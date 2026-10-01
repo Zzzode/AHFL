@@ -669,6 +669,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // aggregate with a String field from the input frame and passes it to
         // a bridge capability; lowers to verifier-clean Core.
         "wasm/wh5c_construct_bridge.ahfl",
+        // WH-5c.2: two P6 nodes reusing ONE packaged agent instance; lowers
+        // to verifier-clean Core (Approach B per-node node-frame blocks).
+        "wasm/wh5c_instance_reuse_fanout.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

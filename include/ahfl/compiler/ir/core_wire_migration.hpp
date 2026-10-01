@@ -60,10 +60,10 @@ struct CoreWireFrameRootSelector {
     CoreWireFrameRootKind kind{CoreWireFrameRootKind::Input};
 };
 
-/// WH-5b.3: a typed selector naming ONE packaged-instance node boundary root
+/// WH-5b.3: a typed selector naming ONE P6-node node boundary root
 /// of a workflow frame-root schema table. The node roots are parallel to the
-/// workflow's sorted packaged-instance (P6-node) table, so `node_ordinal` is a
-/// packaged-instance ordinal, NOT a schedule position. The factory derives the
+/// workflow's P6-node table (matching node_blocks), so `node_ordinal` is a
+/// P6-node ordinal, NOT a schedule position. The factory derives the
 /// binding root from `node_inputs`/`node_outputs` at that ordinal, so a caller
 /// cannot point a node binding at a capability root, an agent boundary root,
 /// or an arbitrary descendant node. This is a SIBLING selector: it does not
@@ -147,7 +147,7 @@ class VerifiedWireSchemaBinding {
     [[nodiscard]] std::optional<CoreWireFrameRootKind> frame_kind() const noexcept {
         return payload_->frame_kind;
     }
-    /// WH-5b.3: set for a packaged-instance node-boundary (input/output)
+    /// WH-5b.3: set for a P6-node node-boundary (input/output)
     /// binding minted by `make_node_frame_binding_from_verified_table`;
     /// nullopt otherwise. A node binding is never an agent-boundary frame
     /// binding nor a capability binding: authorization that distinguishes the
@@ -266,10 +266,10 @@ make_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
                                        const CoreWireFrameRootSelector &selector,
                                        std::vector<CoreLowerDiagnostic> &diagnostics);
 
-/// WH-5b.3: mint a binding for ONE packaged-instance node boundary root (the
+/// WH-5b.3: mint a binding for ONE P6-node node boundary root (the
 /// node's input or output) from a verified workflow table that CARRIES the
 /// frame-root block with per-node roots. The root is derived from the typed
-/// node selector (`node_ordinal` indexes the packaged-instance-parallel
+/// node selector (`node_ordinal` indexes the P6-node-parallel
 /// `node_inputs`/`node_outputs` table), so a table without node roots (an agent
 /// module or a capability-only table) cannot produce a node binding and no raw
 /// NodeId can be supplied by the caller. This is the binding the host

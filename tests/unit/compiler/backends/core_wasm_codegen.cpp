@@ -3978,15 +3978,13 @@ int main() {
                   "P6-6 lifts the coercion arena gate and the per-expr coercion reject");
         }
 
-        // P6-6 StringWiden under frame-bridge v2 V2-B: the coercion is now a
-        // SAME-WIDTH physical no-op (both endpoints are the 2-word PtrLen String
-        // layout), and a computed-final builder materializes it — the
-        // v2b_computed_string node fixture returns a widened literal through an
-        // unbounded output field. A String LITERAL in a NON-FINAL goto handler
-        // still fails closed, however, because that builder owns no in-module
-        // rodata Data region: the rejection is the rodata-pool gate, not a
-        // missing P6 value form. This keeps the guard that a non-final handler
-        // never silently emits String-construction bytes.
+        // P6-6 StringWiden under frame-bridge v2 V2-B + WH-5c.3 (GAP 5): the
+        // coercion is a SAME-WIDTH physical no-op (both endpoints are the
+        // 2-word PtrLen String layout). WH-5c.3 extended the shared rodata
+        // pool to EVERY P6 handler (not just computed-final / bridge handlers),
+        // so a String LITERAL in a NON-FINAL goto handler now interns into the
+        // same Data region and compiles instead of failing closed at the
+        // rodata-pool gate.
         {
             auto program = make_e1_core_program();
             program.value_types.push_back(
@@ -4015,17 +4013,143 @@ int main() {
             start.statements.push_back(
                 CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
             start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.statements.push_back(
                 CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
                   "P6-6 StringWiden fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
+            check(emitted.artifact.has_value(),
+                  "WH-5c.3: a non-final handler's String literal interns into the "
+                  "shared rodata pool and compiles");
+        }
+
+        // WH-5c.3 (GAP 5) fail-closed pin: the shared rodata pool's 768-byte
+        // cap rejects a non-final handler's String literal that would overflow
+        // the fixed [256,1024) region, failing closed with
+        // kResourceExhausted and the literal expression's SourceRange (never
+        // a silent truncation or a misrouted kUnsupportedCapabilityFrame).
+        {
+            auto program = make_e1_core_program();
+            // Unbounded String slot: the literal's length is not capped by the
+            // type, so the ONLY fail-closed path is the 768-byte rodata cap.
+            program.value_types.push_back(
+                CoreValueType{CoreVtString{std::nullopt}}); // vt1 unbounded String
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // 800 distinct bytes: aligned extent = align_up(800, 8) = 800 > 768.
+            const std::string big(800, 'x');
+            flow.storage.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::String, big},
+                         ahfl::SourceRange{100, 200},
+                         CoreValueTypeId{1}}); // expr1 -> v1
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "WH-5c.3 rodata-cap fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
             check(!emitted.artifact.has_value() &&
-                      has_codegen_code(emitted,
-                                       backends::core_wasm_diag::kUnsupportedCapabilityFrame) &&
-                      has_codegen_message(emitted, "computed final"),
-                  "P6-6 StringWiden is a final-lane no-op; a non-final handler's String "
-                  "literal fails closed at the rodata-pool gate");
+                      has_codegen_code(emitted, backends::core_wasm_diag::kResourceExhausted),
+                  "WH-5c.3: a non-final handler's over-capacity String literal "
+                  "fails closed with kResourceExhausted");
+            bool has_ranged_diag = false;
+            for (const auto &diag : emitted.diagnostics) {
+                if (diag.code == backends::core_wasm_diag::kResourceExhausted &&
+                    diag.source_range.has_value() && !diag.source_range->empty()) {
+                    has_ranged_diag = true;
+                    break;
+                }
+            }
+            check(has_ranged_diag,
+                  "WH-5c.3: the rodata-cap diagnostic carries a non-empty SourceRange");
+        }
+
+        // WH-5c.3 fix-forward P1-1: the D6 workflow-level rodata sum check
+        // (the conservative pre-dedup bound across ALL packaged agents) must
+        // carry a SourceRange (Principle 5). Two different P6 agents each
+        // intern UNDER the 768-byte per-agent pool cap (so the per-agent
+        // intern gate stays silent), but their COMBINED rodata exceeds 768
+        // bytes, so only the workflow-level sum check fires. The crossing
+        // contributor's earliest literal range is the attribution site.
+        {
+            auto program = make_e3_workflow_program();
+            // Unbounded String slot: the literal's length is not capped by the
+            // type, so the ONLY fail-closed path is the rodata cap.
+            const CoreValueTypeId string_vt{
+                static_cast<std::uint32_t>(program.value_types.size())};
+            program.value_types.push_back(
+                CoreValueType{CoreVtString{std::nullopt}});
+            // 400 distinct bytes per agent: aligned extent = 400 < 768 (the
+            // per-agent intern gate stays silent), but 400 + 400 = 800 > 768
+            // (the D6 workflow-level sum check fires).
+            const std::string first_literal(400, 'a');
+            const std::string second_literal(400, 'b');
+            const auto add_literal_to_flow = [&](std::size_t flow_idx,
+                                                 const std::string &literal,
+                                                 ahfl::SourceRange range) {
+                auto &flow = program.flows[flow_idx];
+                const auto expr_id = CoreExprId{
+                    static_cast<std::uint32_t>(flow.storage.exprs.size())};
+                flow.storage.exprs.push_back(
+                    CoreExpr{CoreLiteralExpr{CoreLiteralKind::String, literal},
+                             range,
+                             string_vt});
+                flow.storage.value_count = 2;
+                flow.storage.value_types = {CoreValueTypeId{0}, string_vt};
+                // Bind the literal in the Start handler (reachable: it is the
+                // initial state) before the goto, so the builder plans and
+                // interns it. A bare goto alone is not a P6 computed handler;
+                // the let makes it one, which is what makes the agent P6 and
+                // brings the D6 planner into play.
+                auto &start = flow.states[1].body;
+                start.statements.insert(
+                    start.statements.begin(),
+                    CoreStmt{CoreLetStmt{CoreValueId{1}, expr_id}, range});
+            };
+            add_literal_to_flow(0, first_literal, ahfl::SourceRange{100, 200});
+            add_literal_to_flow(1, second_literal, ahfl::SourceRange{300, 400});
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "WH-5c.3 D6 rodata-sum fixture is verified Core with a layout");
+            const auto layouts = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layouts.table,
+                {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi});
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(
+                          emitted,
+                          backends::core_wasm_diag::kResourceExhausted),
+                  "WH-5c.3: combined over-capacity String literals fail closed "
+                  "at the D6 workflow rodata sum check");
+            // The crossing contributor is the SECOND packaged agent
+            // (packaged_instances is sorted by instance id): the sum goes
+            // 400 -> 800, crossing 768 at gathered[1]. Its earliest literal
+            // range {300, 400} is the attribution site.
+            bool has_crossing_range = false;
+            for (const auto &diag : emitted.diagnostics) {
+                if (diag.code == backends::core_wasm_diag::kResourceExhausted &&
+                    diag.source_range.has_value() &&
+                    !diag.source_range->empty() &&
+                    diag.source_range->begin_offset == 300 &&
+                    diag.source_range->end_offset == 400) {
+                    has_crossing_range = true;
+                    break;
+                }
+            }
+            check(has_crossing_range,
+                  "WH-5c.3: the D6 rodata-sum diagnostic carries the crossing "
+                  "contributor's SourceRange");
         }
 
         // P6-5 (RFC 0026 KR6.6): bounded collections. A `List<Int>(4)` value is

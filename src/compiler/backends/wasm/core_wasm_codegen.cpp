@@ -124,6 +124,7 @@ using ir::core::kP6AggregateOutputBase;
 using ir::core::kP6AggregateOutputCapacity;
 using ir::core::kP6AggregateScratchBase;
 using ir::core::kP6AggregateScratchCapacity;
+using ir::core::kP6CollectionBackingBase;
 using ir::core::kP6CollectionBackingCapacity;
 using ir::core::kP6FrameStringPoolBytes;
 using ir::core::kP6RodataBase;
@@ -611,9 +612,15 @@ struct AgentPlan {
     // section and stay byte-identical.
     RodataLiteralPool rodata;
     std::uint32_t rodata_extent{0};
+    // WH-5c.3 fix-forward: the source range of the earliest surviving String
+    // literal (handler/state planning order). The workflow D6 capacity family
+    // attributes its rodata-pool exhaustion diagnostic to this range so the
+    // diagnostic carries a SourceRange (Principle 5); empty when the agent
+    // interns no String literal.
+    ir::SourceRangeOpt rodata_first_literal_range;
     // RFC 0026 P6-7 frame-bridge v2 D5/D6 (rung V2-D): maximum construct-scratch
     // high-water across this agent's planned handlers (relative bytes). A
-    // workflow packager sizes the per-instance scratch node sub-block from it.
+    // workflow packager sizes the per-node scratch node sub-block from it.
     std::uint32_t p6_scratch_high{0};
     // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the dense, ANF-ordered
     // capability bridge call sites planned from non-final handlers. Empty on
@@ -815,7 +822,7 @@ struct AgentPlanPolicy {
     // builds leave this false and keep the historic final-only predicate.
     bool workflow_packaging_lane{false};
     // V2-D emission: when non-null, every frame handler is emitted with its
-    // fixed frame regions and state globals relocated onto a packaged instance's
+    // fixed frame regions and state globals relocated onto a P6 node's
     // node block inside a workflow module. Null on the direct-agent lane.
     const struct P6FrameRelocation *frame_relocation{nullptr};
     // V2-D emission: when non-null, every frame handler interns its String
@@ -843,7 +850,7 @@ struct AgentPlanPolicy {
 };
 
 // V2-D: relocation of a packaged agent's frame-lane handler bytes from the
-// direct-agent fixed regions onto one packaged instance's node-frame block in
+// direct-agent fixed regions onto one P6 node's node-frame block in
 // a workflow module. Installed on each P6ComputationHandlerBuilder before emit.
 struct P6FrameRelocation {
     std::uint32_t input_base{0};
@@ -872,6 +879,11 @@ struct WorkflowFrameSource {
     CoreValueTypeId type{};
 };
 
+// WH-5c.2: sentinel for WorkflowNodePlan::p6_block_ordinal when a workflow
+// node is opaque (no fixed node-frame block).
+constexpr std::uint32_t kInvalidP6Block =
+    std::numeric_limits<std::uint32_t>::max();
+
 struct WorkflowNodePlan {
     CoreWorkflowNodeId node{};
     CoreInstanceId target_instance{};
@@ -883,6 +895,17 @@ struct WorkflowNodePlan {
     // across different branches.
     std::uint32_t schedule_pos{0};
     std::vector<std::pair<CoreCapabilityId, std::uint64_t>> capabilities;
+    // WH-5c.2 (GAP 1, Approach B): every P6 node owns its OWN node-frame block
+    // and runner function, so two nodes may reuse one packaged agent instance.
+    // p6_block_ordinal is the node's P6-dense ordinal (node-id order among P6
+    // nodes) indexing node_blocks / the dense layout tables / the wire
+    // node_inputs/node_outputs roots; kInvalidP6Block for an opaque node.
+    // runner_ordinal is the node's runner FUNCTION ordinal (P6 node runners
+    // occupy [0, p6_node_count), opaque instance runners follow). The host's
+    // runner_to_schedule 1:1 identity and the state-trace runner attribution
+    // both rely on a P6 node's runner being unique to that node.
+    std::uint32_t p6_block_ordinal{kInvalidP6Block};
+    std::uint32_t runner_ordinal{0};
 };
 
 // One value-binding let of a workflow frame region in the form the in-module
@@ -925,15 +948,22 @@ struct WorkflowP6GatherFacts {
     bool p6{false};
     std::uint32_t scratch_high{0};
     std::uint32_t rodata_extent{0};
+    // WH-5c.3 fix-forward: the source range of this agent's earliest surviving
+    // String literal (empty when it interns none). The D6 capacity family
+    // attributes its rodata-pool exhaustion diagnostic to the crossing
+    // contributor's range so the diagnostic carries a SourceRange (Principle 5).
+    ir::SourceRangeOpt rodata_source_range;
     std::uint32_t bridge_site_count{0};
     std::uint32_t bridge_max_arity{0};
     std::uint32_t bridge_spill_extent{0};
     std::uint32_t bridge_result_extent{0};
 };
 
-// V2-D: one packaged instance's fixed node-frame block coordinates.
+// WH-5c.2 (GAP 1, Approach B): one P6 WORKFLOW NODE's fixed node-frame block
+// coordinates. Two nodes that reuse one packaged agent instance each get their
+// OWN block (per-node relocated copies), so the vector is P6-dense in node-id
+// order (parallel to WorkflowPlan::p6_nodes), not per packaged instance.
 struct WorkflowNodeBlock {
-    CoreInstanceId instance{};
     std::uint32_t input_layout{0};
     std::uint32_t context_layout{0};
     std::uint32_t output_layout{0};
@@ -946,11 +976,6 @@ struct WorkflowNodeBlock {
     std::uint32_t scratch_size{0};
     std::uint32_t output_base{0};
 };
-
-// WH-5b.1: sentinel for p6_block_by_runner when a packaged-instance runner is
-// opaque (no fixed node-frame block).
-constexpr std::uint32_t kInvalidP6Block =
-    std::numeric_limits<std::uint32_t>::max();
 
 struct WorkflowPlan {
     CoreWorkflowId workflow{};
@@ -972,15 +997,15 @@ struct WorkflowPlan {
     // Gates the computed runners, node blocks, frame sections and the Data
     // section; an all-opaque workflow stays byte-identical.
     bool has_p6_nodes{false};
-    // WH-5b.1: node blocks are P6-RUNNER-ONLY dense order (packaged-instance
-    // order with opaque runners skipped). An opaque capability-final runner
-    // keeps its heap tuple and owns no fixed node-frame block, so the frame
-    // section's node_blocks array carries only nonzero P6 spans (the
-    // transport verifier's honesty guarantee needs no special-casing).
+    // WH-5c.2 (GAP 1, Approach B): node blocks are P6-NODE-dense in node-id
+    // order (parallel to p6_nodes). Every P6 node owns its own fixed
+    // node-frame block, so two nodes reusing one packaged agent instance each
+    // get a distinct block; an opaque node owns no block. The frame section's
+    // node_blocks array carries exactly these P6 spans (the transport
+    // verifier's honesty guarantee needs no special-casing).
     std::vector<WorkflowNodeBlock> node_blocks;
-    // Maps every packaged-instance runner index to its P6-only node_blocks
-    // ordinal, or kInvalidP6Block when the runner is opaque.
-    std::vector<std::uint32_t> p6_block_by_runner;
+    // The P6-dense workflow node ids (node-id order), parallel to node_blocks.
+    std::vector<CoreWorkflowNodeId> p6_nodes;
     // V2-D module-level physical coordinates (all compile-time constants).
     std::uint32_t bridge_control_base{0};
     std::uint32_t bridge_block_stride{0};
@@ -1014,9 +1039,10 @@ struct WorkflowPlan {
     // V2-D workflow output boundary value type (sizes the workflow output
     // slot in the D6 capacity family).
     CoreValueTypeId wf_output_vt{};
-    // V2-D emission: relocated frame-handler bodies per packaged runner
-    // (parallel to agent_plans), produced by the second, relocated
-    // build_agent_plan pass in the emit driver. Empty for an opaque runner.
+    // WH-5c.2: relocated frame-handler bodies per P6 NODE (P6-dense, parallel
+    // to p6_nodes / node_blocks), produced by the second, relocated
+    // build_agent_plan pass in the emit driver. Two nodes reusing one packaged
+    // instance each get their own relocated copy (Approach B).
     std::vector<std::vector<CompiledHandler>> relocated_handlers;
     // V2-D emission: the merged, frozen module-wide rodata pool (one Data
     // section image across every packaged agent).
@@ -1096,8 +1122,8 @@ struct WorkflowFunctionTable {
     // Identity workflows have import_count == 0, so their indices are unchanged.
     std::uint32_t import_count{0};
     std::uint32_t runner_count{0};
-    // V2-D: total relocated frame-handler functions across every packaged
-    // runner, appended AFTER run2 (each is a `() -> i32` handler). Zero on an
+    // V2-D: total relocated frame-handler functions across every P6
+    // node, appended AFTER run2 (each is a `() -> i32` handler). Zero on an
     // all-opaque workflow, so the fixed 6+runner_count shape is byte-identical.
     std::uint32_t handler_count{0};
     // RFC 0026 FB-1: outlined fn bodies follow runner/run2/handlers (§6.1 agent
@@ -2356,8 +2382,15 @@ class P6ComputationHandlerBuilder {
         return rodata_literals_;
     }
 
+    // WH-5c.3 fix-forward: the source range of the first String literal this
+    // builder interned (empty when it interned none). The workflow D6 capacity
+    // family uses it to attribute the rodata-pool exhaustion diagnostic.
+    [[nodiscard]] ir::SourceRangeOpt rodata_first_literal_range() const noexcept {
+        return rodata_first_literal_range_;
+    }
+
     // V2-D: the construct-scratch high-water this builder planned (relative
-    // bytes; the workflow packager sizes the per-instance scratch sub-block
+    // bytes; the workflow packager sizes the per-node scratch sub-block
     // from the maximum across an agent's handlers).
     [[nodiscard]] std::uint32_t scratch_high_water() const noexcept {
         return scratch_addr_cursor_;
@@ -2996,9 +3029,15 @@ class P6ComputationHandlerBuilder {
     // Byte content of every literal this builder interned (duplicates kept;
     // the pool hash-conses on rebuild).
     std::vector<std::string> rodata_literals_;
+    // WH-5c.3 fix-forward: the source range of the FIRST String literal this
+    // builder interned (handler/ANF planning order). The workflow D6 capacity
+    // family attributes its sourceless rodata-pool exhaustion to this range so
+    // the diagnostic carries a SourceRange (Principle 5); only the first
+    // literal is recorded because attribution needs one deterministic site.
+    ir::SourceRangeOpt rodata_first_literal_range_;
 
     // Fixed P6 frame regions (single named authority for every emit/plan site).
-    // The V2-D workflow packager RELOCATES these onto one packaged instance's
+    // The V2-D workflow packager RELOCATES these onto one P6 node's
     // fixed node-frame block (I_k/C_k/scratch_k/O_k) and rebases the two state
     // globals a handler touches onto the workflow module's global indices via
     // install_frame_relocation(); until then the canonical agent-lane constants
@@ -3007,7 +3046,7 @@ class P6ComputationHandlerBuilder {
     using FrameRelocation = P6FrameRelocation;
 
     // V2-D: relocate every fixed frame region this builder emits onto one
-    // packaged instance's node-frame block and rebase the state globals onto
+    // P6 node's node-frame block and rebase the state globals onto
     // the workflow module's global section. Called once, after plan() and
     // before emit(), by the workflow packager.
     void install_frame_relocation(FrameRelocation relocation) {
@@ -4424,16 +4463,18 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         case CoreLiteralKind::String: {
-            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String literal is
-            // the two-word PtrLen (rodata ptr, byte len), constructible ONLY on
-            // the frame lane where the module owns a rodata Data section.
+            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B) + WH-5c.3 (GAP 5):
+            // a String literal is the two-word PtrLen (rodata ptr, byte len),
+            // constructible on the frame lane where the module owns a rodata
+            // Data section. WH-5c.3 extended the pool to EVERY P6 handler
+            // (including non-final computed handlers); an outlined fn builder
+            // still owns no pool and keeps failing closed.
             if (rodata_pool_ == nullptr) {
                 return reject_with_code(
                     core_wasm_diag::kUnsupportedCapabilityFrame,
-                    "a String literal is constructible only inside a P6-7 frame-bridge v2 "
-                    "computed final: this builder owns no in-module rodata region (the "
-                    "E1-E3/FB lanes never build one, and V2-B does not construct String "
-                    "literals in a non-final frame handler)",
+                    "a String literal is constructible only inside a P6 frame handler: "
+                    "this builder owns no in-module rodata region (an outlined fn or a "
+                    "non-frame lane never builds one)",
                     expr.source_range);
             }
             if (*kind != P6ScalarKind::String) {
@@ -4458,6 +4499,9 @@ class P6ComputationHandlerBuilder {
             // bytes into the shared pool: the reachability compaction rebuilds
             // the module pool from the surviving (reachable) builders only, so
             // a dead handler can never pin rodata bytes a live byte never names.
+            if (!rodata_first_literal_range_.has_value()) {
+                rodata_first_literal_range_ = expr.source_range;
+            }
             rodata_literals_.push_back(bytes);
             if (!rodata_pool_->intern(std::move(bytes), upper_length)) {
                 if (upper_length.has_value()) {
@@ -10687,7 +10731,7 @@ build_frame_section_plan(const CoreProgram &program,
     // write into the neighbouring region (or past the page) with no diagnostic.
     // Fail closed with the same RESOURCE-class rejection the constructor scratch
     // arena uses, BEFORE any handler byte is emitted. A V2-D relocated build
-    // gates against the packaged instance's node-block sub-spans (each sized by
+    // gates against the P6 node's node-block sub-spans (each sized by
     // the D6 capacity family from these same finalized layouts) instead of the
     // direct-agent fixed regions.
     const std::uint32_t effective_input_capacity =
@@ -10818,7 +10862,7 @@ build_frame_section_plan(const CoreProgram &program,
                 // (kP6AggregateOutputBase 12288, cap 4096). The output nominal
                 // may be larger than the input, so it is gated independently of
                 // the 3072-byte input region before any handler byte is emitted.
-                // A V2-D relocated build gates against the packaged instance's
+                // A V2-D relocated build gates against the P6 node's
                 // O_k node-block sub-span instead.
                 const std::uint32_t effective_output_capacity =
                     policy.frame_relocation != nullptr
@@ -10909,20 +10953,19 @@ build_frame_section_plan(const CoreProgram &program,
                                                                   result);
                 // V2-C: a direct-agent frame handler may plan ordered capability
                 // bridge calls; the workflow packaging policy keeps this off. The
-                // registry (and the rodata pool) is installed ONLY into a handler
-                // whose region actually reaches a capability statement: a pure
-                // goto handler stays on the closed V2-A lane, so a String field
-                // read there keeps failing closed instead of being silently
-                // admitted merely because the MODULE has a bridge elsewhere.
-                // Reaching a capability in an allow_bridge builder is what makes
-                // this a bridge handler; it also owns the shared rodata pool so a
-                // computed continuation can compare a bridge result against a
-                // String literal straight out of the Data region.
+                // registry is installed ONLY into a handler whose region actually
+                // reaches a capability statement: a pure goto handler stays on
+                // the closed V2-A lane. Reaching a capability in an allow_bridge
+                // builder is what makes this a bridge handler.
+                // WH-5c.3 (GAP 5): the rodata pool is installed into EVERY P6
+                // handler builder (not just bridge handlers), so a String literal
+                // in a non-final computed handler interns into the same shared
+                // Data region and compiles instead of failing closed.
+                builder->install_rodata_pool(&rodata_pool);
                 if (policy.allow_bridge &&
                     region_contains_capability(handler->body)) {
                     builder->install_bridge_registry(&effective_bridge_registry,
                                                      CoreStateId{state});
-                    builder->install_rodata_pool(&rodata_pool);
                 }
                 if (policy.workflow_packaging_lane) {
                     builder->mark_workflow_packaging_lane();
@@ -11489,6 +11532,17 @@ build_frame_section_plan(const CoreProgram &program,
     } else if (!owns_rodata_pool) {
         plan.rodata_extent = rodata_pool.extent();
     }
+    // WH-5c.3 fix-forward: attribute the workflow D6 rodata-pool exhaustion to
+    // the earliest surviving String literal (handler/state planning order ==
+    // planned_handlers order). A dead handler's literal cannot be the
+    // attribution site because reachability compaction already removed it.
+    for (const PlannedComputedHandler &planned : planned_handlers) {
+        if (planned.builder->rodata_first_literal_range().has_value()) {
+            plan.rodata_first_literal_range =
+                planned.builder->rodata_first_literal_range();
+            break;
+        }
+    }
 
     // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): a module that projects
     // the raw P4-D input frame, materializes a computed final, OR carries an
@@ -11671,7 +11725,7 @@ build_frame_section_plan(const CoreProgram &program,
         // reachable-fn driver.
         builder->install_import_table(&plan.imports);
         // V2-D: relocate this handler's fixed frame regions and state globals
-        // onto a packaged instance's node-frame block inside the workflow
+        // onto a P6 node's node-frame block inside the workflow
         // module (no-op on the direct-agent lane).
         if (policy.frame_relocation != nullptr) {
             builder->install_frame_relocation(*policy.frame_relocation);
@@ -11686,7 +11740,7 @@ build_frame_section_plan(const CoreProgram &program,
         // reads_raw_input_frame_ is latched during EMIT (an input-frame
         // projection emits a fixed-region load), so read it after emit().
         const bool reads_raw = builder->reads_raw_input_frame();
-        // V2-D: the workflow packager sizes the per-instance scratch node block
+        // V2-D: the workflow packager sizes the per-node scratch node block
         // from the maximum construct-scratch high-water across handlers.
         plan.p6_scratch_high =
             std::max(plan.p6_scratch_high, builder->scratch_high_water());
@@ -12192,30 +12246,75 @@ validate_workflow_region(const CoreProgram &program,
                  std::string("the workflow ") + std::string(region) +
                      " extent overflows the wasm32 address domain");
     };
-    auto exhausted = [&](std::string_view region, std::uint64_t extent) {
+    // Best-attributable source range for a workflow-level capacity failure:
+    // the entry node's first input-region statement (the workflow starts
+    // there), falling back to the return region's first statement. Every D6
+    // exhaustion axis names a range (Principle 5); a workflow whose statements
+    // carry no source range at all has no attributable source and is reported
+    // as such rather than emitted sourceless.
+    const auto workflow_capacity_range = [&]() -> ir::SourceRangeOpt {
+        if (!plan.schedule.empty()) {
+            const ir::core::CoreWorkflowNode &entry =
+                workflow.nodes[plan.schedule.front().value];
+            if (entry.input_region != nullptr) {
+                for (const CoreStmt &stmt : entry.input_region->statements) {
+                    if (stmt.source_range.has_value()) {
+                        return stmt.source_range;
+                    }
+                }
+            }
+        }
+        if (workflow.return_region != nullptr) {
+            for (const CoreStmt &stmt : workflow.return_region->statements) {
+                if (stmt.source_range.has_value()) {
+                    return stmt.source_range;
+                }
+            }
+        }
+        return std::nullopt;
+    };
+    // WH-5c.3 fix-forward: the D6 capacity family's RESOURCE-class rejection.
+    // Every axis carries a SourceRange (Principle 5): the rodata axis uses the
+    // crossing contributor's earliest literal range; the page/backing axes use
+    // the entry node's range. `capacity_desc` names what the capacity
+    // represents so the message is actionable (§12.15.9 style).
+    auto exhausted = [&](std::string_view region, std::uint64_t extent,
+                         std::uint64_t capacity, std::string_view capacity_desc,
+                         ir::SourceRangeOpt range) {
         add_diag(result,
                  core_wasm_diag::kResourceExhausted,
-                 "the workflow " + std::string(region) + " (" +
-                     std::to_string(extent) +
-                     " bytes, with the per-instance node blocks, bridge control page, entry "
-                     "payload arena and result placements) exceeds the fixed 64 KiB linear-memory "
-                     "page; split the workflow or shrink the boundary/container capacities");
+                 "the workflow " + std::string(region) + " is " +
+                     std::to_string(extent) + " bytes but only " +
+                     std::to_string(capacity) + " bytes are available " +
+                     std::string(capacity_desc) +
+                     " in the fixed 64 KiB linear-memory page; split the "
+                     "workflow or shrink the boundary/container capacities",
+                 range);
     };
 
     // Merged rodata image: concatenation of the per-agent frozen pools. It must
     // fit the single fixed [256,1024) pool (cross-agent deduplication is applied
     // when the image is materialized in the module-emission slice; the sum here
-    // is the conservative pre-dedup bound).
+    // is the conservative pre-dedup bound). The crossing contributor's earliest
+    // literal range is the attribution site (deterministic: gathered is in
+    // packaged-instance order and each agent records its first interned
+    // literal), so the rejection carries a SourceRange (Principle 5).
     std::uint64_t rodata_total = 0;
+    ir::SourceRangeOpt rodata_exhaust_range;
     for (const WorkflowP6GatherFacts &g : gathered) {
         rodata_total += g.rodata_extent;
         if (rodata_total > std::numeric_limits<std::uint32_t>::max()) {
             overflow("read-only literal pool");
             return false;
         }
+        if (!rodata_exhaust_range.has_value() &&
+            rodata_total > kP6RodataCapacity) {
+            rodata_exhaust_range = g.rodata_source_range;
+        }
     }
     if (rodata_total > kP6RodataCapacity) {
-        exhausted("read-only literal pool", rodata_total);
+        exhausted("read-only literal pool", rodata_total, kP6RodataCapacity,
+                  "in its reserved rodata region", rodata_exhaust_range);
         return false;
     }
 
@@ -12241,12 +12340,23 @@ validate_workflow_region(const CoreProgram &program,
     }
 
     // (1) Merged bridge control-block page frame: dense fixed-stride blocks for
-    // every in-handler bridge call site (agent order, then local ANF order)
-    // followed by the scalar/PtrLen spill slots.
+    // every in-handler bridge call site (P6-node order, then local ANF order)
+    // followed by the scalar/PtrLen spill slots. WH-5c.2: two nodes reusing one
+    // packaged instance each plan their own bridge sites, so the reservation is
+    // per P6 NODE (each node's relocated build contributes its instance's
+    // gathered site facts).
     std::uint32_t total_sites = 0;
     std::uint32_t max_arity = 0;
     std::uint64_t spill_total = 0;
-    for (const WorkflowP6GatherFacts &g : gathered) {
+    for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+        const auto runner =
+            workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
+        if (!runner.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidCore,
+                     "a P6 workflow node target has no packaged runner plan");
+            return false;
+        }
+        const WorkflowP6GatherFacts &g = gathered[*runner];
         if (total_sites > std::numeric_limits<std::uint32_t>::max() - g.bridge_site_count) {
             overflow("bridge call-site table");
             return false;
@@ -12278,14 +12388,13 @@ validate_workflow_region(const CoreProgram &program,
         cursor += control_extent;
     }
 
-    // (2) Per-P6-runner node-frame blocks (only P6 instances occupy a block;
+    // (2) Per-P6-NODE node-frame blocks (every P6 node occupies its own block;
     // opaque capability-final nodes keep their heap tuple and own no fixed
     // block). Each block is I_k / C_k / scratch_k / O_k, every sub-span
     // 8-aligned and sized from the finalized boundary layouts + the gathered
-    // scratch high-water.
+    // scratch high-water. WH-5c.2: two nodes reusing one packaged instance
+    // each get their own block (per-node relocated copies).
     plan.node_blocks_base = static_cast<std::uint32_t>(cursor);
-    // p6_block_by_runner is already initialized to kInvalidP6Block in
-    // build_workflow_plan; the loop below assigns P6 ordinals.
     auto layout_size = [&](CoreValueTypeId vt) -> std::optional<std::uint64_t> {
         if (vt.value >= layouts.value_layouts.size()) {
             return std::nullopt;
@@ -12296,22 +12405,25 @@ validate_workflow_region(const CoreProgram &program,
         }
         return layouts.layouts[id.value].size;
     };
-    // Gather each P6 runner's aligned block parts in P6-only dense order, then
+    // Gather each P6 node's aligned block parts in P6-dense node-id order, then
     // derive the dense cursor through the shared pure arithmetic.
-    std::vector<std::uint32_t> p6_runners;
-    p6_runners.reserve(plan.packaged_instances.size());
-    for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
-        if (!gathered[runner].p6) {
-            continue;
+    std::vector<CoreInstanceId> p6_node_instances;
+    p6_node_instances.reserve(plan.p6_nodes.size());
+    for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+        const auto runner =
+            workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
+        if (!runner.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidCore,
+                     "a P6 workflow node target has no packaged runner plan");
+            return false;
         }
-        plan.p6_block_by_runner[runner] =
-            static_cast<std::uint32_t>(p6_runners.size());
-        p6_runners.push_back(runner);
+        p6_node_instances.push_back(plan.packaged_instances[*runner]);
     }
-    std::vector<CoreWasmP6NodeBlockParts> block_parts(p6_runners.size());
-    for (std::uint32_t p6 = 0; p6 < p6_runners.size(); ++p6) {
-        const std::uint32_t runner = p6_runners[p6];
-        const auto *instance = agent_instance(program, plan.packaged_instances[runner]);
+    std::vector<CoreWasmP6NodeBlockParts> block_parts(plan.p6_nodes.size());
+    for (std::uint32_t p6 = 0; p6 < p6_node_instances.size(); ++p6) {
+        const auto runner =
+            workflow_runner_index(plan, plan.nodes[plan.p6_nodes[p6].value].target_instance);
+        const auto *instance = agent_instance(program, p6_node_instances[p6]);
         if (instance == nullptr || instance->dispatch_types.size() != 3) {
             add_diag(result,
                      core_wasm_diag::kInvalidCore,
@@ -12328,7 +12440,7 @@ validate_workflow_region(const CoreProgram &program,
             return false;
         }
         const std::uint64_t scratch_size =
-            align8(std::max<std::uint64_t>(gathered[runner].scratch_high, 16u));
+            align8(std::max<std::uint64_t>(gathered[*runner].scratch_high, 16u));
         block_parts[p6] = CoreWasmP6NodeBlockParts{
             static_cast<std::uint32_t>(align8(*input_size)),
             static_cast<std::uint32_t>(align8(*context_size)),
@@ -12340,13 +12452,11 @@ validate_workflow_region(const CoreProgram &program,
         overflow("node-frame block region");
         return false;
     }
-    plan.node_blocks.resize(p6_runners.size());
-    for (std::uint32_t p6 = 0; p6 < p6_runners.size(); ++p6) {
-        const std::uint32_t runner = p6_runners[p6];
-        const auto *instance = agent_instance(program, plan.packaged_instances[runner]);
+    plan.node_blocks.resize(p6_node_instances.size());
+    for (std::uint32_t p6 = 0; p6 < p6_node_instances.size(); ++p6) {
+        const auto *instance = agent_instance(program, p6_node_instances[p6]);
         const CoreWasmP6NodeBlockParts &parts = block_parts[p6];
         WorkflowNodeBlock &block = plan.node_blocks[p6];
-        block.instance = plan.packaged_instances[runner];
         const ir::core::CoreLayoutId in_id =
             layouts.value_layouts[instance->dispatch_types[0].value];
         const ir::core::CoreLayoutId ctx_id =
@@ -12412,8 +12522,19 @@ validate_workflow_region(const CoreProgram &program,
     }
 
     // (4) Per-call-site bridge result placements: aligned result structures
-    // plus one pool share each for result String payloads.
-    for (const WorkflowP6GatherFacts &g : gathered) {
+    // plus one pool share each for result String payloads. WH-5c.2: each P6
+    // node's relocated build bakes its own result placements, so the
+    // reservation is per P6 NODE (two nodes reusing one instance each reserve
+    // their instance's gathered window).
+    for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+        const auto runner =
+            workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
+        if (!runner.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidCore,
+                     "a P6 workflow node target has no packaged runner plan");
+            return false;
+        }
+        const WorkflowP6GatherFacts &g = gathered[*runner];
         const std::uint64_t extent =
             std::uint64_t{g.bridge_result_extent} +
             std::uint64_t{g.bridge_site_count} * kP6FrameStringPoolBytes;
@@ -12437,11 +12558,21 @@ validate_workflow_region(const CoreProgram &program,
     cursor += align8(*wf_output_size);
 
     // (5c) V2-D emission half 2: state-entry trace ring. One 8-byte record per
-    // declared state of every packaged P6 agent is the conservative maximum
-    // (a deterministic single run enters each state at most once); the first
-    // 8 bytes hold the record count header.
+    // declared state of every P6 node's packaged agent is the conservative
+    // maximum (a deterministic single run enters each state at most once); the
+    // first 8 bytes hold the record count header. WH-5c.2: each P6 node owns
+    // its own runner, so two nodes reusing one instance each contribute their
+    // agent's state count.
     std::uint64_t trace_state_count = 0;
-    for (const CoreInstanceId instance_id : plan.packaged_instances) {
+    for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+        const auto runner =
+            workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
+        if (!runner.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidCore,
+                     "a P6 workflow node target has no packaged runner plan");
+            return false;
+        }
+        const CoreInstanceId instance_id = plan.packaged_instances[*runner];
         const auto *instance = agent_instance(program, instance_id);
         const auto *payload = agent_instance_payload(program, instance_id);
         if (instance == nullptr || payload == nullptr) {
@@ -12651,8 +12782,25 @@ validate_workflow_region(const CoreProgram &program,
         overflow("P6 frame high-water");
         return false;
     }
+    // WH-5c.3 fix-forward (P2-4): the fixed frame regions (per-node node
+    // blocks, bridge control page, entry payload arena, result placements,
+    // state-trace ring, entry-normalize and transcode spans) grow upward from
+    // the node-event region and must not REACH the collection element backing
+    // region [kP6CollectionBackingBase, +kP6CollectionBackingCapacity): a P6
+    // handler's collection ops address that region with baked constants and
+    // the construct heap grows upward from this same cursor, so a cursor at or
+    // past the backing base would collide with it. The page check below only
+    // guards the 65536-byte page end; this check closes the backing-region
+    // gap. Fail closed with a ranged RESOURCE diagnostic (Principle 5).
+    if (cursor >= kP6CollectionBackingBase) {
+        exhausted("fixed frame region", cursor, kP6CollectionBackingBase,
+                  "before the collection element backing region",
+                  workflow_capacity_range());
+        return false;
+    }
     if (cursor > kPage) {
-        exhausted("P6 frame high-water", cursor);
+        exhausted("P6 frame high-water", cursor, kPage,
+                  "in the fixed linear-memory page", workflow_capacity_range());
         return false;
     }
     // The construct heap shares the same page and starts above this cursor in
@@ -12866,8 +13014,31 @@ build_workflow_plan(const CoreProgram &program,
     const bool entry_frame_is_normalized =
         entry_runner_index.has_value() && !entry_region.constructed &&
         entry_region.source.kind == WorkflowFrameSourceKind::Input;
+    // WH-5c.2: the normalized-entry-frame admit is per NODE, not per instance,
+    // matching the relocated builds' per-node admit_node below. The
+    // fact-gathering build is per packaged INSTANCE, so when a non-entry node
+    // reuses the entry node's instance the single build would serve both an
+    // admitted node (the entry) and a non-admitted one (the reuse). Stay
+    // closed in that case: the build is admitted only when the entry node is
+    // the sole user of its instance, so a reused instance whose handler
+    // projects an input aggregate is rejected here exactly as the non-entry
+    // node's relocated build rejects it. A non-reused entry instance is
+    // admitted exactly as before.
     auto admit_for_runner = [&](std::uint32_t runner) {
-        return entry_frame_is_normalized && runner == *entry_runner_index;
+        if (!entry_frame_is_normalized || runner != *entry_runner_index) {
+            return false;
+        }
+        for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+            if (CoreWorkflowNodeId{id} == entry_node_id) {
+                continue;
+            }
+            const auto other =
+                workflow_runner_index(plan, workflow.nodes[id].target_instance);
+            if (other.has_value() && *other == runner) {
+                return false;
+            }
+        }
+        return true;
     };
 
     // V2-D: build every packaged agent plan in FACT-GATHERING mode (agent-lane
@@ -12919,6 +13090,8 @@ build_workflow_plan(const CoreProgram &program,
                                   !agent_plan->bridge_calls.empty();
             gathered[runner].scratch_high = agent_plan->p6_scratch_high;
             gathered[runner].rodata_extent = agent_plan->rodata_extent;
+            gathered[runner].rodata_source_range =
+                agent_plan->rodata_first_literal_range;
             gathered[runner].bridge_site_count =
                 static_cast<std::uint32_t>(agent_plan->bridge_calls.size());
             for (const BridgeCallPlan &site : agent_plan->bridge_calls) {
@@ -12976,9 +13149,10 @@ build_workflow_plan(const CoreProgram &program,
 
         // A P6 node's input region must be materializable by the scheduler and
         // a non-P6 (opaque) node may not take a constructed frame; pin the
-        // per-node lane + host-pack facts. Also enforce D5: two nodes may not
-        // reuse one packaged instance in this rung.
-        std::unordered_map<std::uint32_t, std::uint32_t> instance_users;
+        // per-node lane + host-pack facts. WH-5c.2 (GAP 1, Approach B): two
+        // nodes MAY reuse one packaged instance — every P6 node gets its own
+        // node-frame block and runner function, so the old D5 per-instance
+        // reuse rejection is deleted (big-bang, no flag).
         for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
             const ir::core::CoreWorkflowNode &node = workflow.nodes[id];
             const auto runner = workflow_runner_index(plan, node.target_instance);
@@ -12988,7 +13162,6 @@ build_workflow_plan(const CoreProgram &program,
                 return std::nullopt;
             }
             const std::uint32_t runner_id = *runner;
-            instance_users[node.target_instance.value] += 1;
             const bool p6 = gathered[runner_id].p6;
             const WorkflowRegionPlan &region = node_regions[id];
             if (!p6 && region.constructed) {
@@ -13020,25 +13193,44 @@ build_workflow_plan(const CoreProgram &program,
             }
             plan.nodes[id] = std::move(node_plan);
         }
-        // D5 lifecycle rule: in a P6 workflow two different nodes may NOT reuse
-        // one packaged instance (each needs its own fixed node-frame block; a
-        // re-use analysis without observable overlap is a later slice). An
-        // all-opaque workflow keeps sharing its single deduped runner across any
-        // number of nodes, exactly as the E3/E4 baseline did.
         plan.has_p6_nodes = std::any_of(
             gathered.begin(), gathered.end(),
             [](const GatheredAgent &g) { return g.p6; });
-        if (plan.has_p6_nodes) {
-            for (const auto &[instance_id, users] : instance_users) {
-                (void)instance_id;
-                if (users > 1) {
-                    add_diag(result, core_wasm_diag::kResourceExhausted,
-                             "two workflow nodes reuse one packaged agent instance; V2-D assigns one "
-                             "node-frame block per instance in a P6-frame workflow and rejects reuse "
-                             "(re-use analysis pending)");
-                    return std::nullopt;
+        // WH-5c.2: assign the per-node P6-dense block ordinal (node-id order
+        // among P6 nodes) and the runner FUNCTION ordinal. P6 node runners
+        // occupy [0, p6_node_count); opaque instance runners follow in
+        // packaged-instance order. A P6 node's runner is unique to that node,
+        // which preserves the host's runner_to_schedule 1:1 identity and the
+        // state-trace runner attribution.
+        plan.p6_nodes.clear();
+        for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+            const auto runner =
+                workflow_runner_index(plan, workflow.nodes[id].target_instance);
+            if (runner.has_value() && gathered[*runner].p6) {
+                plan.nodes[id].p6_block_ordinal =
+                    static_cast<std::uint32_t>(plan.p6_nodes.size());
+                plan.p6_nodes.push_back(CoreWorkflowNodeId{id});
+            }
+        }
+        std::uint32_t opaque_runner_ordinal = 0;
+        for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
+            if (gathered[runner].p6) {
+                continue;
+            }
+            const std::uint32_t runner_ordinal =
+                static_cast<std::uint32_t>(plan.p6_nodes.size()) + opaque_runner_ordinal;
+            for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+                const auto node_runner =
+                    workflow_runner_index(plan, workflow.nodes[id].target_instance);
+                if (node_runner.has_value() && *node_runner == runner) {
+                    plan.nodes[id].runner_ordinal = runner_ordinal;
                 }
             }
+            ++opaque_runner_ordinal;
+        }
+        for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+            plan.nodes[node_id.value].runner_ordinal =
+                plan.nodes[node_id.value].p6_block_ordinal;
         }
         // The agent-lane fact plans are the plans the workflow module's opaque
         // runner/manifest emission consumes; a P6 workflow's relocated handler
@@ -13103,13 +13295,6 @@ build_workflow_plan(const CoreProgram &program,
         }
     }
 
-    // WH-5b.1: p6_block_by_runner must be populated for EVERY workflow (not
-    // just P6 ones) so the scheduler's unconditional p6_node check never
-    // dereferences an empty vector. All-opaque workflows keep every entry at
-    // kInvalidP6Block; plan_workflow_p6_capacity_family assigns P6 ordinals.
-    plan.p6_block_by_runner.assign(
-        plan.packaged_instances.size(), kInvalidP6Block);
-
     // WH-5b.3: classify crossed lane edges (decision section 12.13.8). A crossed
     // edge exists iff the target node's lane != its source's encoding. The ENTRY
     // source encoding is the lane of schedule.front() (the host entry-pack
@@ -13123,8 +13308,8 @@ build_workflow_plan(const CoreProgram &program,
             const auto runner =
                 workflow_runner_index(plan, plan.nodes[n.value].target_instance);
             // gathered[].p6 is the authoritative P6 flag at this point in
-            // build_workflow_plan; p6_block_by_runner is not assigned until
-            // plan_workflow_p6_capacity_family runs below.
+            // build_workflow_plan; node_blocks are assigned by
+            // plan_workflow_p6_capacity_family below.
             return runner.has_value() && gathered[*runner].p6;
         };
         const bool entry_lane_p6 = node_lane_p6(entry_node);
@@ -13324,7 +13509,12 @@ build_workflow_plan(const CoreProgram &program,
         RodataLiteralPool merged_rodata;
         {
             std::vector<std::string> all_literals;
+            ir::SourceRangeOpt first_literal_range;
             for (const AgentPlan &fact : plan.agent_plans) {
+                if (!first_literal_range.has_value() &&
+                    fact.rodata_first_literal_range.has_value()) {
+                    first_literal_range = fact.rodata_first_literal_range;
+                }
                 for (const std::string &literal : fact.rodata.frozen_literals()) {
                     all_literals.push_back(literal);
                 }
@@ -13332,7 +13522,8 @@ build_workflow_plan(const CoreProgram &program,
             if (!merged_rodata.rebuild_from_literals(all_literals)) {
                 add_diag(result,
                          core_wasm_diag::kResourceExhausted,
-                         "the merged workflow rodata literal pool exceeds its fixed region");
+                         "the merged workflow rodata literal pool exceeds its fixed region",
+                         first_literal_range);
                 return std::nullopt;
             }
             merged_rodata.freeze();
@@ -13340,28 +13531,33 @@ build_workflow_plan(const CoreProgram &program,
         }
         plan.workflow_rodata = std::move(merged_rodata);
 
-        plan.relocated_handlers.resize(plan.packaged_instances.size());
-        for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
-            const CoreInstanceId instance_id = plan.packaged_instances[runner];
+        // WH-5c.2 (GAP 1, Approach B): relocated_handlers is P6-NODE-dense
+        // (parallel to p6_nodes / node_blocks). Every P6 node gets its own
+        // relocated build onto its own node block with its own private state
+        // global and bridge-registry wf_runner tag, so two nodes may reuse one
+        // packaged instance.
+        plan.relocated_handlers.resize(plan.p6_nodes.size());
+        for (std::uint32_t p6 = 0; p6 < plan.p6_nodes.size(); ++p6) {
+            const CoreWorkflowNodeId node_id = plan.p6_nodes[p6];
+            const auto runner = workflow_runner_index(
+                plan, plan.nodes[node_id.value].target_instance);
+            if (!runner.has_value()) {
+                add_diag(result, core_wasm_diag::kInvalidCore,
+                         "workflow node target has no packaged runner plan");
+                return std::nullopt;
+            }
+            const CoreInstanceId instance_id = plan.packaged_instances[*runner];
             const auto *payload = agent_instance_payload(program, instance_id);
             if (payload == nullptr) {
                 add_diag(result, core_wasm_diag::kInvalidCore,
                          "packaged workflow target is not an agent instance");
                 return std::nullopt;
             }
-            const AgentPlan &runner_fact = plan.agent_plans[runner];
-            const bool p6 =
-                runner_fact.has_computed_final ||
-                runner_fact.has_computed_goto ||
-                !runner_fact.bridge_calls.empty();
+            const AgentPlan &runner_fact = plan.agent_plans[*runner];
             const std::uint32_t runner_spill_base = actual_spill_cursor;
-            if (!p6) {
-                continue;
-            }
-            // WH-5b.1: the block lookup is P6-only; opaque runners have no
-            // node_block entry (p6_block_by_runner[runner] == kInvalidP6Block).
-            const WorkflowNodeBlock &block =
-                plan.node_blocks[plan.p6_block_by_runner[runner]];
+            // WH-5c.2: the block lookup is per P6 NODE (node_blocks is P6-dense
+            // in node-id order, parallel to p6_nodes).
+            const WorkflowNodeBlock &block = plan.node_blocks[p6];
             // V2-D emission half 2: the generic handler-dispatch P6 runner can
             // only observe a COMPUTED RETURN terminal (it materializes O_k and
             // returns it). A scalar computed-goto preamble that feeds an opaque
@@ -13414,14 +13610,22 @@ build_workflow_plan(const CoreProgram &program,
             relocation.scratch_capacity = block.scratch_size;
             relocation.output_base = block.output_base;
             relocation.output_capacity = block.output_size;
-            // The per-runner private state globals follow the fixed five and,
-            // on a capability workflow, the sixth pending-latch global (see
+            // The per-NODE private state globals follow the fixed five and, on
+            // a capability workflow, the sixth pending-latch global (see
             // encode_workflow_module's global section); the base therefore
-            // depends on whether the workflow carries imports.
+            // depends on whether the workflow carries imports. WH-5c.2: one
+            // private current_state per P6 NODE (p6-dense ordinal), so a reused
+            // instance's nodes do not alias each other's state.
             relocation.current_state_global =
-                (plan.imports.empty() ? 5u : 6u) + runner;
+                (plan.imports.empty() ? 5u : 6u) + p6;
             relocation.transition_count_global = kWorkflowGlobalTransitionCount;
             relocation.heap_next_global = kWorkflowGlobalHeapNext;
+            // WH-5c.2: the normalized-entry-frame admit is per NODE, not per
+            // instance: only the schedule's entry node receives the host-packed
+            // normalized frame. A non-entry node reusing the entry instance
+            // receives an inline I_k and keeps the provenance gate closed.
+            const bool admit_node =
+                entry_frame_is_normalized && node_id == entry_node_id;
             auto relocated = build_agent_plan(
                 program, layouts, payload->base, result,
                 AgentPlanPolicy{.unsupported_code = core_wasm_diag::kUnsupportedWorkflowFrame,
@@ -13429,17 +13633,13 @@ build_workflow_plan(const CoreProgram &program,
                                .allow_computed_goto = true,
                                .allow_bridge = true,
                                .slice = "E3",
-                               // V2-D RETURN: match the fact-gathering build:
-                               // only the entry runner with the scheduler-
-                               // normalized bare host-packed frame may read
-                               // INPUT through aggregate edges.
-                               .admit_normalized_entry_frame = admit_for_runner(runner),
+                               .admit_normalized_entry_frame = admit_node,
                                .skip_frame_section = true,
                                .workflow_packaging_lane = true,
                                .frame_relocation = &relocation,
                                .shared_rodata_pool = &plan.workflow_rodata,
                                .shared_bridge_registry = &workflow_bridge_registry,
-                               .wf_runner = runner,
+                               .wf_runner = p6,
                                .wf_site_id_base = global_site_base,
                                .wf_runner_spill_base = runner_spill_base,
                                .wf_control_base = plan.bridge_control_base,
@@ -13448,7 +13648,7 @@ build_workflow_plan(const CoreProgram &program,
             if (!relocated.has_value()) {
                 return std::nullopt;
             }
-            if (relocated->handlers.size() != plan.agent_plans[runner].handlers.size()) {
+            if (relocated->handlers.size() != plan.agent_plans[*runner].handlers.size()) {
                 add_diag(result,
                          core_wasm_diag::kInternalInvalid,
                          "a relocated packaged agent emitted a different handler count than its "
@@ -13456,11 +13656,11 @@ build_workflow_plan(const CoreProgram &program,
                 return std::nullopt;
             }
             global_site_base += static_cast<std::uint32_t>(
-                workflow_bridge_registry.site_count_for_runner(runner));
+                workflow_bridge_registry.site_count_for_runner(p6));
             actual_spill_cursor =
                 runner_spill_base + workflow_bridge_registry.runner_spill_extent(
-                                        runner, runner_spill_base);
-            plan.relocated_handlers[runner] = std::move(relocated->handlers);
+                                        p6, runner_spill_base);
+            plan.relocated_handlers[p6] = std::move(relocated->handlers);
         }
         plan.workflow_bridge_sites = workflow_bridge_registry.sites();
 
@@ -13487,14 +13687,13 @@ build_workflow_plan(const CoreProgram &program,
                                                  const CoreWorkflowDecl &workflow,
                                                  WorkflowPlan &plan,
                                                  CoreWasmCodegenResult &result) {
-    const std::uint32_t runner_count =
-        static_cast<std::uint32_t>(plan.packaged_instances.size());
-    // WH-5b.1: node_blocks, dense node layouts, and wire-schema node roots are
-    // P6-RUNNER-ONLY dense order. Opaque runners have no fixed frame block and
-    // no P4-D layout; their wire-JSON encoding is handled through the capability
-    // param/result binding, not frame_roots.
+    // WH-5c.2: node_blocks, dense node layouts, and wire-schema node roots are
+    // P6-NODE-dense (parallel to plan.p6_nodes, node-id order). An opaque
+    // instance has no fixed frame block and no P4-D layout; its wire-JSON
+    // encoding is handled through the capability param/result binding, not
+    // frame_roots.
     const std::uint32_t p6_count = static_cast<std::uint32_t>(
-        plan.node_blocks.size());
+        plan.p6_nodes.size());
 
     std::vector<CoreValueTypeId> node_input_vts;
     std::vector<CoreValueTypeId> node_context_vts;
@@ -13502,16 +13701,20 @@ build_workflow_plan(const CoreProgram &program,
     node_input_vts.reserve(p6_count);
     node_context_vts.reserve(p6_count);
     node_output_vts.reserve(p6_count);
-    for (std::uint32_t runner = 0; runner < runner_count; ++runner) {
+    for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
+        const auto runner = workflow_runner_index(
+            plan, plan.nodes[plan.p6_nodes[p6].value].target_instance);
+        if (!runner.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidCore,
+                     "workflow node target has no packaged runner plan");
+            return false;
+        }
         const auto *instance =
-            agent_instance(program, plan.packaged_instances[runner]);
+            agent_instance(program, plan.packaged_instances[*runner]);
         if (instance == nullptr || instance->dispatch_types.size() != 3) {
             add_diag(result, core_wasm_diag::kInvalidCore,
                      "a packaged workflow instance has no exact dispatch triplet");
             return false;
-        }
-        if (plan.p6_block_by_runner[runner] == kInvalidP6Block) {
-            continue;
         }
         const auto nominal_base = [&](CoreValueTypeId vt) -> std::optional<CoreTypeId> {
             if (vt.value >= program.value_types.size()) {
@@ -13652,11 +13855,21 @@ build_workflow_plan(const CoreProgram &program,
             align8(plan.entry_payload_capacity);
         std::size_t site_index = 0;
         bridge_records.reserve(plan.workflow_bridge_sites.size());
-        for (std::uint32_t runner = 0; runner < runner_count; ++runner) {
-            // Replay the D6 per-runner conservative window exactly.
+        // WH-5c.2: replay the D6 per-NODE conservative window exactly (each P6
+        // node reserves its packaged instance's gathered window), and the
+        // bridge registry's wf_runner tag is the node's p6 ordinal.
+        for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
+            const auto runner = workflow_runner_index(
+                plan, plan.nodes[plan.p6_nodes[p6].value].target_instance);
+            if (!runner.has_value()) {
+                add_diag(result, core_wasm_diag::kInvalidCore,
+                         "workflow node target has no packaged runner plan");
+                return false;
+            }
+            // Replay the D6 per-node conservative window exactly.
             std::uint64_t result_extent_sum = 0;
             for (const BridgeCallPlan &fact_site :
-                 plan.agent_plans[runner].bridge_calls) {
+                 plan.agent_plans[*runner].bridge_calls) {
                 if (fact_site.result_vt.value >= layouts.value_layouts.size()) {
                     add_diag(result, core_wasm_diag::kInvalidLayout,
                              "a workflow bridge result has no finalized value layout");
@@ -13668,12 +13881,12 @@ build_workflow_plan(const CoreProgram &program,
             }
             const std::uint64_t window = align8(
                 result_extent_sum +
-                std::uint64_t{plan.agent_plans[runner].bridge_calls.size()} *
+                std::uint64_t{plan.agent_plans[*runner].bridge_calls.size()} *
                     kP6FrameStringPoolBytes);
             const std::uint64_t window_end = cursor + window;
 
             while (site_index < plan.workflow_bridge_sites.size() &&
-                   plan.workflow_bridge_sites[site_index].runner == runner) {
+                   plan.workflow_bridge_sites[site_index].runner == p6) {
                 const BridgeCallPlan &site = plan.workflow_bridge_sites[site_index];
                 const CoreCapabilityDecl &capability =
                     program.capabilities[site.capability.value];
@@ -13794,7 +14007,7 @@ build_workflow_plan(const CoreProgram &program,
                 bridge_records.push_back(std::move(record));
                 ++site_index;
             }
-            // The next runner's window begins exactly where D6 placed it.
+            // The next node's window begins exactly where D6 placed it.
             cursor = window_end;
         }
         if (site_index != plan.workflow_bridge_sites.size() ||
@@ -14817,9 +15030,10 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
     if (plan.workflow.value == CoreWorkflowId::kInvalid) {
         return std::nullopt;
     }
-    // Build the per-runner in-runner bridge-site table. workflow_bridge_sites
-    // is grouped by runner (global call_site_id order == control-block dense
-    // order); the per-runner ordinal is the dense index within that group.
+    // Build the per-NODE in-runner bridge-site table. workflow_bridge_sites
+    // is grouped by the bridge registry's wf_runner tag, which WH-5c.2 sets to
+    // the node's p6 ordinal (global call_site_id order == control-block dense
+    // order); the per-node ordinal is the dense index within that group.
     //
     // P2-8 ordinal soundness invariant: the static ordinal assigned here (the
     // dense index in plan.workflow_bridge_sites) equals the dynamic ordinal
@@ -14827,7 +15041,7 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
     // order) ONLY because bridge sites are reserved in handler-planning order
     // (the state-index loop in build_agent_plan) and compact_workflow_runner
     // filters reachability while preserving relative order. For SEQUENTIAL
-    // bridge calls in one runner (the AC10 shape: call A then call B in
+    // bridge calls in one node (the AC10 shape: call A then call B in
     // straight-line code), the invariant holds when the agent's states are
     // listed in transition order (the natural way to write a sequential
     // flow): state-index order == transition order == execution order, so
@@ -14846,10 +15060,10 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
     // it relies on the host cross-check. What would break the sequential
     // invariant: reserving sites in a non-state-index order, or reordering
     // sites during reachability compaction.
-    std::vector<std::vector<ManifestBridgeSiteEntry>> bridge_sites_by_runner(
-        plan.agent_plans.size());
+    std::vector<std::vector<ManifestBridgeSiteEntry>> bridge_sites_by_node(
+        plan.p6_nodes.size());
     for (const BridgeCallPlan &site : plan.workflow_bridge_sites) {
-        if (site.runner >= bridge_sites_by_runner.size()) {
+        if (site.runner >= bridge_sites_by_node.size()) {
             return std::nullopt;
         }
         if (site.capability.value == CoreCapabilityId::kInvalid) {
@@ -14862,7 +15076,7 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
         if (!symbol.id.has_value()) {
             return std::nullopt;
         }
-        auto &list = bridge_sites_by_runner[site.runner];
+        auto &list = bridge_sites_by_node[site.runner];
         if (list.size() > std::numeric_limits<std::uint8_t>::max()) {
             return std::nullopt; // bridge_site_count / ordinal are u8
         }
@@ -14888,18 +15102,20 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
         }
         out.u32(node.node.value);
         out.u32(index); // schedule_pos == array index
-        const auto runner = workflow_runner_index(plan, node.target_instance);
-        if (!runner.has_value() || *runner >= plan.p6_block_by_runner.size()) {
-            return std::nullopt;
-        }
-        const bool is_p6 = plan.p6_block_by_runner[*runner] != kInvalidP6Block;
+        // WH-5c.2: a node is P6 iff it owns a node-frame block (p6_block_ordinal
+        // is the P6-dense ordinal); its in-runner bridge sites are grouped
+        // under that ordinal.
+        const bool is_p6 = node.p6_block_ordinal != kInvalidP6Block;
         if (is_p6) {
+            if (node.p6_block_ordinal >= bridge_sites_by_node.size()) {
+                return std::nullopt;
+            }
             // P6 bridge node: identity at the scheduler boundary (tag-0 event
             // record, zero capability fields). Its in-handler bridge imports
-            // are accounted in the in-runner bridge-site table below.
+            // are accounted in the in-node bridge-site table below.
             out.byte(0); // cap_call_count = 0 (identity)
             // capabilities array is empty for a P6 bridge node.
-            const auto &bridge_sites = bridge_sites_by_runner[*runner];
+            const auto &bridge_sites = bridge_sites_by_node[node.p6_block_ordinal];
             out.byte(static_cast<std::uint8_t>(bridge_sites.size()));
             for (const auto &bs : bridge_sites) {
                 out.byte(bs.ordinal);
@@ -15187,7 +15403,6 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
                              std::uint32_t state_trace_capacity,
                              const WorkflowFunctionTable &functions) {
     (void)functions;
-    (void)runner_index;
     if (agent_plan.actions.empty()) {
         return std::nullopt;
     }
@@ -15197,8 +15412,9 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
     body.u32(2);
     body.byte(kI32); // locals 2 = bounded walk fuel, 3 = state-trace scratch
     // Reset the runner's private state global to the initial state on every
-    // node invocation (one packaged instance runs exactly once per run2 today,
-    // but the reset makes re-invocation deterministic).
+    // node invocation. WH-5c.2: each P6 node owns a unique runner + state
+    // global, so a reused instance's nodes do not alias each other's state;
+    // the reset makes a node's re-invocation deterministic.
     append_const(body, agent_plan.initial.value);
     append_indexed_op(body, kOpGlobalSet, state_global);
     append_const(body, static_cast<std::uint32_t>(agent_plan.actions.size()) + 1u);
@@ -15365,11 +15581,9 @@ class WorkflowFrameMaterializer {
             // The entry normalization walks the entry node's input layout.
             if (!plan.schedule.empty()) {
                 const auto &node = plan.nodes[plan.schedule.front().value];
-                if (auto r = workflow_runner_index(plan, node.target_instance);
-                    r.has_value() &&
-                    plan.p6_block_by_runner[*r] != kInvalidP6Block) {
+                if (node.p6_block_ordinal != kInvalidP6Block) {
                     consider_layout(
-                        CoreLayoutId{plan.node_blocks[plan.p6_block_by_runner[*r]]
+                        CoreLayoutId{plan.node_blocks[node.p6_block_ordinal]
                                          .input_layout},
                         normalize_depth);
                 }
@@ -15853,14 +16067,13 @@ class WorkflowFrameMaterializer {
             append_indexed_op(*body_, kOpLocalGet, entry_ptr_local_);
             return true;
         }
-        const auto runner =
-            workflow_runner_index(plan_, plan_.nodes[source.node.value].target_instance);
-        if (!runner.has_value() ||
-            plan_.p6_block_by_runner[*runner] == kInvalidP6Block) {
+        // WH-5c.2: the upstream node's O_k block is indexed by the node's own
+        // p6_block_ordinal (an opaque node owns no fixed output block).
+        const auto &source_node = plan_.nodes[source.node.value];
+        if (source_node.p6_block_ordinal == kInvalidP6Block) {
             return false;
         }
-        emit_const(
-            plan_.node_blocks[plan_.p6_block_by_runner[*runner]].output_base);
+        emit_const(plan_.node_blocks[source_node.p6_block_ordinal].output_base);
         return true;
     }
 
@@ -16349,14 +16562,13 @@ class WorkflowFrameMaterializer {
         if (site.direction ==
             ir::core::CoreFrameTranscodeSite::Direction::P4DToJson) {
             // NODE_OUTPUT P4D_TO_JSON: the P6 producer's fixed O_k block.
-            const auto runner =
-                workflow_runner_index(plan, plan.nodes[producer.value].target_instance);
-            if (!runner.has_value() ||
-                plan.p6_block_by_runner[*runner] == kInvalidP6Block) {
+            // WH-5c.2: indexed by the producer node's own p6_block_ordinal.
+            const auto &producer_node = plan.nodes[producer.value];
+            if (producer_node.p6_block_ordinal == kInvalidP6Block) {
                 return false;
             }
             const WorkflowNodeBlock &block =
-                plan.node_blocks[plan.p6_block_by_runner[*runner]];
+                plan.node_blocks[producer_node.p6_block_ordinal];
             append_const(body, block.output_base);
             append_const(body, block.output_size);
         } else {
@@ -16527,8 +16739,10 @@ void append_word_zero_fill(ByteBuffer &body,
         if (!runner.has_value() || !ptr_local.has_value() || !len_local.has_value()) {
             return false;
         }
-        const bool p6_node =
-            plan.p6_block_by_runner[*runner] != kInvalidP6Block;
+        // WH-5c.2: a node is P6 iff it owns a node-frame block; its runner
+        // function is unique to the node (node.runner_ordinal), so two nodes
+        // reusing one packaged instance each dispatch their own runner.
+        const bool p6_node = node.p6_block_ordinal != kInvalidP6Block;
         // WH-5b.3: the transcode site (if any) targeting this node. A P6 node
         // is always the JSON_TO_P4D direction (wire-JSON source -> shadow P4-D
         // -> materialize into I_k); an opaque node is P4D_TO_JSON (P4-D source
@@ -16539,7 +16753,7 @@ void append_word_zero_fill(ByteBuffer &body,
                 : nullptr;
         if (p6_node) {
             const WorkflowNodeBlock &block =
-                plan.node_blocks[plan.p6_block_by_runner[*runner]];
+                plan.node_blocks[node.p6_block_ordinal];
             // V2-D: every packaged runner starts from a zeroed context frame
             // (scalar defaults are zero; a String default PtrLen is not in this
             // rung, so no Data segment is materialized into C_k).
@@ -16614,7 +16828,7 @@ void append_word_zero_fill(ByteBuffer &body,
             }
             append_const(body, block.input_base);
             append_const(body, block.input_size);
-            append_indexed_op(body, kOpCall, functions.runner(*runner));
+            append_indexed_op(body, kOpCall, functions.runner(node.runner_ordinal));
             append_indexed_op(body, kOpLocalSet, *len_local);
             append_indexed_op(body, kOpLocalSet, *ptr_local);
             append_indexed_op(body, kOpLocalSet, status_local);
@@ -16703,7 +16917,7 @@ void append_word_zero_fill(ByteBuffer &body,
                 return false;
             }
         }
-        append_indexed_op(body, kOpCall, functions.runner(*runner));
+        append_indexed_op(body, kOpCall, functions.runner(node.runner_ordinal));
         // Multi-value results are (status, ptr, len); pop in reverse order.
         append_indexed_op(body, kOpLocalSet, *len_local);
         append_indexed_op(body, kOpLocalSet, *ptr_local);
@@ -17038,18 +17252,30 @@ encode_workflow_module(const CoreProgram &program,
         }
     }
 
-    // V2-D: relocated handler layout. Handler functions follow run2; runner r
-    // owns the contiguous range [handler_offset[r], +handler_count[r]).
-    const std::uint32_t runner_count =
-        static_cast<std::uint32_t>(plan.packaged_instances.size());
-    std::vector<std::uint32_t> handler_offset(runner_count, 0);
-    std::uint32_t total_handlers = 0;
-    for (std::uint32_t r = 0; r < runner_count; ++r) {
-        handler_offset[r] = total_handlers;
-        if (r < plan.relocated_handlers.size()) {
-            total_handlers +=
-                static_cast<std::uint32_t>(plan.relocated_handlers[r].size());
+    // V2-D: relocated handler layout. Handler functions follow run2; a P6
+    // node runner owns the contiguous range [handler_offset[p6], +count).
+    // WH-5c.2: runner_count is the number of runner FUNCTIONS = P6 node count
+    // (one unique runner per P6 node) plus the opaque packaged-instance count
+    // (one shared runner per opaque instance, as in the E3/E4 baseline). P6
+    // node runners occupy [0, p6_node_count); opaque instance runners follow.
+    const std::uint32_t p6_runner_count =
+        static_cast<std::uint32_t>(plan.p6_nodes.size());
+    std::uint32_t opaque_runner_count = 0;
+    for (std::uint32_t r = 0; r < plan.packaged_instances.size(); ++r) {
+        const AgentPlan &fact = plan.agent_plans[r];
+        const bool is_p6 = fact.has_computed_final || fact.has_computed_goto ||
+                           !fact.bridge_calls.empty();
+        if (!is_p6) {
+            ++opaque_runner_count;
         }
+    }
+    const std::uint32_t runner_count = p6_runner_count + opaque_runner_count;
+    std::vector<std::uint32_t> handler_offset(p6_runner_count, 0);
+    std::uint32_t total_handlers = 0;
+    for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
+        handler_offset[p6] = total_handlers;
+        total_handlers +=
+            static_cast<std::uint32_t>(plan.relocated_handlers[p6].size());
     }
 
     const WorkflowFunctionTable functions{import_count, runner_count, total_handlers, 0u};
@@ -17151,11 +17377,10 @@ encode_workflow_module(const CoreProgram &program,
     }
     functions_section.u32(kTypeTwoI32ToI32);
     functions_section.u32(kTypeCapabilityTuple);
-    for (std::uint32_t r = 0; r < functions.runner_count; ++r) {
-        if (r >= plan.relocated_handlers.size()) {
-            continue;
-        }
-        for (const CompiledHandler &h : plan.relocated_handlers[r]) {
+    // WH-5c.2: relocated handlers are per P6 NODE (p6-dense); opaque instance
+    // runners own no relocated handlers.
+    for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
+        for (const CompiledHandler &h : plan.relocated_handlers[p6]) {
             functions_section.u32(5); // `() -> i32` handler type
             (void)h;
         }
@@ -17174,12 +17399,12 @@ encode_workflow_module(const CoreProgram &program,
 
     // Globals: a capability workflow adds the private pending_latched flag as a
     // 6th global (cap-lane only). Identity workflows keep the 5-global section.
-    // V2-D: a P6 workflow appends one mutable private current-state global PER
-    // PACKAGED RUNNER after the fixed five (a relocated handler latches its own
-    // runner global). Additive, so an opaque workflow is byte-identical.
+    // V2-D + WH-5c.2: a P6 workflow appends one mutable private current-state
+    // global PER P6 NODE after the fixed five (a relocated handler latches its
+    // own node's global). Additive, so an opaque workflow is byte-identical.
     ByteBuffer globals;
     const std::uint32_t global_count =
-        (capability_workflow ? 6u : 5u) + (p6 ? runner_count : 0u);
+        (capability_workflow ? 6u : 5u) + (p6 ? p6_runner_count : 0u);
     globals.u32(global_count);
     append_global(globals, true, 0);
     append_global(globals, false, 1);
@@ -17190,8 +17415,13 @@ encode_workflow_module(const CoreProgram &program,
         append_global(globals, true, 0); // kWorkflowGlobalPendingLatched
     }
     if (p6) {
-        for (std::uint32_t r = 0; r < runner_count; ++r) {
-            append_global(globals, true, plan.agent_plans[r].initial.value);
+        for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
+            const auto runner = workflow_runner_index(
+                plan, plan.nodes[plan.p6_nodes[p6].value].target_instance);
+            if (!runner.has_value()) {
+                return std::nullopt;
+            }
+            append_global(globals, true, plan.agent_plans[*runner].initial.value);
         }
     }
     if (!append_section(module, kSectionGlobal, globals)) {
@@ -17230,47 +17460,60 @@ encode_workflow_module(const CoreProgram &program,
     if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) || !code.sized(step)) {
         return std::nullopt;
     }
-    for (std::uint32_t r = 0; r < runner_count; ++r) {
-        const bool runner_is_p6 =
-            r < plan.relocated_handlers.size() && !plan.relocated_handlers[r].empty();
-        if (runner_is_p6) {
-            auto runner = make_workflow_p6_runner_body(
-                plan.agent_plans[r], r,
-                plan.node_blocks[plan.p6_block_by_runner[r]],
-                /*handler_base=*/functions.handler(handler_offset[r]),
-                /*state_global=*/(plan.imports.empty() ? 5u : 6u) + r,
-                plan.state_trace_base,
-                plan.state_trace_capacity,
-                functions);
-            if (!runner.has_value() || !code.sized(*runner)) {
+    // WH-5c.2: emit one runner body per runner FUNCTION, in function-index
+    // order: P6 node runners first (p6-dense), then opaque instance runners.
+    // Each P6 node's runner body bakes its own node block, handler base, state
+    // global and state-trace runner ordinal (== its runner function ordinal).
+    for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
+        const auto runner = workflow_runner_index(
+            plan, plan.nodes[plan.p6_nodes[p6].value].target_instance);
+        if (!runner.has_value()) {
+            return std::nullopt;
+        }
+        auto runner_body = make_workflow_p6_runner_body(
+            plan.agent_plans[*runner], p6,
+            plan.node_blocks[p6],
+            /*handler_base=*/functions.handler(handler_offset[p6]),
+            /*state_global=*/(plan.imports.empty() ? 5u : 6u) + p6,
+            plan.state_trace_base,
+            plan.state_trace_capacity,
+            functions);
+        if (!runner_body.has_value() || !code.sized(*runner_body)) {
+            return std::nullopt;
+        }
+    }
+    for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
+        const auto &agent_plan = plan.agent_plans[runner];
+        const bool is_p6 = agent_plan.has_computed_final ||
+                           agent_plan.has_computed_goto ||
+                           !agent_plan.bridge_calls.empty();
+        if (is_p6) {
+            continue; // a P6 instance's node runners were emitted above
+        }
+        // P2-6 branching-walk honesty: a WireJson (non-P6) agent whose
+        // walk terminal is a ComputedGotoAction has a branching / computed
+        // action. The descriptor walk is a linear chain of GotoAction
+        // edges; a ComputedGotoAction terminal means the agent takes a
+        // runtime-dependent branch the walk cannot represent. The D-B
+        // state reconstruction would emit a dishonest sequence, so reject
+        // the module at codegen time rather than emit a broken walk.
+        auto walk = workflow_initial_transitions(agent_plan);
+        if (walk.has_value() &&
+            walk->terminal.value < agent_plan.actions.size()) {
+            const auto &terminal_action =
+                agent_plan.actions[walk->terminal.value];
+            if (std::holds_alternative<ComputedGotoAction>(terminal_action)) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedOrchestration,
+                         "WireJson agent has a computed-goto (branching) terminal; "
+                         "the linear walk cannot represent runtime-dependent branches. "
+                         "Use a P6-frame agent for computed routing.");
                 return std::nullopt;
             }
-        } else {
-            // P2-6 branching-walk honesty: a WireJson (non-P6) agent whose
-            // walk terminal is a ComputedGotoAction has a branching / computed
-            // action. The descriptor walk is a linear chain of GotoAction
-            // edges; a ComputedGotoAction terminal means the agent takes a
-            // runtime-dependent branch the walk cannot represent. The D-B
-            // state reconstruction would emit a dishonest sequence, so reject
-            // the module at codegen time rather than emit a broken walk.
-            auto walk = workflow_initial_transitions(plan.agent_plans[r]);
-            if (walk.has_value() &&
-                walk->terminal.value < plan.agent_plans[r].actions.size()) {
-                const auto &terminal_action =
-                    plan.agent_plans[r].actions[walk->terminal.value];
-                if (std::holds_alternative<ComputedGotoAction>(terminal_action)) {
-                    add_diag(result,
-                             core_wasm_diag::kUnsupportedOrchestration,
-                             "WireJson agent has a computed-goto (branching) terminal; "
-                             "the linear walk cannot represent runtime-dependent branches. "
-                             "Use a P6-frame agent for computed routing.");
-                    return std::nullopt;
-                }
-            }
-            auto runner = make_workflow_runner_body(plan.agent_plans[r], plan.imports);
-            if (!runner.has_value() || !code.sized(*runner)) {
-                return std::nullopt;
-            }
+        }
+        auto runner_body = make_workflow_runner_body(agent_plan, plan.imports);
+        if (!runner_body.has_value() || !code.sized(*runner_body)) {
+            return std::nullopt;
         }
     }
     // V2-D: run and run2 precede the relocated handlers in the code section,
@@ -17281,13 +17524,10 @@ encode_workflow_module(const CoreProgram &program,
     if (!run2.has_value() || !code.sized(run) || !code.sized(*run2)) {
         return std::nullopt;
     }
-    // V2-D: the relocated frame handlers follow run2 in one flat per-runner
+    // V2-D: the relocated frame handlers follow run2 in one flat per-P6-node
     // range.
-    for (std::uint32_t r = 0; r < runner_count; ++r) {
-        if (r >= plan.relocated_handlers.size()) {
-            continue;
-        }
-        for (const CompiledHandler &handler : plan.relocated_handlers[r]) {
+    for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
+        for (const CompiledHandler &handler : plan.relocated_handlers[p6]) {
             if (!code.sized(handler.body)) {
                 return std::nullopt;
             }
@@ -17810,10 +18050,33 @@ build_import_descriptors(const CoreProgram &program,
         }
     }
 
-    // Runner table: one entry per sorted-unique packaged agent instance.
-    descriptor.agents.reserve(plan.packaged_instances.size());
+    // Runner table: one entry per runner FUNCTION, in emission order (P6 node
+    // runners first in p6-dense order, then one per opaque packaged instance).
+    // WH-5c.2: every P6 node owns a unique runner function, so the host's
+    // runner_to_schedule 1:1 identity and the state-trace rec.runner
+    // attribution both hold when two nodes reuse one packaged instance.
+    descriptor.agents.reserve(plan.p6_nodes.size() + plan.packaged_instances.size());
+    for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+        const auto runner = workflow_runner_index(
+            plan, plan.nodes[node_id.value].target_instance);
+        if (!runner.has_value()) {
+            continue; // defensive; the planner rejected this earlier
+        }
+        const auto &agent_plan = plan.agent_plans[*runner];
+        CoreWasmStateWalk walk;
+        walk.agent = program.agents[agent_plan.agent.value].symbol_ref.canonical_name;
+        walk.walk = runner_walk_names(program, agent_plan);
+        walk.all_states = program.agents[agent_plan.agent.value].states;
+        descriptor.agents.push_back(std::move(walk));
+    }
     for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
         const auto &agent_plan = plan.agent_plans[runner];
+        const bool is_p6 = agent_plan.has_computed_final ||
+                           agent_plan.has_computed_goto ||
+                           !agent_plan.bridge_calls.empty();
+        if (is_p6) {
+            continue; // a P6 instance's walk is emitted per node above
+        }
         CoreWasmStateWalk walk;
         walk.agent = program.agents[agent_plan.agent.value].symbol_ref.canonical_name;
         walk.walk = runner_walk_names(program, agent_plan);
@@ -17830,18 +18093,16 @@ build_import_descriptors(const CoreProgram &program,
         CoreWasmNodeDescriptor node_descriptor;
         node_descriptor.node_id = node.node.value;
         node_descriptor.schedule_pos = node.schedule_pos;
-        // The planner already rejected a node whose target_instance has no
-        // packaged runner ("workflow node target has no packaged runner
-        // plan"), so workflow_runner_index is always present here; value_or(0)
-        // is a defensive fallback that is never hit.
-        node_descriptor.runner = workflow_runner_index(plan, node.target_instance).value_or(0);
+        // WH-5c.2: the node's runner FUNCTION ordinal (unique per P6 node; an
+        // opaque instance's ordinal is shared by its nodes as in the E3/E4
+        // baseline). The host's runner_to_schedule and state-trace attribution
+        // both key on this ordinal.
+        node_descriptor.runner = node.runner_ordinal;
         node_descriptor.name = workflow_decl.nodes[node.node.value].node_name;
-        // WH-5b.1: per-node P6 flag + P6-only node_blocks ordinal.
-        const auto p6_ordinal =
-            plan.p6_block_by_runner[node_descriptor.runner];
-        node_descriptor.is_p6 = p6_ordinal != kInvalidP6Block;
+        // WH-5c.2: per-node P6 flag + P6-dense node_blocks ordinal.
+        node_descriptor.is_p6 = node.p6_block_ordinal != kInvalidP6Block;
         if (node_descriptor.is_p6) {
-            node_descriptor.p6_block_ordinal = p6_ordinal;
+            node_descriptor.p6_block_ordinal = node.p6_block_ordinal;
         }
         // WH-4 fix-forward P1-3: carry the DAG predecessor node ids (the
         // workflow `after` edges) so an embedded host emits

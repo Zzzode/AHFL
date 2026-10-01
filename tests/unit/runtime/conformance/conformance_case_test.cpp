@@ -590,6 +590,16 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::wh5c_construct_bridge::ConstructPipeline",
             1, 1, WasmEligibility::Orchestration,
         },
+        // WH-5c.2: two P6 nodes (first, second) reusing ONE packaged agent
+        // instance. Approach B assigns one node-frame block + runner function
+        // per P6 node, so the fan-out lowers to wasm and both nodes run.
+        {
+            "wh5c_instance_reuse_fanout.case.json",
+            "tests/golden/wasm/wh5c_instance_reuse_fanout.ahfl",
+            CaseKind::Workflow,
+            "wasm::wh5c_instance_reuse_fanout::ReuseFanout",
+            0, 1, WasmEligibility::Orchestration,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";

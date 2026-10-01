@@ -402,6 +402,14 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // WH-5c.2: two P6 nodes reusing ONE packaged agent instance. The
+        // module emits P6Frame; Approach B assigns one node-frame block +
+        // runner per P6 node so the fan-out lowers and both nodes run.
+        {"wh5c_instance_reuse_fanout.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

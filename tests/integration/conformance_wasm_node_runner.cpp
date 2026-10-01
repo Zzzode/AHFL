@@ -144,7 +144,13 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // fb4_effectful_fn (an in-fn capability call sends a constructed frame over
 // the opaque lane, which only accepts the borrowed input bytes) stay on
 // bespoke hosts.
-constexpr int kExpectedAgreed = 68;
+// WH-5c.2 (GAP 1, Approach B): the fan-out case
+// (wh5c_instance_reuse_fanout) reuses ONE packaged agent instance across
+// TWO P6 workflow nodes. The per-instance D5 lifecycle gate rejected this
+// shape; the per-node cardinality flip (one node-frame block + runner
+// function per P6 NODE) lowers both nodes onto their own block/runner and
+// the Node observation agrees with the evaluator: 68/0 -> 69/0.
+constexpr int kExpectedAgreed = 69;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare

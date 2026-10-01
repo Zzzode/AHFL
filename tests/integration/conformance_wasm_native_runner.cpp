@@ -61,7 +61,13 @@ using ahfl::conformance::run_native_scenario;
 // eligible case must compile and agree. The skip set is pinned to 0: the
 // facade never depends on an external embedding, so there is no legitimate
 // skip path (a compile failure is a hard failure, not a skip).
-constexpr int kExpectedNativeAgreed = 68;
+// WH-5c.2 (GAP 1, Approach B): the fan-out case
+// (wh5c_instance_reuse_fanout) reuses ONE packaged agent instance across
+// TWO P6 workflow nodes. The per-instance D5 lifecycle gate rejected this
+// shape; the per-node cardinality flip (one node-frame block + runner
+// function per P6 NODE) lowers both nodes onto their own block/runner and
+// the wasm observation agrees with the evaluator: 68/0 -> 69/0.
+constexpr int kExpectedNativeAgreed = 69;
 constexpr int kExpectedNativeSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare

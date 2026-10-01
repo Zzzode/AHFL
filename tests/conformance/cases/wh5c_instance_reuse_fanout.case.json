@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/wh5c_instance_reuse_fanout.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::wh5c_instance_reuse_fanout::ReuseFanout",
+  "scenarios": [
+    {
+      "name": "fanout",
+      "input": {"_type":"wasm::wh5c_instance_reuse_fanout::Frame","value":42},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::wh5c_instance_reuse_fanout::Frame","value":42}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "two P6 nodes (first, second) reusing ONE packaged agent instance; WH-5c.2 Approach B assigns one node-frame block + runner function per P6 node, so the fan-out lowers to wasm and both nodes run"
+    }
+  }
+}

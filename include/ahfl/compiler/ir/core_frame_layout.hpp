@@ -162,8 +162,10 @@ struct CoreFrameLayoutSection {
     // frame section keeps its rung V2-C bytes exactly.
     // ------------------------------------------------------------------
 
-    /// One packaged instance's fixed node-frame block (parallel to the
-    /// workflow module's sorted packaged-instance table).
+    /// One P6 workflow NODE's fixed node-frame block. WH-5c.2 (GAP 1,
+    /// Approach B): the vector is P6-dense in node-id order (parallel to the
+    /// workflow module's p6_nodes table), not per packaged instance, so two
+    /// nodes reusing one packaged instance each own their own block.
     struct NodeBlock {
         CoreLayoutId input_layout{};
         CoreLayoutId context_layout{};

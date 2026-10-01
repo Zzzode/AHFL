@@ -297,8 +297,8 @@ resolve_core_wasm_entry(const ir::core::CoreProgram &program,
                                                    CoreWasmTarget target);
 
 // RFC 0026 P6-7 frame-bridge v2 rung V2-D D6: the pure node-frame block cursor
-// arithmetic shared by the workflow capacity family. One block per packaged P6
-// instance, each block I/C/scratch/O with already-8-aligned extents; the cursor
+// arithmetic shared by the workflow capacity family. One block per P6 workflow
+// node, each block I/C/scratch/O with already-8-aligned extents; the cursor
 // advances by each block's OWN extent exactly once, so the dense high-water is
 // the simple sum of the block extents (never the per-runner cumulative total,
 // which double-counted every earlier block quadratically). Exposed for the
@@ -313,7 +313,7 @@ struct CoreWasmP6NodeBlockParts {
 struct CoreWasmP6NodeBlockCursor {
     std::uint32_t base{0};
     std::uint32_t extent{0};
-    // Per-block bases in packaged-instance order: [input, context, scratch,
+    // Per-block bases in P6-node order: [input, context, scratch,
     // output].
     std::vector<std::array<std::uint32_t, 4>> bases;
 };

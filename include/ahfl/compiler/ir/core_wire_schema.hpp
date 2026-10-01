@@ -152,9 +152,9 @@ struct CoreWireCapabilitySchema {
 struct CoreWireFrameRoots {
     CoreWireSchemaNodeId input{};
     CoreWireSchemaNodeId output{};
-    /// RFC 0026 P6-7 frame-bridge v2 D5 (rung V2-D): per-packaged-instance node
+    /// RFC 0026 P6-7 frame-bridge v2 D5 (rung V2-D): per-P6-node node
     /// boundary roots of a P6 workflow module (parallel to the workflow's
-    /// sorted packaged-instance table). Empty on an agent module and on an
+    /// P6-node table, matching node_blocks). Empty on an agent module and on an
     /// all-opaque workflow.
     std::vector<CoreWireSchemaNodeId> node_inputs;
     std::vector<CoreWireSchemaNodeId> node_outputs;
