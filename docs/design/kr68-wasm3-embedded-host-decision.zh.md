@@ -3310,3 +3310,224 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 - **§12.15.11(AC):** 不变。#213/#214/#421/#422 的验收是 exit 0 + fan-out 正常,不依赖内部机制(frame-base vs per-node copy)。
 - **§12.15.13(LOC):** GAP 1 的 LOC 估计从 "per-node blocks + frame-base runner(~200)" 修订为 "per-node blocks + per-node relocated copies(~250)"。`core_wasm_codegen.cpp` 行从 ~400 修订为 ~450;总计从 ~1230 修订为 ~1280。
 - **§12.15.14(sequencing):** 不变。WH-5c.2(GAP 1)的优先级和 gate 不变。
+
+### 12.15.17 WH-5c residual gaps 6/7 (2026-10-02, dedicated decision agent)
+
+本节记录 WH-5c.1(GAP 3 descriptor fix,uncommitted in tree)落地后,同两个 product smoke(#425 `ahflc.run.llm_failure_matrix.smoke`、#427 `ahflc.run.capability_bindings.smoke`)中剩余的两个 cutover-blocking discrepancy 的决策。所有代码断言已对工作树(HEAD `b6239120` + uncommitted WH-5c.1 + WH-6 cutover)逐条复核。两个 fix 分别以 slice WH-5c.6(diagnostic ranges)和 WH-5c.7(rich type matrix)落地,排在 WH-6 cutover commit 之前。§12.15.11 AC 表与 §12.15.14 sequencing 由本节修订。
+
+#### 12.15.17.1 GAP 6 — runtime failure diagnostics lack SourceRange parity
+
+**证据(已独立复核):**
+
+- #425 的断言(`tests/scripts/llm_failure_matrix_smoke.py:537-544`):每个 failed-run 的 `capability_failed`/`node_failed`/`workflow_failed` 事件中,至少一个 materialized diagnostic 必须同时有 `message` + `code` + `range`(dict)。wasm lane 发射两次 `wasm.trap`/`wasm.host-abort`,`range` 为 null。
+- wasm lane 的失败诊断构造:`src/runtime/wasm_host/workflow_session.cpp:1598-1676` 把失败归约为 `run_failure_code`/`run_failure_message` 两个 **string**;`src/runtime/wasm_host/wasm_lifecycle.cpp:31-39` 的 `add_error` 只调 `.code().message().emit()`,**不调 `.range()`**。
+- 重复发射:`wasm_lifecycle.cpp:287-289`(NodeFailed)与 `330-331`(WorkflowFailed)对同一 `code`/`message` 各调一次 `add_error`,diagnostic bag 里出现两条相同 entry。
+- evaluator 的对照:`src/runtime/engine/workflow_runtime.cpp:1499-1503` 把 node 级 diagnostic id 存入 `workflow_diagnostic`,`1594-1597` 的 WorkflowFailed **复用同一 id**——bag 里只有一条 entry,两个事件引用它。
+- evaluator 的 range 来源(实测,非推断):`src/runtime/evaluator/evaluator.cpp:1800-1801` 的 `apply_default_range(source_range)` 把 capability **CallExpr** 的 `source_range` 应用到失败诊断。在 `build/dev/tests/runtime/llm-failure-matrix-smoke/run-3718777/auth_failure_events.jsonl` 中实测 evaluator 输出 `range={begin:455,end:491}`,对应 fixture 源码的 `Echo(Request { value: input.value })` 调用表达式(call-site range,不是 node/agent 声明 range)。
+- wasm lane 在失败站点已知的身份:host-abort 路径的 import callback 知道 call site 的 `source_symbol`(capability SymbolId u64,`capability_import.cpp:286,402` 设 `config.context.source_capability_symbol_id`);trap 路径的 session 知道 failed node(`workflow_session.cpp:2078-2086` 按 schedule order 找第一个 non-completed node)。
+- facade 持有 `ir::Program` 但只在 ctor:`src/runtime/wasm_runner/wasm_workflow_runtime.cpp:60-114`。ctor 已用 `ProgramIndex` 预算 `capability_effects_`(避免存储 ProgramIndex,`wasm_workflow_runtime.cpp:63-65` 注释)。session config 已有 `name_resolver` seam(`workflow_session.hpp:64-65`,§12.7.2 记录 CLI 留空)。
+- IR 侧的 range 可得性:`WorkflowNode::source_range`(`include/ahfl/compiler/ir/decl.hpp:349`)、`CapabilityDecl::provenance.source_range`(`decl.hpp:67,210-217`,CapabilityDecl 无自身 `source_range` 字段,range 在 `DeclarationProvenance` 上)、`AgentDecl::provenance` 同理。
+
+**Root cause:**
+
+wasm session 把失败诊断归约为 code+message string 时,host 已有的 node 身份(`node_id`/`schedule_pos`)与 capability 身份(`source_symbol` u64)没有 resolver 映射回 `SourceRange`。facade 是唯一持有 `ir::Program` 的 wasm-lane 组件,但它只在 ctor 用 Program 预算了 `capability_effects_`,没有预算 range 表,也没有把 range resolver 传进 session config。
+
+**决策:Option A — facade 构建 host-side range resolver 表,传入 session config。**
+
+facade ctor 从 Program 预算两张表(与 `capability_effects_` 同生命周期,不存储 ProgramIndex):
+
+1. **`node_ranges_`**:per workflow,按 dense node ordinal 索引的 `WorkflowNode::source_range`(decl.hpp:349)。session 跑单个 workflow,`run()` 按 workflow name 取出该 workflow 的 vector 传入。
+2. **`capability_ranges_`**:`source_symbol`(SymbolId u64)→ `CapabilityDecl::provenance.source_range`(decl.hpp:67)。key 是 `capability.symbol_ref.id`(与 codegen 的 `record.source_symbol = *capability.symbol_ref.id`,`core_wasm_codegen.cpp:9970,13703` 一致)。
+
+`WorkflowSessionConfig` 增加两个 optional 字段(与 `name_resolver` 同 seam):`node_range_resolver`(按 dense node ordinal 查 `SourceRangeOpt`)与 `capability_range_resolver`(按 `source_symbol` u64 查)。facade `run()` 把它们填入 session config(`wasm_workflow_runtime.cpp:145-154` 附近,与 `name_resolver` 同处)。
+
+**失败发射站点(必须获得 range):**
+
+| 站点 | 文件:行 | range 来源 |
+|------|---------|-----------|
+| Run2HostAborted(capability import failure) | `workflow_session.cpp:1619-1641` | `CapabilityImportState` 新增 `last_source_symbol`(callback 在 `capability_import.cpp:286,402` 设 `source_capability_symbol_id` 时同步记录),经 `capability_range_resolver` 查 capability 声明 range;fallback 到 failed node 的 `node_range_resolver` |
+| Run2Trapped(capability executed + failed) | `workflow_session.cpp:1642-1655` | 同上(`last_capability_error` 已有,`304,428`;补 `last_source_symbol`) |
+| Run2Trapped(generic,无 capability 上下文) | `workflow_session.cpp:1642-1655` | failed node 的 `node_range_resolver`(failed node 在 `2078-2086` 已识别) |
+| invoke_run2 engine error | `workflow_session.cpp:1613-1618` | failed node range |
+| run2 non-zero status / replay diverged / origination failure | `workflow_session.cpp:1666-1690,1598-1612` | failed node range(或 pending coordinate 的 node range) |
+| output decode failed(kOutputDecodeFailed) | `workflow_session.cpp:1950-1991` | 被 decode 的 node 的 range |
+| suspend 路径 | `workflow_session.cpp:1856-1864` | **不发诊断**(suspend 不是 failure;`1856-1864` 的 "suspended but no pending coordinate" 是 invariant violation,发 failed node range) |
+
+**重复诊断发射的结构化:**
+
+`emit_workflow_events`(`wasm_lifecycle.cpp:267-337`)改为与 evaluator 同构:failed node 的 NodeFailed 发射**一条** diagnostic(带 range),把返回的 `DiagnosticId` 存入 `WasmWorkflowRunFacts`;workflow 级 WorkflowFailed **复用该 id**(`330-331` 不再调 `add_error`,改为引用 facts 里存的 id)。若失败无 failed node(全 node completed 但 workflow 级失败,理论上不应发生),workflow 级发一条带 range 的诊断。`add_error` 增加 `SourceRangeOpt` 参数,调 `.range(...)`。
+
+**诚实的 parity 注记:**
+
+evaluator 附的是 capability **call-site** range(CallExpr `source_range`,实测 `{455,491}`);wasm lane 附的是 capability **声明** range(`provenance.source_range`)。这是诚实的最小 parity:manifest v2 只携带 capability 的 `source_symbol`(声明 SymbolId),不携带 call-site range;call-site parity 需要 codegen 在 descriptor 的 `CoreWasmBridgeCallSite` 上携带 per-call-site `SourceRange`(descriptor 是 host-side sidecar,不是 wire format,但这是更大的 codegen 改动),推迟到后续 slice。#425 的断言只要求 `range` 是 dict(非 null),声明级 range 满足。
+
+**WASM=OFF 影响:** 无。wasm host(`workflow_session.cpp`/`wasm_lifecycle.cpp`)与 facade 在 WASM=OFF 下编译 out;`ahflc run` 以可行动诊断拒绝(§12.7.1),不跑 workflow。
+
+**Reference Hierarchy:** Clang diagnostic infrastructure——diagnostic 在 source location 可解析的地方构造。facade 是唯一持有 `ir::Program` 的 wasm-lane 组件,在 ctor 预算 range 表(与 `capability_effects_` 同模式),session 在失败站点用 resolver 解析。AHFL-specific divergence:wasm3 host 跨 wasm boundary 执行,失败站点在 host import callback / trap handler,不在 IR 解释器内,因此 range 必须经 host-side resolver 表传递,不能像 evaluator 那样直接从 IR 表达式取。
+
+**被否决的替代方案:**
+
+- **(B) 在 custom wasm section 编码 range — REJECTED。** range 是 source-level 诊断概念,不是 wire identity(Principle 2)。module bytes 保持 identity-only;range 表是 host-side sidecar,经 session config 传递,不进 module。
+- **(C) host 用 symbol table handle 经 source_symbol 映射 — SUBSUMED by (A)。** facade 直接从 Program 预算 `source_symbol → SourceRange` 表;单独的 symbol table handle 会重复 facade 刻意避免存储的 `ProgramIndex`(`wasm_workflow_runtime.cpp:63-65`)。
+
+#### 12.15.17.2 GAP 7 — P6 body/computed-final codegen rejects the full rich wire-type matrix
+
+**证据(已独立复核):**
+
+- #427 scenario `run_rich_input_matrix` tag `baseline_all_shapes`(`tests/scripts/runtime_capability_bindings_smoke.py:635-650`):fixture `rich_input_pkg/main.ahfl` 是 capability-free agent,computed final 从 `RichInput` 逐 field 构造 `RichOutput`,覆盖 9 类类型:`Decimal(2)`、`Duration`、`collections::Set<Int>(8)`、`collections::Map<String,Int>(8)`、`option::Option<Int>`、`Unit`、`Float`(f64)、`Int`、`String`;workflow 级 computed return 从 node `first` 的 field 构造 `RichOutput`。evaluator 编译并运行;wasm emission 失败:`wasm.UNSUPPORTED_WORKFLOW_FRAME: ... cannot lower body 'Done': let value has a non-scalar or f64 type`(`core_wasm_codegen.cpp:6046`)。
+- 实测 fixture 路径:`build/dev/tests/runtime/capability-bindings-smoke/run-*/rich_input_pkg/main.ahfl`(多份历史 run 留存)。
+
+**P4-D 布局系统已支持的类型矩阵(全部 9 类已有 P4-D 布局,证明 "they already have P4-D layouts"):**
+
+| 类型 | P4-D layout | 文件:行 |
+|------|------------|---------|
+| `Decimal(2)` | `CoreLayoutScalar(I64)`(ride IntI64) | `core_wasm_codegen.cpp:2071-2075` |
+| `Duration` | `CoreLayoutScalar(I64)`(同上) | `core_wasm_codegen.cpp:2071-2075` |
+| `Set<Int>(8)` | `CoreLayoutContainer(capacity=8, stride, element=I32)` | `core_layout.hpp:101-109` |
+| `Map<String,Int>(8)` | `CoreLayoutContainer(element=key, value=map-value)` | `core_layout.hpp:102-103` |
+| `Option<Int>` | `CoreLayoutEnum`(payload-bearing) | `core_layout.hpp:93-99` |
+| `Unit` | zero-sized(无 bytes) | — |
+| `Float` | `CoreLayoutScalar(F64)` | `core_layout.hpp:35-43` |
+| `Int` | `CoreLayoutScalar(I32/I64)` | `core_layout.hpp:35-43` |
+| `String` | `CoreLayoutPtrLen`(8-byte pair) | `core_layout.hpp:51-55` |
+
+**已工作的端到端路径(不需重写):**
+
+- **WH-2 host packer/unpacker**:`frame_packer.cpp:395-436` 处理 Set/List(bounded collection + placement backing);`260-293` 处理 Option(tag + payload inline)。`frame_reader.cpp:238-258` 对称。**reject** `Float/Decimal/Duration/Map`(`frame_packer.cpp:470`、`frame_reader.cpp:447` 的 fallback)。
+- **WH-5b.3 transcode / wire codec**:`core_wire_codec.cpp` 对 wire JSON ↔ native Value 处理**全部 9 类**(Float:173、Decimal:217、Duration:233、Option:286、Set:320、Map)。exact-decode 路径是 full-matrix。
+- **body builder `p6_scalar_kind`**(`core_wasm_codegen.cpp:1988-2077`):支持 Bool/IntI32/IntI64/Decimal/Duration(ride IntI64)/String(PtrLen)/Closure/Index(tag-only enum)/Ptr(struct/payload-enum)/Collection(bounded collection)。**reject f64**(`2018`:`scalar->repr == F64 → nullopt`)与 **Unit**(zero-sized,不匹配任何分支 → `2040` nullopt)。
+- **golden 证据**:`tests/golden/wasm/wh5b_hybrid_rich_fidelity.ahfl`(tag-only enum/String/Int/Bool 双向 transcode)与 `wh5b_hybrid_decimal_fail_closed.ahfl`(pin Decimal 在 entry pack fail-closed)。前者 NOTE 明确记录 "payload-bearing enums and nested structs in the workflow return are rejected by the scheduler materializer"。
+
+**Root cause(四层独立 gate,按触发顺序):**
+
+1. **let gate**(`core_wasm_codegen.cpp:6033-6047`):`Done` body 的 construct field 值被 lower 成 let 绑定;`input.nothing`(Unit)与 `input.flag`(Float)的 `scalar_kind` 返回 nullopt → `6046` reject。sibling gate:`3884`(plan_expr entry)、`4412`(plan_literal)、`5743`(match arm binding)、`6284`(plan_expr second site)、`7859`(plan_unary)。
+2. **construct operand gate**(`plan_construct_operand`,`4816-4867`):
+   - `4821`:nullopt-kind operand(f64/Unit)→ reject "constructor operand has a non-aggregate, non-scalar type"。
+   - `4834`:Collection-kind operand 进 aggregate_leaf slot(container slot 是 aggregate_leaf,`3686-3699`)但 kind != Ptr → reject "constructor operand is not an aggregate for its aggregate slot"。影响 `nums: input.nums`(Set)与 `tags: input.tags`(Map)。
+   - `4844`:input-sourced aggregate operand(`opt: input.opt`,Option payload-enum)→ reject "a computed final stores an aggregate/enum field sourced from the host-packed INPUT frame"(inline-input-frame expansion 未落地)。
+3. **scheduler materializer**(`13062-13107`):`workflow_inline_path_needs_child_dereference`(`12140-12162`)拒绝 scheduler-materialized region 从 inline source frame(host-packed entry 或 upstream node O_k)project nested struct/enum。workflow return 的 `opt: first.opt`(payload-enum)与 `nums: first.nums`(collection)命中此 gate。
+4. **host packer/reader**:`frame_packer.cpp:470` / `frame_reader.cpp:447` reject Float/Decimal/Duration/Map。即使 body builder 放宽,entry pack(RichInput)与 output read(RichOutput)仍会 fail。
+
+**决策:widen body builder + host packer/reader + materializer 到 full matrix,复用现有 frame/arena machinery(不引入并行 type system)。**
+
+**(a) f64(Float)— copy-only 路径 ride IntI64:**
+
+rich fixture 的 f64 只做 projection → construct copy(无算术)。`p6_scalar_kind` 对 `CoreScalarRepr::F64` 返回 `IntI64`(8-byte word,bit-identical copy);`place_is_scalar_leaf`(`3674-3678`)接受 f64 slot(8-byte scalar leaf)。emit 路径用 `i64.load`/`i64.store` 拷贝 8 字节(不引入 `f64.const`/f64 arithmetic ladder——rich fixture 不需要)。host packer/reader 增加 f64 分支(field offset 处 8-byte load/store,native `FloatValue` 重建)。**f64.const 与 f64 arithmetic 推迟到后续 slice**(P6 scalar ladder 的独立扩展)。
+
+**(b) Unit(zero-sized)— no-op kind:**
+
+`p6_scalar_kind` 对 zero-sized 类型返回一个 no-op kind(或 special-case):let 绑定不分配 local;construct operand 是 no-op(不 store);emit 路径跳过。host packer/reader 对 Unit 分支是 no-op(零字节,`CoreWireSchemaUnit` 已在 wire schema)。`plan_construct_operand` 的 `4821` gate 放宽以接受 zero-sized operand。
+
+**(c) Collection(Set/Map)construct operand — header copy,不是 address store:**
+
+`plan_construct_operand` 的 `4834` gate 放宽:Collection-kind operand 进 container slot 时接受。emit 路径拷贝 collection **header**(`base: u32, len: u32`,8 bytes inline)从 source 到 destination——**不是** Ptr address store。collection elements 留在 shared backing region(`kP6CollectionBackingBase=16384`,`core_wasm_abi_constants.hpp:71`),immutable borrow(output 的 header 指向 input 的 backing region,computed final 的 output 在 agent 完成后只读一次,安全)。host packer 增加 Map 分支(key-value pairs 进 container layout 的 `element`+`value` edge,`core_layout.hpp:102-103`);Set 已工作(`frame_packer.cpp:395-436`)。
+
+**(d) Payload-enum from input(inline-input-frame expansion):**
+
+`plan_construct_operand` 的 `4844` gate 在 computed-final lane 放宽:input-sourced aggregate operand 不再 reject。emit 路径拷贝 inline enum bytes(tag + payload)从 input frame 到 output frame——construct 命名 inline input 地址(`input_base + field_offset`),不是 module child address。这是 `13058-13061` 注释的 "inline->pointer-tree normalization" 在 construct 路径的落地。Option<Int> 的 inline 表示是 tag(1 byte + padding)+ payload(Int at `payload_offset`),`frame_packer.cpp:277-293` 已证实此 layout。
+
+**(e) Scheduler materializer 扩展:**
+
+`workflow_inline_path_needs_child_dereference` / materializer 的 copy 路径扩展以处理 rich projection:payload-enum(`first.opt`)、collection(`first.nums`/`first.tags`)、f64(`first.flag`)、Unit(`first.nothing`)从 inline node O_k block 拷贝。materializer 的 `latch_path_slot` + `copy_aggregate` 增加 inline-byte-copy 路径(与 (d) 同 machinery)。`13088-13096` 与 `13098-13106` 的 child-dereference reject 对 rich leaf 放宽(leaf 本身是 scalar/collection/enum,不是 nested struct 的 child dereference)。
+
+**(f) Host packer/reader widening:**
+
+`frame_packer.cpp:470` 与 `frame_reader.cpp:447` 的 fallback 前增加 Float/Decimal/Duration/Map 分支。Decimal/Duration ride i64(packer 写 i64 word;reader 读 i64 并按 wire schema 的 scale/unit 重建 `DecimalValue`/`DurationValue`)。Map 按 container layout 的 key+value edge pack/read。
+
+**Bridge-crossability per type(honest matrix):**
+
+| 类型 | bridge(capability arg) | in-agent construct | entry pack | output read |
+|------|------------------------|-------------------|------------|-------------|
+| Int / Bool / String / Unit | Spill ✓(`capability_import.cpp:77-81`) | ✓ | ✓ | ✓ |
+| Option / Struct / Tuple | Root ✓(`82-85`) | ✓(d) | ✓(`260-293`) | ✓(`238-258`) |
+| Float(f64) | **REJECT**(`94-95` else → Reject) | ✓(a) | ✓(f) | ✓(f) |
+| Decimal / Duration | **REJECT**(同上) | ✓(已 ride IntI64) | ✓(f) | ✓(f) |
+| Set(sequence)/ Map | **REJECT**(同上) | ✓(c) | Set ✓ / Map ✓(f) | Set ✓ / Map ✓(f) |
+
+**f64 跨 bridge 保持 fail-closed 的诚实理由:** bridge ABI 的 spill/root subset 是 Bool/Int/Unit/String/tag-only-enum(Spill)+ Struct/Option/Tuple/payload-enum(Root)。f64 跨 bridge 需要:(1) `bridge_param_kind` 把 `CoreWireSchemaFloat` 加入 Spill set(`capability_import.cpp:72-96`),(2) JS oracle `bridgeParamKind` 同步,(3) packer/reader 的 f64 支持。wire schema **已有** `CoreWireSchemaFloat`(`core_wire_schema.hpp:39-41`),所以 **不需要 wire-schema 变更**;但 bridge-param-classification + JS oracle 是独立 slice,大于 WH-5c.7。rich echo agent **无 capability**,bridge 限制不适用。§12.15.10 的 string-leaf bridge case 是把 String(PtrLen,已 bridge-crossable)thread 过 constructed aggregate bridge arg;与 f64/Decimal/Duration/Set/Map 的 bridge reject 正交——前者跨 bridge,后者不跨。
+
+**Page/backing-region capacity + SourceRange:**
+
+- collection backing region(`kP6CollectionBackingBase=16384`,capacity 49152)hold Set/Map elements。rich fixture 的 Set(8)+Map(8)需 `8*stride + 8*entry_stride`。capacity planner(`plan_workflow_p6_capacity_family`,`12181+`)把 rich types 的 backing + construct scratch 计入。超限 → `kResourceExhausted` + SourceRange diagnostic(Principle 5,与 §12.15.9 同 style)。
+- construct scratch arena(`kP6AggregateScratchBase`)hold intermediate construct。rich construct 的 scratch 用量按 `aggregate_size` 计入(已有 high-water check)。
+- 所有新增 reject gate(f64 arithmetic、f64.const、超限 collection backing)携带 `statement.source_range` / `expr.source_range`(Principle 5)。
+
+**与 WH-5c.2(per-node blocks)的交互:**
+
+rich fixture 单 node,per-node blocks 不改变 capacity 模型。construct scratch 在 per-node block 的 scratch region 内(WH-5c.2 的 per-node relocation 提供 per-node scratch base);collection backing 是 shared page region。WH-5c.2 的 per-node relocation 与 rich type matrix 独立——前者改 cardinality,后者改 type coverage。
+
+**被否决的替代方案:**
+
+- **弱化 G4b matrix — REJECTED。** 9 类 shape 都是 evaluator shipped 的合法行为;弱化 fixture 是 falsify conformance。
+- **evaluator fallback — REJECTED。** Principle 1(no old-and-new coexistence);evaluator 在 WH-6 cutover 后不可达。
+- **把类型编码为 opaque JSON blob 进 P6 frame — REJECTED。** 全部 9 类已有 P4-D 布局(上表证明);opaque JSON 是并行 type system,违反 Principle 1/3。
+- **f64 引入完整 f64 opcode ladder(const/arithmetic)— DEFERRED。** rich fixture 只需 copy(load/store);f64.const/arithmetic 是独立 slice,不在 WH-5c.7。
+- **f64 跨 bridge 在本 slice 开放 — REJECTED(本 slice)。** 需要 bridge-param-classification + JS oracle + packer/reader 三处协同,大于 WH-5c.7;保持 fail-closed with explicit diagnostic。
+
+#### 12.15.17.3 AC(mapped to #425 / #427)
+
+| Test | 机制 | Acceptance |
+|------|------|-----------|
+| #425 `ahflc.run.llm_failure_matrix.smoke` | GAP 6 | exit 0;每个 failed-run 的 materialized diagnostic 有 code+message+range(wasm lane 的 trap/host-abort 诊断携带 node/capability 声明 SourceRange);diagnostic bag 无重复 entry(node_failed 与 workflow_failed 引用同一 id) |
+| #427 `ahflc.run.capability_bindings.smoke` | GAP 7 | exit 0;`run_rich_input_matrix` tag `baseline_all_shapes` 在 wasm lane 运行,9 类类型 round-trip(RichInput → agent → RichOutput → workflow return);evaluator 与 wasm 的 output_json 一致 |
+
+**Additional gates:**
+- Conformance census:`kExpectedAgreed` 见 §12.15.17.4;`kExpectedSkipped` 见同节。
+- ASan build & test clean。
+- WASM=OFF build clean。
+- Fresh build `-Werror` clean。
+- f64 跨 bridge 保持 fail-closed:有 explicit diagnostic(不是 silent),pin 在 golden/conformance case。
+
+#### 12.15.17.4 Census
+
+**Mandatory additions:**
+
+1. **rich-shapes computed-final workflow case(全部 9 类 round-trip):** capability-free agent,computed final 从 RichInput 构造 RichOutput(9 类 field),workflow computed return 从 node output 构造。`engines.wasm.eligible = "orchestration"`。这是 agreed case(evaluator 与 wasm 都跑)。
+2. **fail-closed pin:f64 跨 bridge 保持 reject:** 一个 capability 声明带 f64 arg 的 workflow,wasm lane 以 explicit diagnostic(`wasm.UNSUPPORTED_*` 或 bridge reject)拒绝,evaluator 可跑。这是 wasm-ineligible case(`engines.wasm.eligible = "none"` + reason),pin 拒绝是 explicit diagnostic 而非 silent。
+
+**Census pin movements(predicted,builder sequence):**
+
+- 当前(after WH-5c.1):`kExpectedAgreed = 68`(`conformance_wasm_node_runner.cpp:147`)。
+- WH-5c.2/5c.3/5c.4/5c.5:+4(§12.15.10 的 5 个 case 中 5c.1 已 +1,剩余 4 个)→ **72**。
+- WH-5c.6(diagnostic ranges):+0 agreed(diagnostic parity 由 #425 smoke 测试,不是 conformance census case)。
+- WH-5c.7(rich type matrix):+1 agreed(rich-shapes case)→ **73**。fail-closed pin(f64 跨 bridge)是 wasm-ineligible case,若作为 conformance case 加入则 `kExpectedSkipped` 从 0 → 1;若作为 golden test(类似 `wh5b_hybrid_decimal_fail_closed.ahfl`)则 census 不变。
+
+**最终预测:`kExpectedAgreed = 73`;`kExpectedSkipped = 0 或 1`(取决于 f64-bridge pin 是 conformance case 还是 golden test)。**
+
+#### 12.15.17.5 Sequencing(amends §12.15.14)
+
+§12.15.14 的顺序修订为:
+
+1. WH-5c.1(GAP 3 descriptor fix)— landed(uncommitted)。
+2. WH-5c.2(GAP 1 per-node blocks,APPROACH B per §12.15.16)。
+3. WH-5c.3(GAP 5 rodata)。
+4. WH-5c.4(GAP 2 opaque construct)。
+5. WH-5c.5(GAP 4 parity + fail-closed)。
+6. **WH-5c.6(GAP 6 diagnostic SourceRange parity)— 新增,排在 5c.5 后。**
+7. **WH-5c.7(GAP 7 rich type matrix)— 新增,排在 5c.6 后。**
+8. WH-6(ahflc run cutover commit)— gated on 全部 9 test green + census 73 + ASan + WASM=OFF。
+
+**Gate revision:** §12.15.14 的 gate set 从 "5b.1 + 5b.3 + 5b.2 + 5c.1-5c.5" 扩展为 "5b.1 + 5b.3 + 5b.2 + **5c.1-5c.7**"。
+
+#### 12.15.17.6 LOC estimate
+
+| Component | LOC delta | Notes |
+|-----------|-----------|-------|
+| `wasm_workflow_runtime.cpp/hpp` | ~80 | node_ranges_ + capability_ranges_ 表构建 + session config 传递 |
+| `workflow_session.cpp/hpp` | ~60 | range resolver 字段 + 失败站点 range 解析 + `last_source_symbol` |
+| `wasm_lifecycle.cpp` | ~40 | `add_error` 带 range + 重复发射消除(单 diagnostic + id 复用) |
+| `capability_import.hpp` | ~10 | `CapabilityImportState::last_source_symbol` |
+| `core_wasm_codegen.cpp` | ~350 | f64/Unit/Collection/inline-enum construct operand + materializer 扩展 + 各 gate 放宽 |
+| `frame_packer.cpp` | ~80 | Float/Decimal/Duration/Map pack 分支 |
+| `frame_reader.cpp` | ~80 | Float/Decimal/Duration/Map read 分支 |
+| Tests | ~400 | rich-shapes conformance case + golden + f64-bridge fail-closed pin |
+| Docs | ~80 | 本节 |
+| **Total** | **~1180** | |
+
+#### 12.15.17.7 Prior-decision preservation
+
+- **§12.15.1-12.15.15:** 保留,不重写。GAP 1-5 的决策不变;本节只新增 GAP 6/7。
+- **§12.15.16(APPROACH B per-node blocks):** 保留。WH-5c.2 按 APPROACH B 落地;WH-5c.7 的 rich type matrix 与 per-node cardinality 独立(§12.15.17.2 交互节)。
+- **§12.7(WH-6 cutover,无 fallback):** 保留。WASM=OFF 策略不变。gate set 扩展(§12.15.17.5)。
+- **§12.15.10(string-leaf bridge case):** 保留。String 跨 bridge(PtrLen spill)与 f64/Decimal/Duration/Set/Map 的 bridge reject 正交(§12.15.17.2 bridge-crossability 节)。
+- **§12.15.8(no version bump):** 不变。GAP 6/7 不增加 wire field(range 是 host-side sidecar;rich types 已有 P4-D 布局)。AHFLXM v2 不 bump。
