@@ -344,6 +344,59 @@ corrupted_output_module() {
     return m;
 }
 
+// A workflow module whose run2 reports SUCCESS (status 0) but returns a
+// (ptr, len) tuple whose range runs past the 64 KiB linear memory
+// (60000 + 60000 > 65536). The session must bounds-check the untrusted
+// tuple and fail closed with wasm.output-decode-failed instead of letting
+// std::string read out of bounds. Structurally identical to
+// corrupted_output_module (same exports/globals, no data segment).
+[[nodiscard]] inline std::vector<std::uint8_t>
+out_of_bounds_output_module() {
+    constexpr std::int32_t kOoBOffset = 60000;
+    constexpr std::int32_t kOoBLen = 60000;
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32})}));
+    put_section(m, 3, function_section({0, 1})); // func 0 = run2, func 1 = alloc
+    put_section(m, 5, memory_section(1));
+    {
+        std::vector<std::uint8_t> payload;
+        put_uleb(payload, 3);
+        payload.push_back(kI32);
+        payload.push_back(0x01); // mutable
+        put_i32_const(payload, static_cast<std::int32_t>(kHeapBase));
+        payload.push_back(kOpEnd);
+        payload.push_back(kI32);
+        payload.push_back(0x01);
+        put_i32_const(payload, 0);
+        payload.push_back(kOpEnd);
+        payload.push_back(kI32);
+        payload.push_back(0x01);
+        put_i32_const(payload, 1); // workflow_completed_count = 1
+        payload.push_back(kOpEnd);
+        put_section(m, 6, payload);
+    }
+    {
+        std::vector<std::uint8_t> payload;
+        put_uleb(payload, 5);
+        put_export(payload, "memory", kExportKindMemory, 0);
+        put_export(payload, "run2", kExportKindFunc, 0);
+        put_export(payload, "alloc", kExportKindFunc, 1);
+        put_export(payload, "transition_count", kExportKindGlobal, 1);
+        put_export(payload, "workflow_completed_count", kExportKindGlobal, 2);
+        put_section(m, 7, payload);
+    }
+    // run2 body: return (0, 60000, 60000) — success status but the byte
+    // range extends ~54 KiB past the single 64 KiB page.
+    std::vector<std::uint8_t> run2_body = locals_decl({});
+    put_i32_const(run2_body, 0);
+    put_i32_const(run2_body, kOoBOffset);
+    put_i32_const(run2_body, kOoBLen);
+    run2_body.push_back(kOpEnd);
+    append_standard_code(m, run2_body);
+    return m;
+}
+
 // The capability-import module. `param_count` 2 = the opaque
 // (i32,i32)->(i32,i32,i32) lane (run2 forwards its entry ptr/len to the
 // import); `param_count` 1 = the section-9 (i32)->(i32,i32,i32) probe lane

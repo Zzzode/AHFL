@@ -36,6 +36,7 @@
 #include "base/json/json_value.hpp"
 #include "runtime/value/value_json.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -76,6 +77,15 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
                                site.result_payload_base +
                                    site.result_payload_capacity});
         }
+    }
+    // WH-5b.3: the transcode payload arena is the bump-allocation region for
+    // String bytes packed by a JSON_TO_P4D transcode. A workflow output that
+    // carries a transcoded String has its PtrLen pointing into this arena, so
+    // the post-run output read must admit it as a valid String region.
+    if (section.transcode_payload_capacity > 0) {
+        regions.push_back({section.transcode_payload_base,
+                           section.transcode_payload_base +
+                               section.transcode_payload_capacity});
     }
     return regions;
 }
@@ -1149,19 +1159,87 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // it via read_value_at and serializes to wire JSON for the opaque
         // runner. The entry shadow extent equals the entry block input size
         // (both are align8(layout.size) from the same layout root).
-        if (section.transcode_entry_shadow_extent > 0) {
-            if (section.transcode_entry_shadow_extent != block.input_size) {
+        //
+        // The requirement is DERIVED from the site table, not from the span's
+        // presence: a corrupt or foreign descriptor that declares a
+        // P4D_TO_JSON ENTRY site while zeroing the entry shadow must fail
+        // closed here (the guest still invokes the transcode with the
+        // baked-in shadow address and would otherwise read zeroed memory,
+        // reconstructing a schema-valid forged input). This mirrors the
+        // frame-section verifier's needs_entry_shadow rule, which the
+        // session path cannot assume ran (modules are admitted without the
+        // frame-section gate).
+        const bool needs_entry_shadow =
+            std::any_of(section.transcode_sites.begin(),
+                        section.transcode_sites.end(),
+                        [](const irc::CoreFrameTranscodeSite &site) {
+                            return site.direction ==
+                                       irc::CoreFrameTranscodeSite::Direction::
+                                           P4DToJson &&
+                                   site.source ==
+                                       irc::CoreFrameTranscodeSite::Source::
+                                           Entry;
+                        });
+        if (needs_entry_shadow) {
+            // Re-derive the frame size from the named layout root exactly as
+            // the frame-section verifier does; the descriptor's input_size is
+            // untrusted (sessions admit modules without that gate). A forged
+            // input_size must not become either the copy length or the
+            // required shadow extent.
+            const auto *entry_layout = ctx.layout(l_id);
+            if (entry_layout == nullptr) {
                 return std::unexpected(
-                    "run_workflow_session: entry shadow extent mismatch");
+                    "run_workflow_session: entry node names an out-of-range "
+                    "layout root");
             }
-            const auto shadow_end = static_cast<std::size_t>(
-                section.transcode_entry_shadow_base + block.input_size);
+            const std::uint64_t copy_size_u64 =
+                (static_cast<std::uint64_t>(entry_layout->size) + 7u) &
+                ~std::uint64_t{7u};
+            if (copy_size_u64 == 0 ||
+                block.input_size !=
+                    static_cast<std::uint32_t>(copy_size_u64)) {
+                return std::unexpected(
+                    "run_workflow_session: node block input size disagrees "
+                    "with the aligned size of its named layout root");
+            }
+            const auto copy_size =
+                static_cast<std::size_t>(copy_size_u64);
+            if (section.transcode_entry_shadow_base == 0 ||
+                section.transcode_entry_shadow_base % 8u != 0 ||
+                section.transcode_entry_shadow_extent !=
+                    static_cast<std::uint64_t>(copy_size)) {
+                return std::unexpected(
+                    "run_workflow_session: a P4D_TO_JSON ENTRY transcode site "
+                    "needs a valid entry shadow span");
+            }
+            // Widen BEFORE adding: both fields are u32, so a base such as
+            // 0xFFFFFFF8 would wrap the sum to a small in-page value if the
+            // addition happened first and the memcpy would land ~4 GiB out
+            // of bounds. The source (the host-packed entry frame) and the
+            // destination (the shadow) are checked independently.
+            const auto source_end =
+                static_cast<std::size_t>(block.input_base) + copy_size;
+            if (source_end > page->size()) {
+                return std::unexpected(
+                    "run_workflow_session: entry frame exceeds page");
+            }
+            const auto shadow_end =
+                static_cast<std::size_t>(
+                    section.transcode_entry_shadow_base) +
+                copy_size;
             if (shadow_end > page->size()) {
                 return std::unexpected(
                     "run_workflow_session: entry shadow exceeds page");
             }
             std::memcpy(page->data() + section.transcode_entry_shadow_base,
-                        page->data() + block.input_base, block.input_size);
+                        page->data() + block.input_base, copy_size);
+        } else if (section.transcode_entry_shadow_extent != 0) {
+            // No site consumes it: a nonzero span on a module whose sites do
+            // not need one is a descriptor/module disagreement; fail closed
+            // rather than silently copying into an unreferenced region.
+            return std::unexpected(
+                "run_workflow_session: an entry shadow span exists without a "
+                "P4D_TO_JSON ENTRY transcode site");
         }
     } else {
         // WireJson: serialize the input to canonical wire JSON and write it
@@ -1548,15 +1626,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             } else if (tuple != nullptr &&
                        tuple->output_ptr.value != 0 && tuple->output_len > 0) {
                 // WireJson: the output is raw JSON bytes at
-                // (output_ptr, output_len).
-                const std::string output_json(
-                    reinterpret_cast<const char *>(
-                        mem->data() + tuple->output_ptr.value),
-                    tuple->output_len);
-                auto parsed = value_from_json(output_json);
-                if (parsed.has_value()) {
-                    workflow_output = std::move(*parsed);
-                } else {
+                // (output_ptr, output_len). Both are untrusted u32 run2
+                // return values, so widen before adding and bound the range
+                // against the actual memory before touching it; a forged
+                // tuple must never make the host read past the linear
+                // memory.
+                const auto output_end =
+                    static_cast<std::size_t>(tuple->output_ptr.value) +
+                    static_cast<std::size_t>(tuple->output_len);
+                if (output_end > mem->size()) {
                     run_ok = false;
                     run_status = RunTerminalStatus::Failed;
                     run_failure_kind = WorkflowFailureKind::EvaluationFailed;
@@ -1564,7 +1642,25 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         std::string{wasm_diag::kOutputDecodeFailed};
                     run_failure_message =
                         "run_workflow_session: WireJson workflow output "
-                        "failed to parse";
+                        "range exceeds linear memory";
+                } else {
+                    const std::string output_json(
+                        reinterpret_cast<const char *>(
+                            mem->data() + tuple->output_ptr.value),
+                        tuple->output_len);
+                    auto parsed = value_from_json(output_json);
+                    if (parsed.has_value()) {
+                        workflow_output = std::move(*parsed);
+                    } else {
+                        run_ok = false;
+                        run_status = RunTerminalStatus::Failed;
+                        run_failure_kind = WorkflowFailureKind::EvaluationFailed;
+                        run_failure_code =
+                            std::string{wasm_diag::kOutputDecodeFailed};
+                        run_failure_message =
+                            "run_workflow_session: WireJson workflow output "
+                            "failed to parse";
+                    }
                 }
             }
         }

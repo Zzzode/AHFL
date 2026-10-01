@@ -1520,58 +1520,97 @@ class Decoder {
             }
         }
         // WH-5b.3: the transcode shadow region, its String payload arena, and
-        // the entry shadow are disjoint in-page spans. The shadow region is
-        // the single reused JSON_TO_P4D landing area; the payload arena is
-        // append-only within a run; the entry shadow holds the host-packed
-        // INLINE P4-D entry for a P4D_TO_JSON ENTRY crossing. Each is present
-        // iff its extent/capacity is nonzero.
-        if (section.transcode_shadow_extent != 0) {
-            if (section.transcode_shadow_base == 0 ||
-                section.transcode_shadow_base % 8u != 0 ||
-                !add(section.transcode_shadow_base,
-                     section.transcode_shadow_extent)) {
-                fail_local("a workflow transcode shadow span is unaligned or outside the fixed "
-                           "page");
-                return false;
-            }
-        }
-        if (section.transcode_payload_capacity != 0) {
-            if (section.transcode_payload_base == 0 ||
-                section.transcode_payload_base % 8u != 0 ||
-                !add(section.transcode_payload_base,
-                     section.transcode_payload_capacity)) {
-                fail_local("a workflow transcode payload-arena span is unaligned or outside the "
-                           "fixed page");
-                return false;
-            }
-        }
-        if (section.transcode_entry_shadow_extent != 0) {
-            if (section.transcode_entry_shadow_base == 0 ||
-                section.transcode_entry_shadow_base % 8u != 0 ||
-                !add(section.transcode_entry_shadow_base,
-                     section.transcode_entry_shadow_extent)) {
-                fail_local("a workflow transcode entry-shadow span is unaligned or outside the "
-                           "fixed page");
-                return false;
-            }
-        }
-        // WH-5b.3: every transcode site names an in-range layout root, and a
-        // JSON_TO_P4D site's packed frame must fit the reused shadow region.
+        // the entry shadow are disjoint in-page spans whose presence is
+        // REQUIRED by the site directions that use them, not merely declared:
+        //   * every JSON_TO_P4D site needs the reused shadow landing area (at
+        //     least the site's aligned layout size) and the payload arena (the
+        //     planner emits one pool share per JSON_TO_P4D site);
+        //   * every P4D_TO_JSON ENTRY site needs the host-packed entry shadow;
+        //   * a P4D_TO_JSON NODE_OUTPUT site reads the producer's O_k and
+        //     needs no host span.
+        // A section whose sites need a span but carries a zeroed base/extent is
+        // rejected here so a corrupt or foreign module can never make the host
+        // pack a frame at guest address zero. A span that is present but not
+        // required by any site is still checked for disjointness.
+        bool needs_shadow = false;
+        bool needs_payload = false;
+        bool needs_entry_shadow = false;
+        std::uint64_t needed_shadow_extent = 0;
+        std::uint64_t needed_entry_shadow_extent = 0;
         for (const CoreFrameTranscodeSite &site : section.transcode_sites) {
             if (!valid_id(section.table, site.layout)) {
                 fail_local("a transcode site names an out-of-range layout root");
                 return false;
             }
-            if (site.direction == CoreFrameTranscodeSite::Direction::JsonToP4D &&
-                section.transcode_shadow_extent != 0) {
-                const std::uint64_t needed =
-                    align8(section.table.layouts[site.layout.value].size);
-                if (needed == 0 || needed > section.transcode_shadow_extent) {
-                    fail_local("a transcode site's P4-D layout does not fit the reused shadow "
-                               "region");
+            const std::uint64_t needed =
+                align8(section.table.layouts[site.layout.value].size);
+            if (site.direction == CoreFrameTranscodeSite::Direction::JsonToP4D) {
+                needs_shadow = true;
+                needs_payload = true;
+                needed_shadow_extent = std::max(needed_shadow_extent, needed);
+            } else if (site.source == CoreFrameTranscodeSite::Source::Entry) {
+                needs_entry_shadow = true;
+                needed_entry_shadow_extent =
+                    std::max(needed_entry_shadow_extent, needed);
+            }
+        }
+        auto check_transcode_span =
+            [&](bool required, std::uint64_t base, std::uint64_t extent,
+                std::uint64_t min_extent, const char *message,
+                const char *present_message) -> bool {
+            if (!required) {
+                // Not required by any site: an absent span is fine, but a
+                // present one must still be a nonzero, 8-aligned, disjoint
+                // in-page region.
+                if (extent == 0) {
+                    return true;
+                }
+                if (base == 0 || base % 8u != 0) {
+                    fail_local(present_message);
                     return false;
                 }
+                // add() emits the page-bounds/overlap diagnostic itself.
+                if (!add(base, extent)) {
+                    return false;
+                }
+                return true;
             }
+            if (base == 0 || base % 8u != 0 || extent < min_extent) {
+                fail_local(message);
+                return false;
+            }
+            // add() emits the page-bounds/overlap diagnostic itself.
+            if (!add(base, extent)) {
+                return false;
+            }
+            return true;
+        };
+        if (!check_transcode_span(
+                needs_shadow, section.transcode_shadow_base,
+                section.transcode_shadow_extent, needed_shadow_extent,
+                "a JSON_TO_P4D transcode site needs a nonzero, 8-aligned shadow "
+                "region that fits its P4-D layout",
+                "a transcode shadow span is present without a JSON_TO_P4D site "
+                "and must be nonzero, 8-aligned, and disjoint inside the fixed "
+                "page") ||
+            !check_transcode_span(
+                needs_payload, section.transcode_payload_base,
+                section.transcode_payload_capacity, 1,
+                "a JSON_TO_P4D transcode site needs a nonzero, 8-aligned "
+                "payload arena",
+                "a transcode payload arena is present without a JSON_TO_P4D "
+                "site and must be nonzero, 8-aligned, and disjoint inside the "
+                "fixed page") ||
+            !check_transcode_span(
+                needs_entry_shadow, section.transcode_entry_shadow_base,
+                section.transcode_entry_shadow_extent,
+                needed_entry_shadow_extent,
+                "a P4D_TO_JSON ENTRY transcode site needs a nonzero, "
+                "8-aligned entry shadow that fits its P4-D layout",
+                "a transcode entry shadow is present without a P4D_TO_JSON "
+                "ENTRY site and must be nonzero, 8-aligned, and disjoint inside "
+                "the fixed page")) {
+            return false;
         }
         for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
             if (!add(site.result_base, site.result_extent) ||

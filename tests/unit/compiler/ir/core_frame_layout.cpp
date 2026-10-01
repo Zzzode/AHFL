@@ -439,3 +439,128 @@ TEST_CASE("frame-layout verifier rejects non-zero bridge control fields on a "
     REQUIRE(encoded.ok());
     CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
 }
+
+// WH-5b.3 fix-forward: the transcode extension's direction=>span invariant.
+// A P4D_TO_JSON NODE_OUTPUT site needs NO host span (it reads the producer's
+// O_k), so a section carrying one with six zero spans must encode, decode,
+// and verify. A JSON_TO_P4D site REQUIRES the shadow region + payload arena;
+// a P4D_TO_JSON ENTRY site REQUIRES the entry shadow. Zeroed spans on a
+// direction that needs them are rejected.
+
+[[nodiscard]] CoreFrameTranscodeSite
+transcode_site(CoreFrameTranscodeSite::Direction direction,
+               CoreFrameTranscodeSite::Source source,
+               std::uint32_t source_node, std::uint32_t target_node,
+               CoreLayoutId layout) {
+    CoreFrameTranscodeSite site;
+    site.import_ordinal = 0;
+    site.direction = direction;
+    site.source = source;
+    site.source_node_ordinal = source_node;
+    site.target_node_ordinal = target_node;
+    site.layout = layout;
+    return site;
+}
+
+TEST_CASE("frame-layout codec round-trips a P4D_TO_JSON-only transcode section "
+          "with six zero spans") {
+    // The p6_to_opaque shape: one P4D_TO_JSON NODE_OUTPUT site, all six
+    // transcode spans zero by planner design. The decoder presence checks
+    // test byte presence (optional::has_value), not the contained value, so
+    // the zero spans decode; the verifier requires no host span for a
+    // NODE_OUTPUT site. Regression pin for the adjudicated P1.
+    auto section = workflow_node_section();
+    section.transcode_sites.push_back(transcode_site(
+        CoreFrameTranscodeSite::Direction::P4DToJson,
+        CoreFrameTranscodeSite::Source::NodeOutput, 0, 1, CoreLayoutId{0}));
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    auto decoded = decode_core_frame_layout_section(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.section.has_value());
+    CHECK(*decoded.section == section);
+    CHECK(decoded.section->transcode_sites.size() == 1);
+    CHECK(decoded.section->transcode_shadow_base == 0);
+    CHECK(decoded.section->transcode_shadow_extent == 0);
+    CHECK(decoded.section->transcode_payload_base == 0);
+    CHECK(decoded.section->transcode_payload_capacity == 0);
+    CHECK(decoded.section->transcode_entry_shadow_base == 0);
+    CHECK(decoded.section->transcode_entry_shadow_extent == 0);
+}
+
+TEST_CASE("frame-layout verifier rejects a JSON_TO_P4D site with zeroed shadow "
+          "and payload spans") {
+    // A crafted section carrying a JSON_TO_P4D site but zeroed shadow/payload
+    // spans must be rejected: the host would otherwise pack the frame at
+    // guest address zero. The compiler never emits this shape.
+    auto section = workflow_node_section();
+    section.transcode_sites.push_back(transcode_site(
+        CoreFrameTranscodeSite::Direction::JsonToP4D,
+        CoreFrameTranscodeSite::Source::Entry, 0, 1, CoreLayoutId{0}));
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a P4D_TO_JSON ENTRY site with a zeroed "
+          "entry shadow") {
+    // A P4D_TO_JSON ENTRY site needs the host-packed entry shadow; a zeroed
+    // entry shadow base/extent must be rejected.
+    auto section = workflow_node_section();
+    section.transcode_sites.push_back(transcode_site(
+        CoreFrameTranscodeSite::Direction::P4DToJson,
+        CoreFrameTranscodeSite::Source::Entry, 0, 1, CoreLayoutId{0}));
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier accepts a direction-consistent mixed "
+          "transcode section") {
+    // Both directions with planner-consistent spans: a JSON_TO_P4D site gets
+    // the shadow region (>= the site's aligned layout size) + one pool-share
+    // payload arena; a P4D_TO_JSON ENTRY site gets the entry shadow. All
+    // spans are disjoint in-page regions chained after the workflow output
+    // slot (which ends at 8240 + 2048 + 8 = 10296).
+    auto section = workflow_node_section();
+    constexpr std::uint32_t kShadowBase =
+        8240 + kP6FrameStringPoolBytes + 8; // 10296
+    section.transcode_shadow_base = kShadowBase;
+    section.transcode_shadow_extent = 8; // align8(i64 layout root)
+    section.transcode_payload_base = kShadowBase + 8; // 10304
+    section.transcode_payload_capacity = kP6FrameStringPoolBytes;
+    section.transcode_entry_shadow_base =
+        kShadowBase + 8 + kP6FrameStringPoolBytes; // 12352
+    section.transcode_entry_shadow_extent = 8;
+    section.transcode_sites.push_back(transcode_site(
+        CoreFrameTranscodeSite::Direction::JsonToP4D,
+        CoreFrameTranscodeSite::Source::Entry, 0, 1, CoreLayoutId{0}));
+    section.transcode_sites.push_back(transcode_site(
+        CoreFrameTranscodeSite::Direction::P4DToJson,
+        CoreFrameTranscodeSite::Source::Entry, 0, 1, CoreLayoutId{0}));
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    auto decoded = decode_core_frame_layout_section(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.section.has_value());
+    CHECK(*decoded.section == section);
+}
+
+TEST_CASE("frame-layout verifier rejects a present-but-unneeded transcode "
+          "span at guest address zero") {
+    // A P4D_TO_JSON NODE_OUTPUT site needs no host span. Declaring a shadow
+    // region anyway at base 0 must still be rejected: a present span is a
+    // real in-page region and can never live at the reserved zero page, even
+    // when no site direction requires it. Regression for the !required
+    // branch accepting base == 0.
+    auto section = workflow_node_section();
+    section.transcode_shadow_base = 0;
+    section.transcode_shadow_extent = 8;
+    section.transcode_sites.push_back(transcode_site(
+        CoreFrameTranscodeSite::Direction::P4DToJson,
+        CoreFrameTranscodeSite::Source::NodeOutput, 0, 1, CoreLayoutId{0}));
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    auto probed = decode_core_frame_layout_section(*encoded.bytes);
+    CHECK_FALSE(probed.ok());
+}

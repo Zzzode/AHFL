@@ -2425,11 +2425,12 @@ transcode 是纯 Value->Value round-trip,经过 host 已有的 codec:
 - **P4D_TO_JSON:** `read_value_at`(P4-D INLINE->Value)-> `serialize_value_for_wire_json`(Value->wire JSON)。fidelity 由 `core_json_round_trip` corpus 保证。
 - **JSON_TO_P4D:** `decode_json`(wire JSON->Value)-> `pack_value_at`(Value->P4-D INLINE)。fidelity 由同一 corpus 保证。
 
-类型覆盖:
-- struct/enum/Option/Result:P4-D binary layout(CoreLayoutTable)<-> wire JSON object。enum discriminant、Option tag、Result tag 在 P4-D 里是 integer tag,在 wire JSON 里是 object field。
-- String:PtrLen <-> wire JSON string。payload arena 落地。
-- Decimal/Duration:P4-D scalar <-> wire JSON number/string。
-- **Closure:fail closed。** `serialize_value_for_wire_json`(`wire_value.hpp:20`)对 closure 失败(`try_value_to_json` 不支持 closure)。transcode 不引入新的 closure 支持。
+类型覆盖(hybrid workflow 真实 crossed edge 的 e2e 覆盖,2026-10-01 校正):
+- struct(扁平 wire 字段集)/tag-only enum/Int/Bool/String:P4-D binary layout(CoreLayoutTable)<-> wire JSON object,两个方向均有 real-wasm3 e2e + evaluator parity 覆盖(`wh5b_hybrid_rich_fidelity` / `wh5b_hybrid_rich_p6_to_opaque`)。enum discriminant 在 P4-D 里是 integer tag,在 wire JSON 里是 enum object field。
+- String:PtrLen <-> wire JSON string。JSON_TO_P4D 方向 String bytes 落地 transcode payload arena;P4D_TO_JSON 方向 PtrLen 可指向 rodata / entry-payload arena / bridge result arena / transcode payload arena,host 的 String region 表必须全部承认。
+- **payload-bearing enum / nested struct / std Option / std Result:codec 支持,workflow 帧边界 e2e 不覆盖。** packer/reader 的 payload-enum/Option arm 由 `frame_packer_reader.cpp` 合成 pin 与 `core_json_round_trip`(经 `@repo-std` project parse 的真实 std Option corpus)覆盖;但 P6 workflow lane 的 scheduler materializer 当前拒绝 node input / workflow return 中的 payload-bearing enum 与嵌套 struct(kUnsupportedWorkflowFrame),computed final 也不能从 host-packed INPUT 转发 aggregate/enum 字段。这是 P6 workflow lane 的既有边界,不是 transcode codec 限制;扩展 materializer 是独立后续 rung。
+- **Decimal/Duration/Timestamp/Float/Uuid/Map:当前 fail closed。** WH-2 的 P4-D 帧子集在 host 侧 pack/read 穷尽分支对这些 wire schema 节点返回 `ValueNotWireEncodable`(`frame_packer.cpp` / `frame_reader.cpp` 的 frame-subset fallthrough)。wire schema 本身接受这些节点,P6 codegen 也能为字面量发射 i64,但 host 侧 P4-D pack/read 不支持。这是 WH-2 帧子集的既有边界,transcode 复用同一 codec 故继承之;`wh5b_hybrid_decimal_fail_closed.ahfl` pin 该安全行为(entry pack 在 run2 之前失败,零 capability invocation)。帧子集扩展是独立后续 KR,不属于 WH-5b.3。
+- **Closure:fail closed。** closure 在 wire-schema 构造期即被拒绝(`core_wire_schema.cpp` ws_Closure:"closure values are not supported by value_json"),任何 source-level 程序都无法产生带 Closure 的 wire schema,故 transcode 边界对 Closure 不可达;codec 级拒绝由 `core_json_round_trip` 与 `frame_packer_reader.cpp` pin。transcode 不引入新的 closure 支持。
 
 ### 12.13.7 Determinism + WH-4b replay
 
@@ -2510,8 +2511,8 @@ evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。was
     - opaque-return fixture(当前不可表达:hybrid output 走 materializer path,`emit_root_base` 拒绝 opaque-rooted return;WH-5b.3 JSON_TO_P4D into workflow_output shadow 使其可表达)。
   - (b) 类 fixture 的 .ahfl 源文件与 ctest 在 WH-5b.3 实现中一并落地;若实现中发现 (b) 类某 shape 仍不可表达,必须以 file evidence 记录并在 AC1 中标注为 deferred,不得静默丢弃。
 - [ ] AC2:hybrid WH-4b resume test 通过:suspend -> resume -> fresh-instance replay -> Completed,event_count invariant 保持,memo identity 不变。
-- [ ] AC3:core_json_round_trip corpus 包含 transcode 的 P4-D<->wire-JSON round-trip,全绿。
-- [ ] AC4:fail-closed tests 全绿(schema mismatch / oversized / corrupt shadow / transcode abort attribution)。
+- [ ] AC3:core_json_round_trip corpus 包含 transcode 的 P4-D<->wire-JSON round-trip,全绿。(2026-10-01 outcome:扁平 wire 字段集 struct/tag-only enum/Int/Bool/String 两个方向 real-wasm3 e2e + evaluator parity 覆盖;payload-enum/Option arm 由 codec 合成 pin 覆盖;Decimal/Duration 为 frame 子集 fail-closed pin,不是 fidelity。详见校正后的 §12.13.6。)
+- [ ] AC4:fail-closed tests 全绿(schema mismatch / oversized / corrupt shadow / transcode abort attribution / descriptor zeroed span —— JSON_TO_P4D shadow+payload 与 P4D_TO_JSON entry shadow 两个方向均 pin)。
 - [ ] AC5:`verify_workflow_spans` 扩展后,所有 hybrid fixture 的 shadow spans disjointness 验证通过。
 - [ ] AC6:ASan build 全绿(无 heap-buffer-overflow / use-after-free,shadow region 复用安全)。
 - [ ] AC7:WASM=OFF build 全绿(transcode 是 wasm-host-only,不影响 WASM=OFF)。

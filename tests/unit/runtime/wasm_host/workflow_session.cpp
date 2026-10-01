@@ -20,6 +20,7 @@
 
 #include "runtime/engine/core_wasm_resume_engine.hpp"
 #include "runtime/engine/core_wasm_schema_module.hpp"
+#include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
@@ -152,6 +153,11 @@ void check_event_sequence(const ahfl::runtime::WorkflowResult &result,
 struct EmittedWorkflow {
     std::vector<std::uint8_t> module_bytes;
     ahfl::backends::CoreWasmExecutionDescriptor descriptor;
+    // The compiled program, retained for the evaluator-parity comparison
+    // (P2-3): the same source runs through the in-process WorkflowRuntime so
+    // the wasm lane's output Value is checked against the evaluator's
+    // structurally, not against a hardcoded JSON string.
+    ir::Program program;
 };
 
 [[nodiscard]] std::optional<EmittedWorkflow>
@@ -192,7 +198,77 @@ emit_workflow(const std::filesystem::path &source_path) {
     return EmittedWorkflow{
         .module_bytes = emitted.artifact->bytes,
         .descriptor = std::move(*emitted.descriptor),
+        .program = std::move(*program),
     };
+}
+
+// P2-3 (spec AC1): run the SAME fixture source through the in-process
+// evaluator (WorkflowRuntime) with the SAME echo invoker the wasm session
+// mock uses, so the wasm lane's output Value is compared against the
+// evaluator's structurally — not against a hardcoded JSON string. The
+// evaluator has no encoding boundary, so it is the reference for what the
+// workflow means.
+struct EvaluatorParity {
+    ahfl::runtime::WorkflowResult result;
+    int cap_invoked_count{0};
+    std::vector<std::string> cap_names;
+};
+
+[[nodiscard]] EvaluatorParity
+run_evaluator_parity(const ir::Program &program,
+                     const std::string &workflow_name, const Value &input) {
+    EvaluatorParity parity;
+    ahfl::runtime::WorkflowRuntimeConfig config;
+    config.capability_invoked_hook =
+        [&parity](AgentId, std::string_view name) {
+            ++parity.cap_invoked_count;
+            parity.cap_names.emplace_back(name);
+        };
+    // Echo mock: returns the input unchanged (the SAME answers the wasm
+    // session mock returns).
+    config.capability_invoker =
+        [](const std::string &,
+           const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    ahfl::runtime::WorkflowRuntime runtime(program, std::move(config));
+    parity.result =
+        runtime.run(workflow_name, ahfl::runtime::clone_value(input));
+    return parity;
+}
+
+// Compare a wasm session outcome against the evaluator's: workflow status,
+// capability invocation count (and names), and the output Value structurally.
+void check_evaluator_parity(const ir::Program &program,
+                            const std::string &workflow_name,
+                            const Value &input,
+                            const ahfl::runtime::WorkflowResult &wasm_result,
+                            int wasm_cap_count, std::string_view label) {
+    auto parity = run_evaluator_parity(program, workflow_name, input);
+    check(parity.result.status() == wasm_result.status(),
+          std::string(label) + ".parity_status");
+    check(parity.cap_invoked_count == wasm_cap_count,
+          std::string(label) + ".parity_cap_count");
+    for (const auto &name : parity.cap_names) {
+        // The evaluator passes the canonical (module-qualified) capability
+        // name; the wasm session's name_resolver returns the bare "Echo".
+        // Compare by suffix so both lanes agree on the capability identity.
+        check(name.size() >= 4 && name.substr(name.size() - 4) == "Echo",
+              std::string(label) + ".parity_cap_name");
+    }
+    const auto *wasm_output = wasm_result.output();
+    const auto *eval_output = parity.result.output();
+    check((wasm_output == nullptr) == (eval_output == nullptr),
+          std::string(label) + ".parity_output_presence");
+    if (wasm_output != nullptr && eval_output != nullptr) {
+        check(ahfl::runtime::structurally_equal(*wasm_output, *eval_output),
+              std::string(label) + ".parity_output_value");
+    }
 }
 
 // ==== 1. P6-frame workflow (trace ring, no capabilities) ====
@@ -949,6 +1025,69 @@ void test_corrupted_output_workflow() {
     check(!report.output.has_value(), "corrupt_out.no_output");
 }
 
+// ==== 7d. WireJson run2 tuple whose range exceeds linear memory ==========
+
+void test_out_of_bounds_output_workflow() {
+    namespace whts = ahfl::runtime::wasm_host_test_support;
+    // A hand-built module whose run2 reports success but returns
+    // (ptr=60000, len=60000): the range runs ~54 KiB past the 64 KiB page.
+    const auto module_bytes = whts::out_of_bounds_output_module();
+
+    ahfl::backends::CoreWasmExecutionDescriptor descriptor;
+    descriptor.is_workflow = true;
+    descriptor.frame_contract =
+        ahfl::backends::CoreWasmFrameContract::WireJson;
+    descriptor.workflow_name = "oob_output";
+    descriptor.workflow_node_count = 1;
+    descriptor.agents.push_back(
+        ahfl::backends::CoreWasmStateWalk{
+            .agent = "A", .walk = {"Done"}, .all_states = {"Done"}});
+    ahfl::backends::CoreWasmNodeDescriptor node_desc;
+    node_desc.node_id = 0;
+    node_desc.schedule_pos = 0;
+    node_desc.runner = 0;
+    node_desc.name = "n0";
+    descriptor.nodes.push_back(std::move(node_desc));
+
+    auto input = value_from_json("42");
+    check(input.has_value(), "oob_out.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto result = wh::run_workflow_session(module_bytes, descriptor, *input,
+                                           std::move(config));
+    check(result.has_value(), "oob_out.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::EvalError,
+          "oob_out.eval_error");
+    check(result->result.report.status ==
+              ahfl::runtime::RunTerminalStatus::Failed,
+          "oob_out.report_failed");
+    bool found_decode_failed = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.output-decode-failed") {
+            found_decode_failed = true;
+            break;
+        }
+    }
+    check(found_decode_failed, "oob_out.found_diagnostic");
+    check(!result->result.report.output.has_value(), "oob_out.no_output");
+}
+
 // ==== 8. P1-5/P2-4: workflow_completed_count fail-closed ====
 
 void test_completed_count_fail_closed(
@@ -1216,15 +1355,15 @@ void test_hybrid_p6_before_cap(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_p6cap.completed");
 
-    // The output is the P6 compute node's Frame { n: 1 }.
-    const auto *output = result->result.output();
-    check(output != nullptr, "hybrid_p6cap.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::wh5b_hybrid_p6_before_cap::Frame","n":1})",
-              "hybrid_p6cap.output_value");
-    }
+    // P2-3 (spec AC1): the wasm lane's output Value is compared against the
+    // in-process evaluator's structurally (same fixture source, same input,
+    // same echo invoker), not against a hardcoded JSON string. The evaluator
+    // has no encoding boundary, so it is the reference for what the workflow
+    // means.
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_p6_before_cap::HybridPipeline",
+                           *input, result->result, cap_invoked_count,
+                           "hybrid_p6cap");
 
     check(result->workflow_completed_count == 2,
           "hybrid_p6cap.completed_count");
@@ -1334,15 +1473,11 @@ void test_hybrid_cap_before_p6(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_capp6.completed");
 
-    // The output is the P6 compute node's Frame { n: 1 }.
-    const auto *output = result->result.output();
-    check(output != nullptr, "hybrid_capp6.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::wh5b_hybrid_cap_before_p6::Frame","n":1})",
-              "hybrid_capp6.output_value");
-    }
+    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_cap_before_p6::HybridPipeline",
+                           *input, result->result, cap_invoked_count,
+                           "hybrid_capp6");
 
     check(result->workflow_completed_count == 2,
           "hybrid_capp6.completed_count");
@@ -1461,15 +1596,13 @@ void test_hybrid_kahn_reordered(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_kahn.completed");
 
-    // The output is the P6 compute node's Frame { n: 1 }.
-    const auto *output = result->result.output();
-    check(output != nullptr, "hybrid_kahn.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::wh5b_hybrid_kahn_reordered::Frame","n":1})",
-              "hybrid_kahn.output_value");
-    }
+    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
+    // The echo2 node is a no-site passthrough; the evaluator still invokes it
+    // (it is a capability call), so the cap counts match.
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_kahn_reordered::HybridKahn",
+                           *input, result->result, cap_invoked_count,
+                           "hybrid_kahn");
 
     check(result->workflow_completed_count == 3,
           "hybrid_kahn.completed_count");
@@ -1585,15 +1718,11 @@ void test_hybrid_p6_to_opaque(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_p6opaque.completed");
 
-    // The output is the P6 compute node's Frame { n: 1 }.
-    const auto *output = result->result.output();
-    check(output != nullptr, "hybrid_p6opaque.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::wh5b_hybrid_p6_to_opaque::Frame","n":1})",
-              "hybrid_p6opaque.output_value");
-    }
+    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_p6_to_opaque::P6ToOpaque", *input,
+                           result->result, cap_invoked_count,
+                           "hybrid_p6opaque");
 
     check(result->workflow_completed_count == 2,
           "hybrid_p6opaque.completed_count");
@@ -1713,16 +1842,11 @@ void test_hybrid_opaque_to_p6(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_opaquep6.completed");
 
-    // The output is the P6 compute node's Frame { n: 1 } (echo forwarded
-    // the entry, compute forwarded its input).
-    const auto *output = result->result.output();
-    check(output != nullptr, "hybrid_opaquep6.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::wh5b_hybrid_opaque_to_p6::Frame","n":1})",
-              "hybrid_opaquep6.output_value");
-    }
+    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_opaque_to_p6::OpaqueToP6", *input,
+                           result->result, cap_invoked_count,
+                           "hybrid_opaquep6");
 
     check(result->workflow_completed_count == 2,
           "hybrid_opaquep6.completed_count");
@@ -1850,22 +1974,585 @@ void test_hybrid_opaque_return(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_opaque_ret.completed");
 
-    // The output is the opaque echo node's Frame { n: 1 }, read from the
-    // workflow_output region (JSON_TO_P4D landing).
-    const auto *output = result->result.output();
-    check(output != nullptr, "hybrid_opaque_ret.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::wh5b_hybrid_opaque_return::Frame","n":1})",
-              "hybrid_opaque_ret.output_value");
-    }
+    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
+    // The opaque echo node's result crosses the JSON_TO_P4D workflow-output
+    // boundary; the evaluator has no such boundary, so parity proves the
+    // transcode preserved the Value.
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_opaque_return::OpaqueReturn",
+                           *input, result->result, cap_invoked_count,
+                           "hybrid_opaque_ret");
 
     check(result->workflow_completed_count == 2,
           "hybrid_opaque_ret.completed_count");
 }
 
-// ==== WH-5b.3 AC4: transcode fail-closed tests ====
+// ==== WH-5b.3 P2-2: rich type fidelity across BOTH transcode directions ====
+//
+// Drives a TAG-ONLY enum, String, Int, and Bool through a P4D_TO_JSON ENTRY
+// transcode and a JSON_TO_P4D workflow-output transcode on real wasm3, then
+// compares the wasm output Value against the in-process evaluator's
+// structurally. The String fields exercise the transcode payload arena
+// (JSON_TO_P4D bump-allocation) and the entry-payload arena (P4D_TO_JSON
+// PtrLen read).
+//
+// Coverage boundary (established with file evidence, not silently skipped):
+//   * Payload-bearing enums and nested structs in a workflow node input /
+//     return frame are rejected by the scheduler materializer
+//     (kUnsupportedWorkflowFrame), and a computed final cannot forward an
+//     aggregate/enum field sourced from the host-packed INPUT frame. Those
+//     are P6 workflow-lane limitations, not transcode codec limits; the
+//     codec-level payload-enum pack/read arms are covered in
+//     frame_packer_reader.cpp and core_json_round_trip.
+//   * std::option::Option / std::result::Result cannot be imported in this
+//     fixture because compile_conformance_source parses a single file
+//     without the project/sysroot module graph (an `import std::option`
+//     fixture needs the // @repo-std project parse used by
+//     core_wasm_p6_probe). The tag-only enum exercises the
+//     CoreWireSchemaEnum discriminant path; the Option null/payload and
+//     payload-bearing Enum arms are covered by the synthetic
+//     frame_packer_reader.cpp pins and core_json_round_trip.
+void test_hybrid_rich_fidelity(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_rich_fidelity.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "hybrid_rich.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "hybrid_rich.is_workflow");
+    check(desc.workflow_node_count == 2, "hybrid_rich.two_nodes");
+    check(desc.imports.size() == 1, "hybrid_rich.one_import");
+
+    // Two transcode sites: P4D_TO_JSON ENTRY (echo input) and
+    // JSON_TO_P4D workflow-output (echo result -> workflow output).
+    check(desc.frame_section.has_value(), "hybrid_rich.frame_section");
+    if (desc.frame_section.has_value()) {
+        check(desc.frame_section->transcode_sites.size() == 2,
+              "hybrid_rich.transcode_sites_count");
+        if (desc.frame_section->transcode_sites.size() == 2) {
+            const auto &s0 = desc.frame_section->transcode_sites[0];
+            const auto &s1 = desc.frame_section->transcode_sites[1];
+            // One P4D_TO_JSON ENTRY and one JSON_TO_P4D workflow-output.
+            const auto entry_dir =
+                irc::CoreFrameTranscodeSite::Direction::P4DToJson;
+            const auto output_dir =
+                irc::CoreFrameTranscodeSite::Direction::JsonToP4D;
+            check((s0.direction == entry_dir && s1.direction == output_dir) ||
+                      (s0.direction == output_dir && s1.direction == entry_dir),
+                  "hybrid_rich.transcode_directions");
+        }
+        // The JSON_TO_P4D site needs the shadow + payload arena.
+        check(desc.frame_section->transcode_shadow_base != 0,
+              "hybrid_rich.shadow_base");
+        check(desc.frame_section->transcode_payload_base != 0,
+              "hybrid_rich.payload_base");
+    }
+
+    // Rich input: tag-only enum, String, Int, Bool. Payload-bearing enums
+    // and nested structs are rejected by the scheduler materializer
+    // (kUnsupportedWorkflowFrame); see the fixture header for details.
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b_hybrid_rich_fidelity::Frame",)"
+        R"("n":1,"flag":true,)"
+        R"("color":{"_enum":"wasm::wh5b_hybrid_rich_fidelity::Color","_variant":"Green"},)"
+        R"("label":"rich"})");
+    check(input.has_value(), "hybrid_rich.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    int node_completed_count = 0;
+    wh::WorkflowSessionConfig config;
+    config.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view name) {
+            ++cap_invoked_count;
+            check(name == "Echo", "hybrid_rich.cap_name");
+        };
+    config.node_completed_hook =
+        [&node_completed_count](AgentId, std::string_view, const Value &) {
+            ++node_completed_count;
+        };
+    // Echo mock: returns the input unchanged.
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, desc, *input,
+                                           std::move(config));
+    check(result.has_value(), "hybrid_rich.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(cap_invoked_count == 1, "hybrid_rich.cap_invoked_count");
+    check(node_completed_count == 2, "hybrid_rich.node_completed_count");
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "hybrid_rich.completed");
+
+    // P2-3 (spec AC1): evaluator parity. The echo node's result crosses the
+    // JSON_TO_P4D workflow-output boundary; the evaluator has no boundary, so
+    // parity proves the transcode preserved every rich field.
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_rich_fidelity::RichFidelity",
+                           *input, result->result, cap_invoked_count,
+                           "hybrid_rich");
+
+    check(result->workflow_completed_count == 2,
+          "hybrid_rich.completed_count");
+}
+
+// ==== WH-5b.3 P2-2: rich fidelity on the P4D_TO_JSON NODE_OUTPUT path ====
+//
+// rich_fidelity above covers ENTRY + workflow-output crossings. This fixture
+// pins the distinct NODE_OUTPUT source: the P6 compute node's O_k is the
+// workflow return (host reads it directly, no scheduler materializer) and
+// the opaque echo node consumes that O_k through a P4D_TO_JSON NODE_OUTPUT
+// transcode. Fields are the same flat wire subset (tag-only enum, String,
+// Int, Bool); the String PtrLen in O_k may point into the entry-payload
+// arena or the rodata pool, so this is the path that requires the
+// transcode String regions to admit both. A payload-bearing enum forwarded
+// from the host-packed INPUT to a constructed P6 output stays blocked by
+// the computed-final aggregate-forwarding gate (see the fixture header);
+// payload-enum codec arms are covered in frame_packer_reader.cpp.
+void test_hybrid_rich_p6_to_opaque(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_rich_p6_to_opaque.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "hybrid_rich_p6o.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "hybrid_rich_p6o.is_workflow");
+    check(desc.workflow_node_count == 2, "hybrid_rich_p6o.two_nodes");
+    check(desc.imports.size() == 1, "hybrid_rich_p6o.one_import");
+
+    // One P4D_TO_JSON NODE_OUTPUT transcode (P6 output -> opaque echo input).
+    check(desc.frame_section.has_value(), "hybrid_rich_p6o.frame_section");
+    if (desc.frame_section.has_value()) {
+        check(desc.frame_section->transcode_sites.size() == 1,
+              "hybrid_rich_p6o.transcode_sites_count");
+        if (desc.frame_section->transcode_sites.size() == 1) {
+            const auto &site = desc.frame_section->transcode_sites[0];
+            check(site.direction ==
+                      irc::CoreFrameTranscodeSite::Direction::P4DToJson,
+                  "hybrid_rich_p6o.transcode_direction");
+            check(site.source ==
+                      irc::CoreFrameTranscodeSite::Source::NodeOutput,
+                  "hybrid_rich_p6o.transcode_source");
+        }
+    }
+
+    // Rich input: tag-only enum, String, Int, Bool. Payload-bearing enums
+    // cannot be forwarded from the host-packed input to a constructed P6
+    // output (see the fixture header for details).
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b_hybrid_rich_p6_to_opaque::Frame",)"
+        R"("n":1,"flag":true,)"
+        R"("color":{"_enum":"wasm::wh5b_hybrid_rich_p6_to_opaque::Color","_variant":"Blue"},)"
+        R"("label":"node-output"})");
+    check(input.has_value(), "hybrid_rich_p6o.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    int node_completed_count = 0;
+    wh::WorkflowSessionConfig config;
+    config.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view name) {
+            ++cap_invoked_count;
+            check(name == "Echo", "hybrid_rich_p6o.cap_name");
+        };
+    config.node_completed_hook =
+        [&node_completed_count](AgentId, std::string_view, const Value &) {
+            ++node_completed_count;
+        };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, desc, *input,
+                                           std::move(config));
+    check(result.has_value(), "hybrid_rich_p6o.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(cap_invoked_count == 1, "hybrid_rich_p6o.cap_invoked_count");
+    check(node_completed_count == 2, "hybrid_rich_p6o.node_completed_count");
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "hybrid_rich_p6o.completed");
+
+    // P2-3: evaluator parity on the P4D_TO_JSON NODE_OUTPUT path. The
+    // workflow return is the P6 node's O_k; parity proves the transcode
+    // preserved every flat field (tag-only enum variant, String, Int, Bool).
+    check_evaluator_parity(wf->program,
+                           "wasm::wh5b_hybrid_rich_p6_to_opaque::P6ToOpaqueRich",
+                           *input, result->result, cap_invoked_count,
+                           "hybrid_rich_p6o");
+
+    check(result->workflow_completed_count == 2,
+          "hybrid_rich_p6o.completed_count");
+}
+
+// ==== WH-5b.3 P2-2: Decimal/Duration fail-closed pin ====
+//
+// Spec 12.13.6 claims "Decimal/Duration: P4-D scalar <-> wire JSON number/
+// string" fidelity across the transcode boundary. The implementation does
+// NOT support this: the P4-D packer (frame_packer.cpp:470-472) and reader
+// (frame_reader.cpp:447-448) both fail closed on CoreWireSchemaDecimal /
+// CoreWireSchemaDuration with ValueNotWireEncodable. The wire schema itself
+// accepts them (core_wire_schema.cpp:268-273), and the P6 codegen can emit
+// them as i64 constants (core_wasm_codegen.cpp:2057-2075), but the host-side
+// pack/read path rejects them. This test pins the current safe behavior:
+// the session fails closed at the entry pack step, before any node runs.
+//
+// Closure reachability note: Closure is rejected at wire-schema construction
+// (core_wire_schema.cpp:304-308, ws_Closure lambda: "closure values are not
+// supported by value_json"). No source-level AHFL program can produce a wire
+// schema with a Closure type, so no transcode site can ever carry a Closure
+// value. The transcode boundary is unreachable for Closure; the codec-level
+// rejection is already pinned in core_json_round_trip and
+// frame_packer_reader.cpp.
+void test_hybrid_decimal_fail_closed(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_decimal_fail_closed.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "decimal_fail.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Construct a Frame input with a real DecimalValue. value_from_json
+    // cannot produce a DecimalValue (it has no type information), so build
+    // the struct directly.
+    Value input{ahfl::runtime::StructValue{}};
+    auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
+    sv.type_name = "wasm::wh5b_hybrid_decimal_fail_closed::Frame";
+    sv.fields.set("n",
+                  std::make_unique<Value>(Value{ahfl::runtime::IntValue{1}}));
+    sv.fields.set(
+        "amount",
+        std::make_unique<Value>(Value{ahfl::runtime::DecimalValue{"1.25"}}));
+
+    int cap_invoked_count = 0;
+    wh::WorkflowSessionConfig config;
+    config.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view) {
+            ++cap_invoked_count;
+        };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           input, std::move(config));
+    // The session must fail at the PRE-RUN entry pack: pack_value_at
+    // encounters the Decimal field and returns ValueNotWireEncodable
+    // (frame_packer.cpp frame-subset fallthrough), surfaced as the
+    // "pack_value_at failed" setup error before run2. Asserting the exact
+    // string pins the failure REASON (not merely non-Completed, which an
+    // admission/instantiation failure could also produce). No node runs, so
+    // no capability is invoked.
+    check(!result.has_value(), "decimal_fail.fail_closed");
+    if (!result.has_value()) {
+        check(result.error().find("pack_value_at failed") !=
+                  std::string::npos,
+              "decimal_fail.reason_is_entry_pack");
+    }
+    check(cap_invoked_count == 0, "decimal_fail.zero_cap_invocations");
+}
+
+// ==== WH-5b.3: descriptor-corruption runtime guard ====
+//
+// Zero the JSON_TO_P4D transcode shadow + payload spans in a validated
+// descriptor, then run on real wasm3. The host guard in transcode.cpp
+// (JSON_TO_P4D arm) must catch the zeroed spans BEFORE
+// mutable_whole_memory/pack_value_at and return transcode_fail(). The guest
+// scheduler traps on the nonzero reply, converting to NodeFailed.
+//
+// The opaque echo node runs BEFORE the transcode (the echo->compute edge is
+// transcoded when the compute node is about to materialize), so the Echo
+// capability IS invoked once. The P6 compute node never completes.
+void test_transcode_descriptor_corruption_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_opaque_to_p6.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "xcode_corrupt.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Corrupt the descriptor: zero the JSON_TO_P4D shadow + payload spans.
+    // The wasm module still contains the transcode import call; the host
+    // guard must catch the zeroed spans at runtime.
+    auto corrupted_desc = wf->descriptor;
+    if (corrupted_desc.frame_section.has_value()) {
+        corrupted_desc.frame_section->transcode_shadow_base = 0;
+        corrupted_desc.frame_section->transcode_shadow_extent = 0;
+        corrupted_desc.frame_section->transcode_payload_base = 0;
+        corrupted_desc.frame_section->transcode_payload_capacity = 0;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b_hybrid_opaque_to_p6::Frame","n":1})");
+    check(input.has_value(), "xcode_corrupt.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    int node_completed_count = 0;
+    wh::WorkflowSessionConfig config;
+    config.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view) {
+            ++cap_invoked_count;
+        };
+    config.node_completed_hook =
+        [&node_completed_count](AgentId, std::string_view, const Value &) {
+            ++node_completed_count;
+        };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, corrupted_desc,
+                                           *input, std::move(config));
+    // The session ran (the transcode guard fires mid-run, not at setup); the
+    // host guard catches the zeroed spans, the guest scheduler traps, and the
+    // workflow ends specifically as NodeFailed. The echo node ran before the
+    // transcode, so the Echo capability was invoked exactly once; the P6
+    // compute node never completed.
+    check(result.has_value(), "xcode_corrupt.session_ran");
+    if (result.has_value()) {
+        check(result->result.status() ==
+                  ahfl::runtime::WorkflowStatus::NodeFailed,
+              "xcode_corrupt.node_failed");
+    }
+    check(cap_invoked_count == 1, "xcode_corrupt.cap_invoked_count");
+    check(node_completed_count == 1, "xcode_corrupt.node_completed_count");
+}
+
+// Symmetric descriptor-corruption case (P2-1): wh5b_hybrid_p6_before_cap
+// carries a P4D_TO_JSON ENTRY site (echo consumes the P6 entry lane through
+// the host-packed entry shadow). Zero the entry-shadow span while keeping the
+// site: the entry pack must refuse the run BEFORE run2 (the guest would
+// otherwise invoke the transcode with the baked-in shadow address and read
+// zeroed memory, reconstructing a schema-valid forged input).
+void test_transcode_entry_shadow_corruption_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_p6_before_cap.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "xcode_entry_corrupt.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+    check(wf->descriptor.frame_section.has_value(),
+          "xcode_entry_corrupt.has_frame_section");
+    bool has_entry_site = false;
+    if (wf->descriptor.frame_section.has_value()) {
+        for (const auto &site :
+             wf->descriptor.frame_section->transcode_sites) {
+            if (site.direction ==
+                    irc::CoreFrameTranscodeSite::Direction::P4DToJson &&
+                site.source == irc::CoreFrameTranscodeSite::Source::Entry) {
+                has_entry_site = true;
+            }
+        }
+    }
+    check(has_entry_site, "xcode_entry_corrupt.has_entry_site");
+    if (!has_entry_site) {
+        return;
+    }
+
+    auto corrupted_desc = wf->descriptor;
+    corrupted_desc.frame_section->transcode_entry_shadow_base = 0;
+    corrupted_desc.frame_section->transcode_entry_shadow_extent = 0;
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b_hybrid_p6_before_cap::Frame","n":1})");
+    check(input.has_value(), "xcode_entry_corrupt.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    wh::WorkflowSessionConfig config;
+    config.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view) {
+            ++cap_invoked_count;
+        };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, corrupted_desc,
+                                           *input, std::move(config));
+    // Pre-run setup failure (entry pack), so the session returns an
+    // unexpected error and no node or capability ever runs.
+    check(!result.has_value(), "xcode_entry_corrupt.fail_closed");
+    check(cap_invoked_count == 0,
+          "xcode_entry_corrupt.zero_cap_invocations");
+
+    // Integer-wrap variant: a base near u32::MAX whose u32 sum with the
+    // entry size wraps to a small in-page value. The page-end check must
+    // widen to size_t BEFORE adding, otherwise the memcpy lands ~4 GiB out
+    // of bounds. Kept extent == the real block input size so the run reaches
+    // the bounds check rather than the extent-mismatch guard.
+    check(!corrupted_desc.frame_section->node_blocks.empty(),
+          "xcode_entry_wrap.has_node_block");
+    if (!corrupted_desc.frame_section->node_blocks.empty()) {
+        const auto entry_size =
+            corrupted_desc.frame_section->node_blocks[0].input_size;
+        auto wrap_desc = wf->descriptor;
+        constexpr std::uint64_t kU32Span = 0x100000000ULL;
+        const auto wrap_base =
+            static_cast<std::uint32_t>((kU32Span - entry_size) & ~0x7ULL);
+        wrap_desc.frame_section->transcode_entry_shadow_base = wrap_base;
+        wrap_desc.frame_section->transcode_entry_shadow_extent = entry_size;
+
+        int wrap_cap_count = 0;
+        wh::WorkflowSessionConfig wrap_config;
+        wrap_config.capability_invoked_hook =
+            [&wrap_cap_count](AgentId, std::string_view) {
+                ++wrap_cap_count;
+            };
+        wrap_config.invoker =
+            [](const CapabilityInvocationContext &, const std::string &,
+               const std::vector<Value> &args) -> CapabilityCallResult {
+                CapabilityCallResult r;
+                r.status = CapabilityCallStatus::Success;
+                if (!args.empty()) {
+                    r.value = ahfl::runtime::clone_value(args[0]);
+                }
+                return r;
+            };
+        wrap_config.name_resolver = [](std::uint64_t)
+                                        -> std::optional<std::string> {
+            return "Echo";
+        };
+        auto wrap_result = wh::run_workflow_session(
+            wf->module_bytes, wrap_desc, *input, std::move(wrap_config));
+        check(!wrap_result.has_value(), "xcode_entry_wrap.fail_closed");
+        if (!wrap_result.has_value()) {
+            check(wrap_result.error().find("entry shadow exceeds page") !=
+                      std::string::npos,
+                  "xcode_entry_wrap.reason_is_page_end");
+        }
+        check(wrap_cap_count == 0, "xcode_entry_wrap.zero_cap_invocations");
+    }
+
+    // Forged-source variant (P0-1): the descriptor's node block input range
+    // is untrusted. Forge a source range whose END runs past the page while
+    // the shadow destination stays in page (input_base=40000,
+    // input_size=30000 -> source end 70000 > 65536; shadow at 8 with extent
+    // 30000 -> destination end 30008, in page). The old code bounds-checked
+    // only the destination, so the entry-shadow memcpy over-read ~14 KiB.
+    // The host now re-derives the copy size from the layout root (8 bytes),
+    // so the forged input_size disagrees and the run fails pre-run.
+    {
+        auto forged_desc = wf->descriptor;
+        constexpr std::uint32_t kForgedSize = 30000;
+        forged_desc.frame_section->node_blocks[0].input_base = 40000;
+        forged_desc.frame_section->node_blocks[0].input_size = kForgedSize;
+        forged_desc.frame_section->transcode_entry_shadow_base = 8;
+        forged_desc.frame_section->transcode_entry_shadow_extent =
+            kForgedSize;
+
+        int forged_cap_count = 0;
+        wh::WorkflowSessionConfig forged_config;
+        forged_config.capability_invoked_hook =
+            [&forged_cap_count](AgentId, std::string_view) {
+                ++forged_cap_count;
+            };
+        forged_config.invoker =
+            [](const CapabilityInvocationContext &, const std::string &,
+               const std::vector<Value> &args) -> CapabilityCallResult {
+                CapabilityCallResult r;
+                r.status = CapabilityCallStatus::Success;
+                if (!args.empty()) {
+                    r.value = ahfl::runtime::clone_value(args[0]);
+                }
+                return r;
+            };
+        forged_config.name_resolver = [](std::uint64_t)
+                                          -> std::optional<std::string> {
+            return "Echo";
+        };
+        auto forged_result = wh::run_workflow_session(
+            wf->module_bytes, forged_desc, *input, std::move(forged_config));
+        check(!forged_result.has_value(),
+              "xcode_entry_forged_size.fail_closed");
+        if (!forged_result.has_value()) {
+            check(forged_result.error().find(
+                      "input size disagrees with the aligned size") !=
+                      std::string::npos,
+                  "xcode_entry_forged_size.reason_is_size_derivation");
+        }
+        check(forged_cap_count == 0,
+              "xcode_entry_forged_size.zero_cap_invocations");
+    }
+}
 
 // Unknown xcode ordinal: corrupt the descriptor by clearing the transcode
 // sites. The wasm module still calls the transcode import, but the session's
@@ -2340,6 +3027,7 @@ int main() {
     test_trap_workflow(repo_root);
     test_trap_pipeline(repo_root);
     test_corrupted_output_workflow();
+    test_out_of_bounds_output_workflow();
     test_completed_count_fail_closed(repo_root);
     test_capability_kind_fail_closed(repo_root);
     test_capability_ordinal_oor_fail_closed(repo_root);
@@ -2351,6 +3039,13 @@ int main() {
     test_hybrid_p6_to_opaque(repo_root);
     test_hybrid_opaque_to_p6(repo_root);
     test_hybrid_opaque_return(repo_root);
+    // WH-5b.3 P2-2: rich type fidelity across both transcode directions.
+    test_hybrid_rich_fidelity(repo_root);
+    test_hybrid_rich_p6_to_opaque(repo_root);
+    // WH-5b.3 P2-2: Decimal/Duration fail-closed + descriptor corruption.
+    test_hybrid_decimal_fail_closed(repo_root);
+    test_transcode_descriptor_corruption_fail_closed(repo_root);
+    test_transcode_entry_shadow_corruption_fail_closed(repo_root);
     // WH-5b.3 AC4: transcode fail-closed tests.
     test_transcode_unknown_ordinal_fail_closed(repo_root);
     test_transcode_schema_mismatch_fail_closed(repo_root);

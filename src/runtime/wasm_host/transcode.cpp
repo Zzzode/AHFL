@@ -186,8 +186,38 @@ handle_transcode(const TranscodeConfig &config,
     if (!decoded.ok()) {
         return transcode_fail();
     }
+    // Host-side defense at the actual write site: a corrupt or foreign module
+    // whose frame section zeroed or misplaces the JSON_TO_P4D shadow/payload
+    // spans must fail closed here, before any page write (the session admits
+    // modules without the verified-schema gate, so the host cannot assume the
+    // section passed the frame-section verifier). The needed extent is
+    // derived from the site's layout exactly as the verifier does, and the
+    // predicates mirror verify_workflow_spans: nonzero, 8-aligned, and fully
+    // inside the fixed page. Without this guard the packer would write the
+    // frame at guest address zero (the reserved zero page) or across the
+    // page boundary for a section the verifier would have rejected.
+    const auto *site_layout = ctx.layout(site.layout);
+    if (site_layout == nullptr) {
+        return transcode_fail();
+    }
+    const std::uint64_t needed_extent =
+        (static_cast<std::uint64_t>(site_layout->size) + 7u) &
+        ~std::uint64_t{7u};
     auto page = config.engine.mutable_whole_memory();
     if (!page.has_value()) {
+        return transcode_fail();
+    }
+    const std::uint64_t shadow_base = section.transcode_shadow_base;
+    const std::uint64_t shadow_extent = section.transcode_shadow_extent;
+    const std::uint64_t payload_base = section.transcode_payload_base;
+    const std::uint64_t payload_capacity =
+        section.transcode_payload_capacity;
+    if (shadow_base == 0 || shadow_base % 8u != 0 ||
+        shadow_extent < needed_extent ||
+        shadow_base + shadow_extent > page->size() ||
+        payload_base == 0 || payload_base % 8u != 0 ||
+        payload_capacity == 0 ||
+        payload_base + payload_capacity > page->size()) {
         return transcode_fail();
     }
     const auto packed = pack_value_at(

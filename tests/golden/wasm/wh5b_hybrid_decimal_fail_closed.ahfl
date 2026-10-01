@@ -1,0 +1,99 @@
+// WH-5b.3 P2-2 Decimal/Duration fail-closed pin.
+//
+// Spec 12.13.6 claims "Decimal/Duration: P4-D scalar <-> wire JSON number/
+// string" fidelity across the transcode boundary. The implementation does
+// NOT support this: the P4-D packer (frame_packer.cpp) and reader
+// (frame_reader.cpp) both fail closed on CoreWireSchemaDecimal /
+// CoreWireSchemaDuration with ValueNotWireEncodable. The wire schema itself
+// accepts them (core_wire_schema.cpp emits CoreWireSchemaDecimal /
+// CoreWireSchemaDuration), and the P6 codegen can emit them as i64
+// constants (v2b_builtin_i64_final.ahfl), but the host-side pack/read path
+// rejects them.
+//
+// This fixture carries a Decimal(2) field in the workflow IO so the host's
+// entry pack (pack_value_at) fails closed BEFORE the wasm module runs. The
+// test asserts the session returns an error, pinning the current safe
+// behavior until the packer/reader grow Decimal/Duration support.
+
+module wasm::wh5b_hybrid_decimal_fail_closed;
+
+pub struct Frame {
+    n: Int;
+    amount: Decimal(2);
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+// P6-packaged agent: computed-goto + computed-final. Constructs the Decimal
+// output from a literal (the P6 codegen supports this as an i64 constant).
+pub agent ComputeAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for ComputeAgent {
+    state Decide {
+        if (input.n > 0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n, amount: 0.00d };
+    }
+}
+
+// Opaque capability-final agent.
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow DecimalFailClosed {
+    input: Frame;
+    output: Frame;
+
+    node compute: ComputeAgent(input);
+    node echo: EchoAgent(input) after [compute];
+
+    return: echo;
+}
