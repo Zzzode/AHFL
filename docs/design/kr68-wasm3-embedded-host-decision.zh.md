@@ -3531,3 +3531,217 @@ rich fixture 单 node,per-node blocks 不改变 capacity 模型。construct scra
 - **§12.7(WH-6 cutover,无 fallback):** 保留。WASM=OFF 策略不变。gate set 扩展(§12.15.17.5)。
 - **§12.15.10(string-leaf bridge case):** 保留。String 跨 bridge(PtrLen spill)与 f64/Decimal/Duration/Set/Map 的 bridge reject 正交(§12.15.17.2 bridge-crossability 节)。
 - **§12.15.8(no version bump):** 不变。GAP 6/7 不增加 wire field(range 是 host-side sidecar;rich types 已有 P4-D 布局)。AHFLXM v2 不 bump。
+
+### 12.15.18 WH-5c residual gaps 8/9 (2026-10-02, dedicated decision agent)
+
+本节记录 WH-5c cutover-blocking 普查暴露的最后两个 wasm-lane gap 的机制决策。GAP 8(#421 provider-runtime capability lifecycle event parity)与 GAP 9(#424 non-final String PtrLen carry + cross-node String edges)都不阻塞 WH-5c.2/5c.3 的实现(2026-10-02 实现完成、独立 review 中),但阻塞 WH-6 cutover 的 test-green gate。所有代码断言已对工作树(HEAD 70419ba1 + uncommitted WH-5c.2/5c.3)逐条复核。本节是 append-only;§12.15.1-12.15.17 原文保留。
+
+#### 12.15.18.1 GAP 8 — provider-runtime capability lifecycle event parity
+
+**Empirical signature(file:line):**
+
+fan-out unblocked 后,`tests/scripts/llm_provider_runtime_smoke.py` 的 fallback-stream case(:230-277)在 wasm lane 运行到 completed 但失败:wasm lane 发射 ZERO `provider_degraded` 事件。leftover wasm output(`build/dev/tests/runtime/llm-provider-runtime-smoke/fallback-stream.jsonl`)证实:0 provider_degraded、0 retry_scheduled、0 capability_failed;2 capability_started(attempt=1)、2 capability_completed。
+
+根因是 wasm lane 的 per-call emission 把 aggregate `CapabilityCallResult` 折叠成单一事件序列:
+
+- **evaluator(reference):** `workflow_runtime.cpp:1040` 调用 invoker **一次**;`:1066-1115` 的 synthesis loop 从 aggregate `attempts=N` 合成 per-attempt 事件——每个 attempt 一个 `CapabilityStarted`(:1080-1086)、attempt 之间一个 `CapabilityRetryScheduled`(:1074-1078)、terminal attempt 一个 `CapabilityUsageRecorded`(:1088-1098)、非 terminal-success 一个 `CapabilityFailed`(:1102-1113)。`:1117-1131` 发射 `ProviderDegraded`(用 `add_provider(degraded_name)` + `add_provider(selected_name)` 分配 provider id)。`:1134-1164` 仅在 success 时发射 `CapabilityCompleted`(用 last-attempt invocation id)。`:1057-1064` Pending 路径在 synthesis loop 之前 return,不发射 `CapabilityStarted`(parity 正确)。
+- **wasm lane(collapse site):** `wasm_lifecycle.cpp:225-265`(workflow lane)与 `:409-444`(agent lane)对每个 collected call 发射**一个** `CapabilityStarted(attempt=1)`(:237-243)、可选 `CapabilityUsageRecorded`(:244-254)、**一个** `CapabilityCompleted`(:259-264)——**即使 call 失败也发射 Completed**(bug)。`:276` 注释正确声明 Pending 不发射 `CapabilityStarted`(parity 正确)。
+- **WasmCapabilityCall 丢字段:** `wasm_lifecycle.hpp:64-79` 的 `WasmCapabilityCall` 只有 node_id、capability_name、success、output、attempts、cache_hit、usage——**缺** status、failure_kind、diagnostic_code、error_message、provider_degraded、degraded_provider_name、selected_provider_name。`workflow_session.cpp:575-588`(workflow)与 `wasm_agent_runner.cpp:265-275`(agent)的 wrapped_invoker 在 collect 时丢弃这些字段。
+- **budget-warn gap:** `llm_capability_provider.cpp:534-553` 的 warn-policy reject 把 `CapabilityPolicyNotice` ride 在 `usage.notices` 上;evaluator 的 `capability_eval.cpp:74-81` 把 notices 转成 WARNING diagnostic(进 DiagnosticBag → stderr);wasm lane 不做此转换,notice 只进 report JSON 的 `CapabilityUsageRecorded`,不进 stderr。
+- **budget-fail gap:** `llm_capability_provider.cpp:596-601`(usage budget)与 `:629-634`(cost budget)的 fail-policy reject 返回 `CapabilityCallResult{Error, BudgetRejected, diagnostic_code}`;wasm lane 的 `workflow_session.cpp:2084-2128` 把 failed node 归因为 `wasm.trap`/`wasm.host-abort`(不用 cap_call 的 diagnostic_code),且 wasm_lifecycle 发射 `CapabilityCompleted`(应发射 `CapabilityFailed`)。
+
+**关键事实:evaluator 的 per-attempt 事件本身就是 synthetic-from-aggregate。** invoker 被调用一次(`workflow_runtime.cpp:1040`),返回 aggregate `CapabilityCallResult`(`capability_bridge.hpp:76-93`,无 per-attempt trail);synthesis loop 从 `attempts=N` 合成 per-attempt 事件。per-attempt timing/usage/failure detail 在 **两个 lane 都不可得**。因此 parity **不**要求丰富 `CapabilityCallResult` 或把 retry iteration 移到 host loop——它要求 wasm lane 复制**同一个 synthesis**。
+
+**决策:host-side post-run projection helper(单实现,双 lane 调用)。**
+
+新增 `src/runtime/engine/capability_event_projection.{hpp,cpp}`(与 `capability_bridge.hpp` 同目录,因 wasm_host/ 已依赖 engine/),封装 evaluator 的 synthesis 逻辑为一个共享 helper。evaluator 的 `workflow_runtime.cpp:1066-1164` synthesis loop 重构为调用该 helper(big-bang 去重,Principle 1);wasm lane 的 `wasm_lifecycle.cpp:225-265` 与 `:409-444` 替换为调用同一 helper。helper 在 WH-9 evaluator 删除后存活(与 `capability_bridge.hpp` 一起 relocate,见 WH-9 交互节)。
+
+helper 的职责(给定 metadata store + emit sink + node/cap/provider id + `CapabilityCallResult` + optional output_value_id):
+
+1. Pending → 不发射任何事件(与 evaluator `:1057-1064` 一致)。
+2. `attempts = max(call.attempts, 1)`;for attempt 1..attempts:分配 invocation id(首个由 evaluator 预分配传入;wasm lane 由 helper 分配);attempt 之间发射 `CapabilityRetryScheduled`;发射 `CapabilityStarted`;terminal attempt + usage → 发射 `CapabilityUsageRecorded`;非 terminal-success → 发射 `CapabilityFailed`。
+3. `provider_degraded` → `add_provider(degraded_name)` + `add_provider(selected_name)`,发射 `ProviderDegraded`。
+4. success → 发射 `CapabilityCompleted`(last-attempt invocation id、output_value_id、attempts、cache_hit);failure → 不发射 `CapabilityCompleted`。
+5. `usage.notices` → 每个 notice 转成 WARNING diagnostic 进 `result.diagnostics`(与 `capability_eval.cpp:74-81` 同 code/message)。
+
+wasm lane 的 invocation 时机是 **post-run**(events 在 `invoke_run2` 期间 buffer,在 finalize 前 projection)——这是 AHFL-specific divergence(见下)。
+
+**被否决的替代方案:**
+
+- **event-synthesis-at-renderer(在 report/JSON renderer 里合成 per-attempt 事件)— REJECTED。** renderer 没有 `CapabilityCallResult`(它只看到已发射的 event stream);在 renderer 里合成会让 audit trail 不诚实(event stream 本身缺事件,report 是 event stream 的 projection 这一不变量被破坏)。parity 必须在 event stream 层面达成,不是在 report 层面。
+- **丰富 `CapabilityCallResult` 加 per-attempt trail — REJECTED。** evaluator 本身没有 per-attempt detail(invoker 调用一次,返回 aggregate);加 trail 是发明 evaluator 不拥有的信息,违反 "parity = 复制同一 synthesis" 的事实基础。
+- **把 retry iteration 移到 host loop(host 调用 invoker N 次)— REJECTED。** evaluator 也只调用 invoker 一次(`:1040`);retry 是 provider-internal 行为,host loop 重试会改变 provider 的 retry/budget/cache 语义(第二次 host 调用会命中 cache 而不是 provider 内部 retry)。
+- **在 wasm_lifecycle 里 inline 复制 synthesis loop(不抽 helper)— REJECTED。** Principle 1(no old-and-new coexistence):evaluator 的 synthesis loop 与 wasm lane 的复制是同一逻辑的两份实现,WH-9 删 evaluator 后留下 wasm lane 的副本——但在此之前是两份必须手动保持同步的实现。抽 helper 让两个 lane 调用同一函数,WH-9 只删 evaluator 的 call site。
+
+**AHFL-specific divergence note:** evaluator 在 call time projection(invoker 返回后立即合成事件);wasm lane 在 post-run projection(`invoke_run2` 是 synchronous/non-reentrant,事件在 invoke 期间 buffer,在 finalize 前统一 projection)。这不是语义差异——projection 的输入(`CapabilityCallResult`)和输出(event stream)在两个 lane 完全相同——而是 wasm3 同步执行模型的后果:host 无法在 wasm invoke 期间安全地 re-enter metadata/event 系统。post-run projection 保持 event stream 的诚实性(事件在 run 完成后、report 生成前发射,audit trail 完整)。
+
+**Builder 指令:**
+
+1. **`WasmCapabilityCall` 改为 `{node_id, capability_name, CapabilityCallResult result}`。** `wasm_lifecycle.hpp:64-79` 的现有字段(success/output/attempts/cache_hit/usage)全部由 `result` 派生或冗余,big-bang 删除。`success` 派生自 `result.status == Success`;`output` 即 `result.value`;`attempts`/`cache_hit`/`usage` 是 `result` 的同名字段。
+2. **新增 `src/runtime/engine/capability_event_projection.{hpp,cpp}`。** hpp 声明 projection 函数(签名见上);cpp 实现 synthesis loop + ProviderDegraded + Completed-on-success-only + notices→WARNING。`capability_failure_kind`(`workflow_runtime.cpp:295-312`,anonymous namespace)relocate 到 `capability_bridge.hpp` 作为 `[[nodiscard]] inline` 函数(WH-9 存活的前提)。
+3. **evaluator 重构为调用 helper。** `workflow_runtime.cpp:1066-1164` 的 synthesis loop + ProviderDegraded + Completed 替换为 helper 调用;`:295-312` 的 anonymous-namespace `capability_failure_kind` 删除(call site 改用 `capability_bridge.hpp` 的 shared 版本)。
+4. **wasm_lifecycle 双 lane 调用 helper。** `wasm_lifecycle.cpp:225-265`(workflow)与 `:409-444`(agent)的 per-call emission loop 替换为 helper 调用;caller 在调用前注册 output value(传 output_value_id)。
+5. **wrapped_invoker 记录完整 result。** `workflow_session.cpp:575-588` 与 `wasm_agent_runner.cpp:265-275`:`cap_call.result = std::move(result)`(或 copy);agent lane 对齐 workflow lane 的 Pending skip(`workflow_session.cpp:571`)。
+6. **session 失败路径用 cap_call 的 diagnostic_code。** `workflow_session.cpp:2084-2128`:failed node 若有 failed cap_call 且 diagnostic_code 非空,用它做 `failure_code`(替代 `wasm.trap`/`wasm.host-abort`),用 cap_call 的 `error_message` 做 `failure_message`;range 由 WH-5c.6 的 `capability_range_resolver` 提供(GAP 6 决策)。
+7. **Pending parity 保持。** helper 跳过 Pending(不发射事件),与 evaluator `:1057-1064` 一致;`wasm_lifecycle.cpp:276` 注释保留。
+8. **不做:** 不丰富 `CapabilityCallResult`、不把 retry 移到 host loop、不在 renderer 合成事件、不引入 per-attempt trail。
+
+**Affected files + LOC:**
+
+| 文件 | LOC delta | Notes |
+|------|-----------|-------|
+| `src/runtime/engine/capability_event_projection.hpp` | +30 | 新文件,projection 函数声明 |
+| `src/runtime/engine/capability_event_projection.cpp` | +120 | synthesis loop + ProviderDegraded + notices→WARNING |
+| `src/runtime/engine/capability_bridge.hpp` | +15 | `capability_failure_kind` inline relocate |
+| `src/runtime/engine/workflow_runtime.cpp` | -80 | 删 anonymous-namespace `capability_failure_kind` + synthesis loop 重构为 helper 调用 |
+| `src/runtime/wasm_host/wasm_lifecycle.hpp` | -10 | `WasmCapabilityCall` 精简为 `{node_id, capability_name, result}` |
+| `src/runtime/wasm_host/wasm_lifecycle.cpp` | -35 | 双 lane emission loop 替换为 helper 调用 |
+| `src/runtime/wasm_host/workflow_session.cpp` | +45 | wrapped_invoker 记录完整 result + 失败路径用 cap_call diagnostic_code |
+| `src/runtime/wasm_host/wasm_agent_runner.cpp` | +10 | wrapped_invoker 记录完整 result + Pending skip |
+| Tests | +250 | projection helper 单元测试(attempts=1/2+degraded/failed/budget-fail/notices)+ #421 smoke 验证 |
+| Docs | +120 | 本节 |
+| **Total** | **~465** | |
+
+**AC(mapped to #421,全部 5 case):**
+
+| Test case | Acceptance |
+|-----------|-----------|
+| fallback-stream(:230-277) | exit 0;`provider_degraded` count==1;`cache_hit` 序列 [False, True];2 `capability_completed`;wasm 与 evaluator 的 event stream 逐事件 byte-parity(ordinal 除外) |
+| persistent-cache(:280-325) | exit 0;`cache_hit` [False,True] 然后 [True,True];server request_count==1;event parity |
+| budget-warn(:328-388) | exit 0;completed;2 `capability_completed`;`LLM_TOKEN_BUDGET_EXCEEDED` 在 stderr(WARNING diagnostic,不只是 report JSON);event parity |
+| budget-fail(:328-388) | exit 非 0;failed;`capability_failed` 事件(不是 `capability_completed`);ranged diagnostic 带 `LLM_TOKEN_BUDGET_EXCEEDED` code;event parity |
+| cost-budget-fail(:391-433) | exit 非 0;failed;`LLM_COST_BUDGET_EXCEEDED` 在 stderr;`capability_failed`;event parity |
+
+**Additional gates:** ASan build & test clean;WASM=OFF build clean;fresh build `-Werror` clean;secret leak 检查(`provider-runtime-secret` 不在 event stream/text 中,smoke 已有此断言)。
+
+**Memo/replay(§12.6/§12.14)交互:** `CapabilityMemoEntry`(`workflow_recovery.hpp:81-94`)只存 ordinal/cap_id/arg_hash/result——不存 attempts/cache_hit/usage/degraded。replay 服务 bare Success。两个 lane 在 replay 时发射相同事件(bare Success → 一个 `CapabilityStarted` + 一个 `CapabilityCompleted`,无 retry/degraded/usage)。**PARITY,无交互。** memo replay 不经过 projection helper(replay 路径在 `workflow_session.cpp` 的 memo check 处直接返回,不 collect cap_call);若 replay 也需要 parity(未来 slice),helper 可复用——但本 slice 不改 replay 路径。
+
+**WH-9 交互:** §12.7.3 删除 evaluator target + `WorkflowRuntime`/`agent_runtime`/`capability_eval`。`capability_bridge.hpp` 与 `capability_event_projection.{hpp,cpp}` 被 wasm lane 使用,**不能删**——WH-9 big-bang 必须把它们 relocate 到 shared location(或 `wasm_host/`)。这是 WH-9 的 prerequisite,记入 WH-9 的 deletion manifest。evaluator 的 synthesis loop call site 在 WH-9 删除后,helper 成为唯一实现。
+
+#### 12.15.18.2 GAP 9 — non-final String PtrLen carry + cross-node String edges
+
+**Empirical signature(file:line):**
+
+`examples/execution-demo` 的 IntakeWorkflow 在编译 intake.ahfl 的 Normalize state 时失败:`ctx.normalized_service = input.service;`——String I_k→C_k copy 在 non-final goto handler 中。错误是 `wasm.UNSUPPORTED_WORKFLOW_FRAME`(read gate)。
+
+两个 gate 共同阻止此模式:
+
+- **READ GATE:** `core_wasm_codegen.cpp:4612-4620`——`if (edge_is_ptr_len(leaf->edge)) { if (!final_return_mode_ && bridge_registry_ == nullptr) return reject(...) }`。String PtrLen read 只在 computed-final handler(`final_return_mode_=true`)或 bridge handler(`bridge_registry_ != nullptr`)中允许。Normalize 是 non-final goto handler 且无 bridge → reject。
+- **STORE GATE:** `core_wasm_codegen.cpp:7234-7269`——String ctx store 要求 rodata literal(`:7244-7251`,WH-5c.3 后允许)或 bridge-provenance(`:7258`,`value_derives_from_bridge_result`);input-borrowed String 在 `:7259-7265` 被 REJECT。
+
+**Full chain map(execution-demo 全部文件的 String gate 状态):**
+
+| 文件 / state | 操作 | gate 状态 |
+|--------------|------|-----------|
+| intake.ahfl / Normalize | `ctx.normalized_service = input.service;`(I_k→C_k String copy,non-final) | **READ + STORE GATE 阻止(本 gap)** |
+| intake.ahfl / Done | computed-final 构造 IntakeResult(String leaves 从 ctx/input) | 已允许(`final_return_mode_=true`,read gate 放行) |
+| decision.ahfl / Evaluate | `ctx.reason = "literal";`(rodata store) | 已允许(`:7244-7251`,WH-5c.3 后) |
+| decision.ahfl / Done | computed-final 读 ctx.reason | 已允许 |
+| main.ahfl / `node decide: DecisionAgent(intake)` | bare forward(P6→P6 whole-struct,String fields) | 已工作(materializer `store_operand:16126` + `copy_inline_leaf:16156-16158` 拷贝 PtrLen header;child-dereference gate `:12100-12143` 不 reject PtrLen) |
+| main.ahfl / `node respond: ResponderAgent(ResponseInput{...String leaves...})` | constructed input(String fields 从 intake/decision 的 output) | 已工作(同上;`copy_inline_leaf` 处理 PtrLen) |
+| response.ahfl / Compose | bridge lane(5c.1)+ `ctx.summary = draft.summary`(bridge-provenance store) | 已工作(5c.1 + `:7258` bridge-provenance) |
+| response.ahfl / Done | computed-final | 已允许 |
+
+**结论:只有 intake/Normalize 需要修复。** 其余全部已工作(WH-5c.1/5c.3 + 现有 materializer PtrLen 拷贝)。
+
+**决策:borrow model + 两个 gate lift。**
+
+机制:non-final handler 中,String PtrLen 的 8-byte header(payload_ptr: u32 + byte_len: u32)从 I_k slot 拷贝到 C_k slot(两个 i32 store,复用现有 `ptrlen_ctx_store_needed_`/`ctx_store_addr_local_` machinery,`:2857-2863`);payload bytes **borrow immutable** 自己授权的 page region——不拷贝、不分配新 region。
+
+授权的 payload region(全部 fixed-page、immutable-after-init、whole-run-persistent):
+
+1. **rodata** `[256, 1024)`(`core_wasm_abi_constants.hpp`)——String literal,WH-5c.3 后已支持。
+2. **entry payload arena**(input frame `[1024, 4096)` 的 String payload)——workflow entry 的 String payload 在 entry pack 时写入,whole-run 只读。
+3. **upstream O_k block**(`[12288, 16384)` per-node)——上游 node 的 output String payload,在 node 完成后只读;downstream node 的 I_k 在 dispatch 时从 upstream O_k materialize,borrow 在 downstream node 执行期间有效(upstream O_k 不被 zero-fill——C_k 才被 zero-fill,`:16628-16634`)。
+4. **bridge result placement**——capability 返回的 String payload 由 host 写入 scratch/bridge region,在 agent 执行期间只读。
+
+C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-handler。Normalize 写入的 String PtrLen 在同一 node 的 Done handler 中持久存在(C_k slot 不被 re-zero);payload(borrowed,不在 C_k)不受 zero-fill 影响。
+
+**与 §12.15.17.2(c) GAP 7 collection header-copy 的对比:** GAP 7 的 collection construct operand 拷贝 collection **header**(`base: u32, len: u32`,8 bytes inline),elements 留在 shared backing region(`kP6CollectionBackingBase=16384`)immutable borrow。GAP 9 的 String PtrLen carry 是**同一 borrow model 的应用**:8-byte header 拷贝,payload borrow immutable。区别只在 payload region:collection 用 shared backing region;String 用 rodata/entry arena/upstream O_k/bridge placement(都是已授权的 immutable region)。两个决策一致:AHFL 的 P6 frame 对 variable-length payload(String bytes、collection elements)统一采用 header-copy + payload-borrow,不拷贝 payload bytes。
+
+**被否决的替代方案:**
+
+- **new region/copy model(为 String payload 分配新 page region 并拷贝 bytes)— REJECTED。** (1) 浪费 page capacity:String payload 可能很大,拷贝到新 region 会快速耗尽 64KiB page;(2) 发明第三种机制(rodata literal / bridge-provenance / new-region-copy),违反 Principle 1(一个干净的大重构 > 一百个小 workaround);(3) GAP 7 的 collection header-copy 已确立 borrow model 先例,String 应遵循同一模型;(4) payload 的 immutability 已由 region 语义保证(rodata/entry arena/upstream O_k/bridge placement 都是 immutable-after-init),拷贝不增加安全性。
+- **把 String 编码为 opaque JSON blob 进 P6 frame — REJECTED。** 与 GAP 7 的同类否决一致(§12.15.17.2):opaque JSON 是并行 type system,违反 Principle 1/3;String 已有 P4-D PtrLen 布局。
+- **把 GAP 9 fold 进 WH-5c.7(GAP 7 rich type matrix)— REJECTED(保持独立)。** 理由:(1) gate 不同——GAP 9 是 read gate(`:4612-4620`)+ store gate(`:7258-7265`)的 lift;GAP 7 是 construct/let/materializer 的 4-layer widening(`plan_construct_operand`、`emit_construct_store`、`plan_let_binding`、scheduler materializer)。(2) test driver 不同——GAP 9 由 #424(execution-demo full run)驱动;GAP 7 由 #427(capability_bindings smoke + rich-shapes conformance case)驱动。(3) scope 不同——GAP 9 是 2 个 gate lift(~70 LOC codegen);GAP 7 是 9 类类型的 4-layer widening(~350 LOC codegen)。(4) risk 不同——GAP 9 的 borrow model 是 GAP 7 先例的直接应用,风险低;GAP 7 引入新类型(f64/Unit/Collection/inline-enum)的 construct/materialize 路径,风险高。合并会让 GAP 7 的大 blast radius 阻塞 GAP 9 的窄修复。
+- **evaluator fallback — REJECTED。** Principle 1;evaluator 在 WH-6 cutover 后不可达。
+
+**AHFL-specific divergence note:** Rust/Swift 的 String 是 owned(heap-allocated,move semantics);AHFL 的 P6 frame 是 fixed 64KiB page,无法为每个 String carry 分配 heap。AHFL 的选择是 PtrLen(header)+ immutable borrow(payload):String 的物理表示是 8-byte inline header,指向 page 内一个 immutable-after-init region。这与 Rust 的 `&str`(borrowed string slice)语义接近,但 borrow 的 lifetime 是 whole-run(不是 lexical scope)——由 page region 的 immutability 保证,不是 borrow checker。这是 AHFL 在 wasm3 单 page 约束下的自然选择:variable-length payload 不进 frame,frame 只持有 header。
+
+**Builder 指令:**
+
+1. **Lift read gate。** `core_wasm_codegen.cpp:4612-4620`:删除 `if (!final_return_mode_ && bridge_registry_ == nullptr) return reject(...)` 对 PtrLen read 的限制。non-final handler 无 bridge 现在可以 read String PtrLen from I_k/C_k。设 `ptrlen_read_needed_ = true`(现有 flag,`:2857-2863`)以分配 read temp。emit 路径(`:6889-6902`)已工作,不另 gate。
+2. **Lift store gate + input-frame provenance。** `core_wasm_codegen.cpp:7258-7265`:新增第三个 provenance——input-frame projection。新增 helper `value_derives_from_input_frame`(类比 `value_derives_from_bridge_result` `:3164-3207`,但 root 是 `CorePathRoot::Input`):value 的 defining expr 是 `CorePathExpr` with root=Input(直接,或经 let-alias DAG walk)。这证明 payload 在 entry payload arena / upstream O_k(都是 whole-run-stable immutable region)。
+3. **Fail-closed 保持。** String store 的 value 若不是 rodata literal、不是 bridge-derived、不是 input-frame-projected,保持 reject(`:7259-7265` 的现有 diagnostic,message 更新为命名三个授权 provenance)。每个新增/更新的 reject diagnostic 携带 SourceRange(Principle 5)。
+4. **无 new region、无 payload copy。** payload bytes borrow immutable from 授权 region(rodata/entry arena/upstream O_k/bridge placement)。8-byte PtrLen header 拷贝(两个 i32 store via 现有 `ptrlen_ctx_store` machinery)。
+5. **C_k lifetime 确认。** C_k zero-fill 是 once-per-node(`:16628-16634`),Normalize 写入的 String PtrLen 持久到 Done。无代码变更,但 builder 应加 test 验证(non-final 写 → final 读)。
+6. **Cross-node edges 无变更。** scheduler materializer 的 `store_operand`(`:16090-16142`)+ `copy_inline_leaf`(`:16147-16159`)已处理 PtrLen;child-dereference gate(`:12100-12143`)不 reject PtrLen。无代码变更。
+7. **不做:** 不分配新 page region、不拷贝 payload bytes、不引入 opaque JSON、不 fold 进 WH-5c.7、不 bump wire/manifest/snapshot version(§12.15.8 不变)。
+
+**Affected files + LOC:**
+
+| 文件 | LOC delta | Notes |
+|------|-----------|-------|
+| `src/compiler/backends/wasm/core_wasm_codegen.cpp` | +70 | read gate lift(~10)+ store gate lift + `value_derives_from_input_frame`(~50)+ diagnostic message 更新(~10) |
+| Tests | +150 | #424 execution-demo full run + golden(String carry byte-parity) |
+| Docs | +60 | 本节 |
+| **Total** | **~280** | |
+
+**AC(mapped to #424):**
+
+| Test | Acceptance |
+|------|-----------|
+| #424 `ahflc.run.execution_demo.smoke` | exit 0;execution-demo 4 个 workflow(Intake/Decision/Response/main)全部在 wasm lane 编译+运行成功;output JSON 与 evaluator byte-parity;event stream 与 evaluator byte-parity(ordinal 除外) |
+| golden `wh5c_string_carry.ahfl`(新增) | non-final goto handler `ctx.s = input.s;` → final computed return 读 `ctx.s`;wasm 编译成功(无 `wasm.UNSUPPORTED_WORKFLOW_FRAME`);output String 与 input byte-identical |
+| fail-closed pin | String store from non-authorized provenance(如 scratch-computed String)仍被 reject,带 explicit diagnostic + SourceRange |
+
+**Additional gates:** ASan build & test clean;WASM=OFF build clean;fresh build `-Werror` clean。
+
+**Memo/replay(§12.6/§12.14)交互:** 无。String PtrLen carry 是 codegen 层的 frame 内操作,不经过 capability/memo 路径。memo replay 的 `(node, ordinal)` identity 与 String carry 正交。
+
+**WH-9 交互:** 无。GAP 9 是 codegen gate lift,不引入 evaluator 依赖的 runtime 组件。WH-9 删 evaluator 后,codegen 的 String carry 路径不变。
+
+#### 12.15.18.3 Sequencing(amends §12.15.17.5)
+
+§12.15.17.5 的顺序修订为:
+
+1. WH-5c.1(GAP 3 descriptor fix)— LANDED `70419ba1`(2026-10-02)。
+2. WH-5c.2(GAP 1 per-node blocks,APPROACH B per §12.15.16)— 实现完成,review 中(2026-10-02)。
+3. WH-5c.3(GAP 5 rodata)— 与 5c.2 同切片,review 中(2026-10-02)。
+4. WH-5c.4(GAP 2 opaque construct)。
+5. WH-5c.5(GAP 4 parity + fail-closed)。
+6. WH-5c.6(GAP 6 diagnostic SourceRange parity)。
+7. WH-5c.7(GAP 7 rich type matrix)。
+8. **WH-5c.8(GAP 8 provider-runtime capability lifecycle event parity)— 新增,排在 5c.7 后。**
+9. **WH-5c.9(GAP 9 non-final String PtrLen carry)— 新增,与 5c.8 并行(无依赖),可同 commit 或独立 commit。**
+10. WH-6(ahflc run cutover commit)— gated on §12.15.11 的全部 9 个 CLI smoke green(#213/#214/#421/#422/#423/#424/#425/#426/#427,#79 为 #421 的 cascade 自动解除)+ census 73/0 + ASan + WASM=OFF。
+
+**Gate revision:** §12.15.17.5 的 gate set 从 "5b.1 + 5b.3 + 5b.2 + 5c.1-5c.7" 扩展为 "5b.1 + 5b.3 + 5b.2 + **5c.1-5c.9**"。
+
+**5c.8 与 5c.9 的并行性:** 两者无代码依赖(5c.8 改 runtime event projection;5c.9 改 codegen gate)。可并行实现;但 WH-6 cutover gated on 两者都 green。
+
+#### 12.15.18.4 Census pin impact
+
+**GAP 8(#421):** 无 census impact。#421 是 CLI smoke test(`SingleFileCliTests.cmake:401`),不是 conformance census case。`kExpectedAgreed`/`kExpectedSkipped` 不变。
+
+**GAP 9(#424):** 无 census impact。#424 是 CLI smoke test(`SingleFileCliTests.cmake:434`),不是 conformance census case。execution-demo 的 4 个 workflow 若加入 conformance census 则 +4 agreed(但它们是 CLI smoke,不是 census case)。`kExpectedAgreed`/`kExpectedSkipped` 不变。
+
+**Census verdict:** §12.15.17.4 的预测(`kExpectedAgreed = 73`)不变。GAP 8/9 不增加 conformance census case。
+
+#### 12.15.18.5 LOC estimate
+
+| Component | LOC delta | Notes |
+|-----------|-----------|-------|
+| GAP 8(§12.15.18.1) | ~465 | projection helper + WasmCapabilityCall 精简 + 双 lane 调用 + session 失败路径 + tests |
+| GAP 9(§12.15.18.2) | ~280 | codegen gate lift + input-frame provenance + tests |
+| **Total** | **~745** | |
+
+#### 12.15.18.6 Prior-decision preservation
+
+- **§12.15.1-12.15.15:** 保留,不重写。GAP 1-5 的决策不变。
+- **§12.15.16(APPROACH B per-node blocks):** 保留。GAP 8/9 与 per-node cardinality 独立。
+- **§12.15.17(GAP 6/7):** 保留。GAP 9 的 borrow model 是 §12.15.17.2(c) collection header-copy 先例的应用;GAP 8 与 GAP 6/7 独立。
+- **§12.7(WH-6 cutover,无 fallback):** 保留。gate set 扩展(§12.15.18.3)。
+- **§12.7.3(WH-9 evaluator deletion):** 保留,但增加 prerequisite:`capability_bridge.hpp` + `capability_event_projection.{hpp,cpp}` 必须 relocate(不删)。
+- **§12.15.8(no version bump):** 不变。GAP 8/9 不增加 wire field(event projection 是 host-side;String carry 是 codegen 层 frame 操作)。AHFLXM v2 不 bump。
+- **§12.6/§12.14(memo/replay):** 保留。GAP 8/9 与 memo replay 正交(§12.15.18.1/18.2 交互节)。
