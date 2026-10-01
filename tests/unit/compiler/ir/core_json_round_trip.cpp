@@ -646,6 +646,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // event-record attribution are codegen-level, not Core-verifier
         // gates), so they belong in the lowering corpus.
         "wasm/wh5b_hybrid_cap_before_p6.ahfl",
+        // WH-5b.3: the Decimal fail-closed pin is rejected at host frame
+        // packing, not at Core lowering, so it still belongs here.
+        "wasm/wh5b_hybrid_decimal_fail_closed.ahfl",
         "wasm/wh5b_hybrid_kahn_reordered.ahfl",
         "wasm/wh5b_hybrid_opaque_return.ahfl",
         "wasm/wh5b_hybrid_opaque_to_p6.ahfl",
@@ -653,6 +656,10 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/wh5b_hybrid_p6_bridge.ahfl",
         "wasm/wh5b_hybrid_p6_to_opaque.ahfl",
         "wasm/wh5b_hybrid_resume.ahfl",
+        // WH-5b.3: rich-fidelity hybrid fixtures crossing ENTRY and
+        // NODE_OUTPUT boundaries lower to verifier-clean Core.
+        "wasm/wh5b_hybrid_rich_fidelity.ahfl",
+        "wasm/wh5b_hybrid_rich_p6_to_opaque.ahfl",
     };
 }
 
