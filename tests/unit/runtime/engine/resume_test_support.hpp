@@ -136,11 +136,25 @@ inline std::vector<std::uint8_t> custom_payload(const std::string &name,
     return p;
 }
 
+// WH-5b.2 (manifest v2): one in-runner bridge site. The ordinal is the
+// per-node execution ordinal (dense 0..N-1); call_site_id joins to the frame
+// section's bridge_call_sites table.
+struct ManifestBridgeSiteSpec {
+    std::uint8_t ordinal;
+    std::uint32_t call_site_id;
+    std::uint32_t capability;
+    std::uint64_t source_symbol;
+};
+
 struct ManifestNodeSpec {
     std::uint32_t workflow_node_id;
     std::uint8_t cap_call_count; // 0 identity or 1 capability
     std::uint32_t capability;
     std::uint64_t source_symbol;
+    // WH-5b.2: in-runner bridge sites (manifest v2 only). Empty for agent /
+    // opaque nodes; a P6 bridge node carries cap_call_count == 0 plus a
+    // non-empty bridge_sites list.
+    std::vector<ManifestBridgeSiteSpec> bridge_sites = {};
 };
 
 inline std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
@@ -150,7 +164,7 @@ inline std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
     for (char c : magic) {
         b.push_back(static_cast<std::uint8_t>(c));
     }
-    b.push_back(1); // version
+    b.push_back(2); // version (WH-5b.2: manifest v2)
     b.push_back(0); // entry.kind = Workflow
     put_uleb(b, entry_id);
     put_uleb(b, nodes.size());
@@ -162,6 +176,15 @@ inline std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
         if (n.cap_call_count == 1) {
             put_uleb(b, n.capability);
             put_uleb(b, n.source_symbol);
+        }
+        // WH-5b.2 (manifest v2): per-node bridge-site table, appended AFTER
+        // the capabilities array.
+        b.push_back(static_cast<std::uint8_t>(n.bridge_sites.size()));
+        for (const auto &site : n.bridge_sites) {
+            b.push_back(site.ordinal);
+            put_uleb(b, site.call_site_id);
+            put_uleb(b, site.capability);
+            put_uleb(b, site.source_symbol);
         }
     }
     return b;

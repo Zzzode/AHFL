@@ -242,24 +242,27 @@ class Reader {
         }
 
         const bool is_frontier = node.workflow_node_id == r.suspended_node_id;
-        if (node.node_kind == NodeKind::Identity && !node.memo.empty()) {
-            return error("resume record identity node carries a memo");
-        }
-        if (node.node_kind == NodeKind::Identity && node.pending.has_value()) {
-            return error("resume record identity node carries a pending");
-        }
+        // WH-5b.2: a P6 bridge node has node_kind Identity (cap_call_count 0)
+        // but carries in-runner bridge calls, so it CAN hold memo/pending
+        // entries. The A1 record-level check cannot distinguish a P6 bridge
+        // node from a pure identity node (the distinction lives in the
+        // manifest bridge-sites table); the coordinate gate in the resume
+        // controller enforces that a pure identity node has empty memo and
+        // no pending, while a P6 bridge node may carry both.
         if (node.pending.has_value() && !is_frontier) {
             return error("resume record pending is on a non-frontier node");
         }
     }
 
-    // The frontier node is nodes.back() and must be a capability node.
+    // The frontier node is nodes.back() and must be the suspended node.
+    // WH-5b.2: the frontier can be a Capability node (opaque cap site) or a
+    // P6 bridge node (scheduler-boundary identity + in-runner bridge-site
+    // table). The coordinate gate in the resume controller enforces the
+    // module-specific distinction; the A1 check only verifies the structural
+    // invariant that the suspended node is the last scheduled node.
     const ResumeNode &frontier = r.nodes.back();
     if (!(frontier.workflow_node_id == r.suspended_node_id)) {
         return error("resume record suspended node is not the last scheduled node");
-    }
-    if (frontier.node_kind != NodeKind::Capability) {
-        return error("resume record frontier node is not a capability node");
     }
 
     // resume_state coupling.

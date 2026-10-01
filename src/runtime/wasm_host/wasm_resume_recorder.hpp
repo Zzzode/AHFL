@@ -84,10 +84,24 @@ class WasmResumeRecorder {
     // wrapped invoker mutates it (arg_hash / result / pending).
     [[nodiscard]] CurrentImport *current_import() noexcept;
 
-    // Append an ExactSidecar memo entry from the current import. Called by
-    // the wrapper after a successful reply, with the exact wire bytes read
-    // from guest memory (never re-serialized).
-    void append_memo_entry(std::string authoritative_json);
+    // Append a memo entry from the current import. Called by the wrapper
+    // after a successful reply.
+    //
+    // ExactSidecar (opaque lane): the caller supplies the exact wire JSON
+    // bytes read from guest memory (never re-serialized). The entry carries
+    // authoritative_json = those bytes.
+    //
+    // NativeOnly (bridge lane, WH-5b.2): the bridge result is a P4-D binary
+    // frame, not JSON. The entry carries the native Value (cloned from the
+    // invoker result) and NO authoritative_json. The persistence layer
+    // serializes the Value to wire JSON via try_value_to_json; on reload the
+    // entry becomes ExactSidecar with wire-JSON authoritative_json, and the
+    // replay MemoHit path re-packs it through pack_bridge_result_value (the
+    // same packing the Frontier path uses).
+    void append_memo_entry(
+        std::string authoritative_json,
+        PersistedMemoResultSource source =
+            PersistedMemoResultSource::ExactSidecar);
 
     // Stamp the pending coordinate from the current import.
     void stamp_pending();

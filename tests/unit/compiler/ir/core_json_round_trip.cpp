@@ -492,7 +492,7 @@ lower_golden_file(const std::filesystem::path &path) {
 
 /// The pinned set, asserted to equal what directory discovery finds right now.
 [[nodiscard]] std::vector<std::string> pinned_core_corpus() {
-    return {
+    std::vector<std::string> pinned = {
         "formal/fail_bounded_data_semantics.ahfl",
         "formal/fail_real_smv_control.ahfl",
         "formal/fail_smt_bmc_refuted.ahfl",
@@ -656,11 +656,18 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/wh5b_hybrid_p6_bridge.ahfl",
         "wasm/wh5b_hybrid_p6_to_opaque.ahfl",
         "wasm/wh5b_hybrid_resume.ahfl",
+        // WH-5b.2 AC10: one P6 agent with two sequential in-handler bridge
+        // calls (ordinal 0 ok/memoized, ordinal 1 Pending/suspend) lowers to
+        // verifier-clean Core; the codegen static ordinal assignment is
+        // execution-order sound for the straight-line call sequence.
+        "wasm/wh5b2_two_bridge_calls.ahfl",
         // WH-5b.3: rich-fidelity hybrid fixtures crossing ENTRY and
         // NODE_OUTPUT boundaries lower to verifier-clean Core.
         "wasm/wh5b_hybrid_rich_fidelity.ahfl",
         "wasm/wh5b_hybrid_rich_p6_to_opaque.ahfl",
     };
+    std::sort(pinned.begin(), pinned.end());
+    return pinned;
 }
 
 } // namespace

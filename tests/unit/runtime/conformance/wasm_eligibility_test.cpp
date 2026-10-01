@@ -381,6 +381,16 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // WH-5b.2: hybrid P6-bridge + opaque workflow DAG. The module emits
+        // P6Frame (3 nodes, 2 imports); the bridge PENDING arm suspends the
+        // workflow at the first bridge node. Runnable on the orchestration
+        // lane; the suspend outcome is pinned by the case scenario, not by
+        // eligibility.
+        {"wh5b_bridge_pending_suspend.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

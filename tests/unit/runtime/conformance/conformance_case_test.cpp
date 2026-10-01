@@ -568,6 +568,16 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
             WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
         },
+        // WH-5b.2: hybrid P6-bridge + opaque workflow that suspends at the
+        // first bridge node's PENDING arm. The scenario expects run_status
+        // suspended (not completed), so the run_status pin below admits both.
+        {
+            "wh5b_bridge_pending_suspend.case.json",
+            "tests/golden/wasm/wh5b_hybrid_p6_bridge.ahfl",
+            CaseKind::Workflow,
+            "wasm::wh5b_hybrid_p6_bridge::HybridBridgePipeline",
+            2, 1, WasmEligibility::Orchestration,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";
@@ -647,8 +657,12 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             check(!scenario.name.empty(), "scenario carries a name: " + file_name);
             check(!scenario.input_json.empty(),
                   "scenario '" + scenario.name + "' carries canonical input: " + file_name);
-            check(scenario.expect.run_status == ExpectedRunStatus::Completed,
-                  "expected completed run: " + file_name + "/" + scenario.name);
+            // A census scenario either runs to completion or suspends at a
+            // pending capability arm (WH-5b.2 bridge-pending case); both are
+            // pinned expected outcomes, not failures.
+            check(scenario.expect.run_status == ExpectedRunStatus::Completed ||
+                      scenario.expect.run_status == ExpectedRunStatus::Suspended,
+                  "expected completed or suspended run: " + file_name + "/" + scenario.name);
             if (manifest.kind == CaseKind::Agent) {
                 check(!scenario.expect.state_sequence.empty(),
                       "agent scenario carries state sequence: " + file_name + "/" +

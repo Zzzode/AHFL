@@ -1,0 +1,81 @@
+// WH-5b.2 AC10 determinism fixture: ONE P6-packaged agent with TWO
+// sequential in-handler capability bridge calls (ordinal 0 then ordinal 1).
+// Call A returns ok and is memoized; call B returns Pending and suspends the
+// workflow. On resume (fresh-instance replay), ordinal 0 is a MemoHit
+// (injected from the recorded memo) and ordinal 1 is the Frontier (injected
+// with the host-supplied pending result). The workflow completes.
+//
+// This fixture proves the codegen static ordinal (dense index in
+// plan.workflow_bridge_sites, handler-planning order) equals the dynamic
+// recorder ordinal (per_node_counters_ in execution order) for sequential
+// calls. The states are listed in transition order (Done, CallA, CallB,
+// Decide) so the state-index planning order matches the execution order
+// (Decide -> CallA -> CallB -> Done), making static ordinal N == dynamic
+// ordinal N.
+//
+// The module emits P6Frame (1 node, 1 import). This is a plain ctest fixture
+// (no conformance case.json); it is registered in the core_json_round_trip
+// pinned corpus and driven by wasm_workflow_resume_e2e.
+
+module wasm::wh5b2_two_bridge_calls;
+
+pub struct Frame {
+    n: Int;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+capability Bridge(n: Int) -> Frame;
+
+// P6-packaged agent: computed-goto + TWO sequential in-handler capability
+// bridge calls + computed-final. Call A (ordinal 0) stores its result in
+// ctx.tag; call B (ordinal 1) uses ctx.tag as its argument. The sequential
+// data dependency (B reads ctx.tag written by A) forces the execution order
+// A then B, so the static ordinal assignment is execution-order sound.
+pub agent TwoCallAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, CallA, CallB, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [Bridge];
+    transition Decide -> CallA;
+    transition CallA -> CallB;
+    transition CallB -> Done;
+}
+
+flow for TwoCallAgent {
+    state Decide {
+        goto CallA;
+    }
+
+    state CallA {
+        // Ordinal 0: first bridge call. Returns ok -> memoized.
+        let result_a = Bridge(input.n);
+        ctx.tag = result_a.n;
+        goto CallB;
+    }
+
+    state CallB {
+        // Ordinal 1: second bridge call. Returns Pending -> suspends.
+        let result_b = Bridge(ctx.tag);
+        ctx.tag = result_b.n;
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: ctx.tag };
+    }
+}
+
+pub workflow TwoBridgeCalls {
+    input: Frame;
+    output: Frame;
+
+    node runner: TwoCallAgent(input);
+
+    return: runner;
+}

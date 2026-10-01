@@ -1,0 +1,35 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/wh5b_hybrid_p6_bridge.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::wh5b_hybrid_p6_bridge::HybridBridgePipeline",
+  "scenarios": [
+    {
+      "name": "bridge_pending_suspends",
+      "input": {"_type":"wasm::wh5b_hybrid_p6_bridge::Frame","n":42},
+      "expect": {
+        "run_status": "suspended",
+        "state_sequence": [],
+        "capability_sequence": ["wasm::wh5b_hybrid_p6_bridge::Bridge"]
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "wasm::wh5b_hybrid_p6_bridge::Bridge",
+      "status": "pending"
+    },
+    {
+      "name": "wasm::wh5b_hybrid_p6_bridge::Echo",
+      "status": "ok",
+      "result_json": {"_type":"wasm::wh5b_hybrid_p6_bridge::Frame","n":42}
+    }
+  ],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "hybrid P6-bridge + opaque workflow DAG; the bridge PENDING arm latches and returns (PENDING,0,0) from the P6 runner, suspending the workflow at the first bridge node (WH-5b.2)"
+    }
+  }
+}

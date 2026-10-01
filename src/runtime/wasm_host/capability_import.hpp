@@ -155,4 +155,60 @@ decode_opaque_import_args(
     std::uint32_t import_ordinal,
     std::span<const std::uint8_t> param_frame);
 
+/// WH-5b.2: the resolved bridge call site for an import observation. The
+/// session memo-replay layer uses this to capture (origination) and inject
+/// (replay) the exact P4-D frame + String payload bytes at the site's
+/// disjoint result placement.
+struct ResolvedBridgeSite {
+    std::size_t site_index{0};
+    const ir::core::CoreFrameBridgeCallSite *site{nullptr};
+};
+
+/// WH-5b.2: resolve the bridge call site from the import observation's
+/// scalar_arg (the control-block pointer). Validates the block pointer is in
+/// the dense fixed-stride control region, stride-aligned, and names the
+/// expected site. Returns nullopt + sets error on any structural failure.
+[[nodiscard]] std::optional<ResolvedBridgeSite>
+resolve_bridge_call_site(const ir::core::CoreFrameLayoutSection &section,
+                         std::uint32_t block_ptr,
+                         CapabilityImportError &error) noexcept;
+
+/// WH-5b.2: find a bridge call site by its call_site_id (the manifest
+/// bridge-sites table joins to the frame section on this id). Returns nullptr
+/// when no site carries the id.
+[[nodiscard]] const ir::core::CoreFrameBridgeCallSite *
+find_bridge_site_by_id(const ir::core::CoreFrameLayoutSection &section,
+                       std::uint32_t call_site_id) noexcept;
+
+/// WH-5b.2: decode a bridge call's P4-D arguments into host Values. Shared by
+/// handle_bridge (live) and the session memo-replay layer (arg_hash), so the
+/// origination and replay arg_hash are computed by the SAME code path. The
+/// caller supplies the resolved call site (for the wire binding), bridge site
+/// (for the P4-D layouts + spill regions), and control-block pointer (the
+/// descriptor addresses are read at block_ptr + 8 + 8*i).
+[[nodiscard]] std::optional<std::vector<runtime::Value>>
+decode_bridge_import_args(
+    const ir::core::CoreFrameLayoutSection &section,
+    const core_wasm_schema_module::VerifiedCoreWasmCallSite &call_site,
+    const ir::core::CoreFrameBridgeCallSite &site,
+    std::uint32_t block_ptr,
+    std::span<const std::uint8_t> whole_memory,
+    CapabilityImportError &error);
+
+/// WH-5b.2: pack a host Value into a bridge call site's disjoint result
+/// placement (the same packing handle_bridge performs on a live success).
+/// Used by the session memo-replay layer's Frontier path to inject the
+/// pending capability result without invoking the capability. Zero-fills the
+/// frame region, packs the value via pack_value_at (String bytes bump into
+/// the site's result_payload arena), and returns the ImportReply identical in
+/// shape to live placement.
+[[nodiscard]] core_wasm_resume_engine::ImportCallbackResult
+pack_bridge_result_value(
+    Wasm3ResumeEngine &engine,
+    const ir::core::CoreFrameLayoutSection &section,
+    const core_wasm_schema_module::VerifiedCoreWasmCallSite &call_site,
+    const ir::core::CoreFrameBridgeCallSite &site,
+    runtime::Value value,
+    CapabilityImportError &error);
+
 } // namespace ahfl::runtime::wasm_host

@@ -61,7 +61,7 @@ using ahfl::conformance::run_native_scenario;
 // eligible case must compile and agree. The skip set is pinned to 0: the
 // facade never depends on an external embedding, so there is no legitimate
 // skip path (a compile failure is a hard failure, not a skip).
-constexpr int kExpectedNativeAgreed = 66;
+constexpr int kExpectedNativeAgreed = 67;
 constexpr int kExpectedNativeSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare

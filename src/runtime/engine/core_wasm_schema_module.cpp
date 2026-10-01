@@ -40,7 +40,7 @@ namespace {
 constexpr std::string_view kExecManifestSectionName = "ahfl.wasm-exec-manifest.v1";
 constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
 constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 'X', 'M'};
-constexpr std::uint8_t kExecManifestVersion = 1;
+constexpr std::uint8_t kExecManifestVersion = 2;
 
 // The exact capability import contract (mirrors the C3 inspector).
 constexpr std::string_view kCapabilityImportModule = "ahfl_cap";
@@ -676,6 +676,11 @@ struct ManifestNode {
     // One entry per capability call site on this node (cap_call_count entries).
     // A P6 bridge node can call multiple capabilities across different branches.
     std::vector<ManifestCapability> capabilities;
+    // WH-5b.2 (manifest v2): the node's in-runner bridge call sites. A P6 bridge
+    // node has cap_call_count == 0 (its scheduler completion is a tag-0 identity
+    // event) and accounts its in-handler bridge imports here. Empty for an opaque
+    // cap site or a pure identity node.
+    std::vector<ManifestBridgeSite> bridge_sites;
 };
 
 struct DecodedWorkflowManifest {
@@ -800,6 +805,10 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
     manifest.nodes.reserve(*node_count);
     std::unordered_set<std::uint32_t> seen_ids;
     seen_ids.reserve(*node_count);
+    // WH-5b.2: workflow-wide call_site_id uniqueness (a bridge site's call_site_id
+    // joins to the frame section; a duplicate would make the result-placement
+    // join ambiguous).
+    std::unordered_set<std::uint32_t> seen_bridge_call_site_ids;
     for (std::uint32_t i = 0; i < *node_count; ++i) {
         ManifestNode node;
         const auto node_id = cursor.u32();
@@ -825,6 +834,16 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
             diagnostics.push_back(error("exec-manifest cap_call_count is out of range"));
             return std::nullopt;
         }
+        // P2-6: cap_call_count is the scheduler-boundary binary byte. The codegen
+        // emits 0 (identity: a P6 bridge node or a pure compute node) or 1 (a single
+        // opaque capability call site); the opaque lane is arity-1, so no legitimate
+        // node carries more than one capability in this byte. Reject anything else
+        // rather than silently reading a capability table the scheduler cannot model.
+        if (*cap_call_count > 1) {
+            diagnostics.push_back(
+                error("exec-manifest cap_call_count must be 0 or 1"));
+            return std::nullopt;
+        }
         node.cap_call_count = *cap_call_count;
         node.capabilities.reserve(*cap_call_count);
         for (std::uint8_t c = 0; c < *cap_call_count; ++c) {
@@ -841,6 +860,60 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
             }
             node.capabilities.push_back(
                 ManifestCapability{CoreCapabilityId{*capability}, *source_symbol});
+        }
+        // WH-5b.2 (manifest v2): the in-runner bridge-site table.
+        const auto bridge_site_count = cursor.byte();
+        if (!bridge_site_count.has_value()) {
+            diagnostics.push_back(error("exec-manifest bridge_site_count is out of range"));
+            return std::nullopt;
+        }
+        node.bridge_sites.reserve(*bridge_site_count);
+        for (std::uint8_t b = 0; b < *bridge_site_count; ++b) {
+            const auto ordinal = cursor.byte();
+            if (!ordinal.has_value() || *ordinal != b) {
+                // Per-node ordinals must be dense 0..N-1 (the host recorder's
+                // per_node_counters_ assigns them in execution order; a gap or
+                // duplicate would make the (node, ordinal) -> call_site_id join
+                // ambiguous).
+                diagnostics.push_back(
+                    error("exec-manifest bridge site ordinal is not dense"));
+                return std::nullopt;
+            }
+            const auto call_site_id = cursor.u32();
+            if (!call_site_id.has_value()) {
+                diagnostics.push_back(error("exec-manifest bridge call_site_id is malformed"));
+                return std::nullopt;
+            }
+            if (!seen_bridge_call_site_ids.insert(*call_site_id).second) {
+                diagnostics.push_back(
+                    error("exec-manifest bridge call_site_id is not unique"));
+                return std::nullopt;
+            }
+            const auto capability = cursor.u32();
+            if (!capability.has_value() || *capability == CoreCapabilityId::kInvalid) {
+                diagnostics.push_back(
+                    error("exec-manifest bridge capability is missing or the invalid sentinel"));
+                return std::nullopt;
+            }
+            const auto source_symbol = cursor.u64();
+            if (!source_symbol.has_value()) {
+                diagnostics.push_back(error("exec-manifest bridge source symbol is malformed"));
+                return std::nullopt;
+            }
+            node.bridge_sites.push_back(
+                ManifestBridgeSite{*ordinal, *call_site_id,
+                                   CoreCapabilityId{*capability}, *source_symbol});
+        }
+        // P2-7: a node is either an opaque capability call (cap_call_count 1, no
+        // in-runner bridge sites) or a P6 bridge node (cap_call_count 0 + a
+        // non-empty bridge-site table). The two are mutually exclusive: the
+        // scheduler-boundary byte and the in-runner site table must not both
+        // declare capability calls on the same node, or the resume classifier
+        // could not tell which authority owns the node's completion.
+        if (node.cap_call_count != 0 && !node.bridge_sites.empty()) {
+            diagnostics.push_back(error(
+                "exec-manifest node mixes an opaque capability call with bridge sites"));
+            return std::nullopt;
         }
         manifest.nodes.push_back(node);
     }
@@ -952,6 +1025,14 @@ void encode_exec_manifest(std::vector<std::uint8_t> &out, const DecodedManifest 
                         put_u32(cap.capability.value);
                         put_u64(cap.source_symbol);
                     }
+                    // WH-5b.2 (manifest v2): the in-runner bridge-site table.
+                    out.push_back(static_cast<std::uint8_t>(node.bridge_sites.size()));
+                    for (const ManifestBridgeSite &site : node.bridge_sites) {
+                        out.push_back(site.ordinal);
+                        put_u32(site.call_site_id);
+                        put_u32(site.capability.value);
+                        put_u64(site.source_symbol);
+                    }
                 }
             }
         },
@@ -986,6 +1067,9 @@ ManifestNodeIndex VerifiedCoreWasmNode::schedule_pos() const noexcept {
 }
 std::uint8_t VerifiedCoreWasmNode::cap_call_count() const noexcept {
     return payload_->nodes[node_index_].cap_call_count;
+}
+std::span<const ManifestBridgeSite> VerifiedCoreWasmNode::bridge_sites() const noexcept {
+    return payload_->nodes[node_index_].bridge_sites;
 }
 
 ir::core::CoreWorkflowNodeId VerifiedCoreWasmCallSite::workflow_node_id() const noexcept {
@@ -1332,6 +1416,25 @@ struct SchemaModuleFactory {
                         for (const ManifestCapability &cap : node.capabilities) {
                             if (!resolve_capability_call_site(cap.capability,
                                                               cap.source_symbol, n)) {
+                                call_sites_ok = false;
+                                return;
+                            }
+                        }
+                        // WH-5b.2: a P6 bridge node's in-runner bridge sites
+                        // account its capabilities for the admission-set
+                        // equality. Mint one call site per UNIQUE capability:
+                        // a capability can occupy multiple bridge sites, but
+                        // the Param/Result bindings are identical and
+                        // resolve_import_call_site resolves by import_ordinal
+                        // (per-capability), so a second mint would create an
+                        // ambiguous duplicate.
+                        std::unordered_set<std::uint32_t> seen_bridge_caps;
+                        for (const ManifestBridgeSite &site : node.bridge_sites) {
+                            if (!seen_bridge_caps.insert(site.capability.value).second) {
+                                continue;
+                            }
+                            if (!resolve_capability_call_site(site.capability,
+                                                              site.source_symbol, n)) {
                                 call_sites_ok = false;
                                 return;
                             }

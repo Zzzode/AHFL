@@ -32,6 +32,7 @@ using core_wasm_resume::ResumeState;
 using core_wasm_schema_module::ArtifactDigest;
 using core_wasm_schema_module::ManifestCallSiteIndex;
 using core_wasm_schema_module::ManifestNodeIndex;
+using core_wasm_schema_module::VerifiedCoreWasmNode;
 using core_wasm_schema_module::VerifiedCoreWasmSchemaModule;
 
 // A2 baseline coordinate gate constants: an identity node has cap_call_count 0, a
@@ -305,12 +306,50 @@ capability_identity_matches(const VerifiedCoreWasmSchemaModule &module,
            cs.call_site->invocation_ordinal() == InvocationOrdinal{0};
 }
 
+// WH-5b.2: whether a manifest node is a P6 bridge node (scheduler-boundary
+// identity + non-empty in-runner bridge-site table). A P6 bridge node's
+// cap_call_count is 0 (its completion is a tag-0 identity event), but it
+// carries in-handler bridge imports accounted in the manifest v2 bridge-sites
+// table. Distinct from a pure identity node (cap_call_count 0 + no bridge
+// sites), which has no memo/pending state.
+[[nodiscard]] bool
+is_p6_bridge_node(const VerifiedCoreWasmNode &node) {
+    return node.cap_call_count() == kIdentityCallCount &&
+           !node.bridge_sites().empty();
+}
+
+// WH-5b.2: cross-check a P6 bridge node's pending/memo coordinate against the
+// manifest bridge-sites table. The ordinal is the per-node bridge-call ordinal
+// (dense 0..N-1, validated by the A2 decoder); the bridge site at that ordinal
+// must carry the same capability + source_symbol. Distinct from
+// capability_identity_matches (which joins the A2 call site, absent for a
+// cap_call_count==0 node).
+[[nodiscard]] bool
+bridge_identity_matches(const VerifiedCoreWasmSchemaModule &module,
+                        std::size_t schedule_pos, InvocationOrdinal ordinal,
+                        ir::core::CoreCapabilityId capability,
+                        std::uint64_t source_symbol) {
+    auto node = module.resolve_node(ManifestNodeIndex{schedule_pos});
+    if (!node.ok()) {
+        return false;
+    }
+    const auto sites = node.node->bridge_sites();
+    if (ordinal.value >= sites.size()) {
+        return false;
+    }
+    const auto &site = sites[static_cast<std::size_t>(ordinal.value)];
+    return site.capability == capability &&
+           site.source_symbol == source_symbol;
+}
+
 // The full phase-1 coordinate / A2-baseline / record-state gate. Runs on the
 // authenticated record WITHOUT any admitted slot, using the prebuilt schedule map for
 // O(1) identity joins. Enforces: entry_id match; a dense prefix (nodes.size() <=
 // module.node_count(), nodes[i].schedule_pos == i); the frontier (nodes.back()) is the
-// suspended capability node; the per-node state matrix; and every capability memo/pending
-// coordinate identity against its A2 call site.
+// suspended capability node OR a P6 bridge node (WH-5b.2: scheduler-boundary identity
+// + in-runner bridge-site table); the per-node state matrix; and every capability
+// memo/pending coordinate identity against its A2 call site (opaque) or the manifest
+// bridge-sites table (P6 bridge).
 [[nodiscard]] std::optional<ResumePrepareReason>
 coordinate_gate(const CoreWasmResumeRecord &record, const VerifiedCoreWasmSchemaModule &module,
                 const std::vector<std::optional<std::size_t>> &sched_map) {
@@ -322,9 +361,24 @@ coordinate_gate(const CoreWasmResumeRecord &record, const VerifiedCoreWasmSchema
     }
     const std::size_t frontier_index = record.nodes.size() - 1;
     const ResumeNode &frontier = record.nodes[frontier_index];
-    if (frontier.node_kind != core_wasm_resume::NodeKind::Capability ||
-        frontier.workflow_node_id != record.suspended_node_id) {
-        return ResumePrepareReason::CoordinateMismatch;
+    // WH-5b.2: the frontier must be a capability node (opaque cap site) OR a
+    // P6 bridge node (scheduler-boundary identity + in-runner bridge-site
+    // table). A pure identity node (no bridge sites) cannot be the suspended
+    // frontier: it carries no pending state.
+    {
+        const auto frontier_node =
+            module.resolve_node(ManifestNodeIndex{frontier_index});
+        if (!frontier_node.ok()) {
+            return ResumePrepareReason::CoordinateMismatch;
+        }
+        const bool frontier_cap =
+            frontier.node_kind == core_wasm_resume::NodeKind::Capability;
+        const bool frontier_bridge =
+            is_p6_bridge_node(*frontier_node.node);
+        if ((!frontier_cap && !frontier_bridge) ||
+            frontier.workflow_node_id != record.suspended_node_id) {
+            return ResumePrepareReason::CoordinateMismatch;
+        }
     }
 
     std::size_t pending_seen = 0;
@@ -338,41 +392,78 @@ coordinate_gate(const CoreWasmResumeRecord &record, const VerifiedCoreWasmSchema
             return ResumePrepareReason::CoordinateMismatch;
         }
         const bool is_capability = n.node_kind == core_wasm_resume::NodeKind::Capability;
+        // WH-5b.2: a P6 bridge node is scheduler-boundary identity
+        // (cap_call_count 0) but carries in-runner bridge imports. It is
+        // NOT a pure identity node: it can hold memo entries (earlier
+        // bridge calls) and a pending (the suspended bridge call).
+        const bool p6_bridge = is_p6_bridge_node(*node.node);
         const std::uint8_t want = is_capability ? kCapabilityCallCount : kIdentityCallCount;
         if (node.node->cap_call_count() != want) {
             return ResumePrepareReason::CoordinateMismatch;
         }
 
-        if (!is_capability) {
-            // Identity node: empty memo, never a pending.
+        if (!is_capability && !p6_bridge) {
+            // Pure identity node: empty memo, never a pending.
             if (!n.memo.empty() || n.pending.has_value()) {
                 return ResumePrepareReason::CoordinateMismatch;
             }
             continue;
         }
 
+        // Capability node OR P6 bridge node: both carry memo/pending state.
         const bool is_frontier = i == frontier_index;
         if (is_frontier && record.resume_state == ResumeState::Suspended) {
-            // Frontier, Suspended: empty memo + exactly one ordinal-0 pending.
+            // Frontier, Suspended: empty memo + exactly one pending.
             if (!n.memo.empty() || !n.pending.has_value()) {
                 return ResumePrepareReason::CoordinateMismatch;
             }
             ++pending_seen;
-            if (!capability_identity_matches(module, sched_map, i, n.pending->capability,
-                                             n.pending->source_symbol,
-                                             n.pending->invocation_ordinal)) {
-                return ResumePrepareReason::CoordinateMismatch;
+            if (is_capability) {
+                if (!capability_identity_matches(module, sched_map, i,
+                                                 n.pending->capability,
+                                                 n.pending->source_symbol,
+                                                 n.pending->invocation_ordinal)) {
+                    return ResumePrepareReason::CoordinateMismatch;
+                }
+            } else {
+                // WH-5b.2: P6 bridge frontier. Cross-check the pending
+                // coordinate against the manifest bridge-sites table
+                // (capability + source_symbol at the per-node ordinal).
+                if (!bridge_identity_matches(module, i,
+                                             n.pending->invocation_ordinal,
+                                             n.pending->capability,
+                                             n.pending->source_symbol)) {
+                    return ResumePrepareReason::CoordinateMismatch;
+                }
             }
         } else {
-            // Non-frontier capability, OR the Injected frontier: exactly one ordinal-0
-            // memo, no pending.
-            if (n.memo.size() != 1 || n.pending.has_value()) {
+            // Non-frontier, OR the Injected frontier: memo, no pending.
+            if (n.pending.has_value()) {
                 return ResumePrepareReason::CoordinateMismatch;
             }
-            const ResumeMemoEntry &m = n.memo[0];
-            if (!capability_identity_matches(module, sched_map, i, m.capability, m.source_symbol,
-                                             m.invocation_ordinal)) {
-                return ResumePrepareReason::CoordinateMismatch;
+            if (is_capability) {
+                // Capability: exactly one ordinal-0 memo.
+                if (n.memo.size() != 1) {
+                    return ResumePrepareReason::CoordinateMismatch;
+                }
+                const ResumeMemoEntry &m = n.memo[0];
+                if (!capability_identity_matches(module, sched_map, i,
+                                                 m.capability, m.source_symbol,
+                                                 m.invocation_ordinal)) {
+                    return ResumePrepareReason::CoordinateMismatch;
+                }
+            } else {
+                // WH-5b.2: P6 bridge node. 0..N memo entries (one per
+                // earlier bridge call), each cross-checked against the
+                // manifest bridge-sites table at its per-node ordinal.
+                for (const auto &m : n.memo) {
+                    if (!bridge_identity_matches(module, i,
+                                                 m.invocation_ordinal,
+                                                 m.capability,
+                                                 m.source_symbol)) {
+                        return ResumePrepareReason::CoordinateMismatch;
+                    }
+                }
             }
         }
     }

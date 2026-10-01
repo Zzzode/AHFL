@@ -1527,6 +1527,21 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     }
 
     if (workflow_suspended.has_value()) {
+        // WH-5b.2: every NodeScheduled is a lifecycle Start; the nodes never
+        // reached before the suspension would otherwise have no Terminal,
+        // failing validate_execution_events (MissingTerminal) and collapsing
+        // the report to the default Failed status. Emit NodeSkipped (empty
+        // blocking_dependencies — they were not reached, not blocked) so the
+        // event stream is lifecycle-valid, mirroring the cancellation path.
+        for (std::size_t i = 0; i < plan.nodes.size(); ++i) {
+            const auto node_id = plan.nodes[i].id;
+            if (completed_nodes[i] || failed_nodes[i] || restored_nodes[i] ||
+                node_id == workflow_suspended->node) {
+                continue;
+            }
+            emit(NodeSkipped{.node = node_id, .blocking_dependencies = {}});
+        }
+
         // RFC 0022 (C6): build the v2 resume record — the completed nodes so far
         // plus the suspended node's input and memo — persist it, and terminate as
         // Suspended (not Failed). If persistence fails we cannot resume, so we

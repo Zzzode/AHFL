@@ -34,22 +34,27 @@ WasmResumeRecorder::current_import() noexcept {
     return current_ ? &*current_ : nullptr;
 }
 
-void WasmResumeRecorder::append_memo_entry(std::string authoritative_json) {
+void WasmResumeRecorder::append_memo_entry(
+    std::string authoritative_json,
+    PersistedMemoResultSource source) {
     if (!current_.has_value() || !current_->arg_hash_set) {
         return; // state violation; the wrapper guards this
     }
-    memo_.push_back(CapabilityMemoEntry{
+    CapabilityMemoEntry entry{
         .ordinal = current_->ordinal,
         .cap_id = current_->cap_id,
         .arg_hash = current_->arg_hash,
         .result = current_->result.has_value()
                       ? runtime::clone_value(*current_->result)
                       : runtime::Value{runtime::NoneValue{}},
-        .source = PersistedMemoResultSource::ExactSidecar,
-        .authoritative_json = std::move(authoritative_json),
+        .source = source,
         .result_present = current_->result_present,
         .node = current_->node,
-    });
+    };
+    if (source == PersistedMemoResultSource::ExactSidecar) {
+        entry.authoritative_json = std::move(authoritative_json);
+    }
+    memo_.push_back(std::move(entry));
 }
 
 void WasmResumeRecorder::stamp_pending() {

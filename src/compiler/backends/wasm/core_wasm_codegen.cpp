@@ -177,7 +177,7 @@ constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout.v1";
 // or shared here.
 constexpr std::string_view kExecManifestSectionName = "ahfl.wasm-exec-manifest.v1";
 constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 'X', 'M'};
-constexpr std::uint8_t kExecManifestVersion = 1;
+constexpr std::uint8_t kExecManifestVersion = 2;
 constexpr std::uint8_t kExecManifestEntryKindWorkflow = 0;
 // RFC 0026 KR6.8 WH-4 fix-forward D-C: the agent entry kind. A capability
 // AGENT module carries a flat capability-list manifest (no workflow schedule /
@@ -6586,10 +6586,13 @@ class P6ComputationHandlerBuilder {
     // the fixed control block `{call_site_id, arg_count, (ptr,len)[*]}` at its
     // dense block address, spilling scalar / PtrLen arguments into the call
     // site's private spill slots; (2) calls the additive
-    // `kTypeCapabilityBridge = (i32)->(i32,i32)` import; (3) traps on any
-    // non-OK status (single-run: no pending arm); (4) binds the result SSA from
-    // the returned result root — a load for inline scalars / PtrLen, the root
-    // address itself for an aggregate / collection.
+    // `kTypeCapabilityBridge = (i32)->(i32,i32)` import; (3) on the workflow
+    // lane latches the pending flag and returns a dummy state on PENDING (the
+    // runner checks the latch and returns (PENDING,0,0) to the scheduler),
+    // trapping on ERROR / unknown; on the agent lane traps on any non-OK
+    // status (single-run contract); (4) binds the result SSA from the returned
+    // result root — a load for inline scalars / PtrLen, the root address itself
+    // for an aggregate / collection.
     [[nodiscard]] bool emit_bridge_call(const CoreCapabilityCallStmt &s,
                                         ir::SourceRangeOpt range) {
         if (imports_ == nullptr || bridge_registry_ == nullptr) {
@@ -6724,10 +6727,35 @@ class P6ComputationHandlerBuilder {
         body_.u32(bridge_ptr_local_);
         body_.byte(kOpLocalSet);
         body_.u32(bridge_status_local_);
-        // Single-run contract: any non-OK status traps (durable replay / pending
-        // arm stays the D2b authority).
+        // WH-5b.2 (design 12.14.5): graceful PENDING on the workflow lane.
+        // A Pending bridge capability latches kWorkflowGlobalPendingLatched
+        // and returns a dummy i32 from this `() -> i32` handler; the workflow
+        // P6 runner checks the latch after the handler call and returns
+        // (PENDING,0,0) to the scheduler, which converts it into a run2-level
+        // suspend. On the agent lane there is no runner/scheduler to suspend,
+        // so PENDING traps (the sealed single-run contract). ERROR (and any
+        // other non-OK status) traps on BOTH lanes, matching the evaluator's
+        // CapabilityFailed -> NodeFailed parity.
         body_.byte(kOpLocalGet);
         body_.u32(bridge_status_local_);
+        emit_const_i32(static_cast<std::int32_t>(AHFL_CAP_PENDING));
+        body_.byte(kOpI32Eq);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        if (workflow_packaging_lane_) {
+            emit_const_i32(1);
+            body_.byte(kOpGlobalSet);
+            body_.u32(kWorkflowGlobalPendingLatched);
+            emit_const_i32(0); // dummy i32 handler result
+            body_.byte(kOpReturn);
+        } else {
+            body_.byte(kOpUnreachable);
+        }
+        body_.byte(kOpEnd);
+        body_.byte(kOpLocalGet);
+        body_.u32(bridge_status_local_);
+        emit_const_i32(static_cast<std::int32_t>(AHFL_CAP_OK));
+        body_.byte(kOpI32Ne);
         body_.byte(kOpIf);
         body_.byte(kEmptyBlock);
         body_.byte(kOpUnreachable);
@@ -14754,34 +14782,95 @@ void append_i64_store_zero(ByteBuffer &body, std::uint32_t addr) {
     body.u32(0u); // offset
 }
 
-// RFC 0026 E4-B2-C: emit the AHFLXM execution-manifest payload, byte-identical to
-// the A2 decoder's canonical grammar. Private to this TU; no runtime code shared.
-// Nodes are emitted in schedule order so schedule_pos == array index.
+// Forward declaration: the runner-index resolver is defined later in this TU
+// (after the manifest emitter) but is needed here to classify P6 vs opaque
+// nodes and to group the per-node in-runner bridge-site table.
+[[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
+                                                                 CoreInstanceId instance);
+
+// One in-runner bridge call site as emitted in the manifest v2 per-node table.
+// The ordinal is the dense per-node bridge-call ordinal (0-based, execution
+// order, aligned with the host recorder's per_node_counters_); call_site_id
+// joins to the frame section's bridge_call_sites for result placement.
+struct ManifestBridgeSiteEntry {
+    std::uint8_t ordinal{0};
+    std::uint32_t call_site_id{0};
+    CoreCapabilityId capability{};
+    std::uint64_t source_symbol{0};
+};
+
+// RFC 0026 E4-B2-C + WH-5b.2: emit the AHFLXM execution-manifest payload v2,
+// byte-identical to the A2 decoder's canonical grammar. Private to this TU; no
+// runtime code shared. Nodes are emitted in schedule order so schedule_pos ==
+// array index.
 //
-// The workflow manifest currently references ALL imported capabilities,
-// including in-runner bridge call sites of P6-packaged nodes. This is
-// required because the manifest capability set doubles as the A2
-// import/admission authority: make_verified_core_wasm_schema_module enforces
-// exact set equality between the wire-schema/import capability set and the
-// manifest-referenced set, and run_workflow_session admits the module
-// unconditionally through that factory. Dropping bridge caps from P6 nodes
-// would make every hybrid P6-bridge module fail admission closed.
-//
-// KNOWN latent gap (owned by WH-5b.2): a bridge P6 node's scheduler-level
-// completion is an identity event (design 12.12.5: tag-0 record, zero
-// capability fields), yet its per-node manifest cap byte below counts its
-// in-handler bridge imports. The tag-0 record vs cap-byte distinction is a
-// resume-coordinate inconsistency. WH-5b.2 must introduce a separate
-// in-runner site table (the scheduler-boundary byte stays binary) jointly
-// with admission-set semantics and the resume classifier (design 12.12.10).
+// WH-5b.2 (design 12.14.4): the scheduler-boundary cap_call_count stays binary
+// (0 = identity node, 1 = opaque cap site). A P6 bridge node emits
+// cap_call_count=0 + an empty capabilities array; its in-handler bridge imports
+// are accounted in the NEW per-node in-runner bridge-site table appended after
+// the capabilities array. A2 admission-set equality is the union of opaque
+// sites (cap_call_count=1 nodes) and bridge sites == wire schema == imports.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
-encode_exec_manifest(const WorkflowPlan &plan) {
+encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
     if (plan.schedule.size() >
         static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
         return std::nullopt;
     }
     if (plan.workflow.value == CoreWorkflowId::kInvalid) {
         return std::nullopt;
+    }
+    // Build the per-runner in-runner bridge-site table. workflow_bridge_sites
+    // is grouped by runner (global call_site_id order == control-block dense
+    // order); the per-runner ordinal is the dense index within that group.
+    //
+    // P2-8 ordinal soundness invariant: the static ordinal assigned here (the
+    // dense index in plan.workflow_bridge_sites) equals the dynamic ordinal
+    // the host recorder assigns at runtime (per_node_counters_ in execution
+    // order) ONLY because bridge sites are reserved in handler-planning order
+    // (the state-index loop in build_agent_plan) and compact_workflow_runner
+    // filters reachability while preserving relative order. For SEQUENTIAL
+    // bridge calls in one runner (the AC10 shape: call A then call B in
+    // straight-line code), the invariant holds when the agent's states are
+    // listed in transition order (the natural way to write a sequential
+    // flow): state-index order == transition order == execution order, so
+    // static ordinal N == dynamic ordinal N. If the states are listed out of
+    // transition order (e.g. [Done, CallB, CallA, Decide] with transitions
+    // Decide->CallA->CallB->Done), the state-index order diverges from the
+    // execution order, and the static ordinal does NOT equal the dynamic
+    // ordinal. That divergence is caught fail-closed by the host's
+    // (capability, source_symbol, call_site_id) cross-check against the
+    // memo's recorded site, which rejects an ordinal/site mismatch rather
+    // than injecting the wrong result. For mutually exclusive branches (only
+    // one arm runs), the static order can also diverge from the dynamic
+    // order: the executed arm's site gets dynamic ordinal 0 but may carry
+    // static ordinal 1. The codegen does NOT attempt to make ordinals
+    // execution-order sound across branches or out-of-order state listings;
+    // it relies on the host cross-check. What would break the sequential
+    // invariant: reserving sites in a non-state-index order, or reordering
+    // sites during reachability compaction.
+    std::vector<std::vector<ManifestBridgeSiteEntry>> bridge_sites_by_runner(
+        plan.agent_plans.size());
+    for (const BridgeCallPlan &site : plan.workflow_bridge_sites) {
+        if (site.runner >= bridge_sites_by_runner.size()) {
+            return std::nullopt;
+        }
+        if (site.capability.value == CoreCapabilityId::kInvalid) {
+            return std::nullopt;
+        }
+        if (site.capability.value >= program.capabilities.size()) {
+            return std::nullopt;
+        }
+        const auto &symbol = program.capabilities[site.capability.value].symbol_ref;
+        if (!symbol.id.has_value()) {
+            return std::nullopt;
+        }
+        auto &list = bridge_sites_by_runner[site.runner];
+        if (list.size() > std::numeric_limits<std::uint8_t>::max()) {
+            return std::nullopt; // bridge_site_count / ordinal are u8
+        }
+        list.push_back(ManifestBridgeSiteEntry{
+            static_cast<std::uint8_t>(list.size()), site.call_site_id, site.capability,
+            *symbol.id});
     }
     ByteBuffer out;
     out.raw_span(
@@ -14801,16 +14890,37 @@ encode_exec_manifest(const WorkflowPlan &plan) {
         }
         out.u32(node.node.value);
         out.u32(index); // schedule_pos == array index
-        // Emit ALL node capabilities (including in-handler bridge imports of
-        // P6 nodes) so the manifest-referenced set equals the import set for
-        // A2 admission. See the WH-5b.2 latent-gap note above.
-        out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
-        for (const auto &[cap, sym] : node.capabilities) {
-            if (cap.value == CoreCapabilityId::kInvalid) {
-                return std::nullopt;
+        const auto runner = workflow_runner_index(plan, node.target_instance);
+        if (!runner.has_value() || *runner >= plan.p6_block_by_runner.size()) {
+            return std::nullopt;
+        }
+        const bool is_p6 = plan.p6_block_by_runner[*runner] != kInvalidP6Block;
+        if (is_p6) {
+            // P6 bridge node: identity at the scheduler boundary (tag-0 event
+            // record, zero capability fields). Its in-handler bridge imports
+            // are accounted in the in-runner bridge-site table below.
+            out.byte(0); // cap_call_count = 0 (identity)
+            // capabilities array is empty for a P6 bridge node.
+            const auto &bridge_sites = bridge_sites_by_runner[*runner];
+            out.byte(static_cast<std::uint8_t>(bridge_sites.size()));
+            for (const auto &bs : bridge_sites) {
+                out.byte(bs.ordinal);
+                out.u32(bs.call_site_id);
+                out.u32(bs.capability.value);
+                out.u64(bs.source_symbol);
             }
-            out.u32(cap.value);
-            out.u64(sym);
+        } else {
+            // Opaque cap site (cap_call_count=1) or pure identity (0). The
+            // capabilities array carries the scheduler-boundary capability.
+            out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
+            for (const auto &[cap, sym] : node.capabilities) {
+                if (cap.value == CoreCapabilityId::kInvalid) {
+                    return std::nullopt;
+                }
+                out.u32(cap.value);
+                out.u64(sym);
+            }
+            out.byte(0); // bridge_site_count = 0 (no in-runner bridge calls)
         }
     }
     return std::move(out).take();
@@ -15101,6 +15211,27 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
     body.byte(kOpLoop);
     body.byte(kEmptyBlock); // $continue
 
+    // WH-5b.2 (design 12.14.5): a runner with in-handler bridge calls checks
+    // the pending latch after EVERY handler call. A handler whose bridge call
+    // returned PENDING set the latch and returned a dummy state; the runner
+    // then returns (PENDING,0,0) to the scheduler (which suspends the node)
+    // instead of continuing the dispatch. The latch global exists only on a
+    // capability workflow (a bridge runner always has imports).
+    const bool has_bridge = !agent_plan.bridge_calls.empty();
+    const auto emit_bridge_pending_check = [&] {
+        if (!has_bridge) {
+            return;
+        }
+        append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalPendingLatched);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        append_const(body, AHFL_CAP_PENDING);
+        append_const(body, 0);
+        append_const(body, 0);
+        body.byte(kOpReturn);
+        body.byte(kOpEnd);
+    };
+
     // Fuel guard.
     append_indexed_op(body, kOpLocalGet, 2);
     body.byte(kOpI32Eqz);
@@ -15148,6 +15279,7 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
             append_indexed_op(body, kOpCall,
                              handler_base + computed_go->function);
             body.byte(kOpDrop);
+            emit_bridge_pending_check();
             body.byte(kOpBr);
             body.u32(continue_depth); // -> $continue
         } else if (const auto *computed_return =
@@ -15156,6 +15288,7 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
             append_indexed_op(body, kOpCall,
                              handler_base + computed_return->function);
             body.byte(kOpDrop);
+            emit_bridge_pending_check();
             body.byte(kOpBr);
             body.u32(exit_depth); // -> $exit
         } else {
@@ -16487,6 +16620,32 @@ void append_word_zero_fill(ByteBuffer &body,
             append_indexed_op(body, kOpLocalSet, *len_local);
             append_indexed_op(body, kOpLocalSet, *ptr_local);
             append_indexed_op(body, kOpLocalSet, status_local);
+            // WH-5b.2 (design 12.14.5): a P6 bridge node's runner can suspend
+            // mid-handler on a Pending in-runner bridge call. Mirror the opaque
+            // lane's PENDING arm: only a null result_ptr is a legal suspend ->
+            // set the latch and return (PENDING,0,0) from run2. A PENDING with a
+            // non-null ptr is malformed -> ERROR and does NOT latch. The tag-0
+            // identity record is NOT written (the node did not complete), so
+            // event_count stays at the node's schedule_pos.
+            append_indexed_op(body, kOpLocalGet, status_local);
+            append_const(body, AHFL_CAP_PENDING);
+            body.byte(kOpI32Eq);
+            body.byte(kOpIf);
+            body.byte(kEmptyBlock);
+            append_indexed_op(body, kOpLocalGet, *ptr_local);
+            body.byte(kOpI32Eqz);
+            body.byte(kOpIf);
+            body.byte(kEmptyBlock);
+            append_const(body, 1);
+            append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalPendingLatched);
+            append_const(body, AHFL_CAP_PENDING);
+            append_const(body, 0);
+            append_const(body, 0);
+            body.byte(kOpReturn);
+            body.byte(kOpEnd);
+            // PENDING with a non-null ptr is malformed.
+            append_error_return(body);
+            body.byte(kOpEnd);
             // status must be OK.
             append_indexed_op(body, kOpLocalGet, status_local);
             append_const(body, AHFL_CAP_OK);
@@ -17203,7 +17362,7 @@ encode_workflow_module(const CoreProgram &program,
     std::vector<std::uint8_t> merged_wire_payload;
     if (p6 || capability_workflow) {
         if (capability_workflow) {
-            auto manifest = encode_exec_manifest(plan);
+            auto manifest = encode_exec_manifest(program, plan);
             if (!manifest.has_value()) {
                 return std::nullopt;
             }

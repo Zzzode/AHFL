@@ -474,16 +474,10 @@ int main(int argc, char **argv) {
                 }
                 nuke(work);
             };
-        // Identity node carrying a memo (A1: identity has empty memo, never a pending).
-        a1_reject_case("identity_with_memo", [&](CoreWasmResumeRecord &r) {
-            ResumeMemoEntry m;
-            m.invocation_ordinal = InvocationOrdinal{0};
-            m.capability = CoreCapabilityId{0};
-            m.source_symbol = 0;
-            m.arg_hash = 0;
-            m.result_slot = PayloadSlotId{5};
-            r.nodes[0].memo.push_back(m);
-        });
+        // WH-5b.2: an identity node carrying a memo is now A1-valid (the
+        // record-level check cannot distinguish a P6 bridge node from a pure
+        // identity node; the coordinate gate enforces the distinction). This
+        // case is covered by the B-D1b block below as "identity_with_memo".
         // Suspended frontier pending ordinal != frontier.memo.size() (0): overlap invariant.
         a1_reject_case("frontier_nonzero_pending_ordinal", [&](CoreWasmResumeRecord &r) {
             r.nodes.back().pending->invocation_ordinal = InvocationOrdinal{1};
@@ -547,6 +541,24 @@ int main(int argc, char **argv) {
             CoreWasmResumeRecord r = make_suspended(arg_hash);
             r.nodes.back().pending->source_symbol = 111;
             d1b_coord_case("frontier_source_mismatch", mod, r, entry_only_slots);
+        }
+        // WH-5b.2: a pure identity node (not a P6 bridge node) carrying a memo
+        // is A1-valid but coordinate-invalid. The coordinate gate rejects it
+        // because the manifest node has cap_call_count 0 + no bridge sites.
+        // The memo's result_slot (5) must be in the slots set for publish.
+        {
+            CoreWasmResumeRecord r = make_suspended(arg_hash);
+            ResumeMemoEntry m;
+            m.invocation_ordinal = InvocationOrdinal{0};
+            m.capability = CoreCapabilityId{0};
+            m.source_symbol = 0;
+            m.arg_hash = 0;
+            m.result_slot = PayloadSlotId{5};
+            r.nodes[0].memo.push_back(m);
+            const std::vector<ps::Slot> slots_with_memo = {
+                ps::Slot{PayloadSlotId{9}, kEntryBytes},
+                ps::Slot{PayloadSlotId{5}, kEntryBytes}};
+            d1b_coord_case("identity_with_memo", mod, r, slots_with_memo);
         }
         // prefix longer than the module node count: build a 3-node A1-valid record but run
         // it against the 2-node shared module. entry_id/digests must match the 2-node module,
@@ -836,6 +848,166 @@ int main(int argc, char **argv) {
                             }
                         }
                     }
+                }
+                nuke(work);
+            }
+        }
+    }
+
+    // ================= GROUP B-AC14: P6 bridge node frontier acceptance ======
+    //
+    // WH-5b.2 AC14: a P6 bridge node (cap_call_count==0 + nonempty
+    // bridge_sites) is accepted as a legal frontier by the coordinate gate.
+    // The pending entry's (capability, source_symbol) is cross-checked
+    // against the manifest bridge-sites table at the per-node ordinal.
+    // Mismatch variants (wrong capability, wrong source_symbol, wrong
+    // ordinal) are REJECTED with CoordinateMismatch.
+    //
+    // FOUNDATION only: this is a decision-only controller test. It never
+    // touches a Wasm VM, allocates linear memory, or transfers a frame. The
+    // tag-0 identity event_join is proven by the event_memory synthesizer
+    // (cap_call_count==0 -> tag 0) and the coordinate gate's acceptance of
+    // node_kind Identity for a P6 bridge node.
+    {
+        ModuleSpec bridge_spec;
+        bridge_spec.entry_id = 7;
+        bridge_spec.extra_schema_nodes = {bounded_string_node(8)};
+        bridge_spec.caps = {CapSpec{3, 900, CoreWireSchemaNodeId{1}}};
+        bridge_spec.nodes = {
+            ManifestNodeSpec{50, 0, 0, 0,
+                             {ManifestBridgeSiteSpec{0, 0, 3, 900}}}};
+        auto bridge_mr = admit_module(bridge_spec);
+        check(bridge_mr.ok(), "AC14.module_admits");
+        if (bridge_mr.ok()) {
+            const auto &bridge_mod = *bridge_mr.module;
+            check(bridge_mod.node_count() == 1, "AC14.one_node");
+
+            // Build a Suspended record: the P6 bridge node is the frontier.
+            // node_kind is Identity (cap_call_count==0); the pending entry
+            // carries the bridge site's (capability, source_symbol, ordinal).
+            const auto make_bridge_suspended = [&](std::uint32_t cap,
+                                                   std::uint64_t sym,
+                                                   std::uint32_t ord) {
+                                CoreWasmResumeRecord r;
+                                r.format_version = 1;
+                                set_matching_digests(r, bridge_mod);
+                                r.entry_id = wf;
+                                r.entry_input_slot = PayloadSlotId{9};
+                                r.suspended_node_id = CoreWorkflowNodeId{50};
+                                r.resume_state = ResumeState::Suspended;
+                                ResumeNode n;
+                                n.workflow_node_id = CoreWorkflowNodeId{50};
+                                n.schedule_pos = 0;
+                                n.node_kind = NodeKind::Identity;
+                                ResumePendingEntry p;
+                                p.invocation_ordinal = InvocationOrdinal{ord};
+                                p.capability = CoreCapabilityId{cap};
+                                p.source_symbol = sym;
+                                p.arg_hash = 0;
+                                n.pending = p;
+                                r.nodes.push_back(n);
+                                return r;
+                            };
+
+            // Matching record: ACCEPTED by the coordinate gate.
+            {
+                const fs::path work = base / "b-ac14-match";
+                auto store = open_store(work);
+                check(store.has_value(), "AC14.match.store");
+                if (store.has_value()) {
+                    auto rec = make_bridge_suspended(3, 900, 0);
+                    auto gated = publish_and_gate(*store, rec, entry_only_slots,
+                                                  bridge_mod);
+                    check(gated.has_value() && gated->has_value(),
+                          "AC14.match.accepted");
+                }
+                nuke(work);
+            }
+
+            // Mismatch variant: wrong capability.
+            {
+                const fs::path work = base / "b-ac14-wrong-cap";
+                auto store = open_store(work);
+                check(store.has_value(), "AC14.wrong_cap.store");
+                if (store.has_value()) {
+                    auto rec = make_bridge_suspended(99, 900, 0);
+                    auto gated = publish_and_gate(*store, rec, entry_only_slots,
+                                                  bridge_mod);
+                    check(gated.has_value() && !gated->has_value() &&
+                              is_prepare_reason(gated->error(),
+                                                rc::ResumePrepareReason::CoordinateMismatch),
+                          "AC14.wrong_cap.rejected");
+                }
+                nuke(work);
+            }
+
+            // Mismatch variant: wrong source_symbol.
+            {
+                const fs::path work = base / "b-ac14-wrong-sym";
+                auto store = open_store(work);
+                check(store.has_value(), "AC14.wrong_sym.store");
+                if (store.has_value()) {
+                    auto rec = make_bridge_suspended(3, 111, 0);
+                    auto gated = publish_and_gate(*store, rec, entry_only_slots,
+                                                  bridge_mod);
+                    check(gated.has_value() && !gated->has_value() &&
+                              is_prepare_reason(gated->error(),
+                                                rc::ResumePrepareReason::CoordinateMismatch),
+                          "AC14.wrong_sym.rejected");
+                }
+                nuke(work);
+            }
+
+            // Mismatch variant: wrong ordinal (>= bridge_sites.size()).
+            // A Suspended frontier's pending ordinal must equal memo.size()
+            // (A1: 0 for an empty memo), so the out-of-range case is
+            // unreachable for Suspended. Use an Injected frontier with two
+            // dense memo entries (ordinals 0 and 1) against a single-site
+            // bridge node: ordinal 1 is out of range and the coordinate
+            // gate rejects it.
+            {
+                const fs::path work = base / "b-ac14-wrong-ord";
+                auto store = open_store(work);
+                check(store.has_value(), "AC14.wrong_ord.store");
+                if (store.has_value()) {
+                    CoreWasmResumeRecord r;
+                    r.format_version = 1;
+                    set_matching_digests(r, bridge_mod);
+                    r.entry_id = wf;
+                    r.entry_input_slot = PayloadSlotId{9};
+                    r.suspended_node_id = CoreWorkflowNodeId{50};
+                    r.resume_state = ResumeState::Injected;
+                    ResumeNode n;
+                    n.workflow_node_id = CoreWorkflowNodeId{50};
+                    n.schedule_pos = 0;
+                    n.node_kind = NodeKind::Identity;
+                    // Two dense memo entries (ordinals 0 and 1). The bridge
+                    // node has only one site, so ordinal 1 is out of range.
+                    ResumeMemoEntry m0;
+                    m0.invocation_ordinal = InvocationOrdinal{0};
+                    m0.capability = CoreCapabilityId{3};
+                    m0.source_symbol = 900;
+                    m0.arg_hash = 0;
+                    m0.result_slot = PayloadSlotId{5};
+                    n.memo.push_back(m0);
+                    ResumeMemoEntry m1;
+                    m1.invocation_ordinal = InvocationOrdinal{1};
+                    m1.capability = CoreCapabilityId{3};
+                    m1.source_symbol = 900;
+                    m1.arg_hash = 0;
+                    m1.result_slot = PayloadSlotId{6};
+                    n.memo.push_back(m1);
+                    r.nodes.push_back(n);
+                    const std::vector<ps::Slot> slots_with_memos = {
+                        ps::Slot{PayloadSlotId{9}, kEntryBytes},
+                        ps::Slot{PayloadSlotId{5}, kEntryBytes},
+                        ps::Slot{PayloadSlotId{6}, kEntryBytes}};
+                    auto gated = publish_and_gate(*store, r, slots_with_memos,
+                                                  bridge_mod);
+                    check(gated.has_value() && !gated->has_value() &&
+                              is_prepare_reason(gated->error(),
+                                                rc::ResumePrepareReason::CoordinateMismatch),
+                          "AC14.wrong_ord.rejected");
                 }
                 nuke(work);
             }

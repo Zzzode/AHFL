@@ -166,11 +166,22 @@ std::vector<std::uint8_t> memory_payload(const MemorySectionSpec &spec) {
 }
 
 // A canonical AHFLXM manifest body for a Workflow with the given node specs.
+// WH-5b.2: emits manifest v2 (per-node bridge-site table after capabilities).
+struct ManifestBridgeSiteSpec {
+    std::uint8_t ordinal;
+    std::uint32_t call_site_id;
+    std::uint32_t capability;
+    std::uint64_t source_symbol;
+};
+
 struct ManifestNodeSpec {
     std::uint32_t workflow_node_id;
     std::uint8_t cap_call_count; // 0 or 1
     std::uint32_t capability;    // used iff cap_call_count == 1
     std::uint64_t source_symbol; // used iff cap_call_count == 1
+    // WH-5b.2: in-runner bridge sites (manifest v2). Empty for agent / opaque
+    // nodes; a P6 bridge node carries cap_call_count == 0 + non-empty sites.
+    std::vector<ManifestBridgeSiteSpec> bridge_sites = {};
 };
 
 std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
@@ -180,7 +191,7 @@ std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
     for (char c : magic) {
         b.push_back(static_cast<std::uint8_t>(c));
     }
-    b.push_back(1); // version
+    b.push_back(2); // version (WH-5b.2: manifest v2)
     b.push_back(0); // entry.kind = Workflow
     put_uleb(b, entry_id);
     put_uleb(b, nodes.size());
@@ -193,6 +204,14 @@ std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
             put_uleb(b, n.capability);
             put_uleb(b, n.source_symbol);
         }
+        // WH-5b.2 (manifest v2): per-node bridge-site table.
+        b.push_back(static_cast<std::uint8_t>(n.bridge_sites.size()));
+        for (const auto &site : n.bridge_sites) {
+            b.push_back(site.ordinal);
+            put_uleb(b, site.call_site_id);
+            put_uleb(b, site.capability);
+            put_uleb(b, site.source_symbol);
+        }
     }
     return b;
 }
@@ -200,6 +219,8 @@ std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
 // WH-4 fix-forward D-C: a canonical AHFLXM manifest body for an AGENT with the
 // given flat capability list. Grammar: magic + version + entry_kind=1 +
 // agent_id + capability_count + caps[] { capability_id + source_symbol }.
+// WH-5b.2: version 2; the agent arm has NO bridge_site_count field (only the
+// workflow arm carries the per-node bridge-site table).
 std::vector<std::uint8_t>
 agent_manifest_body(std::uint32_t agent_id,
                     const std::vector<std::pair<std::uint32_t, std::uint64_t>> &caps) {
@@ -208,7 +229,7 @@ agent_manifest_body(std::uint32_t agent_id,
     for (char c : magic) {
         b.push_back(static_cast<std::uint8_t>(c));
     }
-    b.push_back(1); // version
+    b.push_back(2); // version (WH-5b.2: manifest v2)
     b.push_back(1); // entry.kind = Agent
     put_uleb(b, agent_id);
     put_uleb(b, caps.size());
@@ -744,36 +765,39 @@ int main() {
             s.manifest_override = body;
             check(admit_fails(build_module(s)), "neg.manifest_bad_magic");
         }
-        // manifest bad version
+        // manifest bad version: the helper emits v2 (the only accepted version
+        // after the big-bang); pin version 1 to prove v1 is rejected.
         {
             ModuleSpec s = base;
             auto body = exec_manifest_body(7, base.manifest_nodes);
-            body[6] = 2;
+            body[6] = 1; // v1 rejected after big-bang (decoder accepts only v2)
             s.manifest_override = body;
             check(admit_fails(build_module(s)), "neg.manifest_bad_version");
         }
-        // manifest cap_call_count out of range (2)
+        // manifest cap_call_count out of range (2). Built on v2 bytes so the
+        // version gate passes and the decoder reaches the cap_call_count range
+        // check (P2-6: must be 0 or 1). The range check fires before the
+        // capability table is read, so no capability/bridge bytes are needed.
         {
             ModuleSpec s = base;
-            auto body = exec_manifest_body(7, base.manifest_nodes);
-            body.back() = body.back(); // placeholder; rebuild via override with bad count
-            // hand-build: magic+ver+kind+entry(7)+count(1)+node{id40,pos0,cap_call_count=2}
+            // hand-build v2: magic+ver(2)+kind+entry(7)+count(1)+node{id40,pos0,cap_call_count=2}
             std::vector<std::uint8_t> bad;
             const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
             for (char c : magic) {
                 bad.push_back(static_cast<std::uint8_t>(c));
             }
-            bad.push_back(1);
-            bad.push_back(0);
+            bad.push_back(2); // version 2 (pass the version gate)
+            bad.push_back(0); // entry_kind
             put_uleb(bad, 7);
             put_uleb(bad, 1);
             put_uleb(bad, 40);
-            put_uleb(bad, 0);
-            bad.push_back(2); // out of range
+            put_uleb(bad, 0); // schedule_pos == index 0
+            bad.push_back(2); // cap_call_count out of range (must be 0 or 1)
             s.manifest_override = bad;
             check(admit_fails(build_module(s)), "neg.manifest_bad_cap_call_count");
         }
-        // manifest schedule_pos not dense (node index mismatch)
+        // manifest schedule_pos not dense (node index mismatch). Built on v2
+        // bytes so the decoder reaches the schedule_pos == index check.
         {
             ModuleSpec s = base;
             std::vector<std::uint8_t> bad;
@@ -781,17 +805,148 @@ int main() {
             for (char c : magic) {
                 bad.push_back(static_cast<std::uint8_t>(c));
             }
-            bad.push_back(1);
-            bad.push_back(0);
+            bad.push_back(2); // version 2
+            bad.push_back(0); // entry_kind
             put_uleb(bad, 7);
             put_uleb(bad, 1);
             put_uleb(bad, 40);
             put_uleb(bad, 5); // schedule_pos != index 0
-            bad.push_back(1);
-            put_uleb(bad, 3);
-            put_uleb(bad, 300);
+            bad.push_back(1); // cap_call_count (valid, but never reached)
+            put_uleb(bad, 3); // capability
+            put_uleb(bad, 300); // source_symbol
+            bad.push_back(0); // bridge_site_count
             s.manifest_override = bad;
             check(admit_fails(build_module(s)), "neg.manifest_schedule_pos_gap");
+        }
+        // manifest node mixes an opaque capability call (cap_call_count=1) with
+        // a non-empty bridge-site table (P2-7 mutual exclusion). The decoder
+        // rejects after reading the bridge site, before admitting the node.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(2); // version 2
+            bad.push_back(0); // entry_kind
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0); // schedule_pos == index 0
+            bad.push_back(1); // cap_call_count = 1 (opaque)
+            put_uleb(bad, 3); // capability
+            put_uleb(bad, 300); // source_symbol
+            bad.push_back(1); // bridge_site_count = 1 (mixes both -> reject)
+            bad.push_back(0); // ordinal 0 (dense)
+            put_uleb(bad, 1); // call_site_id
+            put_uleb(bad, 3); // bridge capability
+            put_uleb(bad, 300); // bridge source_symbol
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)),
+                  "neg.manifest_cap_and_bridge_mutual_exclusion");
+        }
+        // WH-5b.2 §12.14.9 fail-closed family — schema-level (manifest byte
+        // shape) cases. The case-number -> test-name mapping (AC8 auditability):
+        //
+        //   §12.14.9 case                          | level  | test name
+        //   ----------------------------------------|--------|-------------------------------------------
+        //   1  ordinal tamper (memo vs live)        | host   | workflow_session bridge replay divergence
+        //   2  arg_hash mismatch (memo vs live)     | host   | workflow_session bridge replay divergence
+        //   3  bridge site OOB (truncated site)     | schema | neg.manifest_bridge_site_truncated
+        //   4  unknown call_site_id (not in frame)  | host   | workflow_session host-trust check
+        //   5  ERROR status word                    | host   | wasm_workflow_resume_e2e bridge-error
+        //   6  PENDING + non-null result ptr        | host   | handle_bridge returns GuestPointer{0} (code)
+        //   7  tag-0 published while suspended      | host   | wasm_workflow_resume_e2e suspend event_count
+        //   8  manifest v1 rejection                | schema | neg.manifest_bad_version
+        //   9  bridge site ordinal gap              | schema | neg.manifest_bridge_ordinal_gap
+        //  10  bridge site call_site_id duplicate   | schema | neg.manifest_bridge_callsite_duplicate
+        //
+        // Case 3 (schema): bridge_site_count declares a site but the manifest
+        // bytes end before the site fields. The decoder reads bridge_site_count
+        // then fails on the first site's ordinal read (truncated).
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(2); // version 2
+            bad.push_back(0); // entry_kind
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0); // schedule_pos == index 0
+            bad.push_back(0); // cap_call_count = 0 (P6 bridge node)
+            bad.push_back(1); // bridge_site_count = 1, but NO site bytes follow
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_bridge_site_truncated");
+        }
+        // Case 9: per-node bridge ordinals must be dense 0..N-1. Two sites
+        // with ordinals 0 and 2 (gap at 1) -> reject.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(2); // version 2
+            bad.push_back(0); // entry_kind
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0); // schedule_pos == index 0
+            bad.push_back(0); // cap_call_count = 0 (P6 bridge node)
+            bad.push_back(2); // bridge_site_count = 2
+            // site 0: ordinal 0 (dense)
+            bad.push_back(0); // ordinal
+            put_uleb(bad, 1); // call_site_id
+            put_uleb(bad, 0); // capability
+            put_uleb(bad, 1); // source_symbol
+            // site 1: ordinal 2 (gap — expected 1)
+            bad.push_back(2); // ordinal (not dense)
+            put_uleb(bad, 2); // call_site_id
+            put_uleb(bad, 0); // capability
+            put_uleb(bad, 1); // source_symbol
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_bridge_ordinal_gap");
+        }
+        // Case 10: call_site_id must be workflow-wide unique. Two nodes each
+        // carry a bridge site with the same call_site_id -> reject.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(2); // version 2
+            bad.push_back(0); // entry_kind
+            put_uleb(bad, 7);
+            put_uleb(bad, 2); // node_count = 2
+            // node 0: id 40, pos 0, P6 bridge, one site call_site_id=1
+            put_uleb(bad, 40);
+            put_uleb(bad, 0);
+            bad.push_back(0); // cap_call_count = 0
+            bad.push_back(1); // bridge_site_count = 1
+            bad.push_back(0); // ordinal 0
+            put_uleb(bad, 1); // call_site_id = 1
+            put_uleb(bad, 0); // capability
+            put_uleb(bad, 1); // source_symbol
+            // node 1: id 41, pos 1, P6 bridge, one site call_site_id=1 (duplicate)
+            put_uleb(bad, 41);
+            put_uleb(bad, 1);
+            bad.push_back(0); // cap_call_count = 0
+            bad.push_back(1); // bridge_site_count = 1
+            bad.push_back(0); // ordinal 0
+            put_uleb(bad, 1); // call_site_id = 1 (duplicate)
+            put_uleb(bad, 0); // capability
+            put_uleb(bad, 1); // source_symbol
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)),
+                  "neg.manifest_bridge_callsite_duplicate");
         }
         // manifest trailing byte
         {
@@ -1586,8 +1741,8 @@ int main() {
         // each begins with its raw magic (AHFLXM / AHFLWS) and carries NO custom-name
         // framing, so the byte-exact equality pins the exact digest scope.
         static const std::vector<std::uint8_t> kRawAhflxm = {
-            0x41, 0x48, 0x46, 0x4c, 0x58, 0x4d, 0x01, 0x00,
-            0x07, 0x01, 0x28, 0x00, 0x01, 0x00, 0x01}; // "AHFLXM"...
+            0x41, 0x48, 0x46, 0x4c, 0x58, 0x4d, 0x02, 0x00,
+            0x07, 0x01, 0x28, 0x00, 0x01, 0x00, 0x01, 0x00}; // "AHFLXM" v2...
         static const std::vector<std::uint8_t> kRawAhflws = {
             0x41, 0x48, 0x46, 0x4c, 0x57, 0x53, 0x01, 0x02, 0x02,
             0x00, 0x04, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x01}; // "AHFLWS"...
@@ -1606,20 +1761,22 @@ int main() {
 
         // Externally-computed KATs: python hashlib.sha256(module[a:b]).digest() over
         // the exact byte-locked slices above (whole module / raw AHFLWS / raw AHFLXM).
-        // Recompute: sha256(kModule)=9e6b8c..3b9e; sha256(kRawAhflws)=6cbb2b..0c5b;
-        // sha256(kRawAhflxm)=6200b2..da28. NOT produced by the getter or support::sha256.
+        // The AHFLXM slice is manifest v2 (adds a trailing bridge_site_count byte per
+        // node), so the module and manifest digests differ from the v1 pins.
+        // Recompute: sha256(kModule)=61b191..f940; sha256(kRawAhflws)=6cbb2b..0c5b;
+        // sha256(kRawAhflxm)=49aaf9..c833. NOT produced by the getter or support::sha256.
         static constexpr ArtifactDigest kModuleKat = {
-            0x9e, 0x6b, 0x8c, 0x04, 0x52, 0xb7, 0x1b, 0x69, 0xeb, 0xb2, 0xe8,
-            0xc4, 0x19, 0x9f, 0x44, 0xf6, 0x18, 0xff, 0x3a, 0x80, 0xa1, 0x62,
-            0x36, 0x0e, 0xff, 0x35, 0x8c, 0xfb, 0x3b, 0x26, 0x3b, 0x9e};
+            0x61, 0xb1, 0x91, 0x46, 0x2e, 0x16, 0xcd, 0xdb, 0xbb, 0x93, 0x97,
+            0xe2, 0xb8, 0x82, 0xdd, 0x27, 0x41, 0xed, 0xf1, 0x50, 0x68, 0x45,
+            0xdc, 0xe9, 0xb9, 0xbc, 0xbb, 0x4d, 0xf6, 0xfb, 0xf9, 0x40};
         static constexpr ArtifactDigest kWireKat = {
             0x6c, 0xbb, 0x2b, 0xc1, 0x35, 0xd2, 0xe4, 0xaf, 0x2b, 0x56, 0x7e,
             0xe8, 0x20, 0x06, 0xf2, 0xf6, 0xdc, 0x85, 0xeb, 0x54, 0x63, 0x26,
             0x83, 0xcb, 0x36, 0xb0, 0x2f, 0x8b, 0x8d, 0x40, 0x0c, 0x5b};
         static constexpr ArtifactDigest kManifestKat = {
-            0x62, 0x00, 0xb2, 0xda, 0xfc, 0x9b, 0xb7, 0x64, 0xca, 0xc0, 0x95,
-            0x2c, 0x56, 0x23, 0x4e, 0x0c, 0x37, 0xc8, 0xa5, 0x7e, 0x9d, 0xbd,
-            0x2f, 0xea, 0x35, 0x04, 0xc5, 0x44, 0xbd, 0xf8, 0xda, 0x28};
+            0x49, 0xaa, 0xf9, 0x7b, 0xbf, 0x41, 0x9e, 0xea, 0xb8, 0xaf, 0x47,
+            0x2f, 0x70, 0xb5, 0x04, 0x68, 0xa3, 0xb4, 0x56, 0x98, 0xeb, 0x6d,
+            0xb8, 0x76, 0x48, 0xb4, 0x68, 0x7d, 0x7d, 0xda, 0xcc, 0x83};
 
         auto admitted =
             make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));

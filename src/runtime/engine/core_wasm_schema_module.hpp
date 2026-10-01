@@ -73,6 +73,23 @@ struct ManifestNodeIndex {
     [[nodiscard]] friend bool operator==(ManifestNodeIndex, ManifestNodeIndex) noexcept = default;
 };
 
+// WH-5b.2 (manifest v2): one decoded in-runner bridge call site. A P6 bridge
+// node's scheduler-boundary cap_call_count is 0 (its completion is a tag-0
+// identity event); its in-handler bridge imports are accounted here. The
+// ordinal is the dense per-node bridge-call ordinal (0-based, execution order,
+// aligned with the host recorder's per_node_counters_); call_site_id joins to
+// the frame section's bridge_call_sites for result placement. The host
+// cross-checks this table against the frame section at session admission.
+struct ManifestBridgeSite {
+    std::uint8_t ordinal{0};
+    std::uint32_t call_site_id{0};
+    ir::core::CoreCapabilityId capability{};
+    std::uint64_t source_symbol{0};
+
+    [[nodiscard]] friend bool operator==(const ManifestBridgeSite &,
+                                         const ManifestBridgeSite &) noexcept = default;
+};
+
 // Position of a capability import in the module's `ahfl_cap` import table (equal to
 // the position of its entry in the verified wire-schema capability table). Distinct
 // from a call-site index and from an invocation ordinal.
@@ -94,6 +111,11 @@ class VerifiedCoreWasmNode {
     [[nodiscard]] ir::core::CoreWorkflowNodeId workflow_node_id() const noexcept;
     [[nodiscard]] ManifestNodeIndex schedule_pos() const noexcept;
     [[nodiscard]] std::uint8_t cap_call_count() const noexcept;
+    // WH-5b.2: the node's in-runner bridge call sites (manifest v2). Empty for
+    // an opaque cap site or a pure identity node; non-empty for a P6 bridge
+    // node (whose cap_call_count is 0). The host cross-checks this table
+    // against the frame section's bridge_call_sites.
+    [[nodiscard]] std::span<const ManifestBridgeSite> bridge_sites() const noexcept;
 
   private:
     friend struct SchemaModuleFactory;

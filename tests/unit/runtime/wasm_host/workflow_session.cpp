@@ -27,6 +27,7 @@
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/execution_event.hpp"
 #include "ahfl/runtime/execution_report.hpp"
@@ -36,6 +37,7 @@
 #include "common/project_input_support.hpp"
 #include "unit/runtime/wasm_host/wasm_host_test_support.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -44,6 +46,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -2743,29 +2746,36 @@ void test_hybrid_multi_p6_fanout(const std::filesystem::path &repo_root) {
 
 // ==== WH-5b.1 fix-forward: hybrid P6-bridge + opaque cap manifest test ====
 //
-// Emission/descriptor-only: the exec-manifest references ALL imported
-// capabilities for every node (including in-handler bridge imports of P6
-// nodes), because the manifest cap set doubles as the A2 import/admission
-// authority and run_workflow_session admits unconditionally through it.
-// Both P6 bridge nodes and the opaque cap node therefore encode
-// cap_call_count 1. Also covers the multi-P6 ordinal case (two P6 runners
-// -> p6_block_ordinal 0 and 1, node_blocks count == 2).
+// Emission/descriptor-only: the exec-manifest v2 (WH-5b.2) carries a per-node
+// bridge-site table. P6 bridge nodes emit cap_call_count=0 + empty capabilities
+// + one bridge site (the in-handler Bridge import); the opaque cap node emits
+// cap_call_count=1 (Echo cap) + an empty bridge-site table. The A2 admission
+// set is the UNION of opaque + bridge-site capabilities, which equals the
+// wire-schema/import set {Bridge, Echo}. Also covers the multi-P6 ordinal case
+// (two P6 runners -> p6_block_ordinal 0 and 1, node_blocks count == 2).
 //
-// KNOWN latent gap (WH-5b.2): a bridge P6 node writes a tag-0 identity
-// event record (zero capability fields) yet its manifest cap byte counts
-// its in-handler bridge import. This tag-0-vs-cap-byte disagreement is a
-// resume-coordinate inconsistency owned by WH-5b.2 (separate in-runner
-// site table + admission-set semantics + resume classifier, design
-// 12.12.5/12.12.10). The resume gates are unreachable for this module
-// today; this test does NOT assert they accept it.
-//
-// End-to-end suspend/resume of this configuration is WH-5b.2/5b.3 scope.
+// WH-5b.2 CLOSED the former tag-0-vs-cap-byte latent gap: the bridge-site
+// table is the separate in-runner site authority (design 12.14), and the
+// resume classifier now accepts a P6 bridge node as a legal frontier via
+// bridge_sites (not cap_call_count).
 
 // One decoded exec-manifest node (the subset the test asserts).
+// WH-5b.2 (manifest v2): one in-runner bridge site decoded from the per-node
+// bridge-site table.
+struct ManifestBridgeSite {
+    std::uint8_t ordinal = 0;
+    std::uint32_t call_site_id = 0;
+    std::uint32_t capability = 0;
+    std::uint64_t source_symbol = 0;
+};
+
 struct ManifestNode {
     std::uint32_t node_id = 0;
     std::uint32_t schedule_pos = 0;
     std::uint8_t cap_call_count = 0;
+    // WH-5b.2: in-runner bridge sites (manifest v2). A P6 bridge node carries
+    // cap_call_count == 0 plus a non-empty bridge_sites list.
+    std::vector<ManifestBridgeSite> bridge_sites;
 };
 
 // Minimal ULEB128 reader for the manifest grammar.
@@ -2854,7 +2864,10 @@ extract_exec_manifest(std::span<const std::uint8_t> module_bytes) {
 // Decode the workflow-arm exec-manifest payload (mirrors the A2 grammar:
 // magic(6) + version(1) + entry_kind=0 + workflow_id(4) + node_count(4) +
 // nodes[] { node_id(4) + schedule_pos(4) + cap_call_count(1) +
-// capabilities[] { cap_id(4) + source_symbol(8) } }).
+// capabilities[] { cap_id(4) + source_symbol(8) } + bridge_site_count(1) +
+// bridge_sites[] { ordinal(1) + call_site_id(4) + capability(4) +
+// source_symbol(8) } }). WH-5b.2: version 2; the per-node bridge-site table is
+// appended AFTER the capabilities array.
 [[nodiscard]] std::optional<std::vector<ManifestNode>>
 decode_workflow_manifest(std::span<const std::uint8_t> payload) {
     static constexpr std::array<std::uint8_t, 6> kMagic = {
@@ -2866,7 +2879,7 @@ decode_workflow_manifest(std::span<const std::uint8_t> payload) {
     UlebReader r{payload};
     r.pos = 6; // magic
     const auto version = r.byte();
-    if (!version.has_value() || *version != 1) {
+    if (!version.has_value() || *version != 2) {
         return std::nullopt;
     }
     const auto entry_kind = r.byte();
@@ -2909,6 +2922,36 @@ decode_workflow_manifest(std::span<const std::uint8_t> payload) {
             if (!sym.has_value()) {
                 return std::nullopt;
             }
+        }
+        // WH-5b.2 (manifest v2): per-node bridge-site table.
+        const auto bridge_site_count = r.byte();
+        if (!bridge_site_count.has_value()) {
+            return std::nullopt;
+        }
+        node.bridge_sites.reserve(*bridge_site_count);
+        for (std::uint8_t b = 0; b < *bridge_site_count; ++b) {
+            ManifestBridgeSite site;
+            const auto ordinal = r.byte();
+            if (!ordinal.has_value() || *ordinal != b) {
+                return std::nullopt; // dense 0..N-1
+            }
+            site.ordinal = *ordinal;
+            const auto call_site_id = r.u32();
+            if (!call_site_id.has_value()) {
+                return std::nullopt;
+            }
+            site.call_site_id = *call_site_id;
+            const auto capability = r.u32();
+            if (!capability.has_value()) {
+                return std::nullopt;
+            }
+            site.capability = *capability;
+            const auto source_symbol = r.u64();
+            if (!source_symbol.has_value()) {
+                return std::nullopt;
+            }
+            site.source_symbol = *source_symbol;
+            node.bridge_sites.push_back(site);
         }
         nodes.push_back(node);
     }
@@ -2957,12 +3000,12 @@ void test_hybrid_p6_bridge_manifest(const std::filesystem::path &repo_root) {
     }
     check(desc.wire_schema.has_value(), "hybrid_bridge.wire_schema");
 
-    // Decode the exec-manifest and assert the current byte shape: ALL nodes
-    // reference their capabilities (including P6 nodes' in-handler bridge
-    // imports) so the manifest-referenced set equals the import set for A2
-    // admission. Both P6 bridge nodes have 1 Bridge cap; the opaque echo node
-    // has 1 Echo cap. The tag-0-record-vs-cap-byte disagreement for P6 nodes
-    // is the WH-5b.2 latent gap (see header comment).
+    // Decode the exec-manifest and assert the WH-5b.2 v2 byte shape: P6 bridge
+    // nodes emit cap_call_count=0 + empty capabilities + a non-empty
+    // bridge-site table (one Bridge cap each); the opaque echo node emits
+    // cap_call_count=1 (Echo cap) + an empty bridge-site table. The A2
+    // admission set is the UNION of opaque + bridge-site capabilities, which
+    // equals the wire-schema/import set {Bridge, Echo}.
     auto manifest_payload =
         extract_exec_manifest(std::span<const std::uint8_t>(wf->module_bytes));
     check(manifest_payload.has_value(), "hybrid_bridge.manifest_extracted");
@@ -2989,28 +3032,272 @@ void test_hybrid_p6_bridge_manifest(const std::filesystem::path &repo_root) {
               "hybrid_bridge.manifest_node2_id");
         check((*nodes)[2].schedule_pos == 2,
               "hybrid_bridge.manifest_node2_pos");
-        // P6 bridge nodes: cap_call_count 1 (bridge cap referenced for A2
-        // admission; the tag-0 record disagreement is WH-5b.2 latent gap).
-        check((*nodes)[0].cap_call_count == 1,
-              "hybrid_bridge.manifest_node0_bridge_cap");
-        check((*nodes)[1].cap_call_count == 1,
-              "hybrid_bridge.manifest_node1_bridge_cap");
-        // Opaque cap node: cap_call_count 1 (Echo cap).
+        // P6 bridge nodes: cap_call_count 0 + one bridge site (Bridge cap).
+        check((*nodes)[0].cap_call_count == 0,
+              "hybrid_bridge.manifest_node0_p6_zero_cap_call");
+        check((*nodes)[0].bridge_sites.size() == 1,
+              "hybrid_bridge.manifest_node0_bridge_site_count");
+        check((*nodes)[1].cap_call_count == 0,
+              "hybrid_bridge.manifest_node1_p6_zero_cap_call");
+        check((*nodes)[1].bridge_sites.size() == 1,
+              "hybrid_bridge.manifest_node1_bridge_site_count");
+        // Opaque cap node: cap_call_count 1 (Echo cap) + no bridge sites.
         check((*nodes)[2].cap_call_count == 1,
               "hybrid_bridge.manifest_node2_capability");
+        check((*nodes)[2].bridge_sites.empty(),
+              "hybrid_bridge.manifest_node2_no_bridge_sites");
     }
 
-    // A2 admission SUCCEEDS: the manifest references all imported caps
-    // (including the P6 nodes' in-handler bridge imports), so the
-    // manifest-referenced set equals the wire-schema/import set. The
-    // tag-0-record-vs-cap-byte disagreement for P6 nodes is the WH-5b.2
-    // latent gap (see header comment); the resume classifier is unreachable
-    // for this module today.
+    // A2 admission SUCCEEDS: the union of opaque + bridge-site capabilities
+    // equals the wire-schema/import set {Bridge, Echo}.
     auto admitted = ahfl::runtime::core_wasm_schema_module::
         make_verified_core_wasm_schema_module(
             std::span<const std::uint8_t>(wf->module_bytes));
     check(admitted.ok(),
-          "hybrid_bridge.a2_admission_succeeds_all_caps_referenced");
+          "hybrid_bridge.a2_admission_succeeds_bridge_plus_opaque_union");
+}
+
+// ==== WH-5b.2 §12.14.9 case 4: unknown call_site_id host trust check ====
+//
+// The manifest's bridge site carries a call_site_id that joins to the frame
+// section's bridge_call_sites. On resume, the replay path resolves the
+// manifest site from (node, ordinal), then finds the frame-section site by
+// call_site_id. If the manifest was corrupted (call_site_id changed to a
+// value not in the frame section), find_bridge_site_by_id returns nullptr
+// and the replay fails closed. This test corrupts the manifest in the module
+// bytes between origination and resume, proving the host trust check is
+// live on REAL wasm3.
+
+void test_wh5b2_case4_unknown_callsite_id(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b2_two_bridge_calls.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "case4.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Origination: suspend at ordinal 1 (second Bridge call returns Pending).
+    int bridge_call_count = 0;
+    wh::WorkflowSessionConfig config;
+    config.invoker = [&bridge_call_count](
+        const CapabilityInvocationContext &,
+        const std::string &,
+        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        ++bridge_call_count;
+        if (bridge_call_count == 1) {
+            r.status = CapabilityCallStatus::Success;
+            if (!args.empty()) {
+                if (const auto *int_val =
+                        std::get_if<ahfl::runtime::IntValue>(
+                            &args[0].node)) {
+                    std::unordered_map<std::string, Value> fields;
+                    fields.emplace("n",
+                                   ahfl::runtime::make_int(int_val->value));
+                    r.value = ahfl::runtime::make_struct(
+                        "wasm::wh5b2_two_bridge_calls::Frame",
+                        std::move(fields));
+                }
+            }
+        } else {
+            r.status = CapabilityCallStatus::Pending;
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Bridge";
+    };
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b2_two_bridge_calls::Frame","n":42})");
+    check(input.has_value(), "case4.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto suspended = wh::run_workflow_session(
+        wf->module_bytes, wf->descriptor, *input, std::move(config));
+    check(suspended.has_value(), "case4.suspend");
+    if (!suspended.has_value()) {
+        std::cerr << "  suspend failed: " << suspended.error() << "\n";
+        return;
+    }
+    check(suspended->result.suspended.has_value(), "case4.has_snapshot");
+    if (!suspended->result.suspended.has_value()) {
+        return;
+    }
+    check(bridge_call_count == 2, "case4.two_bridge_calls");
+    auto snapshot = std::move(*suspended->result.suspended);
+
+    // Corrupt the manifest: change the first bridge site's call_site_id
+    // from 0 to 99. The frame section has no site with call_site_id 99,
+    // so find_bridge_site_by_id returns nullptr on resume.
+    auto corrupted_bytes = wf->module_bytes;
+    static constexpr std::array<char, 6> kMagic = {
+        'A', 'H', 'F', 'L', 'X', 'M'};
+    auto magic_it = std::search(
+        corrupted_bytes.begin(), corrupted_bytes.end(),
+        kMagic.begin(), kMagic.end());
+    check(magic_it != corrupted_bytes.end(), "case4.found_magic");
+    if (magic_it == corrupted_bytes.end()) {
+        return;
+    }
+    const auto manifest_offset =
+        static_cast<std::size_t>(magic_it - corrupted_bytes.begin());
+    UlebReader r{std::span<const std::uint8_t>(
+        corrupted_bytes.data() + manifest_offset,
+        corrupted_bytes.size() - manifest_offset)};
+    r.pos = 6; // magic
+    const auto version = r.byte();
+    const auto entry_kind = r.byte();
+    const auto entry_id = r.u32();
+    const auto node_count = r.u32();
+    const auto nid = r.u32();
+    const auto spos = r.u32();
+    const auto ccc = r.byte();
+    const auto bridge_site_count = r.byte();
+    const auto ordinal = r.byte();
+    const auto callsite_id_offset = r.pos;
+    const auto callsite_id = r.u32();
+    check(version.has_value() && *version == 2, "case4.version");
+    check(entry_kind.has_value() && *entry_kind == 0, "case4.entry_kind");
+    check(entry_id.has_value(), "case4.entry_id");
+    check(node_count.has_value() && *node_count == 1, "case4.node_count");
+    check(nid.has_value(), "case4.node_id");
+    check(spos.has_value(), "case4.schedule_pos");
+    check(ccc.has_value() && *ccc == 0, "case4.cap_call_count");
+    check(bridge_site_count.has_value() && *bridge_site_count == 2,
+          "case4.bridge_site_count");
+    check(ordinal.has_value() && *ordinal == 0, "case4.ordinal");
+    check(callsite_id.has_value() && *callsite_id == 0,
+          "case4.callsite_id_original");
+    if (!callsite_id.has_value() || *callsite_id != 0) {
+        return;
+    }
+    // The ULEB encoding of 0 is a single byte. Change it to 99.
+    corrupted_bytes[manifest_offset + callsite_id_offset] = 99;
+
+    // Resume with the corrupted module bytes. The replay path must fail
+    // closed: the manifest's bridge site call_site_id (99) is not found in
+    // the frame section.
+    wh::WorkflowSessionConfig resume_config;
+    resume_config.invoker = [](const CapabilityInvocationContext &,
+                               const std::string &,
+                               const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        return r;
+    };
+    resume_config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Bridge";
+    };
+    resume_config.recovery_snapshot = std::move(snapshot);
+    resume_config.resume_pending_result_wire_json =
+        R"({"_type":"wasm::wh5b2_two_bridge_calls::Frame","n":42})";
+
+    auto resumed = wh::run_workflow_session(
+        corrupted_bytes, wf->descriptor, *input, std::move(resume_config));
+    // The admission-time bridge-site trust check (workflow_session.cpp
+    // manifest<->frame-section cross-check) rejects the corrupted manifest
+    // before the replay classifier runs: the manifest's bridge site
+    // call_site_id (99) is not found in the frame section.
+    check(!resumed.has_value(), "case4.rejected");
+    if (!resumed.has_value()) {
+        check(resumed.error().find(
+                  "manifest bridge site call_site_id not found in frame "
+                  "section") != std::string::npos,
+              "case4.message_pin");
+    }
+}
+
+// ==== WH-5b.2 §12.14.9 case 3: bridge result region out of page ====
+//
+// The frame section travels in the host descriptor and sessions admit it
+// without the agent-driver verifier gate, so its bridge-site placements are
+// trusted only after the admission-time cross-check in run_workflow_session.
+// A forged section that places a bridge result frame (or its String payload
+// arena) beyond the fixed 64 KiB page must be rejected before run2, with the
+// module's manifest left valid so only the frame-section check can fire.
+
+void test_wh5b2_case3_bridge_site_oob_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b2_two_bridge_calls.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "case3.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+    check(wf->descriptor.frame_section.has_value(),
+          "case3.has_frame_section");
+    if (!wf->descriptor.frame_section.has_value()) {
+        return;
+    }
+    check(!wf->descriptor.frame_section->bridge_call_sites.empty(),
+          "case3.has_bridge_sites");
+    if (wf->descriptor.frame_section->bridge_call_sites.empty()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b2_two_bridge_calls::Frame","n":42})");
+    check(input.has_value(), "case3.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    const auto make_config = [] {
+        wh::WorkflowSessionConfig config;
+        config.invoker = [](const CapabilityInvocationContext &,
+                            const std::string &,
+                            const std::vector<Value> &) -> CapabilityCallResult {
+            CapabilityCallResult r;
+            r.status = CapabilityCallStatus::Success;
+            return r;
+        };
+        config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+            return "Bridge";
+        };
+        return config;
+    };
+
+    constexpr std::uint32_t kPageEnd =
+        irc::kCoreWasmFixedLinearMemoryCapacityBytes;
+
+    // Forged result FRAME: ends four bytes past the page end.
+    auto frame_oob_desc = wf->descriptor;
+    auto &frame_site = frame_oob_desc.frame_section->bridge_call_sites.front();
+    frame_site.result_base = kPageEnd - 4u;
+    frame_site.result_extent = 8u;
+
+    auto frame_rejected = wh::run_workflow_session(
+        wf->module_bytes, frame_oob_desc, *input, make_config());
+    check(!frame_rejected.has_value(), "case3.frame_oob_rejected");
+    if (!frame_rejected.has_value()) {
+        check(frame_rejected.error().find(
+                  "bridge result frame out of bounds") != std::string::npos,
+              "case3.frame_oob_message_pin");
+    }
+
+    // Forged String payload ARENA: ends four bytes past the page end while
+    // the result frame stays at its honest placement.
+    auto payload_oob_desc = wf->descriptor;
+    auto &payload_site =
+        payload_oob_desc.frame_section->bridge_call_sites.front();
+    payload_site.result_payload_base = kPageEnd - 4u;
+    payload_site.result_payload_capacity = 8u;
+
+    auto payload_rejected = wh::run_workflow_session(
+        wf->module_bytes, payload_oob_desc, *input, make_config());
+    check(!payload_rejected.has_value(), "case3.payload_oob_rejected");
+    if (!payload_rejected.has_value()) {
+        check(payload_rejected.error().find(
+                  "bridge result payload arena out of bounds") !=
+                  std::string::npos,
+              "case3.payload_oob_message_pin");
+    }
 }
 
 } // namespace
@@ -3053,6 +3340,11 @@ int main() {
     test_hybrid_multi_p6_fanout(repo_root);
     // WH-5b.1 fix-forward: P6-bridge manifest byte shape + multi-P6 ordinals.
     test_hybrid_p6_bridge_manifest(repo_root);
+    // WH-5b.2 §12.14.9 case 4: unknown call_site_id host trust check.
+    test_wh5b2_case4_unknown_callsite_id(repo_root);
+    // WH-5b.2 §12.14.9 case 3: forged frame-section bridge result regions
+    // beyond the fixed 64 KiB page are rejected at session admission.
+    test_wh5b2_case3_bridge_site_oob_fail_closed(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

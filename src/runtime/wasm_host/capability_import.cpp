@@ -337,40 +337,14 @@ handle_bridge(const CapabilityImportConfig &config,
     // Resolve the bridge site from the control-block address (never from the
     // ordinal alone: one capability legally occupies one import shared by MANY
     // dense call sites).
-    const auto block_ptr = obs.scalar_arg;
-    if (section.bridge_block_stride == 0) {
-        config.state.last_error = CapabilityImportError::BridgeBlockOutOfRange;
+    CapabilityImportError resolve_error{};
+    auto resolved =
+        resolve_bridge_call_site(section, obs.scalar_arg, resolve_error);
+    if (!resolved.has_value()) {
+        config.state.last_error = resolve_error;
         return eng::ImportAbort{};
     }
-    if (block_ptr < section.bridge_control_base) {
-        config.state.last_error = CapabilityImportError::BridgeBlockOutOfRange;
-        return eng::ImportAbort{};
-    }
-    const auto rel = block_ptr - section.bridge_control_base;
-    const auto control_extent = checked_mul_u32(
-        static_cast<std::uint64_t>(section.bridge_call_sites.size()),
-        static_cast<std::uint64_t>(section.bridge_block_stride));
-    if (!control_extent.has_value() || rel >= *control_extent) {
-        config.state.last_error = CapabilityImportError::BridgeBlockOutOfRange;
-        return eng::ImportAbort{};
-    }
-    if (rel % section.bridge_block_stride != 0) {
-        config.state.last_error = CapabilityImportError::BridgeBlockStride;
-        return eng::ImportAbort{};
-    }
-    const auto block_index = rel / section.bridge_block_stride;
-    if (block_index >= section.bridge_call_sites.size()) {
-        config.state.last_error = CapabilityImportError::BridgeSiteNotFound;
-        return eng::ImportAbort{};
-    }
-    const auto &site = section.bridge_call_sites[block_index];
-    const auto expected_addr =
-        checked_add_u32(section.bridge_control_base,
-                        static_cast<std::uint64_t>(site.block_offset));
-    if (!expected_addr.has_value() || block_ptr != *expected_addr) {
-        config.state.last_error = CapabilityImportError::BridgeBlockStride;
-        return eng::ImportAbort{};
-    }
+    const auto &site = *resolved->site;
 
     // Cross-check: the bridge site's source_symbol must match the call site's
     // (the call site was resolved from the import ordinal).
@@ -380,27 +354,14 @@ handle_bridge(const CapabilityImportConfig &config,
     }
 
     // Read and validate the control block header.
-    const auto call_site_id = read_u32_le(obs.whole_memory, block_ptr);
+    const auto call_site_id = read_u32_le(obs.whole_memory, obs.scalar_arg);
     if (!call_site_id.has_value() || *call_site_id != site.call_site_id) {
         config.state.last_error = CapabilityImportError::BridgeCallSiteIdMismatch;
         return eng::ImportAbort{};
     }
-    const auto arg_count = read_u32_le(obs.whole_memory, block_ptr + 4);
+    const auto arg_count = read_u32_le(obs.whole_memory, obs.scalar_arg + 4);
     if (!arg_count.has_value() || *arg_count != site.arity) {
         config.state.last_error = CapabilityImportError::BridgeArgCountMismatch;
-        return eng::ImportAbort{};
-    }
-
-    // Resolve the wire-schema capability record for the arg wire node ids.
-    const auto param_binding = call_site.param_binding();
-    const auto &wire = param_binding.table();
-    const auto *cap = find_capability(wire, call_site.source_symbol());
-    if (cap == nullptr) {
-        config.state.last_error = CapabilityImportError::CapabilityNotInWireSchema;
-        return eng::ImportAbort{};
-    }
-    if (cap->params.size() != site.arity) {
-        config.state.last_error = CapabilityImportError::BridgeWireSchemaMismatch;
         return eng::ImportAbort{};
     }
 
@@ -410,151 +371,46 @@ handle_bridge(const CapabilityImportConfig &config,
         return eng::ImportAbort{};
     }
 
-    // Build the walk context and the authorized regions.
-    FrameWalkContext ctx(section, wire);
-    const auto string_regions = build_bridge_string_regions(section, site.call_site_id);
-    const auto root_regions = build_bridge_root_regions(section, site.call_site_id);
-
-    // Walk the arguments.
-    std::vector<runtime::Value> args;
-    args.reserve(site.arity);
-    for (std::uint32_t i = 0; i < site.arity; ++i) {
-        const auto desc_addr = block_ptr + 8 + 8 * i;
-        const auto ptr = read_i32_le(obs.whole_memory, desc_addr);
-        const auto len = read_u32_le(obs.whole_memory, desc_addr + 4);
-        if (!ptr.has_value() || !len.has_value()) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-        const auto ptr_u = static_cast<std::uint32_t>(*ptr);
-
-        // Bounds-check the span against the page.
-        if (ptr_u > obs.whole_memory.size() ||
-            *len > obs.whole_memory.size() - ptr_u) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-
-        // Classify the parameter by its wire shape.
-        if (cap->params[i].value >= wire.nodes.size()) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-        const auto &wire_node = wire.nodes[cap->params[i].value];
-        const auto kind = bridge_param_kind(wire_node);
-        if (kind == BridgeParamKind::Reject) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-
-        // Get the layout for this parameter.
-        if (i >= site.param_layouts.size()) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-        const auto layout_id = site.param_layouts[i];
-        const auto *layout = ctx.layout(layout_id);
-        if (layout == nullptr) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-
-        if (kind == BridgeParamKind::Spill) {
-            // Every spilled slot is one 8-byte private slot in THIS site's
-            // spill window.
-            const bool layout_ok =
-                std::holds_alternative<ir::core::CoreLayoutScalar>(layout->shape) ||
-                std::holds_alternative<ir::core::CoreLayoutPtrLen>(layout->shape) ||
-                std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape);
-            if (!layout_ok) {
-                config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-                return eng::ImportAbort{};
-            }
-            if (*len != 8) {
-                config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-                return eng::ImportAbort{};
-            }
-            const StringRegion spill_region{site.spill_base,
-                                            site.spill_base + site.spill_extent};
-            if (spill_region.hi <= spill_region.lo ||
-                !region_contains(spill_region, ptr_u, 8)) {
-                config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-                return eng::ImportAbort{};
-            }
-        } else {
-            // An aggregate root stays at its existing stable address.
-            const bool layout_ok =
-                std::holds_alternative<ir::core::CoreLayoutStruct>(layout->shape) ||
-                std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape);
-            if (!layout_ok) {
-                config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-                return eng::ImportAbort{};
-            }
-            if (static_cast<std::uint64_t>(*len) != layout->size) {
-                config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-                return eng::ImportAbort{};
-            }
-            if (!string_in_regions(root_regions, ptr_u, *len)) {
-                config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-                return eng::ImportAbort{};
-            }
-        }
-
-        // Walk the P4-D span into a host Value.
-        auto value = read_value_at(ctx, obs.whole_memory, cap->params[i], layout_id,
-                                   ptr_u, string_regions);
-        if (!value.has_value()) {
-            config.state.last_error = CapabilityImportError::ArgDecodeFailed;
-            return eng::ImportAbort{};
-        }
-        args.push_back(std::move(*value));
+    // Walk the arguments (shared with the session memo-replay arg_hash, so the
+    // origination and replay hashes are computed by the SAME code path).
+    auto args = decode_bridge_import_args(section, call_site, site, obs.scalar_arg,
+                                          obs.whole_memory, resolve_error);
+    if (!args.has_value()) {
+        config.state.last_error = resolve_error;
+        return eng::ImportAbort{};
     }
 
     // Invoke the capability.
     // P2-2: set the per-call source_symbol so the session layer resolves the
     // owning agent/node per-import, not by name-keyed first-wins.
     config.context.source_capability_symbol_id = call_site.source_symbol();
-    auto result = config.invoker(config.context, *name, args);
+    auto result = config.invoker(config.context, *name, *args);
     const auto raw_status = map_status_to_raw(result.status);
 
     if (result.status != runtime::CapabilityCallStatus::Success) {
         // A capability that executed but failed/pending is a raw non-OK reply;
-        // the bridge lane's module traps on any non-zero status (the bridge has
-        // no graceful ERROR/PENDING arm).
+        // WH-5b.2: the bridge runner now has a graceful PENDING arm (suspend),
+        // while ERROR (and any other non-OK status) still traps.
+        //
+        // §12.14.9 case 6 (PENDING carrying a non-empty result): the reply
+        // below ALWAYS carries GuestPointer{0} and extent 0 for any non-Success
+        // status, so a PENDING reply can never transport a non-null result
+        // pointer. The guest's PENDING arm reads only the status word and
+        // suspends; it never dereferences the pointer. This is the
+        // defense-in-depth invariant that makes case 6 unreachable.
         return eng::ImportReply{raw_status, eng::GuestPointer{0}, 0};
     }
 
     // Pack the result at the call site's disjoint result placement.
-    auto page = config.engine.mutable_whole_memory();
-    if (!page.has_value()) {
-        config.state.last_error = CapabilityImportError::EngineMemoryFailed;
-        return eng::ImportAbort{};
-    }
-
-    // Zero the whole result placement (padding reads back deterministically).
-    if (site.result_base > page->size() ||
-        site.result_extent > page->size() - site.result_base) {
-        config.state.last_error = CapabilityImportError::BridgeResultPackFailed;
-        return eng::ImportAbort{};
-    }
-    std::fill(page->begin() + site.result_base,
-              page->begin() + site.result_base + site.result_extent,
-              std::uint8_t{0});
-
     auto value =
         std::move(result.value).value_or(runtime::Value{runtime::NoneValue{}});
-    auto arena_cursor = site.result_payload_base;
-    auto packed = pack_value_at(ctx, *page, cap->result, site.result_layout, value,
-                                site.result_base, arena_cursor,
-                                site.result_payload_base,
-                                site.result_payload_capacity);
-    if (!packed.has_value()) {
-        config.state.last_error = CapabilityImportError::BridgeResultPackFailed;
-        return eng::ImportAbort{};
+    CapabilityImportError pack_error{};
+    auto packed_reply = pack_bridge_result_value(
+        config.engine, section, call_site, site, std::move(value), pack_error);
+    if (std::holds_alternative<eng::ImportAbort>(packed_reply)) {
+        config.state.last_error = pack_error;
     }
-
-    return eng::ImportReply{raw_status, eng::GuestPointer{site.result_base},
-                            site.result_extent};
+    return packed_reply;
 }
 
 } // anonymous namespace
@@ -641,6 +497,205 @@ decode_opaque_import_args(const sm::VerifiedCoreWasmSchemaModule &module,
     result.source_symbol = call_site->source_symbol();
     result.args.push_back(std::move(*decoded.value));
     return result;
+}
+
+// WH-5b.2: exposed for the session memo-replay layer (see the header comment).
+std::optional<ResolvedBridgeSite>
+resolve_bridge_call_site(const ir::core::CoreFrameLayoutSection &section,
+                         std::uint32_t block_ptr,
+                         CapabilityImportError &error) noexcept {
+    if (section.bridge_block_stride == 0) {
+        error = CapabilityImportError::BridgeBlockOutOfRange;
+        return std::nullopt;
+    }
+    if (block_ptr < section.bridge_control_base) {
+        error = CapabilityImportError::BridgeBlockOutOfRange;
+        return std::nullopt;
+    }
+    const auto rel = block_ptr - section.bridge_control_base;
+    const auto control_extent = checked_mul_u32(
+        static_cast<std::uint64_t>(section.bridge_call_sites.size()),
+        static_cast<std::uint64_t>(section.bridge_block_stride));
+    if (!control_extent.has_value() || rel >= *control_extent) {
+        error = CapabilityImportError::BridgeBlockOutOfRange;
+        return std::nullopt;
+    }
+    if (rel % section.bridge_block_stride != 0) {
+        error = CapabilityImportError::BridgeBlockStride;
+        return std::nullopt;
+    }
+    const auto block_index = rel / section.bridge_block_stride;
+    if (block_index >= section.bridge_call_sites.size()) {
+        error = CapabilityImportError::BridgeSiteNotFound;
+        return std::nullopt;
+    }
+    const auto &site = section.bridge_call_sites[block_index];
+    const auto expected_addr =
+        checked_add_u32(section.bridge_control_base,
+                        static_cast<std::uint64_t>(site.block_offset));
+    if (!expected_addr.has_value() || block_ptr != *expected_addr) {
+        error = CapabilityImportError::BridgeBlockStride;
+        return std::nullopt;
+    }
+    return ResolvedBridgeSite{block_index, &site};
+}
+
+const ir::core::CoreFrameBridgeCallSite *
+find_bridge_site_by_id(const ir::core::CoreFrameLayoutSection &section,
+                       std::uint32_t call_site_id) noexcept {
+    for (const auto &site : section.bridge_call_sites) {
+        if (site.call_site_id == call_site_id) {
+            return &site;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<std::vector<runtime::Value>>
+decode_bridge_import_args(
+    const ir::core::CoreFrameLayoutSection &section,
+    const sm::VerifiedCoreWasmCallSite &call_site,
+    const ir::core::CoreFrameBridgeCallSite &site,
+    std::uint32_t block_ptr,
+    std::span<const std::uint8_t> whole_memory,
+    CapabilityImportError &error) {
+    const auto param_binding = call_site.param_binding();
+    const auto &wire = param_binding.table();
+    const auto *cap = find_capability(wire, call_site.source_symbol());
+    if (cap == nullptr) {
+        error = CapabilityImportError::CapabilityNotInWireSchema;
+        return std::nullopt;
+    }
+    if (cap->params.size() != site.arity) {
+        error = CapabilityImportError::BridgeWireSchemaMismatch;
+        return std::nullopt;
+    }
+    FrameWalkContext ctx(section, wire);
+    const auto string_regions = build_bridge_string_regions(section, site.call_site_id);
+    const auto root_regions = build_bridge_root_regions(section, site.call_site_id);
+    std::vector<runtime::Value> args;
+    args.reserve(site.arity);
+    for (std::uint32_t i = 0; i < site.arity; ++i) {
+        const auto desc_addr = block_ptr + 8 + 8 * i;
+        const auto ptr = read_i32_le(whole_memory, desc_addr);
+        const auto len = read_u32_le(whole_memory, desc_addr + 4);
+        if (!ptr.has_value() || !len.has_value()) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        const auto ptr_u = static_cast<std::uint32_t>(*ptr);
+        // Bounds-check the span against the page.
+        if (ptr_u > whole_memory.size() ||
+            *len > whole_memory.size() - ptr_u) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        // Classify the parameter by its wire shape.
+        if (cap->params[i].value >= wire.nodes.size()) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        const auto &wire_node = wire.nodes[cap->params[i].value];
+        const auto kind = bridge_param_kind(wire_node);
+        if (kind == BridgeParamKind::Reject) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        // Get the layout for this parameter.
+        if (i >= site.param_layouts.size()) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        const auto layout_id = site.param_layouts[i];
+        const auto *layout = ctx.layout(layout_id);
+        if (layout == nullptr) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        if (kind == BridgeParamKind::Spill) {
+            // Every spilled slot is one 8-byte private slot in THIS site's
+            // spill window.
+            const bool layout_ok =
+                std::holds_alternative<ir::core::CoreLayoutScalar>(layout->shape) ||
+                std::holds_alternative<ir::core::CoreLayoutPtrLen>(layout->shape) ||
+                std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape);
+            if (!layout_ok || *len != 8) {
+                error = CapabilityImportError::ArgDecodeFailed;
+                return std::nullopt;
+            }
+            const StringRegion spill_region{site.spill_base,
+                                            site.spill_base + site.spill_extent};
+            if (spill_region.hi <= spill_region.lo ||
+                !region_contains(spill_region, ptr_u, 8)) {
+                error = CapabilityImportError::ArgDecodeFailed;
+                return std::nullopt;
+            }
+        } else {
+            // An aggregate root stays at its existing stable address.
+            const bool layout_ok =
+                std::holds_alternative<ir::core::CoreLayoutStruct>(layout->shape) ||
+                std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape);
+            if (!layout_ok || static_cast<std::uint64_t>(*len) != layout->size) {
+                error = CapabilityImportError::ArgDecodeFailed;
+                return std::nullopt;
+            }
+            if (!string_in_regions(root_regions, ptr_u, *len)) {
+                error = CapabilityImportError::ArgDecodeFailed;
+                return std::nullopt;
+            }
+        }
+        // Walk the P4-D span into a host Value.
+        auto value = read_value_at(ctx, whole_memory, cap->params[i], layout_id,
+                                   ptr_u, string_regions);
+        if (!value.has_value()) {
+            error = CapabilityImportError::ArgDecodeFailed;
+            return std::nullopt;
+        }
+        args.push_back(std::move(*value));
+    }
+    return args;
+}
+
+eng::ImportCallbackResult
+pack_bridge_result_value(Wasm3ResumeEngine &engine,
+                         const ir::core::CoreFrameLayoutSection &section,
+                         const sm::VerifiedCoreWasmCallSite &call_site,
+                         const ir::core::CoreFrameBridgeCallSite &site,
+                         runtime::Value value,
+                         CapabilityImportError &error) {
+    const auto param_binding = call_site.param_binding();
+    const auto &wire = param_binding.table();
+    const auto *cap = find_capability(wire, call_site.source_symbol());
+    if (cap == nullptr) {
+        error = CapabilityImportError::CapabilityNotInWireSchema;
+        return eng::ImportAbort{};
+    }
+    auto page = engine.mutable_whole_memory();
+    if (!page.has_value()) {
+        error = CapabilityImportError::EngineMemoryFailed;
+        return eng::ImportAbort{};
+    }
+    // Zero the whole result placement (padding reads back deterministically).
+    if (site.result_base > page->size() ||
+        site.result_extent > page->size() - site.result_base) {
+        error = CapabilityImportError::BridgeResultPackFailed;
+        return eng::ImportAbort{};
+    }
+    std::fill(page->begin() + site.result_base,
+              page->begin() + site.result_base + site.result_extent,
+              std::uint8_t{0});
+    FrameWalkContext ctx(section, wire);
+    auto arena_cursor = site.result_payload_base;
+    auto packed = pack_value_at(ctx, *page, cap->result, site.result_layout, value,
+                                site.result_base, arena_cursor,
+                                site.result_payload_base,
+                                site.result_payload_capacity);
+    if (!packed.has_value()) {
+        error = CapabilityImportError::BridgeResultPackFailed;
+        return eng::ImportAbort{};
+    }
+    return eng::ImportReply{AHFL_CAP_OK, eng::GuestPointer{site.result_base},
+                            site.result_extent};
 }
 
 eng::ImportCallback

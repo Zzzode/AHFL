@@ -682,11 +682,17 @@ int main() {
               "encoder.rejects_frontier_not_capability");
     }
     {
-        // identity node carrying a memo
+        // WH-5b.2: an identity node carrying a memo is now A1-valid. The
+        // record-level check cannot distinguish a P6 bridge node (identity
+        // node_kind + in-runner bridge-site table) from a pure identity
+        // node; the coordinate gate in the resume controller enforces that
+        // a pure identity node has empty memo. The A1 check only verifies
+        // structural invariants (dense ordinals, valid slots, etc.).
         auto r = make_suspended();
         r.nodes[0].node_kind = NodeKind::Identity;
         r.nodes[0].memo.push_back(r.nodes[1].memo[0]);
-        check(!encode_and_authenticate(r, test_key()).ok(), "encoder.rejects_identity_with_memo");
+        check(encode_and_authenticate(r, test_key()).ok(),
+              "encoder.allows_identity_with_memo");
     }
     {
         // Suspended pending ordinal not following memo

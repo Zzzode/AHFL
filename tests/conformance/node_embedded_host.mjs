@@ -506,7 +506,22 @@ async function makeInstance(compiled, mode) {
       return [77, 1234, 9]; // unknown
     };
   }
-  const instance = (await WebAssembly.instantiate(compiled, { ahfl_cap: imports }));
+  // WH-5b.3: build fail-closed stubs for the ahfl_xcode transcode imports.
+  // The Node embedded host handles bridge transcoding internally via
+  // makeBridgeCallback; the wasm module's ahfl_xcode calls are never reached
+  // in scenarios that suspend before a transcode site. A stub that returns
+  // status=1 (error) traps the module if a transcode is ever attempted.
+  const xcodeImports = {};
+  for (const listedImport of WebAssembly.Module.imports(compiled)) {
+    if (listedImport.module === "ahfl_xcode") {
+      xcodeImports[listedImport.name] = () => [1, 0, 0];
+    }
+  }
+  const importObject = { ahfl_cap: imports };
+  if (Object.keys(xcodeImports).length > 0) {
+    importObject.ahfl_xcode = xcodeImports;
+  }
+  const instance = (await WebAssembly.instantiate(compiled, importObject));
   state.instance = instance;
   state.exports = instance.exports;
   state.writeInput = function writeInput() {
@@ -1270,41 +1285,48 @@ async function runWorkflowP6(compiled) {
 
   const tuple = e.run2(entryBlock.input_base, entryBlock.input_size);
   let outputRaw = null;
-  if (tuple[0] !== 0) {
+  // WH-5b.2: a bridge PENDING arm latches and returns (PENDING,0,0) from the
+  // P6 runner. The workflow suspends: no output slot, no completed-count
+  // check. Read the state trace + probe events and return the suspended
+  // observation.
+  const suspended = tuple[0] === 2;
+  if (!suspended && tuple[0] !== 0) {
     fail(`p6 workflow run2 returned non-OK status ${tuple[0]}`);
   }
-  if (tuple[1] !== frameLane.output_base) {
-    fail(`p6 workflow run2 returned ${tuple[1]} != output slot ${frameLane.output_base}`);
-  }
-  if (tuple[2] !== frameLane.output_size) {
-    fail(`p6 workflow run2 length ${tuple[2]} != ${frameLane.output_size}`);
-  }
-  if (e.workflow_completed_count.value !== nodeCount) {
-    fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
-  }
-  // Encode the workflow output slot against the workflow output root. String
-  // payloads are authorized in rodata, the entry payload arena, or any bridge
-  // call site's disjoint result placement (V2-D emission half 2).
-  const stringRegions = [];
-  if (frameLane.rodata_extent > 0) {
-    stringRegions.push({lo: frameLane.rodata_base,
-                        hi: frameLane.rodata_base + frameLane.rodata_extent});
-  }
-  if (lane.entry_payload_capacity > 0) {
-    stringRegions.push({lo: lane.entry_payload_base,
-                        hi: lane.entry_payload_base + lane.entry_payload_capacity});
-  }
-  for (const site of (frameLane.bridge_call_sites ?? [])) {
-    if (site.result_payload_capacity > 0) {
-      stringRegions.push({lo: Number(site.result_payload_base),
-                          hi: Number(site.result_payload_base) +
-                              Number(site.result_payload_capacity)});
+  if (!suspended) {
+    if (tuple[1] !== frameLane.output_base) {
+      fail(`p6 workflow run2 returned ${tuple[1]} != output slot ${frameLane.output_base}`);
     }
+    if (tuple[2] !== frameLane.output_size) {
+      fail(`p6 workflow run2 length ${tuple[2]} != ${frameLane.output_size}`);
+    }
+    if (e.workflow_completed_count.value !== nodeCount) {
+      fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
+    }
+    // Encode the workflow output slot against the workflow output root. String
+    // payloads are authorized in rodata, the entry payload arena, or any bridge
+    // call site's disjoint result placement (V2-D emission half 2).
+    const stringRegions = [];
+    if (frameLane.rodata_extent > 0) {
+      stringRegions.push({lo: frameLane.rodata_base,
+                          hi: frameLane.rodata_base + frameLane.rodata_extent});
+    }
+    if (lane.entry_payload_capacity > 0) {
+      stringRegions.push({lo: lane.entry_payload_base,
+                          hi: lane.entry_payload_base + lane.entry_payload_capacity});
+    }
+    for (const site of (frameLane.bridge_call_sites ?? [])) {
+      if (site.result_payload_capacity > 0) {
+        stringRegions.push({lo: Number(site.result_payload_base),
+                            hi: Number(site.result_payload_base) +
+                                Number(site.result_payload_capacity)});
+      }
+    }
+    const output = readValue(e, frameLane, W, L, roots.output,
+                             frameLane.output_layout, tuple[1], backing,
+                             stringRegions);
+    outputRaw = JSON.stringify(output);
   }
-  const output = readValue(e, frameLane, W, L, roots.output,
-                           frameLane.output_layout, tuple[1], backing,
-                           stringRegions);
-  outputRaw = JSON.stringify(output);
   // V2-D emission half 2: the state sequence is REAL runtime evidence read
   // from the module's state-entry trace ring: one (runner, state) record per
   // dispatched state (a computed-goto routing handler records only the
@@ -1342,13 +1364,13 @@ async function runWorkflowP6(compiled) {
   const capabilities = probe.events.map((event) => event.name);
   const capabilityArguments = probe.events.map((event) => event.argument);
   return {
-    status: "completed",
+    status: suspended ? "suspended" : "completed",
     states,
     capabilities,
     capabilityArguments,
     outputRaw,
     transitions: e.transition_count.value,
-    completedNodes: e.workflow_completed_count.value,
+    completedNodes: suspended ? null : e.workflow_completed_count.value,
   };
 }
 
@@ -1713,6 +1735,10 @@ async function runAbiProbes(compiled) {
 // ---- run ---------------------------------------------------------------------
 const compiled = await WebAssembly.compile(bytes);
 for (const listedImport of WebAssembly.Module.imports(compiled)) {
+  // WH-5b.3: the ahfl_xcode transcode imports are host-side codec adapters,
+  // not capability imports. The Node embedded host provides fail-closed
+  // stubs (they trap if reached); the descriptor does not list them.
+  if (listedImport.module === "ahfl_xcode") continue;
   if (listedImport.module !== "ahfl_cap" ||
       !descriptor.imports.some((i) => i.field === listedImport.name)) {
     fail(`module imports undeclared capability ${listedImport.module}.${listedImport.name}`);

@@ -642,6 +642,62 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 ? *descriptor.frame_section
                 : default_section;
 
+        // WH-5b.2: host-side trust checks. Cross-check the manifest
+        // bridge-site table against the frame section: every bridge
+        // site's call_site_id must exist in the frame section's
+        // bridge_call_sites, the source_symbol must match, and the
+        // result placement (frame + payload arena) must be in-bounds of
+        // the fixed 64 KiB page. The A2 decoder already validates
+        // ordinal density and call_site_id uniqueness; these checks
+        // close the manifest<->frame-section trust gap (design 12.14.4).
+        if (is_p6 && descriptor.frame_section.has_value()) {
+            const auto &fsection = *descriptor.frame_section;
+            for (std::size_t i = 0; i < admitted.module->node_count();
+                 ++i) {
+                auto node_result = admitted.module->resolve_node(
+                    csm::ManifestNodeIndex{i});
+                if (!node_result.ok() ||
+                    !node_result.node.has_value()) {
+                    return std::unexpected(
+                        "run_workflow_session: manifest node resolution "
+                        "failed during bridge-site trust check");
+                }
+                for (const auto &bs :
+                     node_result.node->bridge_sites()) {
+                    const auto *fsite = find_bridge_site_by_id(
+                        fsection, bs.call_site_id);
+                    if (fsite == nullptr) {
+                        return std::unexpected(
+                            "run_workflow_session: manifest bridge "
+                            "site call_site_id not found in frame "
+                            "section");
+                    }
+                    if (fsite->source_symbol != bs.source_symbol) {
+                        return std::unexpected(
+                            "run_workflow_session: manifest bridge "
+                            "site source_symbol mismatch");
+                    }
+                    if (static_cast<std::size_t>(fsite->result_base) +
+                            static_cast<std::size_t>(
+                                fsite->result_extent) >
+                        irc::kCoreWasmFixedLinearMemoryCapacityBytes) {
+                        return std::unexpected(
+                            "run_workflow_session: bridge result "
+                            "frame out of bounds");
+                    }
+                    if (static_cast<std::size_t>(
+                            fsite->result_payload_base) +
+                            static_cast<std::size_t>(
+                                fsite->result_payload_capacity) >
+                        irc::kCoreWasmFixedLinearMemoryCapacityBytes) {
+                        return std::unexpected(
+                            "run_workflow_session: bridge result "
+                            "payload arena out of bounds");
+                    }
+                }
+            }
+        }
+
         // WH-5b.3: build the transcode ordinal->site map and admit the wire
         // schema for binding minting. A hybrid P6+opaque workflow carries
         // transcode sites; an all-P6 or all-opaque workflow has none and the
@@ -732,6 +788,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
              &descriptor, &last_trace_count, &collected_states,
              &states_per_node, &runner_to_schedule, &trace_error, &admitted,
              &transcode_by_ordinal, &verified_wire, &transcode_arena_cursor,
+             &frame_section,
              has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
@@ -753,19 +810,17 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     }
                 }
 
-                // WH-4b: opaque lane only. Bridge imports (empty param_frame)
-                // pass through to inner live: the bridge ABI traps on Pending,
-                // so there is no suspend/resume on that lane.
-                if (obs.param_frame.empty()) {
-                    return inner(obs);
-                }
+                // WH-5b.2: lane detection. Bridge imports (empty param_frame)
+                // now flow through the same memo/replay machinery as opaque
+                // imports: the bridge ABI has a graceful PENDING arm
+                // (suspend), so suspend/resume parity holds on both lanes.
+                const bool is_bridge = obs.param_frame.empty();
 
                 // WH-5b.3: route transcode imports BEFORE the memo/replay/
-                // event_count machinery (isomorphic to the bridge skip
-                // above). A transcode is a pure deterministic codec adapter:
-                // it never invokes a capability, touches memo, fires
-                // capability hooks, or writes an event record. The handler
-                // fails closed with a nonzero status that the guest's
+                // event_count machinery. A transcode is a pure deterministic
+                // codec adapter: it never invokes a capability, touches memo,
+                // fires capability hooks, or writes an event record. The
+                // handler fails closed with a nonzero status that the guest's
                 // scheduler traps on, converting the failure to NodeFailed.
                 if (auto xit = transcode_by_ordinal.find(obs.import_ordinal);
                     xit != transcode_by_ordinal.end()) {
@@ -783,6 +838,46 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         .arena_cursor = transcode_arena_cursor,
                     };
                     return handle_transcode(xconfig, *xit->second, obs);
+                }
+
+                // WH-5b.2: bridge lane. Resolve the bridge site from the
+                // control-block pointer (the same resolution handle_bridge
+                // performs). The site gives the result placement
+                // (result_base / result_extent / result_payload_base /
+                // result_payload_capacity) for memo capture and injection.
+                // The call site (resolved below for both lanes) gives the
+                // source_symbol and result binding.
+                const irc::CoreFrameBridgeCallSite *bridge_site = nullptr;
+                if (is_bridge) {
+                    if (!descriptor.frame_section.has_value()) {
+                        if (recorder.is_replay()) {
+                            replay_divergence =
+                                "durable resume replay diverged: bridge "
+                                "import without frame section";
+                            return eng::ImportAbort{};
+                        }
+                        origination_failure =
+                            "bridge import without frame section at import "
+                            "boundary";
+                        return eng::ImportAbort{};
+                    }
+                    CapabilityImportError resolve_error{};
+                    auto resolved = resolve_bridge_call_site(
+                        *descriptor.frame_section, obs.scalar_arg,
+                        resolve_error);
+                    if (!resolved.has_value()) {
+                        if (recorder.is_replay()) {
+                            replay_divergence =
+                                "durable resume replay diverged: bridge "
+                                "call site resolution failed";
+                            return eng::ImportAbort{};
+                        }
+                        origination_failure =
+                            "bridge call site resolution failed at import "
+                            "boundary";
+                        return eng::ImportAbort{};
+                    }
+                    bridge_site = resolved->site;
                 }
 
                 // P1-1: derive the CURRENT node's schedule position from the
@@ -810,6 +905,24 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     return inner(obs);
                 }
                 const auto source_symbol = call_site->source_symbol();
+
+                // WH-5b.2: cross-check the bridge site's source_symbol with
+                // the call site's (the call site was resolved from the
+                // import ordinal; the bridge site from the control-block
+                // pointer). A mismatch is a host-side invariant violation.
+                if (is_bridge && bridge_site->source_symbol != source_symbol) {
+                    if (recorder.is_replay()) {
+                        replay_divergence =
+                            "durable resume replay diverged: bridge site "
+                            "source_symbol mismatch";
+                        return eng::ImportAbort{};
+                    }
+                    origination_failure =
+                        "bridge site source_symbol mismatch at import "
+                        "boundary";
+                    return eng::ImportAbort{};
+                }
+
                 const auto event_count =
                     ne::read_event_count(obs.whole_memory);
                 if (!event_count.has_value() ||
@@ -861,20 +974,58 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 std::to_string(ordinal) + ")";
                             return eng::ImportAbort{};
                         }
-                        auto decoded_args = decode_opaque_import_args(
-                            *admitted.module, obs.import_ordinal,
-                            obs.param_frame);
-                        if (!decoded_args.has_value()) {
-                            replay_divergence =
-                                "durable resume replay diverged from the "
-                                "recorded memo (ordinal " +
-                                std::to_string(ordinal) + ")";
-                            return eng::ImportAbort{};
+                        // WH-5b.2: lane-specific arg_hash. The bridge lane
+                        // decodes P4-D args; the opaque lane decodes the
+                        // wire-JSON envelope. Both feed hash_values so the
+                        // origination and replay hashes use the SAME code
+                        // path (decode_bridge_import_args is shared with
+                        // handle_bridge).
+                        std::uint64_t live_arg_hash = 0;
+                        if (is_bridge) {
+                            CapabilityImportError decode_error{};
+                            auto bargs = decode_bridge_import_args(
+                                *descriptor.frame_section, *call_site,
+                                *bridge_site, obs.scalar_arg,
+                                obs.whole_memory, decode_error);
+                            if (!bargs.has_value()) {
+                                replay_divergence =
+                                    "durable resume replay diverged from "
+                                    "the recorded memo (ordinal " +
+                                    std::to_string(ordinal) + ")";
+                                return eng::ImportAbort{};
+                            }
+                            auto h = runtime::hash_values(*bargs);
+                            if (!h.has_value()) {
+                                replay_divergence =
+                                    "durable resume replay diverged from "
+                                    "the recorded memo (ordinal " +
+                                    std::to_string(ordinal) + ")";
+                                return eng::ImportAbort{};
+                            }
+                            live_arg_hash = *h;
+                        } else {
+                            auto decoded_args = decode_opaque_import_args(
+                                *admitted.module, obs.import_ordinal,
+                                obs.param_frame);
+                            if (!decoded_args.has_value()) {
+                                replay_divergence =
+                                    "durable resume replay diverged from "
+                                    "the recorded memo (ordinal " +
+                                    std::to_string(ordinal) + ")";
+                                return eng::ImportAbort{};
+                            }
+                            auto h = runtime::hash_values(
+                                decoded_args->args);
+                            if (!h.has_value()) {
+                                replay_divergence =
+                                    "durable resume replay diverged from "
+                                    "the recorded memo (ordinal " +
+                                    std::to_string(ordinal) + ")";
+                                return eng::ImportAbort{};
+                            }
+                            live_arg_hash = *h;
                         }
-                        const auto arg_hash =
-                            runtime::hash_values(decoded_args->args);
-                        if (!arg_hash.has_value() ||
-                            *arg_hash != entry->arg_hash) {
+                        if (live_arg_hash != entry->arg_hash) {
                             replay_divergence =
                                 "durable resume replay diverged from the "
                                 "recorded memo (ordinal " +
@@ -891,6 +1042,95 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 std::to_string(ordinal) + ")";
                             return eng::ImportAbort{};
                         }
+                        if (is_bridge) {
+                            // WH-5b.2: resolve the bridge site from the
+                            // manifest (node, ordinal) -> call_site_id ->
+                            // frame section site. The manifest is the
+                            // trusted authority (A2-admitted); the
+                            // control-block site is untrusted guest input.
+                            auto node_result = admitted.module->resolve_node(
+                                csm::ManifestNodeIndex{schedule_pos});
+                            if (!node_result.ok() ||
+                                !node_result.node.has_value()) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "manifest node not found";
+                                return eng::ImportAbort{};
+                            }
+                            const auto sites =
+                                node_result.node->bridge_sites();
+                            if (ordinal >= sites.size()) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge site ordinal out of range";
+                                return eng::ImportAbort{};
+                            }
+                            const auto &manifest_site =
+                                sites[static_cast<std::size_t>(ordinal)];
+                            // Cross-check the manifest site's call_site_id
+                            // with the control-block site's (defense-in-
+                            // depth: they must agree).
+                            if (manifest_site.call_site_id !=
+                                bridge_site->call_site_id) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge call_site_id mismatch";
+                                return eng::ImportAbort{};
+                            }
+                            const auto *inject_site =
+                                find_bridge_site_by_id(
+                                    *descriptor.frame_section,
+                                    manifest_site.call_site_id);
+                            if (inject_site == nullptr) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge site not found in frame "
+                                    "section";
+                                return eng::ImportAbort{};
+                            }
+                            // WH-5b.2: the bridge lane stores NativeOnly at
+                            // origination (the result is a P4-D binary frame,
+                            // not JSON). The persistence layer serializes the
+                            // native Value to wire JSON; on reload the entry
+                            // is ExactSidecar with wire-JSON
+                            // authoritative_json. Decode through the call
+                            // site's result binding, then pack into the P4-D
+                            // frame (the same packing the Frontier path
+                            // uses). The P4-D encoding is deterministic, so
+                            // re-packing produces the identical frame the
+                            // guest wrote at origination.
+                            auto dom = ahfl::json::parse_json(
+                                *entry->authoritative_json);
+                            if (!dom.has_value() || !*dom) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge memo result is not valid wire "
+                                    "JSON";
+                                return eng::ImportAbort{};
+                            }
+                            auto decoded = wire_codec::decode_json(
+                                **dom, call_site->result_binding());
+                            if (!decoded.ok()) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge memo result type mismatch";
+                                return eng::ImportAbort{};
+                            }
+                            CapabilityImportError pack_error{};
+                            auto packed = pack_bridge_result_value(
+                                engine, *descriptor.frame_section,
+                                *call_site, *inject_site,
+                                std::move(*decoded.value), pack_error);
+                            if (std::holds_alternative<
+                                    eng::ImportAbort>(packed)) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge memo pack failed";
+                                return eng::ImportAbort{};
+                            }
+                            return packed;
+                        }
+                        // Opaque lane: alloc_then_write the wire JSON.
                         const std::span<const std::uint8_t> bytes(
                             reinterpret_cast<const std::uint8_t *>(
                                 entry->authoritative_json->data()),
@@ -936,7 +1176,55 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 "capability result";
                             return eng::ImportAbort{};
                         }
-                        // Build the wire bytes to supply.
+                        if (is_bridge) {
+                            // WH-5b.2: bridge frontier. Pack the pending
+                            // result Value into the P4-D frame at the
+                            // bridge site's disjoint result placement (the
+                            // same packing handle_bridge performs on a
+                            // live success), then return the ImportReply
+                            // identical in shape to live placement.
+                            runtime::Value pending_value{
+                                runtime::NoneValue{}};
+                            if (has_native) {
+                                pending_value = runtime::clone_value(
+                                    *resume_pending_result);
+                            } else {
+                                auto dom = ahfl::json::parse_json(
+                                    *resume_pending_result_wire_json);
+                                if (!dom.has_value() || !*dom) {
+                                    replay_divergence =
+                                        "durable resume pending result "
+                                        "is not valid wire JSON";
+                                    return eng::ImportAbort{};
+                                }
+                                auto decoded = wire_codec::decode_json(
+                                    **dom,
+                                    call_site->result_binding());
+                                if (!decoded.ok()) {
+                                    replay_divergence =
+                                        "durable resume pending-result "
+                                        "type mismatch";
+                                    return eng::ImportAbort{};
+                                }
+                                pending_value = std::move(
+                                    *decoded.value);
+                            }
+                            CapabilityImportError pack_error{};
+                            auto packed = pack_bridge_result_value(
+                                engine, *descriptor.frame_section,
+                                *call_site, *bridge_site,
+                                std::move(pending_value), pack_error);
+                            if (std::holds_alternative<
+                                    eng::ImportAbort>(packed)) {
+                                replay_divergence =
+                                    "durable resume replay diverged: "
+                                    "bridge frontier pack failed";
+                                return eng::ImportAbort{};
+                            }
+                            recorder.mark_frontier_injected();
+                            return packed;
+                        }
+                        // Opaque lane: build the wire bytes to supply.
                         std::string wire_bytes;
                         if (has_raw) {
                             wire_bytes =
@@ -1017,56 +1305,79 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     if (import_reply->raw_status == AHFL_CAP_PENDING) {
                         recorder.stamp_pending();
                     } else if (import_reply->raw_status == AHFL_CAP_OK) {
-                        // P2-3: record the memo even for a zero-length OK
-                        // result (an empty-but-valid reply is still a
-                        // deterministic outcome the resume must replay).
-                        //
-                        // Reachability note (WH-4b P2-C): on the production
-                        // opaque lane this zero-length branch is provably
-                        // unreachable for two independent reasons:
-                        //   1. handle_opaque (capability_import.cpp) always
-                        //      serializes the result through
-                        //      serialize_value_for_wire_json, which produces
-                        //      non-empty output even for NoneValue ("null").
-                        //   2. The guest classifies an OK reply with a null
-                        //      result pointer or zero length as ERROR
-                        //      (core_wasm_codegen.cpp cap-status dispatch),
-                        //      so an AHFL_CAP_OK import reply always carries
-                        //      a non-empty body.
-                        // The guard is retained as defense-in-depth: a future
-                        //      capability lane that returns raw (unserialized)
-                        //      bytes could legitimately produce an empty OK
-                        //      body, and the memo must still record it.
-                        //      The replay-side defense (empty authoritative
-                        //      JSON rejected at MemoHit) is exercised by the
-                        //      P2-C test in wasm_workflow_resume_e2e.cpp.
-                        //
-                        // Read the exact reply wire bytes from guest
-                        // memory (never re-serialized: no spelling drift).
-                        const auto offset =
-                            import_reply->result_ptr.value;
-                        const auto len = import_reply->result_len;
-                        // P2-4: a bogus guest offset+len that names bytes
-                        // outside linear memory is a host-side invariant
-                        // violation. Fail the origination run rather than
-                        // silently skipping the memo (which would produce a
-                        // snapshot that cannot resume). Widen to size_t
-                        // before adding so a u32 wrap cannot bypass the
-                        // bounds check.
-                        if (static_cast<std::size_t>(offset) +
-                                static_cast<std::size_t>(len) >
-                            obs.whole_memory.size()) {
-                            origination_failure =
-                                "capability reply pointer is out of bounds "
-                                "for the module linear memory";
-                            return eng::ImportAbort{};
+                        if (is_bridge) {
+                            // WH-5b.2: the bridge result is a P4-D binary
+                            // frame, not JSON. Store the native Value
+                            // (NativeOnly) so the persistence layer
+                            // serializes it to wire JSON via
+                            // try_value_to_json. On reload the entry becomes
+                            // ExactSidecar with wire-JSON bytes, and the
+                            // replay MemoHit path re-packs it through
+                            // pack_bridge_result_value (the same packing the
+                            // Frontier path uses). The P4-D bytes are
+                            // deterministic, so re-packing produces the
+                            // identical frame the guest wrote.
+                            recorder.append_memo_entry(
+                                {}, PersistedMemoResultSource::NativeOnly);
+                        } else {
+                            // P2-3: record the memo even for a
+                            // zero-length OK result (an empty-but-valid
+                            // reply is still a deterministic outcome the
+                            // resume must replay).
+                            //
+                            // Reachability note (WH-4b P2-C): on the
+                            // production opaque lane this zero-length
+                            // branch is provably unreachable for two
+                            // independent reasons:
+                            //   1. handle_opaque (capability_import.cpp)
+                            //      always serializes the result through
+                            //      serialize_value_for_wire_json, which
+                            //      produces non-empty output even for
+                            //      NoneValue ("null").
+                            //   2. The guest classifies an OK reply with
+                            //      a null result pointer or zero length
+                            //      as ERROR (core_wasm_codegen.cpp
+                            //      cap-status dispatch), so an
+                            //      AHFL_CAP_OK import reply always
+                            //      carries a non-empty body.
+                            // The guard is retained as
+                            // defense-in-depth: a future capability lane
+                            //      that returns raw (unserialized) bytes
+                            //      could legitimately produce an empty
+                            //      OK body, and the memo must still
+                            //      record it. The replay-side defense
+                            //      (empty authoritative JSON rejected at
+                            //      MemoHit) is exercised by the P2-C
+                            //      test in wasm_workflow_resume_e2e.cpp.
+                            //
+                            // Read the exact reply wire bytes from guest
+                            // memory (never re-serialized: no spelling
+                            // drift).
+                            const auto offset =
+                                import_reply->result_ptr.value;
+                            const auto len = import_reply->result_len;
+                            // P2-4: a bogus guest offset+len that names
+                            // bytes outside linear memory is a host-side
+                            // invariant violation. Fail the origination
+                            // run rather than silently skipping the memo
+                            // (which would produce a snapshot that cannot
+                            // resume). Widen to size_t before adding so a
+                            // u32 wrap cannot bypass the bounds check.
+                            if (static_cast<std::size_t>(offset) +
+                                    static_cast<std::size_t>(len) >
+                                obs.whole_memory.size()) {
+                                origination_failure =
+                                    "capability reply pointer is out of "
+                                    "bounds for the module linear memory";
+                                return eng::ImportAbort{};
+                            }
+                            std::string bytes(
+                                reinterpret_cast<const char *>(
+                                    obs.whole_memory.data() + offset),
+                                len);
+                            recorder.append_memo_entry(
+                                std::move(bytes));
                         }
-                        std::string bytes(
-                            reinterpret_cast<const char *>(
-                                obs.whole_memory.data() + offset),
-                            len);
-                        recorder.append_memo_entry(
-                            std::move(bytes));
                     }
                 }
                 return reply;
@@ -1777,11 +2088,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             node_facts.failure_message = run_failure_message;
         } else {
             node_facts.terminal = WasmNodeRunFacts::Terminal::Skipped;
-            // Blocking dependency: the failed or suspended node.
-            if (suspended_node_index.has_value()) {
-                node_facts.blocking_dependencies.push_back(
-                    descriptor.nodes[*suspended_node_index].node_id);
-            } else if (failed_node_index.has_value()) {
+            // P2-1: align with the evaluator's NodeSkipped semantics. On
+            // suspend the evaluator emits empty blocking_dependencies
+            // (workflow_runtime.cpp: nodes never reached are not "blocked by"
+            // the suspended node); on dependency-failure it emits the actual
+            // failed deps. So the wasm lane pushes a blocking dep only on the
+            // failure path, never on the suspend path.
+            if (failed_node_index.has_value()) {
                 node_facts.blocking_dependencies.push_back(
                     descriptor.nodes[*failed_node_index].node_id);
             }

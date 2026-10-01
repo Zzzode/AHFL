@@ -29,10 +29,12 @@ import tempfile
 from pathlib import Path
 
 # The hardcoded, independently-reviewed canonical AHFLXM payload for the golden
-# capability workflow: magic "AHFLXM", version 1, entry{kind 0, id 0}, node_count
-# 2; node0 id=0 sched=0 cap_call=1 capability=0 source_symbol=1; node1 id=1
-# sched=1 cap_call=0.
-EXPECTED_AHFLXM = bytes.fromhex("4148464c584d010000020000010001010100")
+# capability workflow: magic "AHFLXM", version 2 (WH-5b.2 manifest v2),
+# entry{kind 0, id 0}, node_count 2; node0 id=0 sched=0 cap_call=1 capability=0
+# source_symbol=1 bridge_site_count=0; node1 id=1 sched=1 cap_call=0
+# bridge_site_count=0. The per-node bridge_site_count(u8) is appended AFTER the
+# capabilities array in v2; both nodes are opaque-lane (zero bridge sites).
+EXPECTED_AHFLXM = bytes.fromhex("4148464c584d0200000200000100010001010000")
 
 WASM_HEADER = b"\x00asm\x01\x00\x00\x00"
 EXEC_MANIFEST_NAME = "ahfl.wasm-exec-manifest.v1"
