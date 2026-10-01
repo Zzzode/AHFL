@@ -2571,3 +2571,377 @@ evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。was
 - **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 修订(§12.13.13)。
 - **§12.11(Option C):** 原样保留作历史档案。
 - **§12.12(Option A'):** 保留作历史档案。其修复 (a)/(b) 是 WH-5b.3 的必要前置,作为 WH-5b.1 落地。§12.12 的遗漏(编码边界)在 §12.13.1 中记录,由本节关闭。
+
+## 12.14 WH-5b.2 decision: bridge-lane graceful Pending/suspend parity (2026-10-01, dedicated decision agent, no human gate)
+
+本节关闭 §12.12.10 记录的 bridge-pending parity gap:in-handler bridge capability call 返回 Pending 时,guest trap 导致 `NodeFailed`,而 evaluator 在同一位置 suspend。WH-5b.2 使 bridge lane 的 Pending 语义与 evaluator 对齐:graceful suspend + fresh-instance replay,复用 WH-4b 的 memo/replay 基础设施。
+
+### 12.14.1 问题复现与证据链
+
+**Runtime 复现:** bridge fixture(`scratch_p6f_bridge.ahfl`,两个 P6 节点,capability `A(n: Int) -> Frame` 在非 final `Calling` state 调用)在 Pending invoker 下运行:wasm session 返回 `NodeFailed`(status=1),**不是** `Suspended`(status=4)。guest 在 bridge 调用处 trap。
+
+**Source 证据链(HEAD 8dbd2570):**
+
+1. `core_wasm_codegen.cpp:6727-6734`:bridge guest arm 编译 `if (status != 0) unreachable`——任何非 OK 状态 trap。注释原文:"Single-run contract: any non-OK status traps (durable replay / pending arm stays the D2b authority)."
+2. `capability_import.cpp:520-525`:`handle_bridge` 在非 Success 时返回 `ImportReply{raw_status, GuestPointer{0}, 0}`,guest trap。
+3. `workflow_session.cpp:756-761`:wrapped_callback 对 bridge import(`obs.param_frame.empty()`)直接 `return inner(obs)`,跳过 WH-4b 的 memo/replay  machinery。注释原文:"WH-4b: opaque lane only. Bridge imports (empty param_frame) pass through to inner live: the bridge ABI traps on Pending, so there is no suspend/resume on that lane."
+4. `core_wasm_codegen.cpp:16491-16498`:scheduler 的 P6 node dispatch 检查 `status != AHFL_CAP_OK -> unreachable`,无 PENDING arm。
+5. **对比 — evaluator**:`capability_eval.cpp:108-116` Pending -> `EvalResult::suspension`(无 error,`has_errors()` 保持 false);`workflow_runtime.cpp:1057-1064` Pending -> `node_memo.suspended = true`,stamp `pending_cap_id` / `pending_ordinal`,在 failure-classification 之前 return。
+6. **对比 — opaque lane wasm**:`core_wasm_codegen.cpp:16577-16595` opaque terminal 有完整的 PENDING arm(check `status == AHFL_CAP_PENDING`、check `ptr == 0`、set `kWorkflowGlobalPendingLatched`、return `(PENDING,0,0)`)。bridge lane 缺少对应 arm。
+
+**Parity gap 的后果:** WH-6(`ahflc run` cutover)后,一个在 evaluator 下 suspend 的 workflow 在 wasm 下 `NodeFailed`。这是 terminal-status 级别的 parity regression,不是 cosmetic 差异。
+
+### 12.14.2 决策摘要
+
+**ONE coherent big-bang change:** bridge lane 的 Pending 从 trap 改为 graceful suspend,复用 WH-4b 的 `(node, per-node ordinal)` memo identity、`WasmResumeRecorder` classify/memo/replay、`WorkflowRecoverySnapshot` v2 持久化。具体:
+
+1. **Snapshot schema: stays v2。** `CapabilityMemoEntry` 的 `(optional<WorkflowNodeId> node, ordinal per-NODE, cap_id, arg_hash)` identity 已覆盖 in-handler call。per-node ordinal 计数 node 内所有 capability call(evaluator:`workflow_runtime.cpp:754`;wasm:recorder `per_node_counters_`),不区分 opaque terminal 还是 in-handler bridge。无需新字段。
+2. **Manifest extension: exec manifest v2。** scheduler-boundary per-node byte(`cap_call_count`)保持 binary(0 = identity,1 = opaque cap site)。P6 bridge node 发 `cap_call_count=0`(identity)加空 `capabilities`。新增 per-node in-runner bridge-site table:`(ordinal: u8, call_site_id: u32, capability_id: u32, source_symbol: u64)`。A2 admission-set equality 变为:union of (opaque sites from `cap_call_count=1` nodes) + (bridge sites) == wire schema capabilities == module imports。manifest version 从 1 升到 2,decoder 只接受 v2(big-bang,无 coexistence)。
+3. **Guest ABI: graceful PENDING return。** bridge status arm 从 `if (status != 0) unreachable` 改为 `if (status == PENDING) return (PENDING,0,0) from runner; if (status != OK) unreachable`。scheduler 的 P6 node dispatch 在 tag-0 write 之前加 PENDING arm:latch + return `(PENDING,0,0)` from run2。ERROR 保持 trap(parity:evaluator `CapabilityFailed -> NodeFailed`;wasm trap -> `NodeFailed`——observation 相同)。
+4. **Host suspension coordinate:** run2 tuple `(PENDING,0,0)` 信号 suspend。scheduler 在 runner suspend 时不写 tag-0 event record,`event_count` 保持 node 的 `schedule_pos`。snapshot 的 `suspended.node` / `suspended.agent` / `suspended.pending_ordinal` 从 recorder 的 stamped coordinate 推导。
+5. **Fresh-instance replay:** suspended node 之前的 node replay;suspended runner 内更早的 bridge call 从 per-node memo 供给:host 把 recorded P4-D frame + String payload arena bytes 写回 `site.result_base` + `site.result_payload_base`(与 live `handle_bridge` placement 完全一致)。
+6. **Composition with WH-5b.3 xcode:** xcode 在 wrapped_callback 中 route FIRST(pure codec,no memo),bridge/opaque 走 memo/replay。无 contamination。
+7. **Census + tests:** 新增 `suspended` terminal scenario;evaluator parity of suspended terminal + resumed completion;enumerated fail-closed cases。
+8. **Agent-lane scope:** WH-5b.2 是 workflow-lane only。agent lane(`WasmAgentRunner`)无 recovery-snapshot consumer,保持 `NodeFailed`。
+
+### 12.14.3 Q1: Snapshot schema — v2 stays
+
+**决策:不升 v3。`ahfl.workflow-recovery.v2` 保持不变。**
+
+理由:
+
+- `CapabilityMemoEntry`(`workflow_recovery.hpp:81-94`)的 identity 是 `(optional<WorkflowNodeId> node, ordinal per-NODE, cap_id, arg_hash)`。bridge call 发生在 node 的 agent 内部;per-node ordinal 已计数 node 内每个 call,不论 statement position。
+- evaluator 的 per-node ordinal:`workflow_runtime.cpp:754` `const std::uint64_t memo_ordinal = node_memo.next_ordinal++`——在 node 的 capability-call loop 内递增,覆盖 in-handler call。
+- wasm 的 per-node ordinal:`wasm_resume_recorder.hpp:155` `std::vector<std::uint64_t> per_node_counters_`,按 `schedule_pos` index,在 `begin_import` 中递增。bridge import 走同一 `begin_import`(删除 skip 后),ordinal 空间自然扩展。
+- 一个 node 要么是 P6(bridge calls),要么是 opaque(一个 opaque terminal call),不会同时是两者。因此 `(node, ordinal)` 无歧义。
+- `authoritative_json` 是 `optional<string>`,可存任意 bytes(P4-D frame + String payload arena)。ExactSidecar trust state 不变。
+- `SuspendedNodeState`(`workflow_recovery.hpp:113-127`)的 `pending_cap_id` / `pending_ordinal` 直接复用。`node_input` 在 wasm lane 保持 `nullopt`(in-guest materialized input 不是 host-observable)。
+
+**无需新 snapshot 字段。** 缺失的 piece 纯粹是 host-side:wrapped_callback 跳过 bridge import 的 memo/replay(§12.14.1 证据 3)。删除 skip、把 bridge import 路由进 memo/replay machinery 后,identity 空间自然覆盖。
+
+### 12.14.4 Q2: Manifest extension — exec manifest v2 with in-runner bridge-site table
+
+**决策:exec manifest 从 v1 升到 v2,新增 per-node in-runner bridge-site table。scheduler-boundary byte 保持 binary。**
+
+**当前 v1 格式(`core_wasm_schema_module.cpp:909-958` encode,`:703-852` decode):**
+
+```
+magic "AHFLXM" + version(u8) + entry_kind(u8) + workflow_id(u32) + node_count(u32)
+per node:
+  workflow_node_id(u32) + schedule_pos(u32) + cap_call_count(u8) + capabilities[] {
+    capability(u32) + source_symbol(u64)
+  }
+```
+
+**v1 的 latent gap(`core_wasm_codegen.cpp:14770-14776` 注释原文):**
+
+> "KNOWN latent gap (owned by WH-5b.2): a bridge P6 node's scheduler-level completion is an identity event (design 12.12.5: tag-0 record, zero capability fields), yet its per-node manifest cap byte below counts its in-handler bridge imports. The tag-0 record vs cap-byte distinction is a resume-coordinate inconsistency. WH-5b.2 must introduce a separate in-runner site table (the scheduler-boundary byte stays binary) jointly with admission-set semantics and the resume classifier (design 12.12.10)."
+
+**v2 格式(big-bang,decoder 只接受 v2):**
+
+```
+magic "AHFLXM" + version=2(u8) + entry_kind(u8) + workflow_id(u32) + node_count(u32)
+per node:
+  workflow_node_id(u32) + schedule_pos(u32) + cap_call_count(u8) + capabilities[] {
+    capability(u32) + source_symbol(u64)
+  }
+  bridge_site_count(u8) + bridge_sites[] {
+    ordinal(u8) + call_site_id(u32) + capability(u32) + source_symbol(u64)
+  }
+```
+
+**字段语义:**
+
+- `cap_call_count`:scheduler-boundary byte,保持 binary。0 = identity node(P6 bridge node 或纯计算 node),1 = opaque cap site。P6 bridge node 发 0 + 空 `capabilities`。
+- `bridge_sites[]`:in-runner bridge call 的 per-node table。`ordinal` 是 per-node bridge call ordinal(0-based,execution order,与 recorder 的 `per_node_counters_` 对齐)。`call_site_id` join 到 frame section 的 `bridge_call_sites[call_site_id]`(`core_frame_layout.hpp:60-92`)用于 result placement。`capability` + `source_symbol` 满足 A2 admission-set equality。
+- `bridge_site_count`:per-node bridge site 数量。一个 P6 bridge node 可在不同 branch 调多个 capability(`core_wasm_codegen.cpp:12985-12993` 已收集 ALL reachable capabilities)。
+
+**A2 admission-set equality 修订(`core_wasm_schema_module.cpp:1200-1354`):**
+
+当前:manifest 的 `capabilities` union == wire schema capabilities == module imports。
+
+修订后:union of (opaque sites from `cap_call_count=1` nodes 的 `capabilities`) + (bridge sites from `bridge_sites[]`) == wire schema capabilities == module capability imports。transcode imports(`ahfl_xcode`)排除(不 name capability,`core_wasm_schema_module.cpp:1168-1177` 已有排除逻辑)。
+
+**Host-side trust checks(WH-5b.3 lesson:session admits modules without verified-schema gate):**
+
+session 交叉检查 manifest bridge-site table 与 frame section:
+- 每个 bridge site 的 `call_site_id` 存在于 frame section 的 `bridge_call_sites`。
+- frame section 的 `source_symbol` 匹配 manifest 的 `source_symbol`。
+- `(result_base, result_extent)` 和 `(result_payload_base, result_payload_capacity)` in-bounds。
+- per-node `ordinal` dense 且 unique(0, 1, ..., N-1)。
+- `call_site_id` 在 workflow 内 unique。
+
+**D5 instance-reuse 不受影响:** `core_wasm_codegen.cpp:12997-13001` 确保每个 P6 node 有自己的 runner。in-runner bridge-site table 是 per-node 的,每个 node 的 runner unique,因此 `(node, ordinal) -> call_site_id` 映射无歧义。
+
+**Agent arm:** agent manifest 保持 flat capability list(无 bridge sites),但 version 升到 2。decoder 对 agent arm 不读 `bridge_site_count`。
+
+### 12.14.5 Q3: Guest ABI — graceful PENDING return
+
+**决策:bridge `(i32)->(i32,i32)` 的 PENDING 从 trap 改为 runner-level `return (PENDING,0,0)`。scheduler P6 node dispatch 加 PENDING arm。ERROR 保持 trap。**
+
+**Bridge status arm 修订(`core_wasm_codegen.cpp:6727-6734`):**
+
+当前:
+```
+if (status != 0) unreachable
+```
+
+修订后:
+```
+if (status == AHFL_CAP_PENDING) {
+    // Runner returns (PENDING, 0, 0). The `return` instruction bypasses
+    // handler block structure and returns from the runner function.
+    push AHFL_CAP_PENDING; push 0; push 0; return;
+}
+if (status != AHFL_CAP_OK) unreachable
+```
+
+WebAssembly `return` 从 function(runner)返回,绕过 handler block 结构。runner 返回 `(i32,i32,i32) = (status, O_k, output_size)`。PENDING 时返回 `(PENDING, 0, 0)`。
+
+**Scheduler P6 node dispatch 修订(`core_wasm_codegen.cpp:16491-16498`):**
+
+当前:
+```
+// status must be OK.
+if (runner_status != AHFL_CAP_OK) unreachable
+```
+
+修订后(在 tag-0 write 之前):
+```
+if (runner_status == AHFL_CAP_PENDING) {
+    // Same shape as the opaque lane's PENDING arm (line 16577-16595).
+    set kWorkflowGlobalPendingLatched;
+    return (AHFL_CAP_PENDING, 0, 0) from run2;
+}
+if (runner_status != AHFL_CAP_OK) unreachable
+```
+
+这与 opaque lane 的 PENDING arm(`core_wasm_codegen.cpp:16577-16595`)形状完全一致:check `status == PENDING`、check `ptr == 0`、set latch、return `(PENDING,0,0)`。
+
+**Run2 first-instruction gate 不变(`core_wasm_codegen.cpp:16689-16693`):** 如果 `kWorkflowGlobalPendingLatched` 已 set,run2 第一条指令 trap。fresh instance 清除 latch。这复用现有机制,无需新 global。
+
+**ERROR 保持 trap 的 parity 论证:**
+
+- evaluator:capability failure -> `CapabilityFailed` -> `NodeFailed`(`workflow_runtime.cpp` failure-classification loop)。
+- wasm bridge lane:ERROR -> trap -> `Run2Trapped` -> `NodeFailed`(`workflow_session.cpp:1320-1326`)。
+- terminal status 相同(`NodeFailed`)。trap 是 wasm 对 evaluator error-propagation 的等价表达。无需 graceful ERROR arm。
+
+**PENDING with non-null result_ptr:** 与 opaque lane 一致(`core_wasm_codegen.cpp:16588-16593`):PENDING + non-null ptr 是 malformed -> ERROR,不 latch。bridge status arm 的 PENDING 分支只在 `status == PENDING` 时触发,`ptr` 和 `len` 被忽略(runner 直接返回 `(PENDING,0,0)`)。host 的 `handle_bridge` 在 Pending 时返回 `ImportReply{AHFL_CAP_PENDING, GuestPointer{0}, 0}`(`capability_import.cpp:520-525`),所以 `ptr` 总是 0。
+
+**与 xcode status word 的共存:** xcode 返回 `(0, json_ptr, json_len)` 或 `(AHFL_CAP_ERROR, 0, 0)`(`transcode.cpp:63-65`)。xcode 从不 Pending(不 invoke capability)。bridge PENDING arm 在 runner 内部;xcode call 在 scheduler 内(runner 之前)。无 interference。
+
+### 12.14.6 Q4: Host suspension coordinate
+
+**决策:host 通过 run2 tuple `(PENDING,0,0)` 区分 mid-runner pending 与 completed。suspend 时不写 tag-0 event record,`event_count` 保持 node 的 `schedule_pos`。**
+
+**Mid-runner pending:**
+1. bridge call 返回 PENDING -> runner 返回 `(PENDING,0,0)`。
+2. scheduler P6 node dispatch 检测 PENDING -> latch + return `(PENDING,0,0)` from run2。
+3. scheduler 在 tag-0 write(`core_wasm_codegen.cpp:16519-16527`)之前 return,所以 **不写 tag-0 event record**。
+4. `event_count` 保持 node 的 `schedule_pos`(P6 node 未完成)。
+5. host 的 run2 pending arm(`workflow_session.cpp:1327-1333`)检测 `(PENDING,0,0)` -> `run_status = Suspended`。
+6. recorder 在 bridge import callback 中 stamp pending coordinate(`workflow_session.cpp:1014-1018` `recorder.stamp_pending()`)。
+7. snapshot construction(`workflow_session.cpp:1521-1591`):`suspended.node = pending->node`,`suspended.agent = descriptor node's runner`,`suspended.pending_cap_id = pending->cap_id`,`suspended.pending_ordinal = pending->ordinal`。
+
+**Completed:**
+1. runner 返回 `(OK, O_k, output_size)`。
+2. scheduler 写 tag-0 record + publish `event_count = schedule_pos + 1`(`core_wasm_codegen.cpp:16519-16527`)。
+3. host 检测 `(OK, ...)` -> `run_status = Completed`。
+
+**Frontier classification:** recorder 的 `classify(schedule_pos, ordinal)`(`wasm_resume_recorder.hpp:134`)对 bridge call 与 opaque call 一视同仁。frontier 是 `(suspended.node, pending_ordinal)`。
+
+**D1b resume controller(test-only FOUNDATION)修订(`core_wasm_resume_controller.cpp:315-392`):**
+
+`coordinate_gate` 当前要求 frontier 是 `NodeKind::Capability`(`cap_call_count=1`)。v2 manifest 中 P6 bridge node 的 `cap_call_count=0`(identity)。controller 必须接受 P6 bridge node 作为 frontier:
+- frontier node 的 `cap_call_count == 0` 且 `bridge_sites` 非空 -> 合法 frontier。
+- `event_join` 检查:`cap_call_count=1` != tag-1 record -> mismatch;P6 bridge node `cap_call_count=0` 且 tag-0 record(identity)-> match。
+- frontier 的 pending coordinate 与 `bridge_sites[ordinal]` 交叉检查(`capability` + `source_symbol`)。
+
+D1b controller 是 test-only FOUNDATION(sunset clause);production resume path 是 session memo layer。
+
+### 12.14.7 Q5: Fresh-instance replay and String payload arena
+
+**决策:fresh instance;suspended node 之前的 node replay;suspended runner 内更早的 bridge call 从 per-node memo 供给。memo entry 存储 P4-D frame + String payload arena bytes。**
+
+**Replay 算法(§12.6.5 泛化到 bridge call):**
+
+1. Fresh instance(session 每次 run 创建新 wasm3 instance)。
+2. Nodes < suspended replay:其 capability call(opaque 或 bridge)从 memo 供给。
+3. Suspended node 的 runner 内:
+   - 更早的 bridge call(`ordinal < pending_ordinal`):MemoHit,从 per-node memo 供给。
+   - pending bridge call(`ordinal == pending_ordinal`):Frontier,inject。
+   - 更晚的 bridge call(`ordinal > pending_ordinal`):PostFrontier,live(`ReadyForLive`)。
+
+**Bridge memo capture(origination):**
+
+wrapped_callback 在 `inner(obs)` 返回后(`workflow_session.cpp:1014-1072`):
+- `ImportReply{AHFL_CAP_OK, GuestPointer{site.result_base}, site.result_extent}`(`capability_import.cpp:556-557`)。
+- host 从 `result_base` 读 `result_extent` bytes(P4-D frame)。
+- host 还需读 String payload arena bytes:`result_payload_base` 起 `result_payload_capacity` bytes。
+- wrapped_callback 通过 control-block 解析 bridge site(与 `handle_bridge` 的 `capability_import.cpp:332-366` 相同逻辑:`obs.scalar_arg -> block_ptr -> block_index -> bridge_call_sites[block_index]`),获取 `result_payload_base` + `result_payload_capacity`。
+- memo entry 的 `authoritative_json = [P4-D frame (result_extent bytes)][String payload arena (result_payload_capacity bytes)]`。
+
+**Bridge memo injection(replay, MemoHit):**
+
+wrapped_callback 在 `recorder.classify` 返回 `MemoHit` 后:
+1. Cross-check `cap_id` + `arg_hash`(与 opaque lane 相同,`workflow_session.cpp:855-880`)。
+2. 从 `(node, ordinal)` 解析 bridge site:manifest bridge-site table -> `call_site_id` -> frame section `bridge_call_sites[call_site_id]`。
+3. 把 recorded bytes 拆成两段:`[0, result_extent)` = P4-D frame,`[result_extent, result_extent + result_payload_capacity)` = String payload。
+4. 写 P4-D frame 到 `site.result_base`(bounds check:`result_base + result_extent <= page->size()`)。
+5. 写 String payload 到 `site.result_payload_base`(bounds check:`result_payload_base + result_payload_capacity <= page->size()`)。
+6. 返回 `ImportReply{AHFL_CAP_OK, GuestPointer{site.result_base}, site.result_extent}`。
+
+这与 live `handle_bridge` 的 result placement(`capability_import.cpp:535-557`)完全一致:zero-fill `result_base` 起 `result_extent` bytes,然后 `pack_value_at` 写 frame + String bytes 到 payload arena。replay 直接写 recorded bytes,跳过 `pack_value_at`(bytes 已 packed)。
+
+**String payload arena 的必要性:**
+
+bridge result 的 String 类型有 `PtrLen (ptr, len)` 指向 per-call-site `result_payload` arena(`frame_packer.cpp:202-239`:String bytes bump-allocated in payload arena via `arena_cursor`)。`e2e_multi_agent.ahfl` 的 bridge agent 有 String result(`ClassifyResult.confidence`、`SupportResult.response`、`SummaryResult.summary`)。如果 memo 只存 P4-D frame bytes,String 的 `PtrLen` 指向 arena 但 arena bytes 未记录,replay 时 guest 读到 stale/zero bytes -> divergence。因此 memo 必须同时 capture frame + arena。
+
+**arg_hash 计算:**
+
+bridge call 的 arg_hash 需要 decode P4-D args 成 Values,然后 `runtime::hash_values(decoded_args)`。这与 evaluator 的 arg_hash 一致。wrapped_callback 需要一个 `decode_bridge_import_args` helper(从 `handle_bridge` 的 argument decoding 部分 `capability_import.cpp:418-511` 重构)。origination 和 replay 都用同一 helper,确保 arg_hash 一致。
+
+**Determinism for data-dependent later calls:**
+
+`(node, ordinal)` identity 确保 ordinal 0 在 origination 时 live 供给、replay 时从 memo 供给。memo 存储 exact P4-D frame + String payload bytes。replay 时 host 把这些 bytes 写回同一 result region。guest 读到相同 bytes,产生相同 control flow。ordinal 1(依赖 ordinal 0 的 result)被确定性地到达并 pend。这证明了 data-dependent later calls 的 determinism。
+
+### 12.14.8 Q6: Composition with WH-5b.3 xcode
+
+**决策:xcode 在 wrapped_callback 中 route FIRST(pure codec,no memo),bridge/opaque 走 memo/replay。无 contamination。**
+
+**Routing order(`workflow_session.cpp:770-786`):**
+
+1. xcode imports(`ahfl_xcode.xcode_<N>`):route to `handle_transcode`。pure codec,不 invoke capability,不 touch memo,不写 event record。replay 时重新执行(确定性)。
+2. Bridge imports(empty `param_frame`):memo/replay machinery(WH-5b.2 新增,删除 `workflow_session.cpp:756-761` 的 skip)。
+3. Opaque imports(non-empty `param_frame`):memo/replay machinery(WH-4b 现有)。
+
+**无 memo/xcode contamination:**
+
+- xcode 从不 touch memo(不读、不写)。
+- bridge/opaque memo 从不 touch xcode(xcode 在 memo machinery 之前 route)。
+- xcode 的 `transcode_by_ordinal` map 与 bridge/opaque 的 import ordinal 空间不相交(xcode 有自己的 import namespace `ahfl_xcode`)。
+
+**Shadow/payload arena behavior under replay:**
+
+- **xcode shadow region:** reused(每次 overwrite)。replay 时 xcode 重新执行并 overwrite shadow。确定性。
+- **xcode payload arena:** bump-allocated within a run。replay 时 arena cursor reset(fresh instance)。确定性。
+- **bridge result regions:** per-call-site disjoint(`core_frame_layout.hpp:60-92` 的 `result_base` / `result_payload_base` 是 compile-time constant,pairwise disjoint)。replay 时 memo 写入同一 region。与 xcode shadow 不 interference。
+
+**P6 runner that both transcodes and bridges:**
+
+scheduler 在 runner 之前 call xcode(transcode input),然后 call runner。runner 内部 call bridge imports。xcode call 在 scheduler 内(memo-replay machinery 跳过它)。bridge calls 在 runner 内(memo-replay machinery 处理)。无 interference。
+
+**xcode fail-closed 不变:** `transcode.cpp:199-222` 的 JSON_TO_P4D shadow/payload bounds guards 保持不变。xcode failure 返回 `ImportReply{AHFL_CAP_ERROR}`(`transcode.cpp:63-65`),guest scheduler trap -> `NodeFailed`。这与 WH-5b.2 无关。
+
+### 12.14.9 Q7: Census, tests, and scope
+
+**Census 新增 `suspended` terminal scenario:**
+
+当前 census(`conformance_wasm_native_runner.cpp:64-65`):`kExpectedNativeAgreed = 66`,`kExpectedNativeSkipped = 0`,全部 expect `"completed"`。WH-5b.2 新增:
+
+- 新 manifest(如 `wh5b2_bridge_pending.case.json`):bridge workflow 在 in-handler bridge call 处 pend。scenario expect `run_status: "suspended"`。
+- mock capability 对 bridge call 返回 Pending。
+- census runner 处理 `"suspended"` terminal(`conformance_case.hpp:935` 已支持 `"suspended"` 作为 valid `run_status`)。
+- census pin 更新:`kExpectedNativeAgreed` 从 66 升到 67(或更多,取决于 scenario 数量),deliberately blessed。
+
+**Evaluator parity:**
+
+- evaluator 在同一 fixture 上 suspend(`capability_eval.cpp:108-116`)。
+- census 比较 wasm observation 与 evaluator observation。两者都应 report `"suspended"`。
+- resumed completion:separate ctest(不是 census)驱动 suspend/resume cycle:suspend -> snapshot -> resume with injected result -> `Completed`。resumed completion 与 evaluator 的 resumed completion 比较。
+
+**Enumerated fail-closed cases:**
+
+1. **Ordinal tamper:** memo entry 的 ordinal 不匹配 live call 的 ordinal -> divergence(`workflow_session.cpp:855-860` `entry->cap_id != cap_id` 同类检查)。
+2. **Arg_hash mismatch:** memo entry 的 arg_hash 不匹配 live call 的 arg_hash -> divergence(`workflow_session.cpp:876-880`)。
+3. **Site OOB:** bridge site 的 `result_base + result_extent` 超出 page -> fail closed(`capability_import.cpp:535-536` 同类 bounds check)。
+4. **Unknown site:** manifest bridge site 的 `call_site_id` 不在 frame section 的 `bridge_call_sites` -> fail closed。
+5. **ERROR status word:** bridge call 返回 ERROR -> trap -> `NodeFailed`(parity with evaluator)。
+6. **PENDING carrying non-empty result:** bridge call 返回 PENDING with non-null `result_ptr` -> host `handle_bridge` 总是返回 `GuestPointer{0}` for Pending,所以这种情况不可达;defense-in-depth check 保持。
+7. **Tag-0 published while suspended:** scheduler 在 runner pend 时不写 tag-0 record。test 验证 `event_count` 保持 `schedule_pos`。
+8. **Manifest v1 rejection:** decoder 拒绝 v1 manifest(`*version != kExecManifestVersion` -> error)。
+9. **Bridge site ordinal gap:** per-node ordinals 不 dense(0, 2, ...) -> fail closed。
+10. **Bridge site call_site_id duplicate:** 同一 workflow 内两个 bridge site 有相同 `call_site_id` -> fail closed。
+
+**Agent-lane vs workflow-lane scope:**
+
+WH-5b.2 是 **workflow-lane only**。agent lane(`WasmAgentRunner`)无 recovery-snapshot consumer、无 conformance census pressure for pending。agent lane 的 run2 Pending arm 保持 `NodeFailed`。这与 §12.6.10 的 scope 一致。
+
+**D5 instance-reuse 影响:**
+
+无。D5 rule(`core_wasm_codegen.cpp:12997-13001`)确保每个 P6 node 有自己的 runner。in-runner bridge-site table 是 per-node 的,`(node, ordinal) -> call_site_id` 映射无歧义。无需 D5 修订。
+
+### 12.14.10 Q8: Acceptance criteria
+
+1. - [ ] Fresh `-Werror` dev build:zero warnings(`cmake --preset dev && cmake --build --preset build-dev`)。
+2. - [ ] `ctest --preset test-dev --output-on-failure -L wasm`:all pass,including new WH-5b.2 tests。
+3. - [ ] ASan build & test(`cmake --preset asan && cmake --build --preset build-asan && ctest --preset test-asan`):clean on touched targets。
+4. - [ ] `WASM=OFF` build:clean(无 wasm backend 时 codegen 不编译)。
+5. - [ ] Census:existing 66 agreed / 0 skipped 保持;new suspended scenarios agree(wasm == evaluator == `"suspended"`);pin deliberately blessed。
+6. - [ ] E3-E6 resume tests(`wasm_workflow_resume_e2e.cpp`):unchanged(all-opaque,无 P6 nodes)。
+7. - [ ] Bridge suspend/resume e2e:suspend -> snapshot -> resume with injected result -> `Completed`;resumed output 与 evaluator 一致。
+8. - [ ] Fail-closed family:all 10 enumerated cases(§12.14.9)fail closed with actionable diagnostics。
+9. - [ ] Evaluator parity:suspended terminal + resumed completion match(`run_status`、`pending_cap_id`、`pending_ordinal`、output bytes)。
+10. - [ ] Determinism:data-dependent later calls(ordinal 0 live->memo,ordinal 1 pending)在 replay 时确定性到达。
+11. - [ ] No tag-0 on suspend:`event_count` 保持 `schedule_pos`;snapshot 的 `completed_nodes` 不含 suspended node。
+12. - [ ] Manifest v2:codegen emits v2;decoder rejects v1;A2 admission-set equality(opaque + bridge == wire schema == imports)holds;transcode imports excluded。
+13. - [ ] Host-side trust checks:manifest bridge-site table 与 frame section 交叉检查(call_site_id、source_symbol、bounds、ordinal density、call_site_id uniqueness)。
+14. - [ ] D1b resume controller(test-only):P6 bridge node 作为 frontier 被接受;coordinate_gate 通过。
+15. - [ ] No old/new coexistence:v1 manifest decoder 删除;bridge trap arm 删除;wrapped_callback bridge skip 删除;`cap_call_count > 0` for P6 bridge nodes 删除。
+
+### 12.14.11 Q9: Rejected alternatives
+
+**Option A: Mid-expression frame parking — REJECTED。**
+
+wasm3 interpreter 不能 park a call stack。node 是 re-run unit(evaluator parity:`workflow_runtime.cpp` re-evaluates node-input expression on resume)。fresh-instance replay 是 WH-4b 的模型,已落地、已测试。Reference:Rust async/await parking 是 language-level feature(state machine transformation),不是 runtime trick;AHFL 的 wasm3 interpreter 无 frame parking 能力。在 wasm3 中实现 frame parking 需要保存/恢复整个 interpreter stack,这是重新发明一个 debug info-based unwinder,违反 Principle 1(industry-standard approach = fresh-instance replay,同 GHC 的 IO replay)。
+
+**Option B: Keep the trap — REJECTED。**
+
+evaluator 在 ANY position 的 Pending 都 suspend(`capability_eval.cpp:108-116`)。wasm bridge lane trap -> `NodeFailed`。这是 WH-6 cutover 后会暴露的 parity regression。trap 是 codegen limitation,不是 semantic difference。§12.12.10 已记录为 mandatory pre-WH-6 slice。
+
+**Option C: Key memos by guest pointer — REJECTED。**
+
+guest pointer 在 fresh-instance replay 中不稳定(wasm3 分配新 linear memory)。`(node, ordinal)` identity 是 stable key。Reference:Rust 的 `Pin`/pointer identity 不用于 replay key;index-based identity 是 standard(AHFL Principle 2:Index-Based, Not String-Based;同理 pointer-based 也不适合 replay identity)。
+
+**Option D: Per-import global ordinal — REJECTED。**
+
+evaluator 的 ordinal 是 per-node(`workflow_runtime.cpp:754`)。global ordinal 不匹配 evaluator 的 identity,破坏 parity。per-node ordinal 是正确 key。Reference:Rust 的 `Substs` 按 parameter position index,不按 global declaration order——per-scope index 是 type-system 的 standard。
+
+**Option E: Compat flag / dual implementation — REJECTED by CLAUDE.md Principle 1。**
+
+无 transitional state,无 old/new coexistence。big-bang change flip every call site:codegen emits v2 manifest,decoder accepts only v2,bridge status arm changes,old trap path deleted,wrapped_callback bridge skip deleted,`cap_call_count > 0` for P6 bridge nodes deleted。`BREAKING CHANGE:` footer 标记这些删除。
+
+**Option F: Put in-runner bridge-site table in frame section instead of exec manifest — REJECTED。**
+
+frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capability identity。A2 admission 读 exec manifest 做 set equality;把 bridge-site table 放 frame section 会迫使 admission 同时读两个 payload,增加 attack surface。exec manifest 是 import authority 的 natural home(A2 已读它)。`call_site_id` join 到 frame section 的 `bridge_call_sites` 用于 result placement,这是 table join,不是 duplication。
+
+### 12.14.12 Costs / LOC
+
+| Component | LOC delta | Notes |
+|-----------|-----------|-------|
+| `core_wasm_codegen.cpp` | ~150 | bridge status arm PENDING(~20)、scheduler P6 PENDING arm(~20)、manifest v2 emission(~50)、bridge-site table emission(~60) |
+| `core_wasm_schema_module.cpp` | ~160 | manifest v2 decode(~80)、A2 admission-set equality(~40)、bridge-site table in payload(~40) |
+| `workflow_session.cpp` | ~350 | bridge memo/replay routing(~100)、bridge memo capture + String arena(~60)、bridge memo injection(~80)、bridge frontier injection(~60)、host-side trust checks(~50) |
+| `capability_import.cpp` | ~80 | refactor argument decoding + packing into shared helpers |
+| `wasm_resume_recorder.hpp/cpp` | ~30 | generalize to bridge calls(per_node_counters_ already covers) |
+| `core_wasm_resume_controller.cpp` | ~80 | D1b controller bridge-site support(test-only FOUNDATION) |
+| Tests | ~450 | census scenario、e2e suspend/resume、fail-closed family、determinism |
+| Docs | ~100 | 本节 |
+| **Total** | **~1400** | |
+
+### 12.14.13 Sequencing + gate revision
+
+**顺序:**
+1. **WH-5b.1**(§12.12 修复 (a)/(b))- 已 landed(commit 7813556c)。
+2. **WH-5b.3**(§12.13,transcode)- 已 landed(commit 8dbd2570)。
+3. **WH-5b.2**(本节,bridge-pending parity)- 立即开始。
+4. **WH-6**(ahflc run cutover)- gated on 5b.1 + 5b.3 + 5b.2。
+
+**Gate revision:** §12.13.13 的 gate set 是 "WH-6 gated on 5b.1 + 5b.3 + 5b.2"。本节不改变该 gate set(5b.2 已在其中)。WH-5b.2 落地后,gate set 的三个前置全部满足。
+
+### 12.14.14 Prior-decision preservation statement
+
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。WH-5b.2 复用 WH-4b 的 memo/replay 基础设施(`WasmResumeRecorder`、`WorkflowRecoverySnapshot` v2、ExactSidecar),不改变 opaque terminal 的 PENDING latch、memo/replay、snapshot schema。bridge lane 是 WH-4b machinery 的新 consumer,不是新机制。
+- **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 不变(§12.14.13)。
+- **§12.12(Option A'):** 保留作历史档案。§12.12.10 记录的 bridge-pending parity gap 由本节关闭。
+- **§12.13(WH-5b.3 transcode):** 保留,不重写。WH-5b.2 不改变 transcode 的 routing order、shadow/payload arena、fail-closed guards。xcode 与 bridge memo/replay 无 contamination(§12.14.8)。
