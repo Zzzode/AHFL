@@ -859,6 +859,114 @@ void test_missing_exports_rejected() {
     }
 }
 
+// WH-5b.3 AC12: a module with a custom import (module name, field name,
+// functype). The run2 body calls the import so the engine links it. Used to
+// verify the ahfl_xcode sealed-functype admission check.
+[[nodiscard]] std::vector<std::uint8_t>
+xcode_import_module(std::string_view mod_name, std::string_view field_name,
+                    std::span<const std::uint8_t> params,
+                    std::span<const std::uint8_t> results) {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    // Type section: type 0 = the import functype, type 1 = run2
+    // (i32,i32)->(i32,i32,i32), type 2 = alloc (i32)->i32.
+    std::vector<std::uint8_t> import_type;
+    import_type.push_back(0x60);
+    wht::put_uleb(import_type, params.size());
+    import_type.insert(import_type.end(), params.begin(), params.end());
+    wht::put_uleb(import_type, results.size());
+    import_type.insert(import_type.end(), results.begin(), results.end());
+    const auto run2_type = wht::func_type({wht::kI32, wht::kI32},
+                                           {wht::kI32, wht::kI32, wht::kI32});
+    const auto alloc_type = wht::func_type({wht::kI32}, {wht::kI32});
+    wht::put_section(m, 1, wht::rts::type_payload({import_type, run2_type, alloc_type}));
+    // Import section: function 0 (type 0).
+    std::vector<std::uint8_t> import_payload;
+    wht::put_uleb(import_payload, 1);
+    wht::put_uleb(import_payload, mod_name.size());
+    import_payload.insert(import_payload.end(), mod_name.begin(), mod_name.end());
+    wht::put_uleb(import_payload, field_name.size());
+    import_payload.insert(import_payload.end(), field_name.begin(), field_name.end());
+    import_payload.push_back(0x00); // func import
+    wht::put_uleb(import_payload, 0); // type 0
+    wht::put_section(m, 2, import_payload);
+    // Function section: defined functions 1 (run2, type 1) and 2 (alloc, type 2).
+    wht::put_section(m, 3, wht::function_section({1, 2}));
+    wht::put_section(m, 5, wht::memory_section(1));
+    wht::put_section(m, 6, wht::global_i32_mut(static_cast<std::int32_t>(wht::kHeapBase)));
+    // Exports: run2 -> function 1, alloc -> function 2.
+    wht::put_section(m, 7, wht::standard_exports(1, 2));
+    // run2 body: call the import (func index 0) and return its results.
+    std::vector<std::uint8_t> run2_body = wht::locals_decl({});
+    wht::put_op_uleb(run2_body, wht::kOpLocalGet, 0);
+    wht::put_op_uleb(run2_body, wht::kOpLocalGet, 1);
+    wht::put_op_uleb(run2_body, wht::kOpCall, 0);
+    run2_body.push_back(wht::kOpEnd);
+    wht::append_standard_code(m, run2_body);
+    return m;
+}
+
+// WH-5b.3 AC12: the ahfl_xcode sealed-functype admission check. The engine
+// must accept ahfl_xcode.xcode_<decimal> with EXACTLY (i32,i32)->(i32,i32,i32)
+// and reject every variant (wrong namespace, wrong prefix, non-decimal
+// ordinal, empty ordinal, wrong param count, wrong result count).
+void test_xcode_admission_sealed_functype() {
+    using wht::kI32;
+    const std::vector<std::uint8_t> sealed_params{kI32, kI32};
+    const std::vector<std::uint8_t> sealed_results{kI32, kI32, kI32};
+    auto try_admit = [](std::string_view mod, std::string_view field,
+                        std::span<const std::uint8_t> params,
+                        std::span<const std::uint8_t> results) {
+        const auto bytes = xcode_import_module(mod, field, params, results);
+        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+        auto inst = engine.fresh_instance(
+            std::span<const std::uint8_t>(bytes),
+            [](const eng::ImportObservation &) {
+                return eng::ImportReply{.raw_status = 0};
+            });
+        return inst.has_value();
+    };
+    // Accepted: the exact sealed shape.
+    check(try_admit("ahfl_xcode", "xcode_0", sealed_params, sealed_results),
+          "xcode-admit.xcode_0 sealed functype accepted");
+    check(try_admit("ahfl_xcode", "xcode_42", sealed_params, sealed_results),
+          "xcode-admit.xcode_42 accepted");
+    // Rejected: wrong namespace.
+    check(!try_admit("ahfl_cap", "xcode_0", sealed_params, sealed_results),
+          "xcode-admit.ahfl_cap namespace rejected");
+    check(!try_admit("ahfl_xcod", "xcode_0", sealed_params, sealed_results),
+          "xcode-admit.typo namespace rejected");
+    // Rejected: wrong field prefix.
+    check(!try_admit("ahfl_xcode", "cap_0", sealed_params, sealed_results),
+          "xcode-admit.cap_ prefix rejected");
+    check(!try_admit("ahfl_xcode", "xcode", sealed_params, sealed_results),
+          "xcode-admit.xcode (no underscore) rejected");
+    // Rejected: non-decimal ordinal.
+    check(!try_admit("ahfl_xcode", "xcode_abc", sealed_params, sealed_results),
+          "xcode-admit.non-decimal ordinal rejected");
+    check(!try_admit("ahfl_xcode", "xcode_1a", sealed_params, sealed_results),
+          "xcode-admit.hex-like ordinal rejected");
+    // Rejected: empty ordinal.
+    check(!try_admit("ahfl_xcode", "xcode_", sealed_params, sealed_results),
+          "xcode-admit.empty ordinal rejected");
+    // Rejected: wrong param count (1-param variant).
+    const std::vector<std::uint8_t> one_param{kI32};
+    check(!try_admit("ahfl_xcode", "xcode_0", one_param, sealed_results),
+          "xcode-admit.1-param rejected");
+    // Rejected: wrong result count (2-result variant).
+    const std::vector<std::uint8_t> two_results{kI32, kI32};
+    check(!try_admit("ahfl_xcode", "xcode_0", sealed_params, two_results),
+          "xcode-admit.2-result rejected");
+    // Rejected: 4 results.
+    const std::vector<std::uint8_t> four_results{kI32, kI32, kI32, kI32};
+    check(!try_admit("ahfl_xcode", "xcode_0", sealed_params, four_results),
+          "xcode-admit.4-result rejected");
+    // Rejected: non-i32 param (i64).
+    static constexpr std::uint8_t kI64 = 0x7e;
+    const std::vector<std::uint8_t> i64_params{kI32, kI64};
+    check(!try_admit("ahfl_xcode", "xcode_0", i64_params, sealed_results),
+          "xcode-admit.i64 param rejected");
+}
+
 } // namespace
 
 int main() {
@@ -881,6 +989,8 @@ int main() {
     test_unbound_import_rejected();
     test_bad_memory_rejected();
     test_missing_exports_rejected();
+    // WH-5b.3 AC12: ahfl_xcode sealed-functype admission.
+    test_xcode_admission_sealed_functype();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

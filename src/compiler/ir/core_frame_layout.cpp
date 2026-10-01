@@ -82,7 +82,14 @@ class Encoder {
              section.bridge_spill_extent != 0 || !section.bridge_call_sites.empty() ||
              !section.node_blocks.empty() || section.entry_payload_base != 0 ||
              section.entry_payload_capacity != 0 || section.workflow_output_base != 0 ||
-             section.state_trace_base != 0 || section.state_trace_capacity != 0)) {
+             section.state_trace_base != 0 || section.state_trace_capacity != 0 ||
+             !section.transcode_sites.empty() ||
+             section.transcode_shadow_base != 0 ||
+             section.transcode_shadow_extent != 0 ||
+             section.transcode_payload_base != 0 ||
+             section.transcode_payload_capacity != 0 ||
+             section.transcode_entry_shadow_base != 0 ||
+             section.transcode_entry_shadow_extent != 0)) {
             diagnostics_.push_back(
                 fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
             return std::nullopt;
@@ -201,6 +208,27 @@ class Encoder {
                 }
                 u32(section.state_trace_base);
                 u32(section.state_trace_capacity);
+                // WH-5b.3: the presence-gated transcode extension (shadow
+                // spans + the dense transcode_sites table). A workflow with no
+                // crossed lane edge carries no sites and keeps its exact bytes.
+                if (!section.transcode_sites.empty()) {
+                    u8(1);
+                    u32(section.transcode_shadow_base);
+                    u32(section.transcode_shadow_extent);
+                    u32(section.transcode_payload_base);
+                    u32(section.transcode_payload_capacity);
+                    u32(section.transcode_entry_shadow_base);
+                    u32(section.transcode_entry_shadow_extent);
+                    u32_size(section.transcode_sites.size());
+                    for (const CoreFrameTranscodeSite &site : section.transcode_sites) {
+                        u32(site.import_ordinal);
+                        u8(static_cast<std::uint8_t>(site.direction));
+                        u8(static_cast<std::uint8_t>(site.source));
+                        u32(site.source_node_ordinal);
+                        u32(site.target_node_ordinal);
+                        id(site.layout);
+                    }
+                }
             }
         }
         return std::move(bytes_);
@@ -551,6 +579,74 @@ class Decoder {
                 }
                 section.state_trace_base = *trace_base;
                 section.state_trace_capacity = *trace_capacity;
+                // WH-5b.3: the optional trailing transcode extension.
+                if (!cursor_.at_end()) {
+                    const auto present = cursor_.u8();
+                    if (!present.has_value() || *present != 1) {
+                        result.diagnostics.push_back(
+                            fail("frame-layout transcode tag is malformed"));
+                        return result;
+                    }
+                    const auto shadow_base = cursor_.u32();
+                    const auto shadow_extent = cursor_.u32();
+                    const auto payload_base = cursor_.u32();
+                    const auto payload_capacity = cursor_.u32();
+                    const auto entry_shadow_base = cursor_.u32();
+                    const auto entry_shadow_extent = cursor_.u32();
+                    if (!shadow_base || !shadow_extent || !payload_base ||
+                        !payload_capacity || !entry_shadow_base ||
+                        !entry_shadow_extent) {
+                        result.diagnostics.push_back(
+                            fail("frame-layout transcode shadow span is malformed"));
+                        return result;
+                    }
+                    section.transcode_shadow_base = *shadow_base;
+                    section.transcode_shadow_extent = *shadow_extent;
+                    section.transcode_payload_base = *payload_base;
+                    section.transcode_payload_capacity = *payload_capacity;
+                    section.transcode_entry_shadow_base = *entry_shadow_base;
+                    section.transcode_entry_shadow_extent = *entry_shadow_extent;
+                    const auto site_count = cursor_.u32();
+                    if (!site_count.has_value() || !bounded_count(*site_count) ||
+                        *site_count == 0) {
+                        result.diagnostics.push_back(
+                            fail("frame-layout transcode-site count is malformed"));
+                        return result;
+                    }
+                    section.transcode_sites.reserve(*site_count);
+                    for (std::uint32_t i = 0; i < *site_count; ++i) {
+                        CoreFrameTranscodeSite site;
+                        const auto import_ordinal = cursor_.u32();
+                        const auto direction = cursor_.u8();
+                        const auto source = cursor_.u8();
+                        const auto source_node = cursor_.u32();
+                        const auto target_node = cursor_.u32();
+                        const auto layout = cursor_.id();
+                        if (!import_ordinal || !direction || !source ||
+                            !source_node || !target_node || !layout.has_value()) {
+                            bad("frame-layout transcode-site record is truncated");
+                            return result;
+                        }
+                        if (*direction >
+                                static_cast<std::uint8_t>(
+                                    CoreFrameTranscodeSite::Direction::JsonToP4D) ||
+                            *source >
+                                static_cast<std::uint8_t>(
+                                    CoreFrameTranscodeSite::Source::NodeOutput)) {
+                            bad("frame-layout transcode-site carries an unknown direction or source");
+                            return result;
+                        }
+                        site.import_ordinal = *import_ordinal;
+                        site.direction =
+                            static_cast<CoreFrameTranscodeSite::Direction>(*direction);
+                        site.source =
+                            static_cast<CoreFrameTranscodeSite::Source>(*source);
+                        site.source_node_ordinal = *source_node;
+                        site.target_node_ordinal = *target_node;
+                        site.layout = *layout;
+                        section.transcode_sites.push_back(std::move(site));
+                    }
+                }
             }
             if (!cursor_.at_end()) {
                 result.diagnostics.push_back(
@@ -1421,6 +1517,60 @@ class Decoder {
                 fail_local("a workflow state-trace span is unaligned, undersized, or outside the "
                            "fixed page");
                 return false;
+            }
+        }
+        // WH-5b.3: the transcode shadow region, its String payload arena, and
+        // the entry shadow are disjoint in-page spans. The shadow region is
+        // the single reused JSON_TO_P4D landing area; the payload arena is
+        // append-only within a run; the entry shadow holds the host-packed
+        // INLINE P4-D entry for a P4D_TO_JSON ENTRY crossing. Each is present
+        // iff its extent/capacity is nonzero.
+        if (section.transcode_shadow_extent != 0) {
+            if (section.transcode_shadow_base == 0 ||
+                section.transcode_shadow_base % 8u != 0 ||
+                !add(section.transcode_shadow_base,
+                     section.transcode_shadow_extent)) {
+                fail_local("a workflow transcode shadow span is unaligned or outside the fixed "
+                           "page");
+                return false;
+            }
+        }
+        if (section.transcode_payload_capacity != 0) {
+            if (section.transcode_payload_base == 0 ||
+                section.transcode_payload_base % 8u != 0 ||
+                !add(section.transcode_payload_base,
+                     section.transcode_payload_capacity)) {
+                fail_local("a workflow transcode payload-arena span is unaligned or outside the "
+                           "fixed page");
+                return false;
+            }
+        }
+        if (section.transcode_entry_shadow_extent != 0) {
+            if (section.transcode_entry_shadow_base == 0 ||
+                section.transcode_entry_shadow_base % 8u != 0 ||
+                !add(section.transcode_entry_shadow_base,
+                     section.transcode_entry_shadow_extent)) {
+                fail_local("a workflow transcode entry-shadow span is unaligned or outside the "
+                           "fixed page");
+                return false;
+            }
+        }
+        // WH-5b.3: every transcode site names an in-range layout root, and a
+        // JSON_TO_P4D site's packed frame must fit the reused shadow region.
+        for (const CoreFrameTranscodeSite &site : section.transcode_sites) {
+            if (!valid_id(section.table, site.layout)) {
+                fail_local("a transcode site names an out-of-range layout root");
+                return false;
+            }
+            if (site.direction == CoreFrameTranscodeSite::Direction::JsonToP4D &&
+                section.transcode_shadow_extent != 0) {
+                const std::uint64_t needed =
+                    align8(section.table.layouts[site.layout.value].size);
+                if (needed == 0 || needed > section.transcode_shadow_extent) {
+                    fail_local("a transcode site's P4-D layout does not fit the reused shadow "
+                               "region");
+                    return false;
+                }
             }
         }
         for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {

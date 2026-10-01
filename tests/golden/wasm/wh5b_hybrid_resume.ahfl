@@ -1,0 +1,83 @@
+// WH-5b.3 AC2 fixture: hybrid P6+opaque workflow suspend/resume.
+//
+// Identical topology to e3_capability_workflow_resume.ahfl (one-capability
+// pipeline into an identity node) but the FIRST node is a P6-packaged agent
+// (computed-goto + computed-final, no capabilities) and the SECOND node is
+// opaque (capability-final, calls Echo). The edge compute->echo crosses the
+// P4-D -> wire-JSON encoding boundary, so the scheduler inserts a
+// P4D_TO_JSON transcode. The workflow return is the opaque echo node, so a
+// JSON_TO_P4D transcode converts the result to the workflow_output region.
+//
+// Bounded String (like e3) so the F1 fixed single-page preflight's canonical
+// size bound is finite.
+//
+// Schedule: [compute(P6), echo(opaque)]
+//   - compute: source=ENTRY, lane=P6, entry encoding=P4-D. Same lane.
+//   - echo: source=compute(NodeOutput), lane=opaque, source encoding=P4-D.
+//     Crossed -> P4D_TO_JSON transcode (NodeOutput, source=0, target=1).
+//   - echo calls Echo -> Pending -> suspend.
+//   - On resume: Echo is frontier-injected (zero live calls).
+//   - return echo(opaque) -> workflow-output crossing.
+//     JSON_TO_P4D transcode (echo output -> workflow_output region).
+
+module wasm::wh5b_hybrid_resume;
+
+pub struct Frame {
+    value: String(0, 64);
+}
+
+capability Echo(request: Frame) -> Frame;
+
+// P6-packaged agent: computed-goto + computed-final, no capabilities.
+pub agent ComputeAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for ComputeAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}
+
+// Opaque capability-final agent.
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow HybridResume {
+    input: Frame;
+    output: Frame;
+
+    node compute: ComputeAgent(input);
+    node echo: EchoAgent(compute) after [compute];
+
+    return: echo;
+}

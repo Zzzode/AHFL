@@ -1,0 +1,208 @@
+#include "runtime/wasm_host/transcode.hpp"
+
+#include "runtime/engine/core_wire_codec.hpp"
+#include "runtime/engine/wire_value.hpp"
+#include "runtime/wasm_host/frame_packer.hpp"
+#include "runtime/wasm_host/frame_reader.hpp"
+#include "runtime/wasm_host/frame_walk.hpp"
+#include "runtime/value/value.hpp"
+
+#include "ahfl/runtime/ahfl_host.h"
+#include "base/json/json_value.hpp"
+
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace ahfl::runtime::wasm_host {
+
+namespace {
+
+namespace irc = ahfl::ir::core;
+namespace eng = ahfl::runtime::core_wasm_resume_engine;
+namespace wc = ahfl::runtime::wire_codec;
+
+// Build the String regions for a P4D_TO_JSON read. The source is a P4-D frame
+// (the host-packed entry shadow or a P6 producer's O_k); its String PtrLen
+// payload bytes can lie in the rodata pool, the host-packed entry-payload
+// arena, a bridge result-placement arena, or the transcode payload arena (a P6
+// node may forward a String whose PtrLen was transcoded from an opaque input).
+[[nodiscard]] std::vector<StringRegion>
+build_transcode_string_regions(const irc::CoreFrameLayoutSection &section) {
+    std::vector<StringRegion> regions;
+    if (section.rodata_extent > 0) {
+        regions.push_back(
+            {section.rodata_base, section.rodata_base + section.rodata_extent});
+    }
+    if (section.entry_payload_capacity > 0) {
+        regions.push_back({section.entry_payload_base,
+                           section.entry_payload_base +
+                               section.entry_payload_capacity});
+    }
+    for (const auto &site : section.bridge_call_sites) {
+        if (site.result_payload_capacity > 0) {
+            regions.push_back({site.result_payload_base,
+                               site.result_payload_base +
+                                   site.result_payload_capacity});
+        }
+    }
+    if (section.transcode_payload_capacity > 0) {
+        regions.push_back({section.transcode_payload_base,
+                           section.transcode_payload_base +
+                               section.transcode_payload_capacity});
+    }
+    return regions;
+}
+
+// A nonzero reply: the guest's compiled scheduler traps on it, converting the
+// transcode failure to NodeFailed WITHOUT writing an event record or bumping
+// completed_count (the transcode call sits before the node's event write).
+[[nodiscard]] eng::ImportReply transcode_fail() {
+    return eng::ImportReply{.raw_status = AHFL_CAP_ERROR};
+}
+
+// Mint the typed binding for the transcode site's boundary root. The root is
+// DERIVED from the direction + source kind (never a caller-supplied NodeId),
+// so a corrupt site can only name a legitimate boundary root of its own
+// direction.
+[[nodiscard]] std::optional<irc::VerifiedWireSchemaBinding>
+mint_transcode_binding(const TranscodeConfig &config,
+                       const irc::CoreFrameTranscodeSite &site) {
+    std::vector<irc::CoreLowerDiagnostic> diags;
+    const auto &verified = config.verified_wire;
+    const auto &descriptor = config.descriptor;
+
+    if (site.direction ==
+        irc::CoreFrameTranscodeSite::Direction::P4DToJson) {
+        if (site.source == irc::CoreFrameTranscodeSite::Source::Entry) {
+            // The host-packed entry shadow is the workflow INPUT boundary.
+            return irc::make_frame_binding_from_verified_table(
+                verified, {irc::CoreWireFrameRootKind::Input}, diags);
+        }
+        // NodeOutput: the P6 producer's own OUTPUT boundary root.
+        if (site.source_node_ordinal >= descriptor.nodes.size()) {
+            return std::nullopt;
+        }
+        const auto p6_ord =
+            descriptor.nodes[site.source_node_ordinal].p6_block_ordinal;
+        return irc::make_node_frame_binding_from_verified_table(
+            verified, {p6_ord, irc::CoreWireNodeRootKind::Output}, diags);
+    }
+
+    // JSON_TO_P4D
+    if (site.source == irc::CoreFrameTranscodeSite::Source::Entry) {
+        // The wire-JSON entry decodes to the workflow INPUT boundary.
+        return irc::make_frame_binding_from_verified_table(
+            verified, {irc::CoreWireFrameRootKind::Input}, diags);
+    }
+    if (site.target_node_ordinal == irc::kTranscodeWorkflowOutput) {
+        // An opaque node's result transcoded for the workflow OUTPUT slot.
+        return irc::make_frame_binding_from_verified_table(
+            verified, {irc::CoreWireFrameRootKind::Output}, diags);
+    }
+    // NodeOutput -> a P6 consumer's INPUT boundary root.
+    if (site.target_node_ordinal >= descriptor.nodes.size()) {
+        return std::nullopt;
+    }
+    const auto p6_ord =
+        descriptor.nodes[site.target_node_ordinal].p6_block_ordinal;
+    return irc::make_node_frame_binding_from_verified_table(
+        verified, {p6_ord, irc::CoreWireNodeRootKind::Input}, diags);
+}
+
+} // namespace
+
+[[nodiscard]] eng::ImportCallbackResult
+handle_transcode(const TranscodeConfig &config,
+                 const irc::CoreFrameTranscodeSite &site,
+                 const eng::ImportObservation &obs) {
+    const auto &section = config.frame_section;
+    const auto &wire = config.wire_table;
+
+    auto binding = mint_transcode_binding(config, site);
+    if (!binding.has_value()) {
+        return transcode_fail();
+    }
+    const auto wire_node = binding->root();
+
+    FrameWalkContext ctx(section, wire);
+
+    if (site.direction ==
+        irc::CoreFrameTranscodeSite::Direction::P4DToJson) {
+        // P4D_TO_JSON: read the P4-D source frame at the guest-pushed address,
+        // validate the reconstructed Value against the wire binding, serialize
+        // to wire JSON, alloc_then_write, and reply (0, json_ptr, json_len).
+        // The source address is obs.scalar_arg (the first i32 arg, which for a
+        // 2-param import is the frame pointer).
+        const auto regions = build_transcode_string_regions(section);
+        auto value = read_value_at(ctx, obs.whole_memory, wire_node,
+                                   site.layout, obs.scalar_arg, regions);
+        if (!value.has_value()) {
+            return transcode_fail();
+        }
+        // Defense-in-depth: read_value_at already walks the wire schema, but
+        // the decision mandates a structural validate pass so a Value that
+        // somehow escaped the read checks is rejected before serialization.
+        const auto validation = wc::validate_value(*value, *binding);
+        if (!validation.valid) {
+            return transcode_fail();
+        }
+        auto json = serialize_value_for_wire_json(*value);
+        if (!json.has_value()) {
+            return transcode_fail();
+        }
+        const auto json_span = std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t *>(json->data()),
+            json->size());
+        auto ptr = config.engine.alloc_then_write(json_span);
+        if (!ptr.has_value()) {
+            return transcode_fail();
+        }
+        return eng::ImportReply{
+            .raw_status = AHFL_CAP_OK,
+            .result_ptr = *ptr,
+            .result_len = static_cast<std::uint32_t>(json->size()),
+        };
+    }
+
+    // JSON_TO_P4D: parse the wire-JSON source the guest pushed, decode it
+    // under the typed binding, pack the Value INLINE into the reused static
+    // shadow region (String bytes bump-allocate in the disjoint payload arena
+    // via the in/out arena_cursor), and reply (0, shadow_base, shadow_extent).
+    // The materializer then reads from the shadow via emit_root_base (for a
+    // P6 consumer) or via shadow_root_base (for the workflow-output crossing,
+    // where the materializer copies from the shadow to wf_output_base).
+    const auto json_text = std::string_view(
+        reinterpret_cast<const char *>(obs.param_frame.data()),
+        obs.param_frame.size());
+    auto parsed = ahfl::json::parse_json(json_text);
+    if (!parsed.has_value()) {
+        return transcode_fail();
+    }
+    const auto decoded = wc::decode_json(**parsed, *binding);
+    if (!decoded.ok()) {
+        return transcode_fail();
+    }
+    auto page = config.engine.mutable_whole_memory();
+    if (!page.has_value()) {
+        return transcode_fail();
+    }
+    const auto packed = pack_value_at(
+        ctx, *page, wire_node, site.layout, *decoded.value,
+        section.transcode_shadow_base, config.arena_cursor,
+        section.transcode_payload_base,
+        section.transcode_payload_capacity);
+    if (!packed.has_value()) {
+        return transcode_fail();
+    }
+    return eng::ImportReply{
+        .raw_status = AHFL_CAP_OK,
+        .result_ptr = eng::GuestPointer{section.transcode_shadow_base},
+        .result_len = section.transcode_shadow_extent,
+    };
+}
+
+} // namespace ahfl::runtime::wasm_host

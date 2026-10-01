@@ -63,6 +63,14 @@ constexpr std::uint8_t kLimitsFlagIs64 = 0x02; // memory64: not admissible
 constexpr std::string_view kCapabilityModuleName = "ahfl_cap";
 constexpr std::string_view kCapabilityFieldPrefix = "cap_";
 
+// WH-5b.3: the deterministic encoding-boundary transcode import family. A
+// transcode import is a pure codec adapter (no capability, no memo, no
+// hooks, no events) with the EXACT sealed functype (i32,i32)->(i32,i32,i32).
+// It shares the opaque-lane raw ABI, so the trampoline dispatches it
+// unchanged; the session routes it by ordinal before the memo/replay path.
+constexpr std::string_view kTranscodeModuleName = "ahfl_xcode";
+constexpr std::string_view kTranscodeFieldPrefix = "xcode_";
+
 // A bounds-checked cursor over the module bytes. Every read is checked, so a
 // malformed or truncated module yields std::nullopt and never over-reads.
 class Cursor {
@@ -510,19 +518,26 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     // ahfl_cap.cap_<decimal> with one of the two sealed lane functypes:
     //   * opaque: (i32,i32)->(i32,i32,i32) or (i32)->(i32,i32,i32) (3 results);
     //   * bridge: (i32)->(i32,i32) (2 results; WH-3).
+    // or ahfl_xcode.xcode_<decimal> (WH-5b.3) with the EXACT sealed functype
+    // (i32,i32)->(i32,i32,i32) -- the same raw ABI as the opaque lane, but a
+    // separate namespace so the session can route it as a pure codec adapter
+    // (never a capability, never memo, never an event record).
     std::vector<detail::Wasm3EngineImpl::ImportBinding> bindings;
     bindings.reserve(parsed->imports.size());
     for (const auto &import : parsed->imports) {
-        if (import.module_name != kCapabilityModuleName) {
+        const bool is_cap = import.module_name == kCapabilityModuleName;
+        const bool is_xcode = import.module_name == kTranscodeModuleName;
+        if (!is_cap && !is_xcode) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        if (import.field_name.size() <= kCapabilityFieldPrefix.size() ||
-            import.field_name.compare(0, kCapabilityFieldPrefix.size(),
-                                      kCapabilityFieldPrefix) != 0) {
+        const std::string_view prefix =
+            is_cap ? kCapabilityFieldPrefix : kTranscodeFieldPrefix;
+        if (import.field_name.size() <= prefix.size() ||
+            import.field_name.compare(0, prefix.size(), prefix) != 0) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
         const bool decimal =
-            std::all_of(import.field_name.begin() + kCapabilityFieldPrefix.size(),
+            std::all_of(import.field_name.begin() + prefix.size(),
                         import.field_name.end(),
                         [](char c) { return c >= '0' && c <= '9'; });
         if (!decimal) {
@@ -540,11 +555,19 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
         if (!results_i32 || !params_i32) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        const bool opaque_lane = type.results.size() == 3 &&
-                                 !type.params.empty() && type.params.size() <= 2;
-        const bool bridge_lane = type.results.size() == 2 && type.params.size() == 1;
-        if (!opaque_lane && !bridge_lane) {
-            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        if (is_xcode) {
+            // WH-5b.3: the transcode functype is sealed to EXACTLY
+            // (i32,i32)->(i32,i32,i32). No 1-param variant, no 2-result variant.
+            if (type.params.size() != 2 || type.results.size() != 3) {
+                return std::unexpected(eng::EngineError::InstanceUnavailable);
+            }
+        } else {
+            const bool opaque_lane = type.results.size() == 3 &&
+                                     !type.params.empty() && type.params.size() <= 2;
+            const bool bridge_lane = type.results.size() == 2 && type.params.size() == 1;
+            if (!opaque_lane && !bridge_lane) {
+                return std::unexpected(eng::EngineError::InstanceUnavailable);
+            }
         }
         bindings.push_back(detail::Wasm3EngineImpl::ImportBinding{
             .ordinal = static_cast<std::uint32_t>(bindings.size()),
@@ -593,7 +616,9 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     //    fully built, so its element addresses are stable for the session
     //    (committed to the Impl below before any invocation). The wasm3 raw
     //    signature is results-then-(params): the opaque 3-result lane is
-    //    "iii(ii)"/"iii(i)", the bridge 2-result lane is "ii(i)".
+    //    "iii(ii)"/"iii(i)", the bridge 2-result lane is "ii(i)". A
+    //    transcode import shares the opaque "iii(ii)" lane but links under
+    //    its own "ahfl_xcode" module namespace.
     for (std::size_t i = 0; i < parsed->imports.size(); ++i) {
         const char *signature = nullptr;
         if (bindings[i].result_count == 3) {
@@ -601,7 +626,8 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
         } else {
             signature = "ii(i)";
         }
-        if (m3_LinkRawFunctionEx(impl_->module, "ahfl_cap",
+        if (m3_LinkRawFunctionEx(impl_->module,
+                                 parsed->imports[i].module_name.c_str(),
                                  parsed->imports[i].field_name.c_str(), signature,
                                  &detail::Wasm3EngineImpl::raw_import_trampoline,
                                  &bindings[i]) != nullptr) {

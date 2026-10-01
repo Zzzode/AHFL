@@ -1035,6 +1035,19 @@ struct WorkflowPlan {
     // sites across every packaged runner (global call_site_id order == control
     // block dense order). Empty on an all-opaque / computed-final-only workflow.
     std::vector<BridgeCallPlan> workflow_bridge_sites;
+    // WH-5b.3: the dense encoding-boundary transcode sites (schedule order)
+    // and their shadow ingress spans. One site per crossed lane edge (target
+    // lane != source encoding). Empty on a same-lane / all-opaque workflow.
+    // The shadow region is the single reused JSON_TO_P4D landing area; the
+    // payload arena is append-only within a run; the entry shadow holds the
+    // host-packed INLINE P4-D entry for a P4D_TO_JSON ENTRY crossing.
+    std::vector<ir::core::CoreFrameTranscodeSite> transcode_sites;
+    std::uint32_t transcode_shadow_base{0};
+    std::uint32_t transcode_shadow_extent{0};
+    std::uint32_t transcode_payload_base{0};
+    std::uint32_t transcode_payload_capacity{0};
+    std::uint32_t transcode_entry_shadow_base{0};
+    std::uint32_t transcode_entry_shadow_extent{0};
 };
 
 struct FunctionTable {
@@ -12543,6 +12556,71 @@ validate_workflow_region(const CoreProgram &program,
         }
     }
 
+    // WH-5b.3: the transcode shadow ingress spans. The reused static shadow
+    // region is the JSON_TO_P4D landing area (sized to the largest crossed
+    // layout); the payload arena is append-only within a run (one pool share
+    // per JSON_TO_P4D site); the entry shadow holds the host-packed INLINE
+    // P4-D entry for a P4D_TO_JSON ENTRY crossing. Each is present iff its
+    // direction has at least one site. All are disjoint in-page spans (the
+    // frame-section verifier enforces disjointness).
+    if (!plan.transcode_sites.empty()) {
+        std::uint64_t shadow_extent = 0;
+        std::uint32_t json_to_p4d_count = 0;
+        std::uint64_t entry_shadow_extent = 0;
+        for (const ir::core::CoreFrameTranscodeSite &site : plan.transcode_sites) {
+            if (site.layout.value >= layouts.layouts.size()) {
+                add_diag(result, core_wasm_diag::kInvalidLayout,
+                         "a transcode site names an out-of-range layout root");
+                return false;
+            }
+            const std::uint64_t extent =
+                align8(layouts.layouts[site.layout.value].size);
+            if (site.direction ==
+                ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D) {
+                shadow_extent = std::max(shadow_extent, extent);
+                ++json_to_p4d_count;
+            } else if (site.source ==
+                       ir::core::CoreFrameTranscodeSite::Source::Entry) {
+                entry_shadow_extent = std::max(entry_shadow_extent, extent);
+            }
+        }
+        if (shadow_extent != 0) {
+            if (cursor > std::numeric_limits<std::uint32_t>::max() - shadow_extent) {
+                overflow("transcode shadow region");
+                return false;
+            }
+            plan.transcode_shadow_base = static_cast<std::uint32_t>(cursor);
+            plan.transcode_shadow_extent = static_cast<std::uint32_t>(shadow_extent);
+            cursor += shadow_extent;
+            const std::uint64_t payload_capacity =
+                std::uint64_t{json_to_p4d_count} * kP6FrameStringPoolBytes;
+            if (payload_capacity != 0) {
+                if (cursor > std::numeric_limits<std::uint32_t>::max() -
+                                 payload_capacity) {
+                    overflow("transcode payload arena");
+                    return false;
+                }
+                plan.transcode_payload_base =
+                    static_cast<std::uint32_t>(cursor);
+                plan.transcode_payload_capacity =
+                    static_cast<std::uint32_t>(payload_capacity);
+                cursor += payload_capacity;
+            }
+        }
+        if (entry_shadow_extent != 0) {
+            if (cursor > std::numeric_limits<std::uint32_t>::max() -
+                             entry_shadow_extent) {
+                overflow("transcode entry shadow");
+                return false;
+            }
+            plan.transcode_entry_shadow_base =
+                static_cast<std::uint32_t>(cursor);
+            plan.transcode_entry_shadow_extent =
+                static_cast<std::uint32_t>(entry_shadow_extent);
+            cursor += entry_shadow_extent;
+        }
+    }
+
     if (cursor > std::numeric_limits<std::uint32_t>::max()) {
         overflow("P6 frame high-water");
         return false;
@@ -13005,6 +13083,174 @@ build_workflow_plan(const CoreProgram &program,
     // kInvalidP6Block; plan_workflow_p6_capacity_family assigns P6 ordinals.
     plan.p6_block_by_runner.assign(
         plan.packaged_instances.size(), kInvalidP6Block);
+
+    // WH-5b.3: classify crossed lane edges (decision section 12.13.8). A crossed
+    // edge exists iff the target node's lane != its source's encoding. The ENTRY
+    // source encoding is the lane of schedule.front() (the host entry-pack
+    // rule); a NODE_OUTPUT source encoding is the producing node's lane. A
+    // same-lane edge is untouched (P6->P6 materializer, opaque->opaque heap
+    // copy, same-lane ENTRY direct locals). One transcode site per crossed
+    // edge, in schedule order; the wasm import ordinal is cap_import_count + N.
+    if (!plan.schedule.empty()) {
+        const CoreWorkflowNodeId entry_node = plan.schedule.front();
+        const auto node_lane_p6 = [&](CoreWorkflowNodeId n) -> bool {
+            const auto runner =
+                workflow_runner_index(plan, plan.nodes[n.value].target_instance);
+            // gathered[].p6 is the authoritative P6 flag at this point in
+            // build_workflow_plan; p6_block_by_runner is not assigned until
+            // plan_workflow_p6_capacity_family runs below.
+            return runner.has_value() && gathered[*runner].p6;
+        };
+        const bool entry_lane_p6 = node_lane_p6(entry_node);
+        const auto node_input_layout = [&](CoreWorkflowNodeId n) -> CoreLayoutId {
+            const auto *instance =
+                agent_instance(program, plan.nodes[n.value].target_instance);
+            return layouts.value_layouts[instance->dispatch_types[0].value];
+        };
+        const auto node_output_layout = [&](CoreWorkflowNodeId n) -> CoreLayoutId {
+            const auto *instance =
+                agent_instance(program, plan.nodes[n.value].target_instance);
+            return layouts.value_layouts[instance->dispatch_types[2].value];
+        };
+        // Collect the distinct upstreams of one node region (the sources of
+        // its path lets). A bare-forward / projected-path region has exactly
+        // one; a construct-yield region can have several. A bare-forward
+        // region (not constructed, no lets) yields the region's own source
+        // as its sole upstream.
+        const auto region_upstreams =
+            [&](const WorkflowRegionPlan &region) {
+                std::vector<WorkflowFrameSource> upstreams;
+                for (const WorkflowFrameLet &let : region.lets) {
+                    if (let.is_construct) {
+                        continue;
+                    }
+                    bool dup = false;
+                    for (const auto &u : upstreams) {
+                        if (u.kind == let.source.kind && u.node == let.source.node) {
+                            dup = true;
+                            break;
+                        }
+                    }
+                    if (!dup) {
+                        upstreams.push_back(let.source);
+                    }
+                }
+                if (upstreams.empty() && !region.constructed) {
+                    upstreams.push_back(region.source);
+                }
+                return upstreams;
+            };
+        std::uint32_t ordinal = 0;
+        for (const auto node_id : plan.schedule) {
+            const bool node_p6 = node_lane_p6(node_id);
+            const auto upstreams =
+                region_upstreams(plan.node_regions[node_id.value]);
+            if (upstreams.size() > 1) {
+                // A multi-source construct: a cross-lane operand would need
+                // one transcode per operand with shadow re-transcode
+                // interleaved into the materializer's ANF walk. That is a
+                // later rung; reject with a precise diagnostic.
+                for (const auto &u : upstreams) {
+                    const bool u_p6 =
+                        u.kind == WorkflowFrameSourceKind::Input
+                            ? entry_lane_p6
+                            : node_lane_p6(u.node);
+                    if (u_p6 != node_p6) {
+                        add_diag(result,
+                                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                                 "a workflow node constructs its input from a cross-lane node "
+                                 "output; per-edge transcode for a multi-source construct is a "
+                                 "later rung");
+                        return std::nullopt;
+                    }
+                }
+                continue; // all upstreams same-lane: no transcode
+            }
+            if (upstreams.empty()) {
+                continue;
+            }
+            const WorkflowFrameSource &src = upstreams.front();
+            const bool source_p6 =
+                src.kind == WorkflowFrameSourceKind::Input
+                    ? entry_lane_p6
+                    : node_lane_p6(src.node);
+            if (node_p6 == source_p6) {
+                continue; // same lane: untouched
+            }
+            ir::core::CoreFrameTranscodeSite site;
+            site.direction =
+                node_p6
+                    ? ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D
+                    : ir::core::CoreFrameTranscodeSite::Direction::P4DToJson;
+            site.source =
+                src.kind == WorkflowFrameSourceKind::Input
+                    ? ir::core::CoreFrameTranscodeSite::Source::Entry
+                    : ir::core::CoreFrameTranscodeSite::Source::NodeOutput;
+            site.source_node_ordinal =
+                src.kind == WorkflowFrameSourceKind::Input
+                    ? 0u
+                    : schedule_position[src.node.value];
+            site.target_node_ordinal = schedule_position[node_id.value];
+            // P4D_TO_JSON reads the SOURCE P4-D frame; JSON_TO_P4D packs the
+            // TARGET node's input frame.
+            if (site.direction ==
+                ir::core::CoreFrameTranscodeSite::Direction::P4DToJson) {
+                site.layout =
+                    src.kind == WorkflowFrameSourceKind::Input
+                        ? node_input_layout(entry_node)
+                        : node_output_layout(src.node);
+            } else {
+                site.layout = node_input_layout(node_id);
+            }
+            site.import_ordinal =
+                static_cast<std::uint32_t>(plan.imports.size()) + ordinal;
+            plan.transcode_sites.push_back(std::move(site));
+            ++ordinal;
+        }
+        // WH-5b.3: the workflow-output crossing. A hybrid workflow
+        // (has_p6_nodes) materializes its return as P4-D; if the return
+        // region's single upstream is an opaque node (wire-JSON), the
+        // scheduler inserts a JSON_TO_P4D transcode into the workflow-output
+        // shadow, then the materializer reads from the shadow to build
+        // wf_output_base. A multi-source construct return is a later rung
+        // (same rejection as a multi-source node input).
+        if (plan.has_p6_nodes) {
+            const auto return_upstreams = region_upstreams(plan.return_region);
+            if (return_upstreams.size() > 1) {
+                for (const auto &u : return_upstreams) {
+                    if (u.kind == WorkflowFrameSourceKind::NodeOutput &&
+                        !node_lane_p6(u.node)) {
+                        add_diag(result,
+                                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                                 "a workflow return constructs from a cross-lane node output; "
+                                 "per-edge transcode for a multi-source return is a later rung");
+                        return std::nullopt;
+                    }
+                }
+            } else if (return_upstreams.size() == 1) {
+                const WorkflowFrameSource &src = return_upstreams.front();
+                if (src.kind == WorkflowFrameSourceKind::NodeOutput &&
+                    !node_lane_p6(src.node)) {
+                    ir::core::CoreFrameTranscodeSite site;
+                    site.direction =
+                        ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D;
+                    site.source =
+                        ir::core::CoreFrameTranscodeSite::Source::NodeOutput;
+                    site.source_node_ordinal =
+                        schedule_position[src.node.value];
+                    site.target_node_ordinal =
+                        ir::core::kTranscodeWorkflowOutput;
+                    site.layout =
+                        layouts.value_layouts[plan.wf_output_vt.value];
+                    site.import_ordinal =
+                        static_cast<std::uint32_t>(plan.imports.size()) +
+                        ordinal;
+                    plan.transcode_sites.push_back(std::move(site));
+                    ++ordinal;
+                }
+            }
+        }
+    }
 
     // V2-D physical planning: run the D6 compile-time single-page capacity
     // family over the node-frame blocks, the merged bridge control page frame,
@@ -13572,6 +13818,41 @@ build_workflow_plan(const CoreProgram &program,
         out.scratch_size = block.scratch_size;
         out.output_base = block.output_base;
         section.node_blocks.push_back(std::move(out));
+    }
+    // WH-5b.3: populate the transcode extension. Each site's source layout id
+    // is already interned by the node boundary emission above (a transcode
+    // site always names a node input or output layout), so map it to its dense
+    // id rather than re-emitting (a container-bearing aggregate would
+    // duplicate).
+    {
+        std::unordered_map<std::uint32_t, ir::core::CoreLayoutId> dense_by_source;
+        for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
+            dense_by_source.emplace(
+                layouts.value_layouts[node_input_vts[p6].value].value,
+                plan.dense_node_input_layouts[p6]);
+            dense_by_source.emplace(
+                layouts.value_layouts[node_output_vts[p6].value].value,
+                plan.dense_node_output_layouts[p6]);
+        }
+        section.transcode_sites.reserve(plan.transcode_sites.size());
+        for (const ir::core::CoreFrameTranscodeSite &site : plan.transcode_sites) {
+            const auto it = dense_by_source.find(site.layout.value);
+            if (it == dense_by_source.end()) {
+                add_diag(result,
+                         core_wasm_diag::kInternalInvalid,
+                         "a transcode site layout was not interned in the workflow frame table");
+                return false;
+            }
+            ir::core::CoreFrameTranscodeSite out = site;
+            out.layout = it->second;
+            section.transcode_sites.push_back(std::move(out));
+        }
+        section.transcode_shadow_base = plan.transcode_shadow_base;
+        section.transcode_shadow_extent = plan.transcode_shadow_extent;
+        section.transcode_payload_base = plan.transcode_payload_base;
+        section.transcode_payload_capacity = plan.transcode_payload_capacity;
+        section.transcode_entry_shadow_base = plan.transcode_entry_shadow_base;
+        section.transcode_entry_shadow_extent = plan.transcode_entry_shadow_extent;
     }
     // Local admission: pairwise disjoint in-page spans and root consistency.
     auto encoded = ir::core::encode_core_frame_layout_section(section);
@@ -14992,7 +15273,8 @@ class WorkflowFrameMaterializer {
                             CoreLayoutId dst_layout,
                             std::uint32_t entry_ptr_local,
                             std::uint32_t cursor_local,
-                            std::uint32_t addr_base) {
+                            std::uint32_t addr_base,
+                            std::uint32_t shadow_root_base = 0) {
         if (dst_layout.value >= layouts_.layouts.size()) {
             return fail("a materialized frame names an out-of-range destination layout");
         }
@@ -15005,6 +15287,7 @@ class WorkflowFrameMaterializer {
         entry_ptr_local_ = entry_ptr_local;
         cursor_local_ = cursor_local;
         addr_base_ = addr_base;
+        shadow_root_base_ = shadow_root_base;
         construct_cursor_ = 0;
         lets_ = region.lets;
         construct_off_.clear();
@@ -15316,6 +15599,11 @@ class WorkflowFrameMaterializer {
     std::uint32_t normalize_cursor_local_{0};
     std::uint32_t addr_base_{0};
     std::uint32_t construct_cursor_{0};
+    // WH-5b.3: when nonzero, every path root reads from this static shadow
+    // base (the JSON_TO_P4D transcode landing region) instead of the entry
+    // pointer or an upstream O_k block. Set per-emit by the scheduler for a
+    // crossed P6 node; zero for every ordinary materialize.
+    std::uint32_t shadow_root_base_{0};
     std::span<const WorkflowFrameLet> lets_;
     // Construct-scratch window offset keyed by the SSA CoreValueId a region
     // let binds (never the value-type index: those are separate index spaces).
@@ -15422,6 +15710,14 @@ class WorkflowFrameMaterializer {
     // frame region that roots an opaque output is not materializable on this
     // rung.
     [[nodiscard]] bool emit_root_base(const WorkflowFrameSource &source) {
+        // WH-5b.3: a crossed P6 node materializes from the JSON_TO_P4D shadow
+        // region, not from the entry pointer or an upstream O_k block. The
+        // shadow is a static compile-time constant, so it is emitted as an
+        // i32.const (never a local).
+        if (shadow_root_base_ != 0) {
+            emit_const(shadow_root_base_);
+            return true;
+        }
         if (source.kind == WorkflowFrameSourceKind::Input) {
             append_indexed_op(*body_, kOpLocalGet, entry_ptr_local_);
             return true;
@@ -15887,6 +16183,77 @@ class WorkflowFrameMaterializer {
     return true;
 }
 
+// WH-5b.3: emit one `ahfl_xcode.xcode_<N>` transcode call. Pushes the source
+// (ptr,len), calls the transcode import, pops (status, dst_ptr, dst_len) into
+// the node's scratch locals, and traps on a nonzero status (fail-closed
+// NodeFailed). For P4D_TO_JSON the dst (ptr,len) is the wire-JSON the opaque
+// runner consumes (the caller pushes it as the runner argument); for
+// JSON_TO_P4D the dst is the shadow region (a compile-time constant the
+// materializer reads directly via emit_root_base), so the popped words are
+// scratch only. The transcode handler is a pure deterministic codec adapter:
+// it never invokes a capability, touches memo, fires hooks, or writes an event
+// record, so this call sits outside the memo/replay/event_count machinery.
+[[nodiscard]] bool append_transcode_call(
+    ByteBuffer &body, const WorkflowPlan &plan,
+    const ir::core::CoreFrameTranscodeSite &site, std::uint32_t status_local,
+    std::uint32_t ptr_local, std::uint32_t len_local) {
+    // Push the source (ptr, len).
+    if (site.source == ir::core::CoreFrameTranscodeSite::Source::Entry) {
+        if (site.direction ==
+            ir::core::CoreFrameTranscodeSite::Direction::P4DToJson) {
+            // ENTRY P4D_TO_JSON: the host-packed entry shadow (INLINE P4-D,
+            // never normalized).
+            append_const(body, plan.transcode_entry_shadow_base);
+            append_const(body, plan.transcode_entry_shadow_extent);
+        } else {
+            // ENTRY JSON_TO_P4D: the wire-JSON entry pointer (run2 locals 0/1).
+            append_indexed_op(body, kOpLocalGet, 0);
+            append_indexed_op(body, kOpLocalGet, 1);
+        }
+    } else {
+        if (site.source_node_ordinal >= plan.schedule.size()) {
+            return false;
+        }
+        const CoreWorkflowNodeId producer = plan.schedule[site.source_node_ordinal];
+        if (site.direction ==
+            ir::core::CoreFrameTranscodeSite::Direction::P4DToJson) {
+            // NODE_OUTPUT P4D_TO_JSON: the P6 producer's fixed O_k block.
+            const auto runner =
+                workflow_runner_index(plan, plan.nodes[producer.value].target_instance);
+            if (!runner.has_value() ||
+                plan.p6_block_by_runner[*runner] == kInvalidP6Block) {
+                return false;
+            }
+            const WorkflowNodeBlock &block =
+                plan.node_blocks[plan.p6_block_by_runner[*runner]];
+            append_const(body, block.output_base);
+            append_const(body, block.output_size);
+        } else {
+            // NODE_OUTPUT JSON_TO_P4D: the opaque producer's wire-JSON (ptr,len).
+            const auto pptr = workflow_node_ptr_local(producer);
+            const auto plen = workflow_node_len_local(producer);
+            if (!pptr.has_value() || !plen.has_value()) {
+                return false;
+            }
+            append_indexed_op(body, kOpLocalGet, *pptr);
+            append_indexed_op(body, kOpLocalGet, *plen);
+        }
+    }
+    append_indexed_op(body, kOpCall, site.import_ordinal);
+    append_indexed_op(body, kOpLocalSet, len_local);
+    append_indexed_op(body, kOpLocalSet, ptr_local);
+    append_indexed_op(body, kOpLocalSet, status_local);
+    // A nonzero transcode status is a fail-closed NodeFailed.
+    append_indexed_op(body, kOpLocalGet, status_local);
+    append_const(body, 0);
+    body.byte(kOpI32Ne);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    body.byte(kOpUnreachable);
+    body.byte(kOpEnd);
+    return true;
+}
+
 // Emit the SOLE node-event write for one completed node (P0-1: runners never
 // write events). Writes the full 40-byte record body FIRST, then the caller
 // publishes the incremented event_count. `record_addr` = records_base +
@@ -16007,6 +16374,17 @@ void append_word_zero_fill(ByteBuffer &body,
 
     WorkflowFrameMaterializer materializer(program, layouts, plan, result);
 
+    // WH-5b.3: index transcode sites by their target node's schedule position
+    // so the scheduler loop can find the one call (if any) that must run
+    // immediately before a node's materialize/runner.
+    std::vector<const ir::core::CoreFrameTranscodeSite *> transcode_by_target(
+        plan.schedule.size(), nullptr);
+    for (const auto &site : plan.transcode_sites) {
+        if (site.target_node_ordinal < transcode_by_target.size()) {
+            transcode_by_target[site.target_node_ordinal] = &site;
+        }
+    }
+
     for (const auto node_id : plan.schedule) {
         if (node_id.value >= plan.nodes.size()) {
             return false;
@@ -16020,6 +16398,14 @@ void append_word_zero_fill(ByteBuffer &body,
         }
         const bool p6_node =
             plan.p6_block_by_runner[*runner] != kInvalidP6Block;
+        // WH-5b.3: the transcode site (if any) targeting this node. A P6 node
+        // is always the JSON_TO_P4D direction (wire-JSON source -> shadow P4-D
+        // -> materialize into I_k); an opaque node is P4D_TO_JSON (P4-D source
+        // -> wire-JSON -> runner args).
+        const ir::core::CoreFrameTranscodeSite *xcode =
+            node.schedule_pos < transcode_by_target.size()
+                ? transcode_by_target[node.schedule_pos]
+                : nullptr;
         if (p6_node) {
             const WorkflowNodeBlock &block =
                 plan.node_blocks[plan.p6_block_by_runner[*runner]];
@@ -16029,6 +16415,15 @@ void append_word_zero_fill(ByteBuffer &body,
             if (block.context_size != 0) {
                 append_word_zero_fill(body, block.context_base,
                                       block.context_size, cursor_local);
+            }
+            // WH-5b.3: a crossed P6 node (JSON_TO_P4D) transcodes its
+            // wire-JSON source into the shadow region BEFORE materializing;
+            // the materializer then reads from the shadow via emit_root_base.
+            if (xcode != nullptr) {
+                if (!append_transcode_call(body, plan, *xcode, status_local,
+                                           *ptr_local, *len_local)) {
+                    return false;
+                }
             }
             // V2-D: materialize the node's projected/constructed input frame
             // into its fixed I_k block, then invoke the packaged P6 runner
@@ -16079,7 +16474,10 @@ void append_word_zero_fill(ByteBuffer &body,
                                        CoreLayoutId{block.input_layout},
                                        /*entry_ptr_local=*/0,
                                        cursor_local,
-                                       addr_local_base)) {
+                                       addr_local_base,
+                                       /*shadow_root_base=*/xcode != nullptr
+                                           ? plan.transcode_shadow_base
+                                           : 0u)) {
                     return false;
                 }
             }
@@ -16133,8 +16531,20 @@ void append_word_zero_fill(ByteBuffer &body,
             append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
             continue;
         }
-        if (!append_workflow_source(body, node.input)) {
-            return false;
+        if (xcode != nullptr) {
+            // WH-5b.3: P4D_TO_JSON. Transcode the P4-D source (entry shadow
+            // or a P6 producer's O_k) to wire-JSON, then push the result as
+            // the opaque runner's (ptr, len) argument.
+            if (!append_transcode_call(body, plan, *xcode, status_local,
+                                       *ptr_local, *len_local)) {
+                return false;
+            }
+            append_indexed_op(body, kOpLocalGet, *ptr_local);
+            append_indexed_op(body, kOpLocalGet, *len_local);
+        } else {
+            if (!append_workflow_source(body, node.input)) {
+                return false;
+            }
         }
         append_indexed_op(body, kOpCall, functions.runner(*runner));
         // Multi-value results are (status, ptr, len); pop in reverse order.
@@ -16297,6 +16707,26 @@ make_workflow_run2_body(const CoreProgram &program,
     }
     append_const(body, AHFL_CAP_OK);
     if (p6) {
+        // WH-5b.3: a workflow-output crossing (opaque return in a hybrid
+        // workflow) transcodes the opaque node's wire-JSON into the shadow,
+        // then the materializer reads from the shadow to build wf_output_base.
+        const ir::core::CoreFrameTranscodeSite *wf_xcode = nullptr;
+        for (const auto &site : plan.transcode_sites) {
+            if (site.target_node_ordinal ==
+                ir::core::kTranscodeWorkflowOutput) {
+                wf_xcode = &site;
+                break;
+            }
+        }
+        if (wf_xcode != nullptr) {
+            // The schedule is done; status/cursor/normalize-cursor locals are
+            // free scratch for the transcode result.
+            if (!append_transcode_call(body, plan, *wf_xcode, status_local,
+                                       cursor_local,
+                                       normalize_cursor_local)) {
+                return std::nullopt;
+            }
+        }
         // V2-D: materialize the workflow return frame into the fixed workflow
         // output slot and return it (with the declared output layout size),
         // never a borrowed node pointer.
@@ -16309,7 +16739,10 @@ make_workflow_run2_body(const CoreProgram &program,
                                wf_output_layout,
                                /*entry_ptr_local=*/0,
                                cursor_local,
-                               addr_base)) {
+                               addr_base,
+                               /*shadow_root_base=*/wf_xcode != nullptr
+                                   ? plan.transcode_shadow_base
+                                   : 0u)) {
             return std::nullopt;
         }
         append_const(body, plan.wf_output_base);
@@ -16400,8 +16833,12 @@ encode_workflow_module(const CoreProgram &program,
 
     const bool capability_workflow = !plan.imports.empty();
     const bool p6 = plan.has_p6_nodes;
-    const auto import_count =
-        capability_workflow ? static_cast<std::uint32_t>(plan.imports.size()) : 0u;
+    // WH-5b.3: the transcode imports follow the capability imports in the
+    // import section, so the function-index space is cap imports first, then
+    // ahfl_xcode.xcode_<N> imports. A hybrid workflow always carries at least
+    // one capability (its opaque node), so capability_workflow is true here.
+    const auto import_count = static_cast<std::uint32_t>(
+        plan.imports.size() + plan.transcode_sites.size());
 
     // RFC 0026 E4-B2-C two-phase memory sizing (seam §4.4/§5.2). PHASE 1 checked
     // wasm32 arithmetic -> BINARY_OVERFLOW; PHASE 2 capacity vs the fixed 64 KiB
@@ -16428,6 +16865,20 @@ encode_workflow_module(const CoreProgram &program,
             return std::nullopt;
         }
         heap_base = layout->heap_base;
+    }
+    // WH-5b.3: a P6 workflow's node-frame blocks (and transcode shadow
+    // spans) are allocated above the event region by the capacity planning.
+    // The bump heap must start above them so alloc_then_write (transcode
+    // JSON, opaque results) never overwrites a node-frame block.
+    if (plan.has_p6_nodes) {
+        heap_base = plan.wf_heap_base;
+        if (heap_base > kCoreWasmFixedLinearMemoryCapacityBytes) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "the workflow P6 frame high-water and heap exceed the "
+                     "fixed 64 KiB linear-memory page");
+            return std::nullopt;
+        }
     }
 
     // V2-D: relocated handler layout. Handler functions follow run2; runner r
@@ -16491,7 +16942,10 @@ encode_workflow_module(const CoreProgram &program,
 
     // RFC 0026 E4-B2-C: capability imports occupy the low function indices. The
     // import module name / field spelling mirror the E2 agent contract exactly.
-    if (capability_workflow) {
+    // WH-5b.3: the ahfl_xcode transcode imports follow the capability imports,
+    // each with the sealed opaque-terminal tuple functype (type 4). The import
+    // count already includes them (import_count above).
+    if (capability_workflow || !plan.transcode_sites.empty()) {
         ByteBuffer imports;
         imports.u32(import_count);
         for (const auto id : plan.imports) {
@@ -16511,6 +16965,14 @@ encode_workflow_module(const CoreProgram &program,
             imports.byte(kImportFunction);
             imports.u32(workflow_import_is_bridge(id) ? kWorkflowBridgeType
                                                      : kTypeCapabilityTuple);
+        }
+        for (std::uint32_t t = 0; t < plan.transcode_sites.size(); ++t) {
+            if (!imports.name("ahfl_xcode") ||
+                !imports.name("xcode_" + std::to_string(t))) {
+                return std::nullopt;
+            }
+            imports.byte(kImportFunction);
+            imports.u32(kTypeCapabilityTuple);
         }
         if (!append_section(module, kSectionImport, imports)) {
             return std::nullopt;

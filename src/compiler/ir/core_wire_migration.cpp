@@ -48,7 +48,8 @@ struct WireSchemaBindingFactory {
             return std::nullopt;
         }
         auto payload = std::make_shared<const VerifiedWireSchemaBinding::Payload>(
-            VerifiedWireSchemaBinding::Payload{verified.table_, selector, std::nullopt, *root});
+            VerifiedWireSchemaBinding::Payload{verified.table_, selector, std::nullopt,
+                                               std::nullopt, *root});
         return VerifiedWireSchemaBinding(std::move(payload));
     }
 
@@ -90,6 +91,40 @@ struct WireSchemaBindingFactory {
         payload->table = verified.table_;
         payload->selector = CoreWireRootSelector{}; // not a capability slot
         payload->frame_kind = selector.kind;
+        payload->root = root;
+        return VerifiedWireSchemaBinding(std::move(payload));
+    }
+
+    // WH-5b.3: the node-boundary sibling mint. Derives the root from the typed
+    // node selector against the admitted frame-root block's per-node
+    // `node_inputs`/`node_outputs` table (parallel to the packaged-instance
+    // table). A table without node roots, or an out-of-range ordinal, fails
+    // closed. The minted binding records its node provenance and is never
+    // mistaken for an agent-boundary frame binding or a capability binding.
+    [[nodiscard]] static std::optional<VerifiedWireSchemaBinding>
+    mint_node_from_verified(const VerifiedWireSchemaTable &verified,
+                            const CoreWireNodeRootSelector &selector,
+                            std::vector<CoreLowerDiagnostic> &diagnostics) {
+        diagnostics.clear();
+        const auto &table = *verified.table_;
+        if (!table.frame_roots.has_value()) {
+            fail(diagnostics, "wire-schema table carries no agent frame-root block");
+            return std::nullopt;
+        }
+        const auto &roots = *table.frame_roots;
+        const bool is_input = selector.kind == CoreWireNodeRootKind::Input;
+        const auto &nodes = is_input ? roots.node_inputs : roots.node_outputs;
+        if (selector.node_ordinal >= nodes.size()) {
+            fail(diagnostics,
+                 "wire-schema node-binding selector ordinal is out of range");
+            return std::nullopt;
+        }
+        const CoreWireSchemaNodeId root = nodes[selector.node_ordinal];
+        auto payload = std::make_shared<VerifiedWireSchemaBinding::Payload>();
+        payload->table = verified.table_;
+        payload->selector = CoreWireRootSelector{}; // not a capability slot
+        payload->frame_kind = std::nullopt;         // not an agent boundary root
+        payload->node_selector = selector;
         payload->root = root;
         return VerifiedWireSchemaBinding(std::move(payload));
     }
@@ -288,6 +323,16 @@ make_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
     // authority is verified-once/immutable); the root is derived from the typed
     // frame selector against the admitted frame-root block.
     return WireSchemaBindingFactory::mint_frame_from_verified(verified, selector, diagnostics);
+}
+
+std::optional<VerifiedWireSchemaBinding>
+make_node_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
+                                            const CoreWireNodeRootSelector &selector,
+                                            std::vector<CoreLowerDiagnostic> &diagnostics) {
+    // WH-5b.3: the node-boundary sibling mint. No table re-verification; the
+    // root is derived from the typed node selector against the admitted
+    // frame-root block's per-node table.
+    return WireSchemaBindingFactory::mint_node_from_verified(verified, selector, diagnostics);
 }
 
 } // namespace ahfl::ir::core

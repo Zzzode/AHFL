@@ -45,6 +45,13 @@ constexpr std::uint8_t kExecManifestVersion = 1;
 // The exact capability import contract (mirrors the C3 inspector).
 constexpr std::string_view kCapabilityImportModule = "ahfl_cap";
 constexpr std::string_view kCapabilityImportFieldPrefix = "cap_";
+// WH-5b.3: the deterministic transcode import family. A transcode import is
+// a pure codec adapter (no capability, no memo, no hooks, no events) with the
+// EXACT sealed functype (i32,i32)->(i32,i32,i32) -- the same raw tuple shape
+// as the opaque capability lane, but a separate namespace so A2 can exclude
+// it from the capability<->schema cross-check and validate it independently.
+constexpr std::string_view kTranscodeImportModule = "ahfl_xcode";
+constexpr std::string_view kTranscodeImportFieldPrefix = "xcode_";
 constexpr std::uint8_t kImportKindFunction = 0;
 constexpr std::uint8_t kFuncTypeForm = 0x60;
 constexpr std::uint8_t kValueTypeI32 = 0x7f;
@@ -199,6 +206,10 @@ parse_capability_field(std::span<const std::uint8_t> field) noexcept {
 struct ParsedImport {
     std::uint64_t source_symbol = 0;
     std::uint32_t type_index = 0;
+    // WH-5b.3: true for an ahfl_xcode.xcode_<decimal> transcode import. A
+    // transcode import is excluded from the capability<->schema cross-check
+    // (it names no capability) and is validated only for its sealed functype.
+    bool is_transcode = false;
 };
 
 // One Memory (wasm section id 5) section, structurally parsed during framing. The
@@ -345,7 +356,9 @@ spans_are_bridge_signature(std::span<const std::uint8_t> params,
         }
         const std::string_view module_view(reinterpret_cast<const char *>(module_name->data()),
                                            module_name->size());
-        if (module_view != kCapabilityImportModule) {
+        const bool is_cap = module_view == kCapabilityImportModule;
+        const bool is_xcode = module_view == kTranscodeImportModule;
+        if (!is_cap && !is_xcode) {
             return false;
         }
         const auto field_len = cursor.u32();
@@ -364,11 +377,38 @@ spans_are_bridge_signature(std::span<const std::uint8_t> params,
         if (!type_index.has_value()) {
             return false;
         }
-        const auto source_symbol = parse_capability_field(*field_name);
-        if (!source_symbol.has_value()) {
-            return false;
+        if (is_xcode) {
+            // WH-5b.3: validate xcode_<decimal> (no source_symbol; the
+            // functype seal is checked in the cross-check below).
+            const std::string_view field_view(
+                reinterpret_cast<const char *>(field_name->data()),
+                field_name->size());
+            if (field_view.substr(0, kTranscodeImportFieldPrefix.size()) !=
+                kTranscodeImportFieldPrefix) {
+                return false;
+            }
+            const std::string_view digits =
+                field_view.substr(kTranscodeImportFieldPrefix.size());
+            if (digits.empty()) {
+                return false;
+            }
+            if (digits.size() > 1 && digits.front() == '0') {
+                return false;
+            }
+            for (const char c : digits) {
+                if (c < '0' || c > '9') {
+                    return false;
+                }
+            }
+            framing.imports.push_back(
+                ParsedImport{0, *type_index, /*is_transcode=*/true});
+        } else {
+            const auto source_symbol = parse_capability_field(*field_name);
+            if (!source_symbol.has_value()) {
+                return false;
+            }
+            framing.imports.push_back(ParsedImport{*source_symbol, *type_index});
         }
-        framing.imports.push_back(ParsedImport{*source_symbol, *type_index});
     }
     return cursor.at_end();
 }
@@ -1089,16 +1129,26 @@ struct SchemaModuleFactory {
         }
 
         // 4. Import <-> schema strict one-to-one cross-check (mirrors C3).
-        if (framing->imports.empty()) {
-            result.diagnostics.push_back(error("module has a wire-schema section but no imports"));
+        //    WH-5b.3: transcode imports (ahfl_xcode.xcode_<decimal>) are
+        //    excluded from the capability cross-check (they name no
+        //    capability) and validated only for their sealed tuple functype;
+        //    the capability imports alone must match the schema one-to-one.
+        std::size_t cap_import_count = 0;
+        for (const auto &imp : framing->imports) {
+            if (!imp.is_transcode) {
+                ++cap_import_count;
+            }
+        }
+        if (cap_import_count == 0) {
+            result.diagnostics.push_back(error("module has a wire-schema section but no capability imports"));
             return result;
         }
         if (table.capabilities.empty()) {
             result.diagnostics.push_back(error("wire-schema table carries no capability"));
             return result;
         }
-        if (framing->imports.size() != table.capabilities.size()) {
-            result.diagnostics.push_back(error("module import count does not match the table"));
+        if (cap_import_count != table.capabilities.size()) {
+            result.diagnostics.push_back(error("module capability import count does not match the table"));
             return result;
         }
         // Bridge-signature imports carry multi-argument capabilities (the
@@ -1107,9 +1157,26 @@ struct SchemaModuleFactory {
         // the bridge signature so the call-site resolver below accepts
         // their multi-param schema entries.
         std::unordered_set<std::uint64_t> bridge_source_symbols;
-        for (std::size_t i = 0; i < framing->imports.size(); ++i) {
-            const auto &imported = framing->imports[i];
-            if (imported.source_symbol != table.capabilities[i].source_symbol) {
+        std::size_t cap_i = 0;
+        for (const auto &imported : framing->imports) {
+            const bool type_in_range =
+                imported.type_index < framing->type_is_capability_tuple.size();
+            const bool is_tuple =
+                type_in_range && framing->type_is_capability_tuple[imported.type_index];
+            const bool is_bridge =
+                type_in_range && framing->type_is_bridge_signature[imported.type_index];
+            if (imported.is_transcode) {
+                // WH-5b.3: a transcode import must use the EXACT sealed
+                // tuple functype (i32,i32)->(i32,i32,i32) -- never the bridge
+                // shape, never anything else.
+                if (!is_tuple) {
+                    result.diagnostics.push_back(error(
+                        "module transcode import does not use the ahfl_xcode tuple signature"));
+                    return result;
+                }
+                continue;
+            }
+            if (imported.source_symbol != table.capabilities[cap_i].source_symbol) {
                 result.diagnostics.push_back(
                     error("module import source symbol does not match the table"));
                 return result;
@@ -1119,12 +1186,6 @@ struct SchemaModuleFactory {
             // accepts BOTH the opaque (i32,i32)->(i32,i32,i32) tuple and the
             // bridge (i32)->(i32,i32) shape; anything else is rejected (decision
             // doc section 11.3).
-            const bool type_in_range =
-                imported.type_index < framing->type_is_capability_tuple.size();
-            const bool is_tuple =
-                type_in_range && framing->type_is_capability_tuple[imported.type_index];
-            const bool is_bridge =
-                type_in_range && framing->type_is_bridge_signature[imported.type_index];
             if (!is_tuple && !is_bridge) {
                 result.diagnostics.push_back(error(
                     "module capability import does not use the ahfl_cap tuple or bridge signature"));
@@ -1133,6 +1194,7 @@ struct SchemaModuleFactory {
             if (is_bridge) {
                 bridge_source_symbols.insert(imported.source_symbol);
             }
+            ++cap_i;
         }
 
         // 5. EXACT set equality: the unique manifest capability identities must equal

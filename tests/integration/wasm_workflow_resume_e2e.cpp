@@ -9,6 +9,11 @@
 //      resume_pending_result_wire_json (P1-5a) and completes with zero
 //      live calls. workflow_completed == 0 on suspend, == 1 on completion
 //      (P2-7).
+//   1b. WH-5b.3 AC2: hybrid P6+opaque resume. A P6 identity node feeds an
+//       opaque capability-final node (Echo). The edge crosses the P4-D ->
+//       wire-JSON boundary (P4D_TO_JSON transcode); the workflow return is
+//       the opaque node (JSON_TO_P4D transcode). The suspend/resume cycle
+//       proves the transcode calls are replay-safe.
 //   2. e4 memo round-trip: a 2-node opaque pipeline suspends on the
 //      second capability (B returns PENDING). The first capability
 //      (A) returned OK and was memoized. On resume (fresh facade,
@@ -46,6 +51,7 @@
 // The e3 fixture is tests/golden/wasm/e3_capability_workflow_resume.ahfl.
 // The e5 fixture is tests/golden/wasm/e5_non_topological_resume.ahfl.
 // The e6 fixture is tests/golden/wasm/e6_shared_cap_resume.ahfl.
+// The WH-5b.3 AC2 fixture is tests/golden/wasm/wh5b_hybrid_resume.ahfl.
 
 #include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 
@@ -294,6 +300,122 @@ void test_e3_real_ac1_cycle(const std::filesystem::path &repo_root,
         if (output != nullptr) {
             const auto json = ahfl::runtime::value_to_json(*output);
             check(json == std::string(kFrameJson), "e3ac1.output_value");
+        }
+    }
+}
+
+// ==== 1b. WH-5b.3 AC2: hybrid P6+opaque resume (suspend -> persist ->
+// cold-start -> wire-JSON inject -> complete) ====
+//
+// The hybrid fixture has a P6 identity node (compute) feeding an opaque
+// capability-final node (echo). The edge compute->echo crosses the P4-D ->
+// wire-JSON encoding boundary (P4D_TO_JSON transcode). The workflow return
+// is the opaque echo node (JSON_TO_P4D transcode for the workflow_output
+// region). Echo returns Pending on the first call, so the workflow suspends.
+// On resume (fresh facade, cold-start from the on-disk snapshot), Echo is
+// frontier-injected (zero live calls). The P6 node re-runs deterministically
+// and both transcode calls re-execute (they are pure deterministic codec
+// adapters, not memoized). The workflow completes with the correct output.
+// This proves the transcode calls are replay-safe and the hybrid workflow
+// survives the WH-4b suspend/resume cycle.
+
+void test_wh5b3_hybrid_resume(const std::filesystem::path &repo_root,
+                              const std::filesystem::path &work_dir) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_resume.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "wh5b3hr.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    const auto snapshot_path = work_dir / "wh5b3-hr-snapshot.json";
+    std::error_code ec;
+    std::filesystem::remove(snapshot_path, ec);
+
+    static constexpr std::string_view kWorkflow =
+        "wasm::wh5b_hybrid_resume::HybridResume";
+    static constexpr std::string_view kFrameJson =
+        R"({"_type":"wasm::wh5b_hybrid_resume::Frame","value":"hybrid-resume"})";
+
+    // ---- Process A: run until Echo returns PENDING, suspend, persist. ----
+    auto state_a = std::make_shared<InvokerState>();
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state_a);
+        config.recovery_store = &store;
+        config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+            return "Echo";
+        };
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "wh5b3hr.input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto suspended = runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(suspended.status() == WorkflowStatus::Suspended,
+              "wh5b3hr.suspended");
+        check(!suspended.has_errors(), "wh5b3hr.no_errors");
+        check(state_a->echo_calls == 1, "wh5b3hr.echo_called_once");
+        check(suspended.suspended.has_value(), "wh5b3hr.has_resume_record");
+        check_workflow_completed(suspended, 0, "wh5b3hr.suspend");
+    }
+
+    check(std::filesystem::exists(snapshot_path),
+          "wh5b3hr.snapshot_file_on_disk");
+
+    // ---- Process B: cold start. Fresh facade, on-disk snapshot is the
+    // only link. Resume with ONLY wire JSON (P1-5a): no native Value.
+    // Echo is frontier-injected (zero live calls). The P6 compute node
+    // re-runs deterministically; both transcode calls re-execute (pure
+    // deterministic codec adapters, not memoized). The workflow completes.
+    auto state_b = std::make_shared<InvokerState>();
+    state_b->echo_pending = false; // Echo would return Success if called (it must NOT be)
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "wh5b3hr.snapshot_loaded");
+        if (!loaded.has_value()) {
+            return;
+        }
+
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state_b);
+        config.recovery_snapshot = std::move(*loaded);
+        config.resume_pending_result_wire_json = std::string(kFrameJson);
+        config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+            return "Echo";
+        };
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "wh5b3hr.resume_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto resumed = runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(resumed.status() == WorkflowStatus::Completed,
+              "wh5b3hr.completed");
+        check(!resumed.has_errors(), "wh5b3hr.resume_no_errors");
+        check(state_b->echo_calls == 0, "wh5b3hr.zero_live_calls");
+        check_workflow_completed(resumed, 1, "wh5b3hr.complete");
+
+        const auto *output = resumed.output();
+        check(output != nullptr, "wh5b3hr.has_output");
+        if (output != nullptr) {
+            const auto json = ahfl::runtime::value_to_json(*output);
+            check(json == std::string(kFrameJson), "wh5b3hr.output_value");
         }
     }
 }
@@ -1766,6 +1888,7 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(work, ec);
 
     test_e3_real_ac1_cycle(repo, work);
+    test_wh5b3_hybrid_resume(repo, work);
     test_e4_memo_round_trip(repo, work);
     test_fail_closed_missing_pending_result(repo, work);
     test_intent_alignment(repo, work);

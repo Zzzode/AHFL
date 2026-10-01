@@ -1,0 +1,96 @@
+// WH-5b.3 AC1(b) fixture: opaque-node workflow-return.
+//
+// The workflow return is the opaque echo node. The scheduler inserts a
+// JSON_TO_P4D transcode (opaque output -> workflow_output region) so the
+// host post-run can read the result with read_value_at at
+// workflow_output_base. Both nodes consume the workflow entry input (no
+// NodeOutput cross-lane edge); the P6 compute node exists to make this a
+// hybrid (p6=true) workflow so the materializer output path is taken.
+//
+// Schedule: [compute(P6), echo(opaque)] (declaration order, no data dep).
+//   - compute: source=ENTRY, lane=P6, entry encoding=P4-D. Same lane.
+//   - echo: source=ENTRY, lane=opaque, entry encoding=P4-D.
+//     Crossed -> P4D_TO_JSON transcode, source=ENTRY.
+//   - return echo(opaque) -> workflow-output crossing.
+//     JSON_TO_P4D transcode (echo output -> workflow_output region).
+
+module wasm::wh5b_hybrid_opaque_return;
+
+pub struct Frame {
+    n: Int;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+// P6-packaged agent: computed-goto + computed-final.
+pub agent ComputeAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for ComputeAgent {
+    state Decide {
+        if (input.n > 0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n };
+    }
+}
+
+// Opaque capability-final agent.
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow OpaqueReturn {
+    input: Frame;
+    output: Frame;
+
+    node compute: ComputeAgent(input);
+    node echo: EchoAgent(input) after [compute];
+
+    return: echo;
+}

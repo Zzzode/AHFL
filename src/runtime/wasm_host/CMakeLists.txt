@@ -41,12 +41,18 @@
 # memo, pending coordinate) on a suspend run and to classify + serve the memo /
 # inject the frontier on a resume run. It is pure state: the session wrapper owns
 # the engine / binding / diagnostic machinery and drives the recorder.
+#
+# WH-5b.3 adds the encoding-boundary transcode handler (transcode.cpp): the
+# production ImportCallback the engine delivers every ahfl_xcode import to. It
+# is a pure deterministic codec adapter (P4-D frame <-> wire JSON) that never
+# invokes a capability, touches memo, fires hooks, or writes an event record.
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
     frame_packer.cpp
     frame_reader.cpp
     p6_frame_driver.cpp
     capability_import.cpp
+    transcode.cpp
     state_trace_decoder.cpp
     observation_emitter.cpp
     agent_session.cpp

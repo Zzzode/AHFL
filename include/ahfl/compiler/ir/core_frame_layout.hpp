@@ -20,6 +20,7 @@
 // addresses are NEVER echoed.
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -88,6 +89,36 @@ struct CoreFrameBridgeCallSite {
 
     [[nodiscard]] friend bool operator==(const CoreFrameBridgeCallSite &,
                                          const CoreFrameBridgeCallSite &) noexcept = default;
+};
+
+/// Sentinel for a transcode site whose target is the workflow output slot
+/// (not a scheduled node).
+constexpr std::uint32_t kTranscodeWorkflowOutput =
+    std::numeric_limits<std::uint32_t>::max();
+
+/// WH-5b.3: one crossed-lane edge's deterministic host transcode site. The
+/// scheduler inserts exactly one `ahfl_xcode.xcode_<N>` call per crossed edge
+/// (target lane != source encoding); the host handler is a pure codec adapter
+/// that NEVER invokes a capability, touches memo, fires capability hooks, or
+/// writes an event record.
+struct CoreFrameTranscodeSite {
+    /// The `ahfl_xcode.xcode_<N>` wasm function index (import ordinal).
+    std::uint32_t import_ordinal{0};
+    enum class Direction : std::uint8_t { P4DToJson, JsonToP4D };
+    Direction direction{Direction::P4DToJson};
+    enum class Source : std::uint8_t { Entry, NodeOutput };
+    Source source{Source::Entry};
+    /// Schedule ordinal of the producing node (Source::NodeOutput only).
+    std::uint32_t source_node_ordinal{0};
+    /// Schedule ordinal of the consuming node, or kTranscodeWorkflowOutput
+    /// when the transcode targets the workflow output slot.
+    std::uint32_t target_node_ordinal{0};
+    /// The P4-D layout root the host reads (P4DToJson) or packs (JsonToP4D)
+    /// against.
+    CoreLayoutId layout{};
+
+    [[nodiscard]] friend bool operator==(const CoreFrameTranscodeSite &,
+                                         const CoreFrameTranscodeSite &) noexcept = default;
 };
 
 /// The decoded `ahfl.core-layout.v1` payload.
@@ -167,6 +198,26 @@ struct CoreFrameLayoutSection {
     /// all-opaque workflow.
     std::uint32_t state_trace_base{0};
     std::uint32_t state_trace_capacity{0};
+
+    // ------------------------------------------------------------------
+    // WH-5b.3: the deterministic encoding-boundary transcode extension.
+    // A hybrid P6+opaque workflow inserts one `ahfl_xcode.xcode_<N>` import
+    // call per crossed lane edge. The JSON_TO_P4D direction lands its P4-D
+    // INLINE frame in a single reused static shadow region; String payload
+    // bytes bump-allocate in the disjoint payload arena (append-only within a
+    // run, so an earlier consumer's PtrLen stays valid). The entry shadow
+    // holds the host-packed INLINE P4-D entry (never normalized) for a
+    // P4D_TO_JSON ENTRY crossing. All spans are zero on a module with no
+    // transcode sites. Encoded as a trailing presence-gated block inside the
+    // workflow extension, so a non-transcode workflow keeps its exact bytes.
+    // ------------------------------------------------------------------
+    std::vector<CoreFrameTranscodeSite> transcode_sites;
+    std::uint32_t transcode_shadow_base{0};
+    std::uint32_t transcode_shadow_extent{0};
+    std::uint32_t transcode_payload_base{0};
+    std::uint32_t transcode_payload_capacity{0};
+    std::uint32_t transcode_entry_shadow_base{0};
+    std::uint32_t transcode_entry_shadow_extent{0};
 
     [[nodiscard]] friend bool operator==(const CoreFrameLayoutSection &,
                                          const CoreFrameLayoutSection &) noexcept = default;

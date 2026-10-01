@@ -26,6 +26,7 @@
 #include "runtime/wasm_host/frame_packer.hpp"
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
+#include "runtime/wasm_host/transcode.hpp"
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
@@ -36,6 +37,7 @@
 #include "runtime/value/value_json.hpp"
 
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <set>
 #include <string>
@@ -599,6 +601,17 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     CapabilityInvocationContext invocation_context;
     invocation_context.agent_id = AgentId{0};
 
+    // WH-5b.3: transcode routing state. The map joins a wasm import ordinal
+    // to its frame-section transcode site; the verified wire authority mints
+    // the typed binding for each direction's boundary root; the arena cursor
+    // bump-allocates String bytes for JSON_TO_P4D. All MUST outlive the
+    // callback (the lambda captures them by reference and fires during
+    // invoke_run2, long after this setup block ends).
+    std::unordered_map<std::uint32_t, const irc::CoreFrameTranscodeSite *>
+        transcode_by_ordinal;
+    std::optional<irc::VerifiedWireSchemaTable> verified_wire;
+    std::uint32_t transcode_arena_cursor = 0;
+
     if (descriptor.imports.empty()) {
         wrapped_callback =
             [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
@@ -618,6 +631,30 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             is_p6 && descriptor.frame_section.has_value()
                 ? *descriptor.frame_section
                 : default_section;
+
+        // WH-5b.3: build the transcode ordinal->site map and admit the wire
+        // schema for binding minting. A hybrid P6+opaque workflow carries
+        // transcode sites; an all-P6 or all-opaque workflow has none and the
+        // map stays empty (no routing overhead in the callback).
+        if (descriptor.frame_section.has_value()) {
+            for (const auto &site :
+                 descriptor.frame_section->transcode_sites) {
+                transcode_by_ordinal.emplace(site.import_ordinal, &site);
+            }
+            if (!transcode_by_ordinal.empty() &&
+                descriptor.wire_schema.has_value()) {
+                auto wire_result = irc::make_verified_wire_schema_table(
+                    *descriptor.wire_schema);
+                if (!wire_result.ok() || !wire_result.table.has_value()) {
+                    return std::unexpected(
+                        "run_workflow_session: wire-schema admission failed "
+                        "for transcode binding");
+                }
+                verified_wire = std::move(*wire_result.table);
+                transcode_arena_cursor =
+                    descriptor.frame_section->transcode_payload_base;
+            }
+        }
 
         // Build a fallback name_resolver from the descriptor if the caller
         // did not supply one.
@@ -684,6 +721,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
              &engine, &recorder, &replay_divergence, &origination_failure,
              &descriptor, &last_trace_count, &collected_states,
              &states_per_node, &runner_to_schedule, &trace_error, &admitted,
+             &transcode_by_ordinal, &verified_wire, &transcode_arena_cursor,
              has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
@@ -710,6 +748,31 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 // so there is no suspend/resume on that lane.
                 if (obs.param_frame.empty()) {
                     return inner(obs);
+                }
+
+                // WH-5b.3: route transcode imports BEFORE the memo/replay/
+                // event_count machinery (isomorphic to the bridge skip
+                // above). A transcode is a pure deterministic codec adapter:
+                // it never invokes a capability, touches memo, fires
+                // capability hooks, or writes an event record. The handler
+                // fails closed with a nonzero status that the guest's
+                // scheduler traps on, converting the failure to NodeFailed.
+                if (auto xit = transcode_by_ordinal.find(obs.import_ordinal);
+                    xit != transcode_by_ordinal.end()) {
+                    if (!verified_wire.has_value() ||
+                        !descriptor.frame_section.has_value() ||
+                        !descriptor.wire_schema.has_value()) {
+                        return eng::ImportAbort{};
+                    }
+                    TranscodeConfig xconfig{
+                        .engine = engine,
+                        .frame_section = *descriptor.frame_section,
+                        .wire_table = *descriptor.wire_schema,
+                        .descriptor = descriptor,
+                        .verified_wire = *verified_wire,
+                        .arena_cursor = transcode_arena_cursor,
+                    };
+                    return handle_transcode(xconfig, *xit->second, obs);
                 }
 
                 // P1-1: derive the CURRENT node's schedule position from the
@@ -1079,6 +1142,27 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
 
         entry_ptr = eng::GuestPointer{block.input_base};
         entry_len = block.input_size;
+
+        // WH-5b.3: if the workflow has a P4D_TO_JSON ENTRY crossing, copy
+        // the host-packed P4-D entry frame into the entry shadow. The shadow
+        // is an INLINE copy (never normalized): the transcode handler reads
+        // it via read_value_at and serializes to wire JSON for the opaque
+        // runner. The entry shadow extent equals the entry block input size
+        // (both are align8(layout.size) from the same layout root).
+        if (section.transcode_entry_shadow_extent > 0) {
+            if (section.transcode_entry_shadow_extent != block.input_size) {
+                return std::unexpected(
+                    "run_workflow_session: entry shadow extent mismatch");
+            }
+            const auto shadow_end = static_cast<std::size_t>(
+                section.transcode_entry_shadow_base + block.input_size);
+            if (shadow_end > page->size()) {
+                return std::unexpected(
+                    "run_workflow_session: entry shadow exceeds page");
+            }
+            std::memcpy(page->data() + section.transcode_entry_shadow_base,
+                        page->data() + block.input_base, block.input_size);
+        }
     } else {
         // WireJson: serialize the input to canonical wire JSON and write it
         // via the module's own exported allocator.
