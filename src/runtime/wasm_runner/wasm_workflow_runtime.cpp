@@ -19,6 +19,44 @@ namespace ahfl::runtime::wasm_runner {
 namespace irc = ahfl::ir::core;
 namespace bd = ahfl::backends;
 
+namespace {
+
+// WH-6 (kr68 §12.7.8): record a compile-pipeline failure into a DiagnosticBag.
+// A stage-level wasm.compile-failed diagnostic names the failing stage (and
+// the workflow, for emission), then every pipeline diagnostic is recorded as
+// a first-class entry carrying its own code + message + SourceRange (Principle
+// 5) — replacing the old flattened string, which dropped SourceRanges.
+void record_compile_failure(DiagnosticBag &bag, std::string stage,
+                            const std::vector<irc::CoreLowerDiagnostic> &diags) {
+    bag.error()
+        .code(std::string{wasm_host::wasm_diag::kCompileFailed})
+        .message(std::move(stage))
+        .emit();
+    for (const auto &d : diags) {
+        auto builder = d.severity == irc::CoreDiagnosticSeverity::Error
+                           ? bag.error()
+                           : bag.warning();
+        std::move(builder)
+            .code(d.code)
+            .message(d.message)
+            .range(d.source_range)
+            .emit();
+    }
+}
+
+void record_compile_failure(DiagnosticBag &bag, std::string stage,
+                            const std::vector<bd::CoreWasmDiagnostic> &diags) {
+    bag.error()
+        .code(std::string{wasm_host::wasm_diag::kCompileFailed})
+        .message(std::move(stage))
+        .emit();
+    for (const auto &d : diags) {
+        bag.error().code(d.code).message(d.message).range(d.source_range).emit();
+    }
+}
+
+} // namespace
+
 WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
                                          WasmWorkflowRuntimeConfig config)
     : config_(std::move(config)) {
@@ -35,22 +73,18 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
     // Lower AHFL-IR to Core-IR.
     auto core = irc::lower_ahfl_to_core(program);
     if (!core.ok()) {
-        std::string msg = "wasm workflow runtime: core lowering failed";
-        for (const auto &d : core.diagnostics) {
-            msg += "\n  [" + d.code + "] " + d.message;
-        }
-        compile_error_ = std::move(msg);
+        record_compile_failure(compile_errors_,
+                               "wasm workflow runtime: core lowering failed",
+                               core.diagnostics);
         return;
     }
 
     // Compute the wasm32 physical layout side artifact.
     auto layouts = irc::compute_core_layouts(core.program);
     if (!layouts.ok() || !layouts.table.has_value()) {
-        std::string msg = "wasm workflow runtime: layout computation failed";
-        for (const auto &d : layouts.diagnostics) {
-            msg += "\n  [" + d.code + "] " + d.message;
-        }
-        compile_error_ = std::move(msg);
+        record_compile_failure(compile_errors_,
+                               "wasm workflow runtime: layout computation failed",
+                               layouts.diagnostics);
         return;
     }
 
@@ -62,13 +96,11 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
             {irc::CoreWorkflowId{static_cast<std::uint32_t>(i)},
              bd::WasmProfileKind::Wasi});
         if (!emitted.artifact.has_value() || !emitted.descriptor.has_value()) {
-            std::string msg =
+            record_compile_failure(
+                compile_errors_,
                 "wasm workflow runtime: wasm emission failed for workflow '" +
-                wf.name + "'";
-            for (const auto &d : emitted.diagnostics) {
-                msg += "\n  [" + d.code + "] " + d.message;
-            }
-            compile_error_ = std::move(msg);
+                    wf.name + "'",
+                emitted.diagnostics);
             workflows_.clear();
             return;
         }
@@ -83,15 +115,14 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
 
 WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
                                         Value input) {
-    // Compilation failure: every run returns a failed result.
-    if (compile_error_.has_value()) {
+    // Compilation failure: every run returns a failed result carrying the
+    // compile diagnostics (§12.7.8: the bag holds the pipeline diagnostics
+    // with their SourceRanges, not a flattened string).
+    if (compile_errors_.has_error()) {
         WorkflowResult result;
         result.report.status = RunTerminalStatus::Failed;
         result.report.failure_kind = WorkflowFailureKind::NodeFailed;
-        result.diagnostics.error()
-            .code(std::string{wasm_host::wasm_diag::kCompileFailed})
-            .message(*compile_error_)
-            .emit();
+        result.diagnostics = compile_errors_;
         return result;
     }
 

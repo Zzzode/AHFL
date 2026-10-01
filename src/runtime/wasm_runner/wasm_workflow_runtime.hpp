@@ -77,8 +77,9 @@ struct WasmWorkflowRuntimeConfig {
 // by workflow name and drives the wasm_host workflow session.
 //
 // If compilation fails (lowering / layout / emission), the constructor
-// records the error and every run() call returns a failed WorkflowResult
-// carrying the compilation diagnostic (wasm.compile-failed).
+// records the diagnostics and every run() call returns a failed
+// WorkflowResult carrying the diagnostic bag (wasm.compile-failed plus
+// the first-class stage diagnostics with their source ranges).
 class WasmWorkflowRuntime {
   public:
     WasmWorkflowRuntime(const ir::Program &program,
@@ -101,8 +102,13 @@ class WasmWorkflowRuntime {
     // would require the program to outlive the facade).
     std::unordered_map<std::string, ir::CapabilityEffectKind>
         capability_effects_;
-    // Set when compilation fails; every run() returns a failed result.
-    std::optional<std::string> compile_error_;
+    // WH-6 (kr68 §12.7.8): compilation diagnostics from the IR->Core->wasm
+    // pipeline (lowering / layout / codegen), each carrying its own code +
+    // message + SourceRange. Populated by the constructor when the pipeline
+    // fails; every run() returns a failed WorkflowResult carrying this bag
+    // (the CLI renders the SourceRanges, Principle 5). Replaces the old
+    // flattened optional<string>.
+    DiagnosticBag compile_errors_;
     WasmWorkflowRuntimeConfig config_;
 };
 
