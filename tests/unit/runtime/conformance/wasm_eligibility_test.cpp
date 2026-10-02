@@ -436,6 +436,15 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // WH-5c.7: the 9-shape rich wire-type matrix (Int/String/Decimal/
+        // Duration/Set/Map/Option/Unit/Float) round-trips through the P6
+        // frame packer/reader and the computed-final + workflow-level
+        // materializers.
+        {"wh5c7_rich_input_matrix.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

@@ -456,7 +456,50 @@ lower_golden_file(const std::filesystem::path &path) {
     std::ifstream input(path, std::ios::binary);
     std::ostringstream buffer;
     buffer << input.rdbuf();
-    auto program = lower_source(path.stem().string(), buffer.str());
+    const std::string source = buffer.str();
+
+    // A fixture whose first line is `// @repo-std` compiles through a project
+    // parse with the repo std module root (so `import std::collections`
+    // resolves). Every other fixture uses the plain single-file parse.
+    static constexpr std::string_view kRepoStdMarker = "// @repo-std";
+    const bool has_repo_std =
+        source.compare(0, kRepoStdMarker.size(), kRepoStdMarker) == 0;
+
+    if (has_repo_std) {
+        const Frontend frontend;
+        ProjectInput project_input;
+        project_input.entry_files.push_back(path);
+        project_input.inject_prelude = true;
+        test_support::append_repo_std_module_root(
+            project_input, test_support::repo_root_from_source_file(__FILE__));
+
+        const auto parse_result = parse_project(frontend, project_input);
+        if (parse_result.has_errors()) {
+            return std::nullopt;
+        }
+        const Resolver resolver;
+        const auto resolve = resolver.resolve(parse_result.graph);
+        if (resolve.has_errors()) {
+            return std::nullopt;
+        }
+        const TypeChecker checker;
+        const auto typecheck = checker.check(parse_result.graph, resolve);
+        if (typecheck.has_errors()) {
+            return std::nullopt;
+        }
+        const auto ahfl_ir =
+            lower_program_ir(parse_result.graph, resolve, typecheck);
+        auto result = ir::core::lower_ahfl_to_core(ahfl_ir);
+        if (!result.ok()) {
+            return std::nullopt;
+        }
+        if (!ir::core::verify_core_program(result.program).ok()) {
+            return std::nullopt;
+        }
+        return std::move(result.program);
+    }
+
+    auto program = lower_source(path.stem().string(), source);
     if (!program.has_value()) {
         return std::nullopt;
     }
@@ -646,9 +689,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // event-record attribution are codegen-level, not Core-verifier
         // gates), so they belong in the lowering corpus.
         "wasm/wh5b_hybrid_cap_before_p6.ahfl",
-        // WH-5b.3: the Decimal fail-closed pin is rejected at host frame
-        // packing, not at Core lowering, so it still belongs here.
-        "wasm/wh5b_hybrid_decimal_fail_closed.ahfl",
+        // WH-5c.7: the Decimal round-trip pin (replaces the WH-5b.3
+        // fail-closed pin; the packer now handles Decimal).
+        "wasm/wh5b_hybrid_decimal_round_trip.ahfl",
         "wasm/wh5b_hybrid_kahn_reordered.ahfl",
         "wasm/wh5b_hybrid_opaque_return.ahfl",
         "wasm/wh5b_hybrid_opaque_to_p6.ahfl",
@@ -689,6 +732,31 @@ lower_golden_file(const std::filesystem::path &path) {
         // WH-5c.6: trap node is source id 0 but schedule position 1; pins
         // the facade schedule/source range remap on a reordered DAG.
         "wasm/wh5c6_reorder_trap.ahfl",
+        // WH-5c.7: the 9-shape rich wire-type matrix conformance case
+        // (Int/String/Decimal/Duration/Set/Map/Option/Unit/Float).
+        "wasm/wh5c7_rich_input_matrix.ahfl",
+        // WH-5c.7: the f64-bridge fail-closed pin. The fixture lowers to
+        // verifier-clean Core; the f64-across-capability-bridge rejection is
+        // at wasm codegen (kUnsupportedCapabilityFrame), not Core lowering.
+        "wasm/wh5c7_f64_bridge_fail_closed.ahfl",
+        // WH-5c.7 P1-2: Decimal/Duration bridge fail-closed pins. The
+        // fixtures lower to verifier-clean Core; the rich-type-across-
+        // capability-bridge rejection is at wasm codegen
+        // (kUnsupportedCapabilityFrame for Map/Set) or runtime
+        // (bridge_param_kind Reject for Decimal/Duration), not Core
+        // lowering.
+        "wasm/wh5c7_decimal_bridge_fail_closed.ahfl",
+        "wasm/wh5c7_duration_bridge_fail_closed.ahfl",
+        "wasm/wh5c7_map_bridge_fail_closed.ahfl",
+        "wasm/wh5c7_set_bridge_fail_closed.ahfl",
+        // WH-5c.7 P1-1: Duration round-trip golden.
+        "wasm/wh5c7_duration_round_trip.ahfl",
+        // WH-5c.7: P6 builtin/map fixtures that use the repo-std marker and
+        // lower to verifier-clean Core.
+        "wasm/p6_builtins.ahfl",
+        "wasm/p6_map_bool_key.ahfl",
+        "wasm/p6_map_bool_value.ahfl",
+        "wasm/p6_map_get.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

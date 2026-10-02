@@ -681,6 +681,10 @@
             "value": 4
           }
         ]
+      },
+      "source_range": {
+        "begin_offset": 539,
+        "end_offset": 767
       }
     }
   ],

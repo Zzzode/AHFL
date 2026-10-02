@@ -643,6 +643,15 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             /*evaluator=*/true,
             WasmNodeObservationSkip::HostTranscodeAwaitsNodePort,
         },
+        {
+            "wh5c7_rich_input_matrix.case.json",
+            "tests/golden/wasm/wh5c7_rich_input_matrix.ahfl",
+            CaseKind::Workflow,
+            "app::rich_matrix::RichMatrix",
+            0, 1, WasmEligibility::Orchestration,
+            /*evaluator=*/true,
+            WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";
@@ -1130,6 +1139,27 @@ void test_malformed_manifests() {
 })",
                     "engines.wasm.node_observation_skip "
                     "'node_host_awaits_multinode_stash_join' requires "
+                    "engines.wasm.eligible 'orchestration'");
+
+    expect_rejected("rich wire-types skip on a computation lane",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "x",
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "computation", "reason": "r",
+                       "node_observation_skip":
+                           "node_host_awaits_rich_wire_types"}}
+})",
+                    "engines.wasm.node_observation_skip "
+                    "'node_host_awaits_rich_wire_types' requires "
                     "engines.wasm.eligible 'orchestration'");
 
     expect_rejected("pending capability carries result",

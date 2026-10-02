@@ -3556,6 +3556,27 @@ Option A 按本节决策落地(builder → 独立对抗 review → coordinator f
 
 **不变量:** module bytes / descriptor / wire schema 零变更(无 `src/compiler/`、`include/ahfl/compiler/` diff),golden SHA freeze 不动,conformance 文件不碰,census 维持 native 72/0、Node 69/3。
 
+#### 12.15.17.9 落地记录(2026-10-03):WH-5c.7 GAP 7 九类型矩阵 + 对抗 review fix-forward
+
+按 §12.15.17.2 四层机制落地(builder → 独立对抗 review → fix-forward builder → coordinator 独立复核)。九类型(Int/String 既有;Float(f64)、Decimal、Duration、Set、Map、Option、Unit 新增)在 capability-free P6/wasm lane 全量 round-trip:
+
+1. **let/scalar gate:** f64 复用 IntI64 kind 做 bit-copy word——独立复核确认全 codegen 不发射 f64.const/f64 算术(f64 literal/unary/binary 三处 reject 均带 SourceRange 并有 pin);Unit 为 zero-sized no-op,不发射零长 load/store,容量族不产生碰撞区间。
+2. **plan_construct_operand:** Collection 只内联拷贝 8-byte header(base,len),elements 留在 kP6CollectionBackingBase=16384 immutable borrow(无任何 store 可 alias borrowed backing);Option 经 is_inline_copyable_enum_layout 在 computed-final lane 内联拷贝 1B tag + payload(Scalar/PtrLen)。
+3. **scheduler materializer:** rich-leaf 从内联 node O_k block 投影;rich matrix fixture 的 workflow return 全部经 `first.<field>` 字段投影,非 whole-node passthrough。
+4. **host packer/reader:** Float 8-byte word;Decimal/Duration ride i64(mantissa/millis);Map 新增 key+value 边,checked_mul_u32 + checked_add_u32 容量数学(溢出 kResourceExhausted)。
+
+**Review fix-forward(P0 ×2 + P1 ×2 + P2 ×3):**
+
+- **P0 gate #265(本 slice 新红):** 工具侧 `tests/conformance/wasm_eligibility.cpp` else-if 链漏 `NodeHostAwaitsRichWireTypes` 分支(单元目录已更新、工具二进制未覆盖——unlabeled full ctest 再次成为唯一暴露途径)。
+- **P0 gate #427:** facade not-found 文案收敛到 evaluator canonical `workflow '<n>' not found in program`(`wasm_workflow_runtime.cpp:161` == `workflow_runtime.cpp:616`);另四处 facade 错误删除 "wasm workflow runtime: " 前缀(:102 core lowering failed、:111 layout computation failed、:126 wasm emission failed for workflow、:283 session 错误直透 host 文案)。packer 错误新增 `frame_pack_error_name()` 把 FramePackError 码名透进 session 错误。
+- **P1 spelling fail-closed(真实语义分歧):** evaluator `value_json.cpp:79-82` 原样输出 source spelling,裸 i64 frame 丢失 spelling family,reader 的 format_decimal/format_duration_spelling 会重规范化("1.2" 入 Decimal(2)→"1.20";"60s"→"1m")。两个 formatter 上移为共享 `frame_spelling.hpp`(packer/reader 单一实现),packer 入口用同一 formatter 重建并与 source spelling 精确比对,不一致即 ValueNotWireEncodable 在模块运行前拒绝。接受 pin "1.20"/"01.20 拒"/"1m"/"5s"/"250ms",拒绝 pin "1.2"(Decimal(2))/"1.200"/"60s"/"5000ms"。codegen literal 常量不经 packer,不受影响;不携带原始 spelling、不改 evaluator。
+- **P1 bridge pins 补全:** 旧 wh5b decimal golden 的 capability 路径在本 slice 删除后,逐形状实测真实拒绝层并补 exact-code pin——Decimal/Duration:运行时 `bridge_param_kind` Reject(模块编译成功、import arg decode abort、NodeFailed);Map/Set:P6 scalar codegen 编译期 kUnsupportedCapabilityFrame;Float:return-position cap call 不被 region_contains_capability 识别(扫的是 CapabilityCallStmt),落 WireJson lane 无法服务,NodeFailed。`bridge_param_kind`(capability_import.cpp:72-99)与 verify_frame_bridge_sites 均未削弱。
+- **P2:** (a) 名实不符 golden big-bang 更名 wh5b_hybrid_decimal_fail_closed → wh5b_hybrid_decimal_round_trip(文件/module/workflow/全部引用,注释保留 WH-5b.3 来历);(b) f64 pin 断言真实拒绝层/lane/状态,golden 注释改正;(c) workflow 级 kInvalidLayout 改用 **workflow 声明** SourceRange——CoreWorkflowDecl 新增 source_range(core_lower 从 provenance 落子,core_json 序列化/反序列化对称,2 个 core golden 仅新增 source_range 字段,workflow_session 新增 keyword-range 单测)。
+
+**诚实性复核要点:** 生产 CLI 输入路径(type-aware `wire_codec::decode_json`)经 #427 run_rich_input_matrix 独立证明九类型真实 round-trip;tests/conformance/compile_source.hpp 的 typed decoder 只是 harness 并行实现(evaluator schema-free value_from_json 无法表示 Map/Set),不掩盖生产缺陷;blessed observation 经 evaluator bless+verify byte-match;core_frame_layout.cpp 解码器放宽复用既有 per-placement 校验,无校验削弱。
+
+**证据:** full unlabeled dev ctest 581/588,红恰为 #79/#81/#84/#85(product gates,WH-6 翻)+ #421(5c.8)/#424(5c.9)/#425(5c.8),wasmtime skips #5/#7/#57/#60,#265/#427 绿无新增红;census native 73 agreed/0 skipped、Node 69 agreed/4 skipped(新 skip `node_host_awaits_rich_wire_types`,orchestration-only,exact-stem pin {wh5c7_rich_input_matrix});pure-P6 byte freeze #575 1513 bytes / SHA ca80b9d1.. 不变;WASM=OFF 独立构建 exit 0;ASan 下 9 个相关二进制(core_json/workflow_session/wasm_runner/conformance_case/eligibility/双 census/capability_bindings/binary_gate)全绿无 sanitizer 报告。新增 wasm goldens 均入 pinned_core_corpus();@repo-std marker 支持 p6 fixture 的 import std::collections,4 个既有 p6_* fixture 随 IR JSON 变化纳入 corpus pin。
+
 ### 12.15.18 WH-5c residual gaps 8/9 (2026-10-02, dedicated decision agent)
 
 本节记录 WH-5c cutover-blocking 普查暴露的最后两个 wasm-lane gap 的机制决策。GAP 8(#421 provider-runtime capability lifecycle event parity)与 GAP 9(#424 non-final String PtrLen carry + cross-node String edges)都不阻塞 WH-5c.2/5c.3 的实现(2026-10-02 实现完成、独立 review 中),但阻塞 WH-6 cutover 的 test-green gate。所有代码断言已对工作树(HEAD 70419ba1 + uncommitted WH-5c.2/5c.3)逐条复核。本节是 append-only;§12.15.1-12.15.17 原文保留。

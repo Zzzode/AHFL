@@ -1,7 +1,9 @@
 #include "runtime/wasm_host/frame_packer.hpp"
 
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
+#include "runtime/wasm_host/frame_spelling.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
+#include "runtime/value/scalar_spelling.hpp"
 #include "runtime/value/value.hpp"
 
 #include <algorithm>
@@ -28,8 +30,11 @@ using ir::core::CoreLayoutPtrLen;
 using ir::core::CoreLayoutScalar;
 using ir::core::CoreLayoutStruct;
 using ir::core::CoreScalarRepr;
+using ir::core::CoreWireSchemaDecimal;
+using ir::core::CoreWireSchemaDuration;
 using ir::core::CoreWireSchemaEnum;
 using ir::core::CoreWireSchemaField;
+using ir::core::CoreWireSchemaMap;
 using ir::core::CoreWireSchemaNodeId;
 using ir::core::CoreWireSchemaOption;
 using ir::core::CoreWireSchemaSequence;
@@ -118,6 +123,42 @@ pack_slots(FrameWalkContext &ctx, std::span<std::uint8_t> page,
 }
 
 } // namespace
+
+std::string_view frame_pack_error_name(FramePackError e) noexcept {
+    switch (e) {
+    case FramePackError::NodeIdOutOfRange:
+        return "NodeIdOutOfRange";
+    case FramePackError::LayoutIdOutOfRange:
+        return "LayoutIdOutOfRange";
+    case FramePackError::ShapeMismatch:
+        return "ShapeMismatch";
+    case FramePackError::ValueNotWireEncodable:
+        return "ValueNotWireEncodable";
+    case FramePackError::IntOutOfSchemaBounds:
+        return "IntOutOfSchemaBounds";
+    case FramePackError::IntDoesNotFitI32:
+        return "IntDoesNotFitI32";
+    case FramePackError::StringLengthOutOfBounds:
+        return "StringLengthOutOfBounds";
+    case FramePackError::ArenaExhausted:
+        return "ArenaExhausted";
+    case FramePackError::CollectionExceedsCapacity:
+        return "CollectionExceedsCapacity";
+    case FramePackError::CollectionOverrunsPlacement:
+        return "CollectionOverrunsPlacement";
+    case FramePackError::CollectionHasNoPlacement:
+        return "CollectionHasNoPlacement";
+    case FramePackError::StructMissingField:
+        return "StructMissingField";
+    case FramePackError::EnumUnknownVariant:
+        return "EnumUnknownVariant";
+    case FramePackError::PageBoundsExceeded:
+        return "PageBoundsExceeded";
+    case FramePackError::ArithmeticOverflow:
+        return "ArithmeticOverflow";
+    }
+    return "Unknown";
+}
 
 // --- the recursive pack (public, shared with the bridge executor) -----------
 
@@ -507,8 +548,134 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         return {};
     }
 
-    // Float / Decimal / Duration / Timestamp / Uuid / Map / Closure: outside
-    // the frame subset (or not a wire value) — fail closed.
+    // Decimal: rides an i64 word (mantissa). The spelling is parsed through
+    // the runtime's single spelling authority; the parsed scale MUST match the
+    // wire-schema scale so the reader can rebuild a spelling identical to the
+    // evaluator's preserved source literal (WH-5c.7 mechanism (f)).
+    if (const auto *w_dec = std::get_if<CoreWireSchemaDecimal>(&w->shape)) {
+        const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
+        if (scalar == nullptr || scalar->repr != CoreScalarRepr::I64) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto *dv = std::get_if<DecimalValue>(&value.node);
+        if (dv == nullptr) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto decoded = scalar_spelling::parse_decimal(dv->spelling);
+        if (!decoded.has_value()) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        if (static_cast<std::int64_t>(decoded->parts.scale) != w_dec->scale) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        // WH-5c.7 spelling round-trip guard: the spelling the reader will
+        // rebuild from the bare i64 mantissa must equal the source spelling
+        // exactly, so non-canonical forms ("01.20" for Decimal(2)) are
+        // rejected at entry pack before the module runs.
+        if (format_decimal_spelling(decoded->parts.mantissa,
+                                    decoded->parts.scale) != dv->spelling) {
+            return std::unexpected(FramePackError::ValueNotWireEncodable);
+        }
+        if (!write_u64_le(page, addr,
+                          static_cast<std::uint64_t>(decoded->parts.mantissa))) {
+            return std::unexpected(FramePackError::PageBoundsExceeded);
+        }
+        return {};
+    }
+
+    // Duration: rides an i64 word (milliseconds). The spelling is parsed
+    // through the runtime's single spelling authority (WH-5c.7 mechanism (f)).
+    if (std::holds_alternative<CoreWireSchemaDuration>(w->shape)) {
+        const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
+        if (scalar == nullptr || scalar->repr != CoreScalarRepr::I64) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto *dv = std::get_if<DurationValue>(&value.node);
+        if (dv == nullptr) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto decoded = scalar_spelling::parse_duration(dv->spelling);
+        if (!decoded.has_value()) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        // WH-5c.7 spelling round-trip guard: the spelling the reader will
+        // rebuild from the bare i64 millis must equal the source spelling
+        // exactly, so non-canonical unit forms ("60s", "5000ms") are rejected
+        // at entry pack before the module runs.
+        if (format_duration_spelling(decoded->millis) != dv->spelling) {
+            return std::unexpected(FramePackError::ValueNotWireEncodable);
+        }
+        if (!write_u64_le(page, addr,
+                          static_cast<std::uint64_t>(decoded->millis))) {
+            return std::unexpected(FramePackError::PageBoundsExceeded);
+        }
+        return {};
+    }
+
+    // Map: inline (ptr,len) header, key/value pairs at the declared placement.
+    // Each entry occupies one stride: key at offset 0, value at value_offset
+    // (WH-5c.7 mechanism (f)).
+    if (const auto *w_map = std::get_if<CoreWireSchemaMap>(&w->shape)) {
+        const auto *l_container = std::get_if<CoreLayoutContainer>(&l->shape);
+        if (l_container == nullptr || !l_container->value.has_value()) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto *mv = std::get_if<MapValue>(&value.node);
+        if (mv == nullptr) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto len = mv->entries.size();
+        const std::uint64_t capacity =
+            w_map->capacity.value_or(l_container->capacity);
+        if (static_cast<std::uint64_t>(len) > capacity) {
+            return std::unexpected(FramePackError::CollectionExceedsCapacity);
+        }
+        const auto *placement = ctx.placement_for(lId);
+        if (placement == nullptr) {
+            return std::unexpected(FramePackError::CollectionHasNoPlacement);
+        }
+        const auto scaled =
+            checked_mul_u32(static_cast<std::uint64_t>(len), l_container->stride);
+        if (!scaled.has_value() ||
+            static_cast<std::uint64_t>(*scaled) > placement->extent) {
+            return std::unexpected(FramePackError::CollectionOverrunsPlacement);
+        }
+        for (std::size_t i = 0; i < len; ++i) {
+            const auto entry_base = checked_add_u32(
+                placement->base,
+                static_cast<std::uint64_t>(i) * l_container->stride);
+            if (!entry_base.has_value()) {
+                return std::unexpected(FramePackError::ArithmeticOverflow);
+            }
+            auto key_result = pack_value_at(ctx, page, w_map->key,
+                                         l_container->element, *mv->entries[i].first,
+                                         *entry_base, arena_cursor, arena_base,
+                                         arena_capacity);
+            if (!key_result.has_value()) {
+                return key_result;
+            }
+            const auto value_addr = checked_add_u32(
+                *entry_base, l_container->value_offset);
+            if (!value_addr.has_value()) {
+                return std::unexpected(FramePackError::ArithmeticOverflow);
+            }
+            auto val_result = pack_value_at(ctx, page, w_map->value,
+                                         *l_container->value, *mv->entries[i].second,
+                                         *value_addr, arena_cursor, arena_base,
+                                         arena_capacity);
+            if (!val_result.has_value()) {
+                return val_result;
+            }
+        }
+        if (!write_u32_le(page, addr + 0, placement->base) ||
+            !write_u32_le(page, addr + 4, static_cast<std::uint32_t>(len))) {
+            return std::unexpected(FramePackError::PageBoundsExceeded);
+        }
+        return {};
+    }
+
+    // Timestamp / Uuid / Closure: outside the frame subset (or not a wire
+    // value) — fail closed.
     return std::unexpected(FramePackError::ValueNotWireEncodable);
 }
 

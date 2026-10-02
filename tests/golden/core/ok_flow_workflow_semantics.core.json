@@ -718,6 +718,10 @@
             "value": 2
           }
         ]
+      },
+      "source_range": {
+        "begin_offset": 879,
+        "end_offset": 1237
       }
     }
   ],

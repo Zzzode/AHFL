@@ -1,0 +1,54 @@
+// @repo-std
+// WH-5c.7 P1-2: Map bridge-rejection pin.
+//
+// The P6 frame packer/reader round-trips Map through the P6 frame, but the
+// P6 scalar codegen itself rejects a Map as a bridge capability argument:
+// kUnsupportedCapabilityFrame is emitted and no wasm module is produced.
+// The capability call is in a STATEMENT position
+// (`let reply = Echo(...)`) so region_contains_capability detects it and the
+// bridge registry is populated.
+
+module wasm::wh5c7_map_bridge_fail_closed;
+
+import std::collections;
+
+pub struct Frame {
+    tags: Map<String, Int>(8);
+}
+
+pub struct Output {
+    value: String;
+}
+
+capability Echo(request: Map<String, Int>(8)) -> Map<String, Int>(8);
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Output;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Start {
+        let reply = Echo(input.tags);
+        goto Done;
+    }
+
+    state Done {
+        return Output { value: "done" };
+    }
+}
+
+pub workflow MapBridgeFailClosed {
+    input: Frame;
+    output: Output;
+
+    node echo: EchoAgent(input);
+
+    return: echo;
+}

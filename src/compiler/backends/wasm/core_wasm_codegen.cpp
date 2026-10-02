@@ -102,6 +102,7 @@ using ir::core::CoreVariantPatField;
 using ir::core::CoreVtBool;
 using ir::core::CoreVtDecimal;
 using ir::core::CoreVtDuration;
+using ir::core::CoreVtFloat;
 using ir::core::CoreVtInt;
 using ir::core::CoreVtNominal;
 using ir::core::CoreVtString;
@@ -2023,6 +2024,54 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
     return std::get_if<ir::core::CoreLayoutContainer>(&layout->shape);
 }
 
+// WH-5c.7 mechanism (d): a payload-bearing enum whose EVERY payload field is a
+// scalar or PtrLen can be copied verbatim as a fixed-size inline blob (tag +
+// max payload), with no child-address dereference. This is the Option<Int>
+// case: the host packs the enum inline in the input frame, the construct
+// scratch copies it inline, and the final materializer copies it inline into
+// the output frame.
+[[nodiscard]] bool is_inline_copyable_enum_layout(
+    const ir::core::CoreLayoutTable &layouts, CoreLayoutId id) {
+    if (id.value >= layouts.layouts.size()) {
+        return false;
+    }
+    const auto *tagged =
+        std::get_if<ir::core::CoreLayoutEnum>(&layouts.layouts[id.value].shape);
+    if (tagged == nullptr) {
+        return false;
+    }
+    // Tag-only enums are already leaf_is_word; only payload-bearing enums
+    // need the inline-copyable path.
+    if (std::ranges::all_of(tagged->variant_payload_sizes,
+                            [](std::uint64_t size) { return size == 0; })) {
+        return false;
+    }
+    for (const CoreLayoutId payload : tagged->variant_payload_layouts) {
+        if (payload.value >= layouts.layouts.size()) {
+            return false;
+        }
+        const auto *payload_struct = std::get_if<ir::core::CoreLayoutStruct>(
+            &layouts.layouts[payload.value].shape);
+        if (payload_struct == nullptr) {
+            return false;
+        }
+        for (const CoreLayoutId field : payload_struct->field_layouts) {
+            if (field.value >= layouts.layouts.size()) {
+                return false;
+            }
+            const ir::core::CoreLayout &field_layout =
+                layouts.layouts[field.value];
+            if (!std::holds_alternative<ir::core::CoreLayoutScalar>(
+                    field_layout.shape) &&
+                !std::holds_alternative<ir::core::CoreLayoutPtrLen>(
+                    field_layout.shape)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Whether `type` is a tag-only enum (an enum whose every variant payload is
 // zero-sized): its whole runtime representation is the i32 discriminant, so a
 // `match` on it compiles to tag compares with no payload projection. This is
@@ -2210,9 +2259,8 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
     }
     const auto *scalar =
         std::get_if<ir::core::CoreLayoutScalar>(&layouts.layouts[layout_id.value].shape);
-    if (scalar == nullptr || scalar->repr == ir::core::CoreScalarRepr::F64) {
-        // F64 needs the f64 opcode ladder, which is a later P6 slice; every
-        // non-scalar aggregate is outside the scalar subset.
+    if (scalar == nullptr) {
+        // Every non-scalar aggregate is outside the scalar subset.
         // A tag-only enum is one non-scalar shape in the subset: it is an i32
         // discriminant consumed only by `match` (never by an arithmetic operator,
         // which the distinct kind enforces). A STRUCT or a PAYLOAD-BEARING enum
@@ -2248,6 +2296,16 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
         case ir::core::CoreScalarRepr::F64:
             return std::nullopt;
         }
+    }
+    // WH-5c.7 mechanism (a): an f64 value rides the IntI64 kind as an 8-byte
+    // word (bit-identical copy). The copy path emits i64.load / i64.store —
+    // never f64.const or f64 arithmetic. f64 arithmetic is rejected by
+    // emit_binary / emit_unary with a ranged diagnostic (the f64 opcode ladder
+    // is a deferred slice).
+    if (std::holds_alternative<CoreVtFloat>(node)) {
+        return scalar->repr == ir::core::CoreScalarRepr::F64
+                   ? std::optional{P6ScalarKind::IntI64}
+                   : std::nullopt;
     }
     // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a Decimal / Duration literal
     // is embedded as its compile-time i64 word (mantissa / bare milliseconds),
@@ -3854,7 +3912,9 @@ class P6ComputationHandlerBuilder {
                 case ir::core::CoreScalarRepr::I64:
                     return P6ScalarKind::IntI64;
                 case ir::core::CoreScalarRepr::F64:
-                    break;
+                    // WH-5c.7 mechanism (a): f64 rides IntI64 (8-byte word
+                    // bit-identical copy).
+                    return P6ScalarKind::IntI64;
                 }
             }
             if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
@@ -3904,6 +3964,11 @@ class P6ComputationHandlerBuilder {
         return tagged != nullptr &&
                !std::ranges::all_of(tagged->variant_payload_sizes,
                                     [](std::uint64_t size) { return size == 0; });
+    }
+
+    // WH-5c.7 mechanism (d): delegates to the file-scope helper.
+    [[nodiscard]] bool is_inline_copyable_enum(CoreLayoutId id) const {
+        return is_inline_copyable_enum_layout(layouts_, id);
     }
 
     // Whether a P4-D layout edge is the inline eight-byte PtrLen String slot
@@ -4089,6 +4154,11 @@ class P6ComputationHandlerBuilder {
             return plan_call_closure_expr(*call, expr);
         }
         if (scalar_kind(expr.result_type) == std::nullopt) {
+            // WH-5c.7 mechanism (b): a zero-sized expression (Unit) needs no
+            // scalar planning.
+            if (is_zero_sized_value_type(expr.result_type)) {
+                return true;
+            }
             return reject("scalar expression has a non-scalar or f64 result type",
                           expr.source_range);
         }
@@ -5033,6 +5103,11 @@ class P6ComputationHandlerBuilder {
         if (value.value >= storage_.value_types.size()) {
             return reject("constructor operand value id is out of range", range);
         }
+        // WH-5c.7 mechanism (b): a zero-sized slot (Unit) stores nothing.
+        if (slot.value < layouts_.layouts.size() &&
+            layouts_.layouts[slot.value].is_zero_sized) {
+            return true;
+        }
         const auto kind = scalar_kind(storage_.value_types[value.value]);
         if (kind == std::nullopt) {
             return reject("constructor operand has a non-aggregate, non-scalar type", range);
@@ -5046,6 +5121,19 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         }
+        // WH-5c.7 mechanism (c): a bounded-collection slot takes a
+        // Collection-kind operand. The 8-byte inline (ptr,len) header is
+        // copied, not an address store; the elements stay in the shared
+        // collection backing region (immutable borrow).
+        if (slot.value < layouts_.layouts.size() &&
+            std::holds_alternative<ir::core::CoreLayoutContainer>(
+                layouts_.layouts[slot.value].shape)) {
+            if (*kind != P6ScalarKind::Collection) {
+                return reject("constructor operand for a collection slot is not a bounded collection",
+                              range);
+            }
+            return true;
+        }
         if (place_is_aggregate_leaf(slot)) {
             if (*kind != P6ScalarKind::Ptr) {
                 return reject("constructor operand is not an aggregate for its aggregate slot",
@@ -5054,10 +5142,10 @@ class P6ComputationHandlerBuilder {
             // V2-A fix-forward: an aggregate field is stored as the child's
             // i32 ADDRESS in the module representation, but an operand sourced
             // from the host-packed INPUT frame names inline bytes with no such
-            // address. Fail closed until the inline-input-frame expansion lands
-            // (the materializer would otherwise store an inline value word as a
-            // handle and later dereference it).
-            if (final_return_mode_ && value_names_input_inline_aggregate(value)) {
+            // address. Fail closed unless the slot is an inline-copyable enum
+            // (WH-5c.7 mechanism (d): tag + scalar payload copied verbatim).
+            if (final_return_mode_ && value_names_input_inline_aggregate(value) &&
+                !is_inline_copyable_enum(slot)) {
                 return reject(
                     "a computed final stores an aggregate/enum field sourced from the host-packed "
                     "INPUT frame; input aggregates are packed inline and carry no module child "
@@ -5173,6 +5261,30 @@ class P6ComputationHandlerBuilder {
         const auto *literal = std::get_if<CoreLiteralExpr>(&expr.node);
         return literal != nullptr && (literal->kind == CoreLiteralKind::Decimal ||
                                       literal->kind == CoreLiteralKind::Duration);
+    }
+
+    // WH-5c.7 mechanism (a): true iff a value type is f64. f64 rides the IntI64
+    // kind as a copy-only 8-byte word; arithmetic on it is a deferred slice and
+    // is rejected with a ranged diagnostic by emit_binary / emit_unary.
+    [[nodiscard]] bool is_float_value_type(CoreValueTypeId type) const {
+        if (type.value >= program_.value_types.size()) {
+            return false;
+        }
+        return std::holds_alternative<CoreVtFloat>(
+            program_.value_types[type.value].node);
+    }
+
+    // WH-5c.7 mechanism (b): true iff a value type has a zero-sized P4-D layout
+    // (Unit). A zero-sized value needs no local, no store, and no frame slot.
+    [[nodiscard]] bool is_zero_sized_value_type(CoreValueTypeId type) const {
+        if (type.value >= layouts_.value_layouts.size()) {
+            return false;
+        }
+        const CoreLayoutId layout_id = layouts_.value_layouts[type.value];
+        if (layout_id.value >= layouts_.layouts.size()) {
+            return false;
+        }
+        return layouts_.layouts[layout_id.value].is_zero_sized;
     }
 
     // Emit a bounded-collection operation. The handle in `base` is the address
@@ -6249,6 +6361,13 @@ class P6ComputationHandlerBuilder {
                                       statement.source_range);
                     }
                     const CoreExpr &bound = storage_.exprs[s.expr.value];
+                    // WH-5c.7 mechanism (b): a zero-sized value (Unit) needs no
+                    // local; mark the result used so the E3 orphan gate passes,
+                    // then plan the expression for side effects only.
+                    if (is_zero_sized_value_type(bound.result_type)) {
+                        used_values_[s.result.value] = true;
+                        return plan_expr(s.expr);
+                    }
                     const auto kind = scalar_kind(bound.result_type);
                     if (kind == std::nullopt) {
                         // V2-C: on the frame-bridge lane an unrepresentable let
@@ -6500,6 +6619,11 @@ class P6ComputationHandlerBuilder {
         }
         const auto result_kind = scalar_kind(expr.result_type);
         if (result_kind == std::nullopt) {
+            // WH-5c.7 mechanism (b): a zero-sized expression (Unit) emits no
+            // value onto the stack.
+            if (is_zero_sized_value_type(expr.result_type)) {
+                return true;
+            }
             return reject("scalar expression has a non-scalar or f64 result type",
                           expr.source_range);
         }
@@ -7118,6 +7242,18 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         }
+        if (is_inline_copyable_enum_layout(layouts_, slot->edge)) {
+            // WH-5c.7 mechanism (d): an inline-copyable enum's VALUE is the
+            // address of its inline bytes (tag + scalar payload), NOT a load
+            // of the tag word. The construct store copies the full inline
+            // blob from this address. `emit_projection_slot` left the OWNING
+            // struct's address on the stack, so advance to the slot.
+            if (slot->offset != 0) {
+                emit_const_i32(static_cast<std::int32_t>(slot->offset));
+                body_.byte(kOpI32Add);
+            }
+            return true;
+        }
         // An aggregate field's slot HOLDS the child's address (the ONE
         // representation rule), so both forms are read as one i32, then the
         // aggregate form is left as the pointer it read. A scalar field is
@@ -7327,6 +7463,11 @@ class P6ComputationHandlerBuilder {
                                             std::uint64_t payload_base,
                                             bool dynamic_address,
                                             ir::SourceRangeOpt range) {
+        // WH-5c.7 mechanism (b): a zero-sized slot (Unit) stores nothing.
+        if (slot_layout.value < layouts_.layouts.size() &&
+            layouts_.layouts[slot_layout.value].is_zero_sized) {
+            return true;
+        }
         const std::uint64_t offset = payload_base + slot_offset;
         const auto kind = readable_kind(arg.value);
         const auto local = readable_local(arg.value);
@@ -7359,6 +7500,62 @@ class P6ComputationHandlerBuilder {
             };
             store_word(0, *local);
             store_word(4, *local + 1u);
+            return true;
+        }
+        // WH-5c.7 mechanism (c): a bounded-collection slot copies the 8-byte
+        // inline (ptr,len) header from the operand's source header, NOT an
+        // address store. The elements stay in the shared collection backing
+        // region (immutable borrow).
+        if (slot_layout.value < layouts_.layouts.size() &&
+            std::holds_alternative<ir::core::CoreLayoutContainer>(
+                layouts_.layouts[slot_layout.value].shape)) {
+            if (*kind != P6ScalarKind::Collection) {
+                return reject("constructor collection slot operand is not a bounded collection",
+                              std::move(range));
+            }
+            // Stack: [dst_addr][src_addr] -> i64.load -> [dst_addr][header] -> i64.store.
+            if (dynamic_address) {
+                emit_local_get(alloc_temp_local_);
+            } else {
+                emit_const_i32(static_cast<std::int32_t>(static_address));
+            }
+            emit_local_get(*local);
+            body_.byte(kOpI64Load);
+            body_.u32(kAlignI64);
+            body_.u32(0);
+            body_.byte(kOpI64Store);
+            body_.u32(kAlignI64);
+            body_.u32(static_cast<std::uint32_t>(offset));
+            return true;
+        }
+        // WH-5c.7 mechanism (d): an inline-copyable enum (tag + scalar-only
+        // payload) is copied verbatim as a fixed-size inline blob from the
+        // source address, NOT an address store. The host packs the enum inline
+        // in the input frame; the construct scratch mirrors that inline form.
+        if (is_inline_copyable_enum(slot_layout)) {
+            const std::uint64_t enum_size =
+                layouts_.layouts[slot_layout.value].size;
+            const std::uint64_t aligned_size =
+                (enum_size + 7u) & ~std::uint64_t{7u};
+            for (std::uint64_t word_off = 0; word_off < aligned_size;
+                 word_off += 8u) {
+                if (dynamic_address) {
+                    emit_local_get(alloc_temp_local_);
+                } else {
+                    emit_const_i32(static_cast<std::int32_t>(static_address));
+                }
+                emit_local_get(*local);
+                if (word_off != 0) {
+                    emit_const_i32(static_cast<std::int32_t>(word_off));
+                    body_.byte(kOpI32Add);
+                }
+                body_.byte(kOpI64Load);
+                body_.u32(kAlignI64);
+                body_.u32(0);
+                body_.byte(kOpI64Store);
+                body_.u32(kAlignI64);
+                body_.u32(static_cast<std::uint32_t>(offset + word_off));
+            }
             return true;
         }
         if (place_is_aggregate_leaf(slot_layout)) {
@@ -7574,10 +7771,11 @@ class P6ComputationHandlerBuilder {
     //
     // V2-B: a String (PtrLen) slot is copied as its two inline words (the
     // payload pointer stays a rodata / input-arena pointer — the payload is
-    // never copied). Bytes16 (Uuid), f64, closures, and uninhabited slots still
+    // never copied). Bytes16 (Uuid), closures, and uninhabited slots still
     // fail closed. Decimal/Duration i64 literal words pass the scalar gate but
     // have no canonical differential observation (the host spelling render is a
-    // later rung).
+    // later rung). WH-5c.7 mechanism (a): f64 rides the IntI64 kind as a
+    // copy-only 8-byte word (bit-identical i64.load/i64.store).
 
     // Validate one P4-D layout edge is entirely in the v2 output-frame walk
     // subset (scalars i32/i64, inline structs/enums, bounded containers, and the
@@ -7591,8 +7789,10 @@ class P6ComputationHandlerBuilder {
         const bool ok = std::visit(
             Overloaded{
                 [](const ir::core::CoreLayoutPending &) { return false; },
-                [](const ir::core::CoreLayoutScalar &s) {
-                    return s.repr != ir::core::CoreScalarRepr::F64;
+                [](const ir::core::CoreLayoutScalar &) {
+                    // WH-5c.7 mechanism (a): f64 is an 8-byte word copied
+                    // bit-identically (i64.load/i64.store).
+                    return true;
                 },
                 [](const ir::core::CoreLayoutBytes &) { return false; },
                 // V2-B: the String PtrLen inline pair.
@@ -7624,8 +7824,8 @@ class P6ComputationHandlerBuilder {
         if (!ok) {
             return reject(
                 "computed final carries a shape the P6-7 output frame cannot represent "
-                "(only Bool/Int scalars, tag enums, inline structs/enums, bounded "
-                "collections, and String PtrLen slots; f64/Uuid/closure slots stay fail-closed)",
+                "(only Bool/Int/Float scalars, tag enums, inline structs/enums, bounded "
+                "collections, and String PtrLen slots; Uuid/closure slots stay fail-closed)",
                 range);
         }
         return true;
@@ -7741,8 +7941,12 @@ class P6ComputationHandlerBuilder {
     // TAG-ONLY enum whose whole representation is the i32 discriminant), vs an
     // aggregate child reached through the i32 address its parent field stores.
     [[nodiscard]] bool final_leaf_is_word(const ir::core::CoreLayout &layout) const {
-        if (const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(&layout.shape)) {
-            return scalar->repr != ir::core::CoreScalarRepr::F64;
+        // WH-5c.7 mechanism (a): f64 is an 8-byte word (bit-identical copy),
+        // so every scalar (I32/I64/F64) is a single-word leaf. A collection
+        // header (ptr:u32,len:u32) is also an 8-byte inline word.
+        if (std::holds_alternative<ir::core::CoreLayoutScalar>(layout.shape) ||
+            std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
+            return true;
         }
         if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
             return std::ranges::all_of(tagged->variant_payload_sizes,
@@ -7765,10 +7969,16 @@ class P6ComputationHandlerBuilder {
             }
             const ir::core::CoreLayout &field = layouts_.layouts[edge.value];
             if (final_leaf_is_word(field)) {
+                // WH-5c.7 mechanism (a)/(c): f64 and collection headers are
+                // 8-byte words copied bit-identically via i64.load/i64.store
+                // (wide), alongside I64.
                 const bool wide =
-                    std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
-                    std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
-                        ir::core::CoreScalarRepr::I64;
+                    (std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
+                     (std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                          ir::core::CoreScalarRepr::I64 ||
+                      std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                          ir::core::CoreScalarRepr::F64)) ||
+                    std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape);
                 emit_copy_word(wide, final_src_local_ + level, src_off + off,
                               dst_base, dst_off + off);
                 continue;
@@ -7788,8 +7998,25 @@ class P6ComputationHandlerBuilder {
                 std::holds_alternative<ir::core::CoreLayoutClosure>(field.shape)) {
                 return reject("computed final copies a Uuid/closure field", range);
             }
+            // WH-5c.7 mechanism (d): an inline-copyable enum (tag +
+            // scalar-only payload) is copied verbatim as a fixed-size inline
+            // blob, NOT a child-address dereference.
+            if (is_inline_copyable_enum(edge)) {
+                const std::uint64_t enum_size =
+                    layouts_.layouts[edge.value].size;
+                const std::uint64_t aligned_size =
+                    (enum_size + 7u) & ~std::uint64_t{7u};
+                for (std::uint64_t word_off = 0; word_off < aligned_size;
+                     word_off += 8u) {
+                    emit_copy_word(
+                        true, final_src_local_ + level,
+                        static_cast<std::uint32_t>(src_off + off + word_off),
+                        dst_base,
+                        static_cast<std::uint32_t>(dst_off + off + word_off));
+                }
+                continue;
+            }
             if (std::holds_alternative<ir::core::CoreLayoutStruct>(field.shape) ||
-                std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape) ||
                 std::holds_alternative<ir::core::CoreLayoutEnum>(field.shape)) {
                 if (level + 1u >= final_src_count_) {
                     return reject("computed final aggregate nesting exceeded its scratch stack",
@@ -7926,12 +8153,14 @@ class P6ComputationHandlerBuilder {
                 }
                 const ir::core::CoreLayout &child_layout =
                     layouts_.layouts[child.value];
-                // A scalar / tag-only-enum leaf is an inline word on THIS
-                // level; a payload-bearing enum / struct / container edge
-                // descends one address level.
+                // A scalar / tag-only-enum / container-header / inline-copyable-
+                // enum leaf is an inline word on THIS level; a struct or a
+                // non-inline-copyable payload enum edge descends one address
+                // level. WH-5c.7 mechanism (c)/(d): a container's 8-byte header
+                // and an inline-copyable enum are copied inline, not dereferenced.
                 if (!final_leaf_is_word(child_layout) &&
+                    !is_inline_copyable_enum(child) &&
                     (std::holds_alternative<ir::core::CoreLayoutStruct>(child_layout.shape) ||
-                     std::holds_alternative<ir::core::CoreLayoutContainer>(child_layout.shape) ||
                      std::holds_alternative<ir::core::CoreLayoutEnum>(child_layout.shape))) {
                     deepest = std::max(deepest, 1u + final_copy_depth(child));
                 }
@@ -8075,9 +8304,11 @@ class P6ComputationHandlerBuilder {
             return reject("unary operand has a non-scalar or f64 result type", std::move(range));
         }
         // A Decimal/Duration i64 word rides the constant lane only; it has no
-        // integer arithmetic opcode on the P6 frame model.
+        // integer arithmetic opcode on the P6 frame model. An f64 word is
+        // copy-only (WH-5c.7 mechanism (a)); its arithmetic is a deferred slice.
         if (*operand_kind == P6ScalarKind::String ||
-            is_decimal_duration_expr(storage_.exprs[u.operand.value])) {
+            is_decimal_duration_expr(storage_.exprs[u.operand.value]) ||
+            is_float_value_type(storage_.exprs[u.operand.value].result_type)) {
             return reject("unary arithmetic is defined for Int and Bool only on the P6 frame lane",
                           std::move(range));
         }
@@ -8123,10 +8354,13 @@ class P6ComputationHandlerBuilder {
         // A String PtrLen pair never participates in integer/comparison ops
         // (its equality/order is byte semantics on the payload, a later rung),
         // and a Decimal/Duration i64 word is a literal constant, not an
-        // arithmetic operand on the P6 frame model.
+        // arithmetic operand on the P6 frame model. An f64 word is copy-only
+        // (WH-5c.7 mechanism (a)); its arithmetic is a deferred slice.
         if (*lhs_kind == P6ScalarKind::String ||
             is_decimal_duration_expr(storage_.exprs[b.lhs.value]) ||
-            is_decimal_duration_expr(storage_.exprs[b.rhs.value])) {
+            is_decimal_duration_expr(storage_.exprs[b.rhs.value]) ||
+            is_float_value_type(storage_.exprs[b.lhs.value].result_type) ||
+            is_float_value_type(storage_.exprs[b.rhs.value].result_type)) {
             return reject("binary arithmetic/comparison is defined for Int/Bool only on the P6 "
                           "frame lane",
                           std::move(range));
@@ -8698,6 +8932,12 @@ class P6ComputationHandlerBuilder {
                 [&](const CoreLetStmt &s) {
                     if (!emit_expr(s.expr)) {
                         return false;
+                    }
+                    // WH-5c.7 mechanism (b): a zero-sized result (Unit) has no
+                    // local and emits no value onto the stack.
+                    if (s.result.value < storage_.value_types.size() &&
+                        is_zero_sized_value_type(storage_.value_types[s.result.value])) {
+                        return true;
                     }
                     const auto local = final_local(s.result);
                     if (local == std::nullopt) {
@@ -10026,7 +10266,8 @@ build_frame_section_plan(const CoreProgram &program,
         } else {
             add_diag(result,
                      core_wasm_diag::kResourceExhausted,
-                     "P6 frame backing placements exceed the fixed 64 KiB linear-memory page");
+                     "P6 frame backing placements exceed the fixed 64 KiB linear-memory page",
+                     agent.source_range);
         }
         return std::nullopt;
     }
@@ -13026,7 +13267,8 @@ validate_workflow_region(const CoreProgram &program,
             // the same type each get their own runtime window. An enum window
             // is sized by its own layout extent (it already spans its largest
             // variant payload); the payload fields must be flat words, exactly
-            // the shape normalize_walk accepts. Containers/Uuid/closures and a
+            // the shape normalize_walk accepts. Collection headers (8-byte
+            // inline ptr+len) are flat words like PtrLen. Uuid/closures and a
             // nested aggregate inside an enum payload fail closed here as they
             // do at emission.
             std::uint64_t normalize_extent = 0;
@@ -13049,7 +13291,11 @@ validate_workflow_region(const CoreProgram &program,
                     }
                     const ir::core::CoreLayout &field = layouts.layouts[child.value];
                     if (std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) ||
-                        std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape)) {
+                        std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape) ||
+                        std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape)) {
+                        // Scalars, PtrLen pairs, and collection headers
+                        // (ptr:u32,len:u32) are all flat inline words — no
+                        // normalize window needed.
                         continue;
                     }
                     if (std::holds_alternative<ir::core::CoreLayoutStruct>(field.shape)) {
@@ -13057,6 +13303,11 @@ validate_workflow_region(const CoreProgram &program,
                         if (!self(self, child, depth + 1u)) {
                             return false;
                         }
+                        continue;
+                    }
+                    // WH-5c.7 mechanism (d): an inline-copyable enum is an
+                    // inline word, not an aggregate child — no normalize window.
+                    if (is_inline_copyable_enum_layout(layouts, child)) {
                         continue;
                     }
                     if (const auto *tagged =
@@ -14370,6 +14621,30 @@ build_workflow_plan(const CoreProgram &program,
     }
     plan.dense_wf_output_layout = wf_output_dense;
 
+    // WH-5c.7: every INPUT-REACHED fixed container occurrence (workflow entry
+    // + per-node inputs) gets a DISJOINT sum-of-prior-backing placement in
+    // the collection element backing region. Without these the host packer
+    // cannot place collection elements (CollectionHasNoPlacement).
+    FramePlacementFailure wf_placement_failure = FramePlacementFailure::InvalidBacking;
+    const auto wf_assigned =
+        assign_input_container_placements(builder.table_ref(), builder.occurrences(),
+                                          wf_placement_failure);
+    if (!wf_assigned.has_value()) {
+        if (wf_placement_failure == FramePlacementFailure::InvalidBacking) {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6 workflow input container has an invalid backing layout",
+                     workflow.source_range);
+        } else {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "P6 workflow backing placements exceed the fixed 64 KiB linear-memory page",
+                     workflow_capacity_source_range(workflow, plan));
+        }
+        return false;
+    }
+    std::vector<ir::core::CoreFrameBackingPlacement> wf_placements =
+        std::move(wf_assigned->placements);
+
     // V2-D emission half 2: plan the merged capability bridge page frame's
     // dense records and the disjoint per-call-site result placements + payload
     // arenas. The sites are grouped per runner (global dense call_site_id
@@ -14582,6 +14857,7 @@ build_workflow_plan(const CoreProgram &program,
     ir::core::CoreFrameLayoutSection section;
     section.format_version = 3;
     section.table = builder.table_ref();
+    section.placements = std::move(wf_placements);
     section.input_layout = ir::core::CoreLayoutId{ir::core::CoreLayoutId::kInvalid};
     section.output_layout = wf_output_dense;
     section.rodata_base = ir::core::kP6RodataBase;
@@ -16335,10 +16611,15 @@ class WorkflowFrameMaterializer {
     void norm_copy_leaf(const ir::core::CoreLayout &field,
                         std::uint32_t src_local, std::uint32_t src_off,
                         std::uint32_t dst_local, std::uint32_t dst_off) {
+        // WH-5c.7 mechanism (a): f64 and collection headers are 8-byte words
+        // copied bit-identically via i64.load/i64.store (wide), alongside I64.
         const bool wide =
-            std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
-            std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
-                ir::core::CoreScalarRepr::I64;
+            (std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
+             (std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                  ir::core::CoreScalarRepr::I64 ||
+              std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                  ir::core::CoreScalarRepr::F64)) ||
+            std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape);
         norm_copy_word(wide, src_local, src_off, dst_local, dst_off);
         if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape)) {
             norm_copy_word(false, src_local, src_off + 4u, dst_local, dst_off + 4u);
@@ -16510,6 +16791,24 @@ class WorkflowFrameMaterializer {
                 norm_publish_child(level, off);
                 continue;
             }
+            // WH-5c.7 mechanism (d): an inline-copyable enum is copied
+            // verbatim as a fixed-size inline blob, not normalized to a
+            // child address.
+            if (is_inline_copyable_enum_layout(layouts_, edge)) {
+                const std::uint64_t enum_size =
+                    layouts_.layouts[edge.value].size;
+                const std::uint64_t aligned_size =
+                    (enum_size + 7u) & ~std::uint64_t{7u};
+                for (std::uint64_t word_off = 0; word_off < aligned_size;
+                     word_off += 8u) {
+                    norm_copy_word(
+                        true, norm_src(level),
+                        off + static_cast<std::uint32_t>(word_off),
+                        norm_dst(level),
+                        off + static_cast<std::uint32_t>(word_off));
+                }
+                continue;
+            }
             if (const auto *tagged =
                     std::get_if<ir::core::CoreLayoutEnum>(&field.shape)) {
                 if (!norm_enter_child(edge, level, off)) {
@@ -16577,8 +16876,8 @@ class WorkflowFrameMaterializer {
                 }
                 const ir::core::CoreLayout &child_layout = layouts.layouts[child.value];
                 if (!leaf_is_word_static(child_layout) &&
+                    !is_inline_copyable_enum_layout(layouts, child) &&
                     (std::holds_alternative<ir::core::CoreLayoutStruct>(child_layout.shape) ||
-                     std::holds_alternative<ir::core::CoreLayoutContainer>(child_layout.shape) ||
                      std::holds_alternative<ir::core::CoreLayoutEnum>(child_layout.shape))) {
                     deepest = std::max(deepest, 1u + layout_copy_depth(layouts, child));
                 }
@@ -16592,8 +16891,12 @@ class WorkflowFrameMaterializer {
     }
 
     [[nodiscard]] static bool leaf_is_word_static(const ir::core::CoreLayout &layout) {
-        if (const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(&layout.shape)) {
-            return scalar->repr != ir::core::CoreScalarRepr::F64;
+        // WH-5c.7 mechanism (a): f64 is an 8-byte word (bit-identical copy),
+        // so every scalar (I32/I64/F64) is a single-word leaf. A collection
+        // header (ptr:u32,len:u32) is also an 8-byte inline word.
+        if (std::holds_alternative<ir::core::CoreLayoutScalar>(layout.shape) ||
+            std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
+            return true;
         }
         if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
             return std::ranges::all_of(tagged->variant_payload_sizes,
@@ -16819,6 +17122,39 @@ class WorkflowFrameMaterializer {
             return fail("a workflow constructor operand names an out-of-range layout edge");
         }
         const ir::core::CoreLayout &field = layouts_.layouts[edge.value];
+        // WH-5c.7 mechanism (b): a zero-sized slot (Unit) stores nothing.
+        if (field.is_zero_sized) {
+            return true;
+        }
+        // WH-5c.7 mechanism (d): an inline-copyable enum (tag + scalar-only
+        // payload) is copied verbatim as a fixed-size inline blob from the
+        // projected source slot, not an address store.
+        if (is_inline_copyable_enum_layout(layouts_, edge)) {
+            const WorkflowFrameLet *let = find_let(value);
+            if (let == nullptr || let->is_construct ||
+                let->path->projection.empty()) {
+                return fail("a workflow enum constructor operand must be a prior projected field");
+            }
+            const auto leaf = path_leaf_layout(*let);
+            if (!leaf.has_value() || leaf->value != edge.value) {
+                return fail("a workflow constructor operand layout disagrees with its projected slot");
+            }
+            if (!latch_path_slot(*let, 0)) {
+                return fail("a workflow enum operand projection is not materializable");
+            }
+            const std::uint64_t enum_size =
+                layouts_.layouts[edge.value].size;
+            const std::uint64_t aligned_size =
+                (enum_size + 7u) & ~std::uint64_t{7u};
+            for (std::uint64_t word_off = 0; word_off < aligned_size;
+                 word_off += 8u) {
+                emit_copy_word(true, addr_local(0),
+                               static_cast<std::uint32_t>(word_off),
+                               dst_slot_addr,
+                               static_cast<std::uint32_t>(word_off));
+            }
+            return true;
+        }
         // A tag-only enum is physically one inline i32 discriminant word (its
         // CoreLayoutEnum shape carries only zero-sized payloads), so it takes
         // the scalar/PtrLen leaf path below; only a payload-bearing enum or a
@@ -16842,9 +17178,8 @@ class WorkflowFrameMaterializer {
             body_->u32(0);
             return true;
         }
-        if (std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape)) {
-            return fail("a workflow frame constructor cannot build a bounded collection this rung");
-        }
+        // WH-5c.7 mechanism (c): a collection header (ptr:u32,len:u32) is an
+        // 8-byte inline word, copied bit-identically like a wide scalar.
         if (std::holds_alternative<ir::core::CoreLayoutBytes>(field.shape) ||
             std::holds_alternative<ir::core::CoreLayoutClosure>(field.shape)) {
             return fail("a workflow frame constructor reaches a Uuid/closure operand");
@@ -16874,10 +17209,16 @@ class WorkflowFrameMaterializer {
                           std::uint32_t src_local,
                           std::uint32_t src_off,
                           std::uint32_t dst_addr) {
+        // WH-5c.7 mechanism (a): f64 is an 8-byte word copied bit-identically
+        // via i64.load/i64.store (wide), alongside I64. A collection header
+        // (ptr:u32,len:u32) is also an 8-byte inline word copied as one wide.
         const bool wide =
-            std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
-            std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
-                ir::core::CoreScalarRepr::I64;
+            (std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
+             (std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                  ir::core::CoreScalarRepr::I64 ||
+              std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                  ir::core::CoreScalarRepr::F64)) ||
+            std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape);
         emit_copy_word(wide, src_local, src_off, dst_addr, 0);
         if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape)) {
             emit_copy_word(false, src_local, src_off + 4u, dst_addr, 4u);
@@ -16998,7 +17339,8 @@ class WorkflowFrameMaterializer {
         const ir::core::CoreLayout &leaf_layout = layouts_.layouts[leaf->value];
         const bool aggregate_leaf =
             std::holds_alternative<ir::core::CoreLayoutStruct>(leaf_layout.shape) ||
-            std::holds_alternative<ir::core::CoreLayoutEnum>(leaf_layout.shape);
+            std::holds_alternative<ir::core::CoreLayoutEnum>(leaf_layout.shape) ||
+            std::holds_alternative<ir::core::CoreLayoutContainer>(leaf_layout.shape);
         if (let->path->projection.empty()) {
             // Bare root: the value IS the source frame.
             if (!latch_path_slot(*let, 0)) {
@@ -17023,9 +17365,6 @@ class WorkflowFrameMaterializer {
         }
         // Scalar / PtrLen projection landing at the frame root (a degenerate
         // scalar output nominal).
-        if (std::holds_alternative<ir::core::CoreLayoutContainer>(leaf_layout.shape)) {
-            return fail("a workflow frame yield cannot project a bounded collection this rung");
-        }
         copy_inline_leaf(leaf_layout, addr_local(0), 0,
                          dst_base + static_cast<std::uint32_t>(dst_off));
         return true;
@@ -17085,9 +17424,26 @@ class WorkflowFrameMaterializer {
                 std::holds_alternative<ir::core::CoreLayoutClosure>(field.shape)) {
                 return fail("a workflow frame copy reaches a Uuid/closure field");
             }
+            // WH-5c.7 mechanism (d): an inline-copyable enum (tag +
+            // scalar-only payload) is copied verbatim as a fixed-size inline
+            // blob, NOT a child-address dereference.
+            if (is_inline_copyable_enum_layout(layouts_, edge)) {
+                const std::uint64_t enum_size =
+                    layouts_.layouts[edge.value].size;
+                const std::uint64_t aligned_size =
+                    (enum_size + 7u) & ~std::uint64_t{7u};
+                for (std::uint64_t word_off = 0; word_off < aligned_size;
+                     word_off += 8u) {
+                    emit_copy_word(
+                        true, addr_local(level),
+                        static_cast<std::uint32_t>(src_off + off + word_off),
+                        dst_base,
+                        static_cast<std::uint32_t>(dst_off + off + word_off));
+                }
+                continue;
+            }
             if (std::holds_alternative<ir::core::CoreLayoutStruct>(field.shape) ||
-                std::holds_alternative<ir::core::CoreLayoutEnum>(field.shape) ||
-                std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape)) {
+                std::holds_alternative<ir::core::CoreLayoutEnum>(field.shape)) {
                 // Latch the child address from the parent's field slot, then
                 // expand that child inline.
                 append_indexed_op(*body_, kOpLocalGet, addr_local(level));

@@ -1580,7 +1580,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                     section.entry_payload_capacity);
         if (!packed.has_value()) {
             return std::unexpected(
-                "run_workflow_session: pack_value_at failed");
+                "run_workflow_session: pack_value_at failed: " +
+                std::string(frame_pack_error_name(packed.error())));
         }
 
         entry_ptr = eng::GuestPointer{block.input_base};

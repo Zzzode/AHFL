@@ -1345,6 +1345,7 @@ struct CoreWorkflowDecl {
     CoreBodyStorage storage;                  // shared node/return ANF arenas
     std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
     std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)
+    SourceRangeOpt source_range;              // workflow declaration provenance
     friend bool operator==(const CoreWorkflowDecl &, const CoreWorkflowDecl &) noexcept;
 };
 

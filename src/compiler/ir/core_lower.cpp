@@ -5035,6 +5035,7 @@ class WorkflowLowerer {
     void lower(const WorkflowDecl &decl) {
         wf_.name = decl.name;
         wf_.symbol_ref = decl.symbol_ref;
+        wf_.source_range = decl.provenance.source_range;
         wf_.input_type = types_.type_id_of(decl.input_type_ref).value_or(CoreTypeId{});
         wf_.output_type = types_.type_id_of(decl.output_type_ref).value_or(CoreTypeId{});
 

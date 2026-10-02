@@ -1,0 +1,95 @@
+// @repo-std
+//
+// WH-5c.7 conformance case: the 9-shape rich wire-type matrix.
+//
+// Every shape round-trips through the P6 frame: the agent's computed-final
+// materializer copies each field from the input frame to the output frame,
+// and the workflow-level materializer copies from the node output to the
+// workflow output. The host packer (frame_packer.cpp) and reader
+// (frame_reader.cpp) handle Decimal/Duration/Set/Map/Option/Unit/Float/Int/
+// String across the wire boundary.
+//
+// The @repo-std marker compiles this file through a project parse with the
+// repo std module root, so `import std::collections` and `import std::option`
+// resolve and the sysroot's Map declaration (with its SSOT Invariant-K /
+// Covariant-V variance) is used. A standalone single-file parse cannot
+// declare std::collections::Map with the correct variance through the
+// builtin-metadata-drift gate.
+module app::rich_matrix;
+
+import std::collections;
+import std::option;
+
+pub struct RichInput {
+    count: Int;
+    note: String;
+    dec: Decimal(2);
+    dur: Duration;
+    nums: Set<Int>(8);
+    tags: Map<String, Int>(8);
+    opt: Option<Int>;
+    nothing: Unit;
+    flag: Float;
+}
+
+pub struct RichOutput {
+    count: Int;
+    note: String;
+    dec: Decimal(2);
+    dur: Duration;
+    nums: Set<Int>(8);
+    tags: Map<String, Int>(8);
+    opt: Option<Int>;
+    nothing: Unit;
+    flag: Float;
+}
+
+pub agent EchoAgent {
+    input: RichInput;
+    context: Unit;
+    output: RichOutput;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for EchoAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return RichOutput {
+            count: input.count,
+            note: input.note,
+            dec: input.dec,
+            dur: input.dur,
+            nums: input.nums,
+            tags: input.tags,
+            opt: input.opt,
+            nothing: input.nothing,
+            flag: input.flag,
+        };
+    }
+}
+
+pub workflow RichMatrix {
+    input: RichInput;
+    output: RichOutput;
+
+    node first: EchoAgent(input);
+
+    return: RichOutput {
+        count: first.count,
+        note: first.note,
+        dec: first.dec,
+        dur: first.dur,
+        nums: first.nums,
+        tags: first.tags,
+        opt: first.opt,
+        nothing: first.nothing,
+        flag: first.flag,
+    };
+}

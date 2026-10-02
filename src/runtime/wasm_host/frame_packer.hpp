@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <string_view>
 
 namespace ahfl::runtime::wasm_host {
 
@@ -47,6 +48,10 @@ enum class FramePackError {
     PageBoundsExceeded,
     ArithmeticOverflow,
 };
+
+/// The stable enum-code name of a FramePackError, for surfacing the exact
+/// rejection reason in session errors and test pins (WH-5c.7).
+[[nodiscard]] std::string_view frame_pack_error_name(FramePackError e) noexcept;
 
 /// Pack a host Value into the fixed P6-frame input regions of a 64 KiB page.
 /// `page` must be the whole fixed single page (65536 bytes). The admitted

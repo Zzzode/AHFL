@@ -1,0 +1,53 @@
+// WH-5c.7 P1-2: Decimal bridge-rejection pin.
+//
+// The P6 frame packer/reader round-trips Decimal through the P6 frame, but
+// Decimal across a CAPABILITY bridge stays rejected at RUNTIME: the runtime
+// bridge_param_kind in capability_import.cpp returns Reject for a Decimal
+// wire shape, causing the host's argument decoder to abort the import, which
+// traps the wasm module and fails the node. The capability call is in a
+// STATEMENT position (`let reply = Echo(...)`) so
+// region_contains_capability detects it and the bridge registry is
+// populated, keeping the module on the P6 lane.
+
+module wasm::wh5c7_decimal_bridge_fail_closed;
+
+pub struct Frame {
+    amount: Decimal(2);
+}
+
+pub struct Output {
+    value: String;
+}
+
+capability Echo(request: Decimal(2)) -> Decimal(2);
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Output;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Start {
+        let reply = Echo(input.amount);
+        goto Done;
+    }
+
+    state Done {
+        return Output { value: "done" };
+    }
+}
+
+pub workflow DecimalBridgeFailClosed {
+    input: Frame;
+    output: Output;
+
+    node echo: EchoAgent(input);
+
+    return: echo;
+}

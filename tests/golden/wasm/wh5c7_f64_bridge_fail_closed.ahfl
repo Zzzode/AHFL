@@ -1,0 +1,49 @@
+// WH-5c.7 f64-bridge fail-closed pin.
+//
+// The P6 frame packer/reader now round-trips Float (f64) through the P6 frame
+// (WH-5c.7 mechanism), but f64 across a CAPABILITY bridge stays rejected. The
+// capability call is in a RETURN position (`return Echo(input)`), which
+// region_contains_capability does not detect (it scans for
+// CoreCapabilityCallStmt, not a capability call expression inside a return).
+// The bridge registry is never populated, the P6 frame section is not built,
+// and the module falls back to the WireJson (sectionless) lane. The WireJson
+// lane cannot serve the capability call, so the node fails at runtime.
+
+module wasm::wh5c7_f64_bridge_fail_closed;
+
+pub struct Frame {
+    value: String;
+    ratio: Float;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow F64BridgeFailClosed {
+    input: Frame;
+    output: Frame;
+
+    node echo: EchoAgent(input);
+
+    return: echo;
+}

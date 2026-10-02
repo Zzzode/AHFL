@@ -99,7 +99,7 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
     auto core = irc::lower_ahfl_to_core(program);
     if (!core.ok()) {
         record_compile_failure(compile_errors_,
-                               "wasm workflow runtime: core lowering failed",
+                               "core lowering failed",
                                core.diagnostics);
         return;
     }
@@ -108,7 +108,7 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
     auto layouts = irc::compute_core_layouts(core.program);
     if (!layouts.ok() || !layouts.table.has_value()) {
         record_compile_failure(compile_errors_,
-                               "wasm workflow runtime: layout computation failed",
+                               "layout computation failed",
                                layouts.diagnostics);
         return;
     }
@@ -123,8 +123,7 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
         if (!emitted.artifact.has_value() || !emitted.descriptor.has_value()) {
             record_compile_failure(
                 compile_errors_,
-                "wasm workflow runtime: wasm emission failed for workflow '" +
-                    wf.name + "'",
+                "wasm emission failed for workflow '" + wf.name + "'",
                 emitted.diagnostics);
             workflows_.clear();
             return;
@@ -159,8 +158,7 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
             .code(std::string{wasm_host::wasm_diag::kWorkflowNotFound})
-            .message("wasm workflow runtime: workflow '" + workflow_name +
-                     "' not found")
+            .message("workflow '" + workflow_name + "' not found in program")
             .emit();
         return result;
     }
@@ -283,7 +281,7 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
             .code(std::string{wasm_host::wasm_diag::kSessionFailed})
-            .message("wasm workflow runtime: " + session_result.error())
+            .message(session_result.error())
             .emit();
         return result;
     }

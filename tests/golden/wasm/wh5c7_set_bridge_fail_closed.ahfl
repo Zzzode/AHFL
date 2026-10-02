@@ -1,0 +1,56 @@
+// @repo-std
+// WH-5c.7 P1-2: Set bridge-rejection pin.
+//
+// The P6 frame packer/reader round-trips Set through the P6 frame, and the
+// compile-time verify_frame_bridge_sites check ACCEPTS Sequence (Set) in the
+// frame-walk subset (unlike Map/Float/Decimal/Duration). But the P6 scalar
+// codegen itself rejects a Set (bounded collection) as a bridge capability
+// argument: kUnsupportedCapabilityFrame is emitted and no wasm module is
+// produced. The capability call is in a STATEMENT position
+// (`let reply = Echo(...)`) so region_contains_capability detects it and the
+// bridge registry is populated.
+
+module wasm::wh5c7_set_bridge_fail_closed;
+
+import std::collections;
+
+pub struct Frame {
+    nums: Set<Int>(8);
+}
+
+pub struct Output {
+    value: String;
+}
+
+capability Echo(request: Set<Int>(8)) -> Set<Int>(8);
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Output;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Start {
+        let reply = Echo(input.nums);
+        goto Done;
+    }
+
+    state Done {
+        return Output { value: "done" };
+    }
+}
+
+pub workflow SetBridgeFailClosed {
+    input: Frame;
+    output: Output;
+
+    node echo: EchoAgent(input);
+
+    return: echo;
+}

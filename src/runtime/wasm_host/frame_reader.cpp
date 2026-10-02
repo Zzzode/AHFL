@@ -1,7 +1,9 @@
 #include "runtime/wasm_host/frame_reader.hpp"
 
 #include "runtime/value/value_json.hpp"
+#include "runtime/wasm_host/frame_spelling.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
+#include "runtime/value/scalar_spelling.hpp"
 #include "runtime/value/value.hpp"
 
 #include <algorithm>
@@ -28,7 +30,10 @@ using ir::core::CoreLayoutPtrLen;
 using ir::core::CoreLayoutScalar;
 using ir::core::CoreLayoutStruct;
 using ir::core::CoreScalarRepr;
+using ir::core::CoreWireSchemaDecimal;
+using ir::core::CoreWireSchemaDuration;
 using ir::core::CoreWireSchemaEnum;
+using ir::core::CoreWireSchemaMap;
 using ir::core::CoreWireSchemaNodeId;
 using ir::core::CoreWireSchemaOption;
 using ir::core::CoreWireSchemaSequence;
@@ -480,8 +485,101 @@ read_value_at(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
         return make_list(std::move(items));
     }
 
-    // Float / Decimal / Duration / Timestamp / Uuid / Map: outside the frame
-    // subset — fail closed.
+    // Decimal: i64 mantissa word, rebuilt to a source-literal spelling using
+    // the wire-schema scale (WH-5c.7 mechanism (f)).
+    if (const auto *w_dec = std::get_if<CoreWireSchemaDecimal>(&w->shape)) {
+        const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
+        if (scalar == nullptr || scalar->repr != CoreScalarRepr::I64) {
+            return std::unexpected(FrameReadError::ShapeMismatch);
+        }
+        const auto wide = read_u64_le(page, addr);
+        if (!wide.has_value()) {
+            return std::unexpected(FrameReadError::PageBoundsExceeded);
+        }
+        const auto mantissa = static_cast<std::int64_t>(*wide);
+        return make_decimal(
+            format_decimal_spelling(mantissa, static_cast<std::int32_t>(w_dec->scale)));
+    }
+
+    // Duration: i64 millis word, rebuilt to a source-unit spelling
+    // (WH-5c.7 mechanism (f)).
+    if (std::holds_alternative<CoreWireSchemaDuration>(w->shape)) {
+        const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
+        if (scalar == nullptr || scalar->repr != CoreScalarRepr::I64) {
+            return std::unexpected(FrameReadError::ShapeMismatch);
+        }
+        const auto wide = read_u64_le(page, addr);
+        if (!wide.has_value()) {
+            return std::unexpected(FrameReadError::PageBoundsExceeded);
+        }
+        return make_duration(
+            format_duration_spelling(static_cast<std::int64_t>(*wide)));
+    }
+
+    // Map: inline (ptr,len) header, key/value pairs at the placement (or the
+    // module-written base). Each entry occupies one stride: key at offset 0,
+    // value at value_offset (WH-5c.7 mechanism (f)).
+    if (const auto *w_map = std::get_if<CoreWireSchemaMap>(&w->shape)) {
+        const auto *l_container = std::get_if<CoreLayoutContainer>(&l->shape);
+        if (l_container == nullptr || !l_container->value.has_value()) {
+            return std::unexpected(FrameReadError::ShapeMismatch);
+        }
+        const auto len = read_u32_le(page, addr + 4);
+        if (!len.has_value()) {
+            return std::unexpected(FrameReadError::PageBoundsExceeded);
+        }
+        const std::uint64_t capacity =
+            w_map->capacity.value_or(l_container->capacity);
+        if (static_cast<std::uint64_t>(*len) > capacity) {
+            return std::unexpected(FrameReadError::CollectionLengthOutOfRange);
+        }
+        std::uint32_t base = 0;
+        if (const auto *placement = ctx.placement_for(lId)) {
+            base = placement->base;
+            const auto scaled = checked_mul_u32(static_cast<std::uint64_t>(*len),
+                                                l_container->stride);
+            if (!scaled.has_value() ||
+                static_cast<std::uint64_t>(*scaled) > placement->extent) {
+                return std::unexpected(FrameReadError::CollectionOverrunsPlacement);
+            }
+        } else {
+            const auto header_ptr = read_u32_le(page, addr + 0);
+            if (!header_ptr.has_value()) {
+                return std::unexpected(FrameReadError::PageBoundsExceeded);
+            }
+            base = *header_ptr;
+        }
+        std::vector<std::pair<Value, Value>> entries;
+        entries.reserve(*len);
+        for (std::uint32_t i = 0; i < *len; ++i) {
+            const auto entry_base = checked_add_u32(
+                base, static_cast<std::uint64_t>(i) * l_container->stride);
+            if (!entry_base.has_value()) {
+                return std::unexpected(FrameReadError::ArithmeticOverflow);
+            }
+            auto key = read_value_at(ctx, page, w_map->key,
+                                  l_container->element, *entry_base,
+                                  string_regions);
+            if (!key.has_value()) {
+                return key;
+            }
+            const auto value_addr = checked_add_u32(
+                *entry_base, l_container->value_offset);
+            if (!value_addr.has_value()) {
+                return std::unexpected(FrameReadError::ArithmeticOverflow);
+            }
+            auto val = read_value_at(ctx, page, w_map->value,
+                                  *l_container->value, *value_addr,
+                                  string_regions);
+            if (!val.has_value()) {
+                return val;
+            }
+            entries.emplace_back(std::move(*key), std::move(*val));
+        }
+        return make_map(std::move(entries));
+    }
+
+    // Timestamp / Uuid / Closure: outside the frame subset — fail closed.
     return std::unexpected(FrameReadError::ShapeMismatch);
 }
 

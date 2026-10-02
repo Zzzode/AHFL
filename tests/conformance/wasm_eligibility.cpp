@@ -245,12 +245,22 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     // assumes cap-on-node-0). Same manifest-claim treatment; the Node runner
     // pins an exact stem set. This reason MUST NOT be used where the module
     // actually emits ahfl_xcode sites (that is the HostTranscode reason).
+    //
+    // WH-5c.7 (GAP 5): a case whose wire-type matrix carries shapes the Node
+    // oracle host's P6 frame packer/reader does not yet implement (Map /
+    // Decimal / Duration / Float are outside the JS host's rung-E frame
+    // subset). The C++ host supports them (WH-5c.7); the module emits and the
+    // native wasm3 lane agrees, but the Node observation is withheld until
+    // the JS host ports the rich wire-type matrix. Same manifest-claim
+    // treatment; the Node runner pins an exact stem set.
     const bool declared_node_only =
         declared.node_observation_skip == Skip::EvaluatorSurfaceAwaitsKr68;
     const bool declared_host_transcode =
         declared.node_observation_skip == Skip::HostTranscodeAwaitsNodePort;
     const bool declared_multinode_stash =
         declared.node_observation_skip == Skip::NodeHostAwaitsMultiNodeStashJoin;
+    const bool declared_rich_wire_types =
+        declared.node_observation_skip == Skip::NodeHostAwaitsRichWireTypes;
     if (declared_node_only) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
@@ -277,6 +287,15 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
                    std::string{wasm_eligibility_verdict_name(verdict)} +
                    ": " + computed.reason +
                    ") -- a multi-node stash-join skip requires a runnable artifact";
+        }
+    } else if (declared_rich_wire_types) {
+        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
+            return "manifest declares engines.wasm.node_observation_skip="
+                   "'node_host_awaits_rich_wire_types' but the module does not emit on the "
+                   "orchestration lane (" +
+                   std::string{wasm_eligibility_verdict_name(verdict)} +
+                   ": " + computed.reason +
+                   ") -- a rich wire-types skip requires a runnable artifact";
         }
     } else if (declared.node_observation_skip != required_skip) {
         return "manifest's engines.wasm.node_observation_skip declaration does not match the "

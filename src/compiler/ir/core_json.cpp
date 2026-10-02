@@ -1406,6 +1406,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                 field("return_region",
                       [&]() { print_region(*workflow.return_region, indent_level + 1); });
             }
+            write_source_range_field(field, workflow.source_range, indent_level + 1);
         });
     }
 
@@ -3495,7 +3496,7 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
         if (!check_fields(*item,
                           {"id", "name", "symbol_ref", "input_type", "output_type", "value_count",
                            "exprs", "value_types", "coercion_plans", "patterns", "nodes",
-                           "return_region"},
+                           "return_region", "source_range"},
                           "workflow declaration")) {
             return false;
         }
@@ -3637,6 +3638,11 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
                 return false;
             }
         }
+        const auto wf_range = opt_source_range(*item, "source_range");
+        if (!wf_range.has_value()) {
+            return false;
+        }
+        decl.source_range = *wf_range;
         program.workflows.push_back(std::move(decl));
     }
     return ok();

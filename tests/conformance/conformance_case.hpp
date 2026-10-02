@@ -156,6 +156,14 @@ enum class WasmNodeObservationSkip {
     /// used for a module that emits ahfl_xcode sites (that gap is
     /// HostTranscodeAwaitsNodePort).
     NodeHostAwaitsMultiNodeStashJoin,
+    /// The module emits and the evaluator agrees (the native wasm3 lane
+    /// compares), but the workflow's wire-type matrix carries shapes the
+    /// Node oracle host's P6 frame packer/reader does not yet implement
+    /// (Map / Decimal / Duration / Float are outside the JS host's
+    /// rung-E frame subset). The C++ host supports them (WH-5c.7); the
+    /// Node observation is withheld until the JS host ports the rich
+    /// wire-type matrix.
+    NodeHostAwaitsRichWireTypes,
 };
 
 struct WasmEngineEligibility {
@@ -547,6 +555,16 @@ class ConformanceCaseReader {
                   "'node_host_awaits_multinode_stash_join' "
                   "requires engines.wasm.eligible 'orchestration' (the module emits "
                   "but the Node host lacks the WH-5c.5 multi-node stash-table join)",
+                  std::nullopt);
+            return std::nullopt;
+        }
+        if (wasm.node_observation_skip ==
+                WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes &&
+            wasm.eligibility != WasmEligibility::Orchestration) {
+            error("engines.wasm.node_observation_skip "
+                  "'node_host_awaits_rich_wire_types' "
+                  "requires engines.wasm.eligible 'orchestration' (the module emits "
+                  "but the Node host lacks the WH-5c.7 rich wire-type matrix)",
                   std::nullopt);
             return std::nullopt;
         }
@@ -1113,10 +1131,14 @@ class ConformanceCaseReader {
         if (*value == "node_host_awaits_multinode_stash_join") {
             return WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin;
         }
+        if (*value == "node_host_awaits_rich_wire_types") {
+            return WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes;
+        }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
               "'blocked_kr66', 'evaluator_surface_awaits_kr68', "
-              "'host_transcode_awaits_node_port', or "
-              "'node_host_awaits_multinode_stash_join', got '" +
+              "'host_transcode_awaits_node_port', "
+              "'node_host_awaits_multinode_stash_join', or "
+              "'node_host_awaits_rich_wire_types', got '" +
                   *value + "'",
               range_of(node));
         return std::nullopt;

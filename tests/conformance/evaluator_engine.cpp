@@ -184,12 +184,14 @@ EvaluatorScenarioResult run_evaluator_scenario(const LoadedConformanceCase &load
         return EvaluatorScenarioResult{.ok = false, .observation_json = {}, .error = error};
     }
 
-    auto input = runtime::value_from_json(scenario.input_json);
+    auto input = decode_conformance_input(*program, manifest.entry,
+                                          scenario.input_json, error);
     if (!input.has_value()) {
         return EvaluatorScenarioResult{
             .ok = false,
             .observation_json = {},
-            .error = "failed to decode scenario '" + scenario.name + "' input from wire JSON",
+            .error = "failed to decode scenario '" + scenario.name +
+                     "' input: " + error,
         };
     }
 

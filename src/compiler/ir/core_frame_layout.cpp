@@ -1162,19 +1162,18 @@ class Decoder {
         // Placements: dense edge indices, container nodes, extents that match the
         // RE-DERIVED aligned backing (== stride*capacity), and pairwise-disjoint
         // fixed-page extents on the sum-of-prior-backing rule. A V2-D workflow
-        // section has NO agent input placements or agent payload arena: the
-        // entry frame is packed directly into an entry node's I block and the
-        // entry payload arena is the separate workflow span. Those are checked
-        // by verify_workflow_spans below.
+        // section carries input-collection backing placements (the host packer
+        // needs them to place collection elements) but NO agent payload arena:
+        // the entry payload arena is the separate workflow span, checked by
+        // verify_workflow_spans below.
         constexpr std::uint64_t kBackingBase = kP6CollectionBackingBase;
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
         const bool workflow_section_v2 =
             section.format_version >= 2 && !section.node_blocks.empty();
         if (workflow_section_v2) {
-            if (!section.placements.empty() || section.payload_arena_base != 0 ||
+            if (section.payload_arena_base != 0 ||
                 section.payload_arena_capacity != 0) {
-                fail_local("a workflow frame-layout section cannot carry agent backing "
-                           "placements or an agent payload arena");
+                fail_local("a workflow frame-layout section cannot carry an agent payload arena");
                 return diags;
             }
         }
@@ -1185,7 +1184,7 @@ class Decoder {
         // first (the JS oracle rejects this with Map.has). Reject at admission.
         std::vector<bool> placed_layouts(table.layouts.size(), false);
         for (std::uint32_t i = 0;
-             !workflow_section_v2 && i < section.placements.size(); ++i) {
+             i < section.placements.size(); ++i) {
             const CoreFrameBackingPlacement &placement = section.placements[i];
             if (placement.edge_index != i) {
                 fail_local("frame-layout backing placement edge indices are not dense and in "

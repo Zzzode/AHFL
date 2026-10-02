@@ -81,7 +81,10 @@ using ahfl::conformance::run_native_scenario;
 // the agreed set (three-node identity+capability+identity workflow; the
 // per-node output stash table makes every node output host-observable):
 // 71/0 -> 72/0.
-constexpr int kExpectedNativeAgreed = 72;
+// WH-5c.7: the 9-shape rich wire-type matrix (Int/String/Decimal/Duration/
+// Set/Map/Option/Unit/Float) round-trips through the P6 frame packer/reader
+// and the computed-final + workflow-level materializers: 72/0 -> 73/0.
+constexpr int kExpectedNativeAgreed = 73;
 constexpr int kExpectedNativeSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare

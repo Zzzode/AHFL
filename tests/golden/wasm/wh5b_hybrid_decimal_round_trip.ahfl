@@ -1,0 +1,72 @@
+// WH-5c.7 Decimal round-trip pin (replaces the WH-5b.3 fail-closed pin).
+//
+// The WH-5b.3 pin asserted that the host packer (frame_packer.cpp) and reader
+// (frame_reader.cpp) both fail closed on CoreWireSchemaDecimal. WH-5c.7
+// implemented the Decimal <-> i64-mantissa pack/read path, so the packer now
+// round-trips a Decimal(2) field through the P6 frame: the packer parses the
+// spelling via scalar_spelling::parse_decimal and writes the i64 mantissa;
+// the reader rebuilds the spelling via format_decimal_spelling.
+//
+// This fixture carries a Decimal(2) field in the workflow IO so the host's
+// entry pack (pack_value_at) and the wasm module's computed-final materializer
+// both exercise the Decimal path. The test asserts the session SUCCEEDS and
+// the output Decimal matches the input, pinning the round-trip behavior.
+
+module wasm::wh5b_hybrid_decimal_round_trip;
+
+pub struct Frame {
+    n: Int;
+    amount: Decimal(2);
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+// P6-packaged agent: computed-goto + computed-final. Returns the input
+// Decimal verbatim (the computed-final materializer copies the i64 mantissa
+// from the input frame to the output frame).
+pub agent ComputeAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for ComputeAgent {
+    state Decide {
+        if (input.n > 0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n, amount: input.amount };
+    }
+}
+
+pub workflow DecimalRoundTrip {
+    input: Frame;
+    output: Frame;
+
+    node compute: ComputeAgent(input);
+
+    return: compute;
+}

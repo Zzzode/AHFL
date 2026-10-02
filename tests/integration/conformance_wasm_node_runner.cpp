@@ -173,8 +173,16 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // ok-null capability result finds completed_count already 1): 69/2 ->
 // 69/3. The Node observation is withheld until the JS host ports the
 // WH-5c.5 stash-table join.
+// WH-5c.7: the 9-shape rich wire-type matrix case (wh5c7_rich_input_matrix)
+// skips the Node lane under another SEPARATE, truthful reason
+// (node_host_awaits_rich_wire_types): the module emits and the native
+// wasm3 lane agrees with the evaluator, but the Node oracle host's P6
+// frame packer/reader does not implement Map / Decimal / Duration / Float
+// (they are outside the JS host's rung-E frame subset). The C++ host
+// supports them (WH-5c.7); the Node observation is withheld until the JS
+// host ports the rich wire-type matrix: 69/3 -> 69/4.
 constexpr int kExpectedAgreed = 69;
-constexpr int kExpectedSkipped = 3;
+constexpr int kExpectedSkipped = 4;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
@@ -221,6 +229,19 @@ constexpr std::array<std::string_view, 1> kExpectedMultiNodeStashStems{
     "wh5c5_gap4_stash_parity",
 };
 
+// Pinned STEM SET of cases allowed to declare
+// engines.wasm.node_observation_skip=
+// 'node_host_awaits_rich_wire_types'. The module emits and the native
+// wasm3 lane agrees with the evaluator, but the Node oracle host's P6
+// frame packer/reader does not implement the rich wire-type matrix
+// (Map / Decimal / Duration / Float are outside the JS host's rung-E
+// frame subset). The C++ host supports them (WH-5c.7); the Node
+// observation is withheld until the JS host ports the rich wire-type
+// matrix. Keep sorted.
+constexpr std::array<std::string_view, 1> kExpectedRichWireTypesStems{
+    "wh5c7_rich_input_matrix",
+};
+
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
@@ -235,6 +256,10 @@ std::vector<std::string> g_host_transcode_stems;
 // WH-5c.5 multi-node stash-table join; compared against
 // kExpectedMultiNodeStashStems on a full run.
 std::vector<std::string> g_multinode_stash_stems;
+// Stems that skipped the Node observation because the Node host predates the
+// WH-5c.7 rich wire-type matrix; compared against
+// kExpectedRichWireTypesStems on a full run.
+std::vector<std::string> g_rich_wire_types_stems;
 
 void check(bool condition, std::string_view name) {
     if (!condition) {
@@ -534,7 +559,7 @@ int run_one(const CaseEntry &entry,
 
     // The module emitted. A manifest that declares a Node-observation skip for a
     // case that actually produces a comparable module is a stale skip claim --
-    // fail before running the Node host so neither outcome can mask it. The two
+    // fail before running the Node host so neither outcome can mask it. The
     // exceptions are:
     //  - the FB-3b node-only lane (EvaluatorSurfaceAwaitsKr68): the module runs,
     //    but there is no evaluator reference, so the Node observation is
@@ -547,14 +572,21 @@ int run_one(const CaseEntry &entry,
     //    an all-opaque multi-node workflow emits no transcode sites and agrees
     //    natively via the WH-5c.5 stash table, but the Node host predates that
     //    join, so the observation is withheld.
+    //  - the rich wire-type lane (NodeHostAwaitsRichWireTypes): the module
+    //    emits and the native wasm3 lane agrees, but the Node host's P6 frame
+    //    packer/reader does not implement Map / Decimal / Duration / Float
+    //    (outside the JS host's rung-E frame subset), so the observation is
+    //    withheld.
     const bool node_only =
         declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
     const bool host_transcode_skip =
         declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
     const bool multinode_stash_skip =
         declared_skip == WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin;
+    const bool rich_wire_types_skip =
+        declared_skip == WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes;
     if (declared_skip != WasmNodeObservationSkip::None && !node_only &&
-        !host_transcode_skip && !multinode_stash_skip) {
+        !host_transcode_skip && !multinode_stash_skip && !rich_wire_types_skip) {
         std::cerr << "FAIL: " << label
                   << " emits a comparable module but its manifest declares a "
                      "engines.wasm.node_observation_skip expectation; the skip did not "
@@ -596,6 +628,21 @@ int run_one(const CaseEntry &entry,
         std::cout << "SKIP[77] " << label
                   << ": Node embedded host lacks the WH-5c.5 multi-node "
                      "stash-table join (all-opaque workflow, no transcode sites)\n";
+        return 77;
+    }
+
+    // The WH-5c.7 rich wire-type lane: the module emits and the native wasm3
+    // lane agrees with the evaluator, but the Node oracle host's P6 frame
+    // packer/reader does not implement Map / Decimal / Duration / Float
+    // (they are outside the JS host's rung-E frame subset). Withhold the
+    // Node observation until the JS host ports the rich wire-type matrix.
+    if (rich_wire_types_skip) {
+        ++g_skipped;
+        g_rich_wire_types_stems.push_back(stem);
+        std::cout << "SKIP[77] " << label
+                  << ": Node embedded host lacks the WH-5c.7 rich wire-type "
+                     "matrix (Map / Decimal / Duration / Float outside the "
+                     "JS host's rung-E frame subset)\n";
         return 77;
     }
 
@@ -832,6 +879,35 @@ int mode_verify(const fs::path &repo_root,
             }
             std::cerr << "} (an un-reviewed case moved onto the multi-node "
                          "stash-join lane?)\n";
+            ++g_failures;
+        }
+        // Exact-set pin of the WH-5c.7 rich wire-type
+        // (node_host_awaits_rich_wire_types) stems: keeps the Node-host gap
+        // reasons disjoint -- a case that traps at ahfl_xcode sites cannot be
+        // filed under the rich-wire-type gap (or vice versa).
+        std::sort(g_rich_wire_types_stems.begin(),
+                  g_rich_wire_types_stems.end());
+        g_rich_wire_types_stems.erase(
+            std::unique(g_rich_wire_types_stems.begin(),
+                        g_rich_wire_types_stems.end()),
+            g_rich_wire_types_stems.end());
+        std::vector<std::string> expected_rwt_stems;
+        expected_rwt_stems.reserve(kExpectedRichWireTypesStems.size());
+        for (const std::string_view s : kExpectedRichWireTypesStems) {
+            expected_rwt_stems.emplace_back(s);
+        }
+        if (g_rich_wire_types_stems != expected_rwt_stems) {
+            std::cerr << "FAIL: rich wire-type "
+                         "(node_host_awaits_rich_wire_types) stem set is {";
+            for (std::size_t i = 0; i < g_rich_wire_types_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << g_rich_wire_types_stems[i];
+            }
+            std::cerr << "} but the pinned set is {";
+            for (std::size_t i = 0; i < expected_rwt_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << expected_rwt_stems[i];
+            }
+            std::cerr << "} (an un-reviewed case moved onto the rich "
+                         "wire-type lane?)\n";
             ++g_failures;
         }
     }

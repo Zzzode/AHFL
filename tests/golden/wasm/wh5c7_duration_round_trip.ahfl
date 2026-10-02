@@ -1,0 +1,49 @@
+// WH-5c.7 Duration round-trip pin.
+//
+// The P6 frame carries Duration as an i64 millis word. The packer parses the
+// spelling via scalar_spelling::parse_duration and writes the i64 millis; the
+// reader rebuilds the spelling via format_duration_spelling. This fixture
+// carries a Duration field in the workflow IO so the host's entry pack
+// (pack_value_at) exercises the Duration path. The spelling round-trip guard
+// rejects non-canonical unit forms ("60s", "5000ms") at entry pack.
+
+module wasm::wh5c7_duration_round_trip;
+
+pub struct Frame {
+    n: Int;
+    dur: Duration;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+pub agent ComputeAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for ComputeAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n, dur: input.dur };
+    }
+}
+
+pub workflow DurationRoundTrip {
+    input: Frame;
+    output: Frame;
+
+    node compute: ComputeAgent(input);
+
+    return: compute;
+}

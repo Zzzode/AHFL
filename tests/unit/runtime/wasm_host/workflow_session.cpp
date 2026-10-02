@@ -43,7 +43,9 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -163,6 +165,10 @@ struct EmittedWorkflow {
     // the wasm lane's output Value is checked against the evaluator's
     // structurally, not against a hardcoded JSON string.
     ir::Program program;
+    // WH-5c.7 P1-2/P2-2: the codegen diagnostics, retained so a test can pin
+    // the exact compile-time rejection code (kUnsupportedCapabilityFrame)
+    // for a rich-type bridge parameter.
+    std::vector<ahfl::backends::CoreWasmDiagnostic> diagnostics;
 };
 
 [[nodiscard]] std::optional<EmittedWorkflow>
@@ -204,7 +210,63 @@ emit_workflow(const std::filesystem::path &source_path) {
         .module_bytes = emitted.artifact->bytes,
         .descriptor = std::move(*emitted.descriptor),
         .program = std::move(*program),
+        .diagnostics = emitted.diagnostics,
     };
+}
+
+// WH-5c.7 P1-2: variant of emit_workflow that ALWAYS returns diagnostics,
+// even when the codegen rejects the module (no artifact). Needed for Map/Set
+// bridge pins whose REAL rejection layer is the P6 scalar codegen itself
+// (kUnsupportedCapabilityFrame), not the runtime bridge_param_kind.
+struct EmitOrDiag {
+    std::optional<EmittedWorkflow> wf;
+    std::vector<ahfl::backends::CoreWasmDiagnostic> diagnostics;
+};
+
+[[nodiscard]] EmitOrDiag
+emit_workflow_or_diag(const std::filesystem::path &source_path) {
+    EmitOrDiag result;
+    std::string error;
+    auto program = conf::compile_conformance_source(source_path, error);
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return result;
+    }
+    const auto core = irc::lower_ahfl_to_core(*program);
+    if (!core.ok()) {
+        std::cerr << "  core lower failed\n";
+        for (const auto &d : core.diagnostics) {
+            std::cerr << "    [" << d.code << "] " << d.message << "\n";
+        }
+        return result;
+    }
+    const auto layouts = irc::compute_core_layouts(core.program);
+    if (!layouts.ok() || !layouts.table.has_value()) {
+        std::cerr << "  layout failed\n";
+        return result;
+    }
+    const auto emitted = ahfl::backends::emit_core_wasm(
+        core.program, *layouts.table,
+        {irc::CoreWorkflowId{0}, ahfl::backends::WasmProfileKind::Wasi});
+    result.diagnostics = emitted.diagnostics;
+    if (!emitted.artifact.has_value()) {
+        std::cerr << "  emit failed: no artifact\n";
+        for (const auto &d : emitted.diagnostics) {
+            std::cerr << "    [" << d.code << "] " << d.message << "\n";
+        }
+        return result;
+    }
+    if (!emitted.descriptor.has_value()) {
+        std::cerr << "  emit failed: no descriptor\n";
+        return result;
+    }
+    result.wf = EmittedWorkflow{
+        .module_bytes = emitted.artifact->bytes,
+        .descriptor = std::move(*emitted.descriptor),
+        .program = std::move(*program),
+        .diagnostics = emitted.diagnostics,
+    };
+    return result;
 }
 
 // WH-5c.6: build the SAME host-side range resolvers the facade builds
@@ -2362,11 +2424,11 @@ void test_hybrid_rich_p6_to_opaque(const std::filesystem::path &repo_root) {
 // value. The transcode boundary is unreachable for Closure; the codec-level
 // rejection is already pinned in core_json_round_trip and
 // frame_packer_reader.cpp.
-void test_hybrid_decimal_fail_closed(const std::filesystem::path &repo_root) {
+void test_hybrid_decimal_round_trip(const std::filesystem::path &repo_root) {
     const auto source =
-        repo_root / "tests/golden/wasm/wh5b_hybrid_decimal_fail_closed.ahfl";
+        repo_root / "tests/golden/wasm/wh5b_hybrid_decimal_round_trip.ahfl";
     auto wf = emit_workflow(source);
-    check(wf.has_value(), "decimal_fail.emit");
+    check(wf.has_value(), "decimal_rt.emit");
     if (!wf.has_value()) {
         return;
     }
@@ -2376,27 +2438,314 @@ void test_hybrid_decimal_fail_closed(const std::filesystem::path &repo_root) {
     // the struct directly.
     Value input{ahfl::runtime::StructValue{}};
     auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
-    sv.type_name = "wasm::wh5b_hybrid_decimal_fail_closed::Frame";
+    sv.type_name = "wasm::wh5b_hybrid_decimal_round_trip::Frame";
     sv.fields.set("n",
                   std::make_unique<Value>(Value{ahfl::runtime::IntValue{1}}));
     sv.fields.set(
         "amount",
         std::make_unique<Value>(Value{ahfl::runtime::DecimalValue{"1.25"}}));
 
-    int cap_invoked_count = 0;
     wh::WorkflowSessionConfig config;
-    config.capability_invoked_hook =
-        [&cap_invoked_count](AgentId, std::string_view) {
-            ++cap_invoked_count;
-        };
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           input, std::move(config));
+    // WH-5c.7: the packer now round-trips Decimal(2) through the P6 frame
+    // (parse_decimal -> i64 mantissa -> format_decimal_spelling). The session
+    // must SUCCEED and the output Decimal must match the input.
+    check(result.has_value(), "decimal_rt.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+    const auto *output = result->result.output();
+    check(output != nullptr, "decimal_rt.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json == R"({"_type":"wasm::wh5b_hybrid_decimal_round_trip::Frame","amount":"1.25","n":1})",
+              "decimal_rt.output_value");
+    }
+}
+
+// ==== WH-5c.7 P1-1: Decimal spelling round-trip guard ====
+//
+// The packer rebuilds the canonical spelling from the i64 mantissa and
+// compares it EXACTLY against the source spelling. A non-canonical spelling
+// whose scale matches the wire schema (e.g. "01.20" for Decimal(2)) is
+// rejected with ValueNotWireEncodable at entry pack. A spelling whose scale
+// does not match (e.g. "1.2" or "1.200" for Decimal(2)) is rejected with
+// ShapeMismatch by the existing scale check. Both rejections happen at ENTRY
+// PACK before the module runs.
+
+void test_decimal_spelling_guard(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_decimal_round_trip.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "dec_sg.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto make_input = [](const std::string &spelling) {
+        Value input{ahfl::runtime::StructValue{}};
+        auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
+        sv.type_name = "wasm::wh5b_hybrid_decimal_round_trip::Frame";
+        sv.fields.set("n",
+                      std::make_unique<Value>(Value{ahfl::runtime::IntValue{1}}));
+        sv.fields.set(
+            "amount",
+            std::make_unique<Value>(Value{ahfl::runtime::DecimalValue{spelling}}));
+        return input;
+    };
+
+    // Accept: "1.20" is canonical for Decimal(2).
+    {
+        auto input = make_input("1.20");
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                               input, std::move(config));
+        check(result.has_value(), "dec_sg.accept_1.20");
+        if (!result.has_value()) {
+            std::cerr << "  error: " << result.error() << "\n";
+        }
+    }
+
+    // Reject: "1.2" has scale 1, wire schema expects scale 2 -> ShapeMismatch.
+    {
+        auto input = make_input("1.2");
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                               input, std::move(config));
+        check(!result.has_value(), "dec_sg.reject_1.2");
+        if (!result.has_value()) {
+            check(result.error().find("ShapeMismatch") != std::string::npos,
+                  "dec_sg.reject_1.2.code");
+        }
+    }
+
+    // Reject: "1.200" has scale 3, wire schema expects scale 2 ->
+    // ShapeMismatch.
+    {
+        auto input = make_input("1.200");
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                               input, std::move(config));
+        check(!result.has_value(), "dec_sg.reject_1.200");
+        if (!result.has_value()) {
+            check(result.error().find("ShapeMismatch") != std::string::npos,
+                  "dec_sg.reject_1.200.code");
+        }
+    }
+
+    // Reject: "01.20" has the right scale (2) but is non-canonical (leading
+    // zero) -> ValueNotWireEncodable from the spelling guard.
+    {
+        auto input = make_input("01.20");
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                               input, std::move(config));
+        check(!result.has_value(), "dec_sg.reject_01.20");
+        if (!result.has_value()) {
+            check(result.error().find("ValueNotWireEncodable") !=
+                      std::string::npos,
+                  "dec_sg.reject_01.20.code");
+        }
+    }
+}
+
+// ==== WH-5c.7 P1-1: Duration spelling round-trip guard ====
+//
+// The packer rebuilds the canonical source-unit spelling from the i64 millis
+// and compares it EXACTLY against the source spelling. A non-canonical unit
+// form ("60s" instead of "1m", "5000ms" instead of "5s") is rejected with
+// ValueNotWireEncodable at entry pack before the module runs. Canonical
+// forms ("1m", "5s", "250ms") round-trip successfully.
+
+void test_duration_spelling_guard(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_duration_round_trip.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "dur_sg.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto make_input = [](const std::string &spelling) {
+        Value input{ahfl::runtime::StructValue{}};
+        auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
+        sv.type_name = "wasm::wh5c7_duration_round_trip::Frame";
+        sv.fields.set("n",
+                      std::make_unique<Value>(Value{ahfl::runtime::IntValue{1}}));
+        sv.fields.set(
+            "dur",
+            std::make_unique<Value>(Value{ahfl::runtime::DurationValue{spelling}}));
+        return input;
+    };
+
+    // Accept: canonical forms.
+    for (const char *spelling : {"1m", "5s", "250ms"}) {
+        auto input = make_input(spelling);
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                               input, std::move(config));
+        check(result.has_value(),
+              std::string("dur_sg.accept_") + spelling);
+        if (!result.has_value()) {
+            std::cerr << "  error: " << result.error() << "\n";
+        }
+    }
+
+    // Reject: non-canonical unit forms -> ValueNotWireEncodable.
+    for (const char *spelling : {"60s", "5000ms"}) {
+        auto input = make_input(spelling);
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                               input, std::move(config));
+        check(!result.has_value(),
+              std::string("dur_sg.reject_") + spelling);
+        if (!result.has_value()) {
+            check(result.error().find("ValueNotWireEncodable") !=
+                      std::string::npos,
+                  std::string("dur_sg.reject_") + spelling + ".code");
+        }
+    }
+}
+
+// ==== WH-5c.7: f64-bridge fail-closed pin ====
+//
+// The P6 frame packer/reader now round-trips Float (f64) through the P6
+// frame, but f64 across a CAPABILITY bridge stays rejected. The capability
+// call is in a RETURN position (`return Echo(input)`), which
+// region_contains_capability does not detect (it scans for
+// CoreCapabilityCallStmt, not a capability call expression inside a
+// return). The bridge registry is never populated, the P6 frame section is
+// not built, and the module falls back to the WireJson (sectionless) lane
+// with no compile-time diagnostic. The WireJson lane cannot serve the
+// capability call, so the node fails at runtime.
+
+void test_f64_bridge_fail_closed(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_f64_bridge_fail_closed.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "f64_fc.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // P2-2: the true rejection layer. The capability call is in a RETURN
+    // position (`return Echo(input)`), which region_contains_capability does
+    // not detect (it scans for CoreCapabilityCallStmt, not a capability call
+    // expression inside a return). The bridge registry is never populated,
+    // the P6 frame section is not built, and the module falls back to the
+    // WireJson (sectionless) lane with no compile-time diagnostic. The
+    // WireJson lane cannot serve the capability call, so the node fails.
+    check(wf->descriptor.frame_contract ==
+              ahfl::backends::CoreWasmFrameContract::WireJson,
+          "f64_fc.wire_json_lane");
+    check(!wf->descriptor.frame_section.has_value(),
+          "f64_fc.no_frame_section");
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5c7_f64_bridge_fail_closed::Frame","value":"x","ratio":1.5})");
+    check(input.has_value(), "f64_fc.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
     config.invoker = [](const CapabilityInvocationContext &,
                         const std::string &,
-                        const std::vector<Value> &args) -> CapabilityCallResult {
+                        const std::vector<Value> &) -> CapabilityCallResult {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
-        if (!args.empty()) {
-            r.value = ahfl::runtime::clone_value(args[0]);
-        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    // The session runs on the WireJson lane; the node fails because the
+    // WireJson lane cannot serve the capability call.
+    check(result.has_value(), "f64_fc.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "f64_fc.node_failed");
+}
+
+// ==== WH-5c.7 P1-2: rich-type bridge-rejection pins ====
+//
+// Four dedicated pins for Decimal/Duration/Set/Map across a capability
+// bridge. The capability call is in a STATEMENT position (`let reply =
+// Echo(input)`) so region_contains_capability detects it and the bridge
+// registry is populated.
+//
+// Decimal/Duration/Map: verify_frame_bridge_sites rejects the rich-type
+// bridge parameter at COMPILE TIME. The codegen surfaces it as
+// kUnsupportedCapabilityFrame and the module falls back to the WireJson lane.
+//
+// Set (Sequence): verify_frame_bridge_sites ACCEPTS Sequence in the
+// frame-walk subset. The module stays on the P6 lane (frame section
+// attached), but the runtime bridge_param_kind returns Reject for a Sequence
+// wire shape, causing the host's argument decoder to abort the import, which
+// traps the wasm module and fails the node.
+
+namespace {
+
+[[nodiscard]] bool
+has_diagnostic(const EmittedWorkflow &wf, std::string_view code) {
+    return std::any_of(wf.diagnostics.begin(), wf.diagnostics.end(),
+                       [code](const ahfl::backends::CoreWasmDiagnostic &d) {
+                           return d.code == code;
+                       });
+}
+
+[[nodiscard]] bool
+has_diagnostic(const std::vector<ahfl::backends::CoreWasmDiagnostic> &diags,
+               std::string_view code) {
+    return std::any_of(diags.begin(), diags.end(),
+                       [code](const ahfl::backends::CoreWasmDiagnostic &d) {
+                           return d.code == code;
+                       });
+}
+
+} // namespace
+
+void test_decimal_bridge_fail_closed(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_decimal_bridge_fail_closed.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "dec_bfc.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+    // The workflow frame-section builder does not call
+    // verify_frame_bridge_sites, so there is NO compile-time diagnostic. The
+    // capability call is in statement position so region_contains_capability
+    // detects it, the bridge registry is populated, and the module stays on
+    // the P6 lane.
+    check(!has_diagnostic(*wf,
+                          ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+          "dec_bfc.no_compile_time_rejection");
+    check(wf->descriptor.frame_contract ==
+              ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "dec_bfc.p6_lane");
+
+    Value input{ahfl::runtime::StructValue{}};
+    auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
+    sv.type_name = "wasm::wh5c7_decimal_bridge_fail_closed::Frame";
+    sv.fields.set(
+        "amount",
+        std::make_unique<Value>(Value{ahfl::runtime::DecimalValue{"1.25"}}));
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
         return r;
     };
     config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
@@ -2405,20 +2754,139 @@ void test_hybrid_decimal_fail_closed(const std::filesystem::path &repo_root) {
 
     auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
                                            input, std::move(config));
-    // The session must fail at the PRE-RUN entry pack: pack_value_at
-    // encounters the Decimal field and returns ValueNotWireEncodable
-    // (frame_packer.cpp frame-subset fallthrough), surfaced as the
-    // "pack_value_at failed" setup error before run2. Asserting the exact
-    // string pins the failure REASON (not merely non-Completed, which an
-    // admission/instantiation failure could also produce). No node runs, so
-    // no capability is invoked.
-    check(!result.has_value(), "decimal_fail.fail_closed");
+    check(result.has_value(), "dec_bfc.session");
     if (!result.has_value()) {
-        check(result.error().find("pack_value_at failed") !=
-                  std::string::npos,
-              "decimal_fail.reason_is_entry_pack");
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
     }
-    check(cap_invoked_count == 0, "decimal_fail.zero_cap_invocations");
+    // The runtime bridge_param_kind returns Reject for a Decimal wire shape,
+    // causing the host's argument decoder to abort the import, which traps
+    // the wasm module and fails the node.
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "dec_bfc.node_failed");
+}
+
+void test_duration_bridge_fail_closed(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_duration_bridge_fail_closed.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "dur_bfc.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+    // No compile-time diagnostic (workflow builder skips
+    // verify_frame_bridge_sites). P6 lane; runtime bridge_param_kind returns
+    // Reject for Duration.
+    check(!has_diagnostic(*wf,
+                          ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+          "dur_bfc.no_compile_time_rejection");
+    check(wf->descriptor.frame_contract ==
+              ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "dur_bfc.p6_lane");
+
+    Value input{ahfl::runtime::StructValue{}};
+    auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
+    sv.type_name = "wasm::wh5c7_duration_bridge_fail_closed::Frame";
+    sv.fields.set(
+        "dur",
+        std::make_unique<Value>(Value{ahfl::runtime::DurationValue{"5s"}}));
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           input, std::move(config));
+    check(result.has_value(), "dur_bfc.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "dur_bfc.node_failed");
+}
+
+void test_map_bridge_fail_closed(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_map_bridge_fail_closed.ahfl";
+    auto outcome = emit_workflow_or_diag(source);
+    // Map's REAL rejection layer is the P6 scalar codegen itself:
+    // kUnsupportedCapabilityFrame is emitted because a Map bridge argument is
+    // not a frame-walkable P6 value in this rung. No wasm module is produced.
+    check(!outcome.wf.has_value(), "map_bfc.emit_rejected");
+    check(has_diagnostic(outcome.diagnostics,
+                         ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+          "map_bfc.unsupported_capability_frame");
+}
+
+void test_set_bridge_fail_closed(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_set_bridge_fail_closed.ahfl";
+    auto outcome = emit_workflow_or_diag(source);
+    // Set's REAL rejection layer is the P6 scalar codegen itself:
+    // kUnsupportedCapabilityFrame is emitted because a Set (bounded
+    // collection) bridge argument is not a frame-walkable P6 value in this
+    // rung. No wasm module is produced.
+    check(!outcome.wf.has_value(), "set_bfc.emit_rejected");
+    check(has_diagnostic(outcome.diagnostics,
+                         ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+          "set_bfc.unsupported_capability_frame");
+}
+
+// WH-5c.7 P2-3: the workflow-level kInvalidLayout diagnostic must carry the
+// workflow declaration's SourceRange. This test verifies the prerequisite:
+// the CoreWorkflowDecl's source_range is populated from the AHFL IR
+// WorkflowDecl's provenance during lowering, and the range lands on the
+// `workflow` keyword in the source.
+void test_workflow_decl_source_range(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_duration_round_trip.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "wf_sr.compile");
+    if (!program.has_value()) {
+        std::cerr << "  error: " << error << "\n";
+        return;
+    }
+    const auto core = irc::lower_ahfl_to_core(*program);
+    check(core.ok(), "wf_sr.lower");
+    if (!core.ok()) {
+        return;
+    }
+    check(!core.program.workflows.empty(), "wf_sr.has_workflow");
+    if (core.program.workflows.empty()) {
+        return;
+    }
+    const auto &wf = core.program.workflows.front();
+    check(wf.source_range.has_value(), "wf_sr.range_present");
+    if (!wf.source_range.has_value()) {
+        return;
+    }
+    check(!wf.source_range->empty(), "wf_sr.range_non_empty");
+    // Read the source file and verify the range lands on the `workflow`
+    // keyword (the workflow declaration start).
+    std::ifstream in(source, std::ios::binary);
+    check(in.good(), "wf_sr.open_source");
+    if (!in.good()) {
+        return;
+    }
+    std::string content((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+    const auto begin = wf.source_range->begin_offset;
+    check(begin < content.size(), "wf_sr.offset_in_bounds");
+    if (begin >= content.size()) {
+        return;
+    }
+    const auto head = content.substr(begin, std::min<std::size_t>(8, content.size() - begin));
+    check(head.rfind("workflow", 0) == 0, "wf_sr.lands_on_workflow_keyword");
 }
 
 // ==== WH-5b.3: descriptor-corruption runtime guard ====
@@ -4054,8 +4522,20 @@ int main() {
     // WH-5b.3 P2-2: rich type fidelity across both transcode directions.
     test_hybrid_rich_fidelity(repo_root);
     test_hybrid_rich_p6_to_opaque(repo_root);
-    // WH-5b.3 P2-2: Decimal/Duration fail-closed + descriptor corruption.
-    test_hybrid_decimal_fail_closed(repo_root);
+    // WH-5c.7: Decimal round-trip through the P6 frame (replaces the
+    // WH-5b.3 fail-closed pin).
+    test_hybrid_decimal_round_trip(repo_root);
+    test_f64_bridge_fail_closed(repo_root);
+    // WH-5c.7 P1-2: rich-type bridge-rejection pins.
+    test_decimal_bridge_fail_closed(repo_root);
+    test_duration_bridge_fail_closed(repo_root);
+    test_map_bridge_fail_closed(repo_root);
+    test_set_bridge_fail_closed(repo_root);
+    // WH-5c.7 P1-1: Decimal/Duration spelling round-trip guard.
+    test_decimal_spelling_guard(repo_root);
+    test_duration_spelling_guard(repo_root);
+    // WH-5c.7 P2-3: workflow declaration SourceRange on kInvalidLayout.
+    test_workflow_decl_source_range(repo_root);
     test_transcode_descriptor_corruption_fail_closed(repo_root);
     test_transcode_entry_shadow_corruption_fail_closed(repo_root);
     // WH-5b.3 AC4: transcode fail-closed tests.

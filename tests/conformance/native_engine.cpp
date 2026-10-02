@@ -156,13 +156,14 @@ NativeScenarioResult run_native_scenario(const LoadedConformanceCase &loaded,
         };
     }
 
-    auto input = ahfl::runtime::value_from_json(scenario.input_json);
+    auto input = decode_conformance_input(*program, manifest.entry,
+                                          scenario.input_json, error_buffer);
     if (!input.has_value()) {
         return NativeScenarioResult{
             .ok = false,
             .observation_json = {},
             .error = "failed to decode scenario '" + scenario.name +
-                     "' input from wire JSON",
+                     "' input: " + error_buffer,
         };
     }
 
