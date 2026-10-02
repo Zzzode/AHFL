@@ -10,6 +10,7 @@ add_library(ahfl_runtime_engine STATIC
     workflow_result.cpp
     workflow_recovery.cpp
     capability_bridge.cpp
+    capability_event_projection.cpp
     capability_eval.cpp
     capability_transport_adapter.cpp
     native_host_binding.cpp

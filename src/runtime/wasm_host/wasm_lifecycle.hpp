@@ -63,27 +63,23 @@ struct WasmNodeRunFacts {
 };
 
 // One capability call observed during the run, in call order. The workflow
-// session collects these from the import callback; the lifecycle helper emits
-// CapabilityStarted / CapabilityCompleted events between NodeStarted and
-// NodeCompleted for the calling node, matching the evaluator's event order.
-// node_id is the descriptor's dense source-order node id (NOT the
+// session collects these from the import callback; the lifecycle helper
+// projects the aggregate CapabilityCallResult into the event stream via the
+// shared capability_event_projection helper (the SAME synthesis the
+// evaluator uses), between NodeStarted and NodeCompleted for the calling
+// node. node_id is the descriptor's dense source-order node id (NOT the
 // WorkflowNodeId assigned by the metadata store); the lifecycle helper
 // resolves it via plan.node_by_id.
+//
+// WH-5c.8: collapsed to {node_id, capability_name, result} — success /
+// output / attempts / cache_hit / usage all derive from the aggregate
+// CapabilityCallResult, which the shared projection helper reads directly.
+// A Pending call is NOT collected (it has no terminal yet; the node-level
+// NodeSuspended terminal records the pause).
 struct WasmCapabilityCall {
     std::uint32_t node_id;
     std::string capability_name;
-    bool success{true};
-    std::optional<Value> output;
-    // Real attempt count from CapabilityCallResult (the wasm lane does not
-    // retry, so this is typically 1, but the value is carried through rather
-    // than hardcoded).
-    std::size_t attempts{1};
-    // Real cache_hit from CapabilityCallResult.
-    bool cache_hit{false};
-    // Usage data from CapabilityCallResult (nullopt when the capability
-    // does not report usage). When present, the lifecycle helper emits a
-    // CapabilityUsageRecorded event.
-    std::optional<CapabilityUsage> usage;
+    CapabilityCallResult result;
 };
 
 // All facts for one wasm workflow lane run.

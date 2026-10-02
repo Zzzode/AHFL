@@ -525,8 +525,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // invocation context per-call, so the session resolves the owning
     // agent/node per-import (not name-keyed first-wins).
     std::unordered_map<std::uint64_t, std::uint32_t> symbol_to_runner;
-    // P1-2: capability name -> descriptor node_id (for lifecycle events).
-    std::unordered_map<std::string, std::uint32_t> cap_name_to_node;
     for (const auto &node : descriptor.nodes) {
         if (node.has_capability) {
             // Map ALL capabilities to this node's runner (a P6 bridge node can
@@ -541,8 +539,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         "descriptor node capability_ordinal out of range");
                 }
                 symbol_to_runner[node.source_symbol] = node.runner;
-                cap_name_to_node[descriptor.imports[node.capability_ordinal]
-                                     .canonical_name] = node.node_id;
             } else {
                 for (const auto &[ordinal, sym] : node.all_capabilities) {
                     // P2-10: fail closed when any capability ordinal is out of
@@ -552,8 +548,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                             "descriptor node all_capabilities ordinal out of range");
                     }
                     symbol_to_runner[sym] = node.runner;
-                    cap_name_to_node[descriptor.imports[ordinal]
-                                         .canonical_name] = node.node_id;
                 }
             }
         }
@@ -614,7 +608,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
          capability_result_observer = config.capability_result_observer,
          &recorder, &collected_capabilities, &collected_cap_args,
          &collected_failures, &symbol_to_runner, &collected_cap_calls,
-         &cap_name_to_node,
          workflow_index = descriptor.workflow_index](
             const CapabilityInvocationContext &ctx,
             const std::string &name,
@@ -631,12 +624,21 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 real_ctx.agent_id = AgentId{it->second};
             }
         }
+        // WH-5c.8: the recorder's current-import carries the ACTUAL calling
+        // node (the import wrapper opens it before the inner executor runs).
+        // A name-based lookup would collapse to the last node that declares
+        // the capability, breaking multi-node workflows where the same
+        // capability is called from different nodes (the failed node's
+        // cap_call would be attributed to the wrong node and filtered out
+        // by emit_workflow_events' node_id match).
+        std::uint32_t import_node_id = 0;
         // WH-4b: fill the recorder's current-import correlation. The import
         // wrapper opened it (node / ordinal / cap_id); here the invoker
         // fills arg_hash + result once the args are decoded and the
         // capability returns. Also stamp the idempotency key on the context
         // so the host sees the same key as the evaluator lane.
         if (auto *current = recorder.current_import()) {
+            import_node_id = static_cast<std::uint32_t>(current->node.index());
             if (auto arg_hash = runtime::hash_values(args)) {
                 current->arg_hash = *arg_hash;
                 current->arg_hash_set = true;
@@ -671,26 +673,21 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             collected_failures.push_back(*result.failure_kind);
         }
         // WH-4b: a Pending call has no terminal yet (it completes on
-        // resume), so do NOT emit CapabilityStarted/CapabilityCompleted for
-        // it (mirrors the evaluator at workflow_runtime.cpp:1079-1082). The
-        // NodeSuspended terminal records the pause instead.
+        // resume), so do NOT collect it for event projection (mirrors the
+        // evaluator at workflow_runtime.cpp:1039-1046). The NodeSuspended
+        // terminal records the pause instead.
         if (result.status != CapabilityCallStatus::Pending) {
-            // P1-2: collect for lifecycle events (CapabilityStarted /
-            // CapabilityCompleted). Resolve the descriptor node_id from the
-            // capability name.
+            // WH-5c.8: collect the FULL aggregate CapabilityCallResult so
+            // the shared capability_event_projection helper can synthesize
+            // per-attempt events (Started/Retry/Usage/Failed/Degraded/
+            // Completed) exactly as the evaluator does. The result is
+            // deep-cloned (clone_capability_call_result) so the collected
+            // copy is independent of the result returned to the import
+            // callback.
             WasmCapabilityCall cap_call;
             cap_call.capability_name = name;
-            cap_call.success = result.status == CapabilityCallStatus::Success;
-            if (cap_call.success && result.value.has_value()) {
-                cap_call.output = clone_value(*result.value);
-            }
-            cap_call.attempts = result.attempts;
-            cap_call.cache_hit = result.cache_hit;
-            cap_call.usage = result.usage;
-            auto node_it = cap_name_to_node.find(name);
-            cap_call.node_id = node_it != cap_name_to_node.end()
-                                   ? node_it->second
-                                   : std::uint32_t{0};
+            cap_call.result = clone_capability_call_result(result);
+            cap_call.node_id = import_node_id;
             collected_cap_calls.push_back(std::move(cap_call));
         }
         return result;
@@ -2347,6 +2344,32 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             // (the Failed node's NodeFailed and the workflow's
             // WorkflowFailed reference one ranged bag entry).
             node_facts.failure_range = run_failure_range;
+            // WH-5c.8: when the failed node has a failed capability call
+            // carrying a provider-supplied diagnostic_code
+            // (LLM_TOKEN_BUDGET_EXCEEDED / LLM_COST_BUDGET_EXCEEDED /
+            // BudgetRejected family), attribute the node failure to that
+            // code + the capability's error_message instead of the generic
+            // wasm.trap / wasm.host-abort. The range was already resolved
+            // by the WH-5c.6 capability_range_resolver above. No
+            // diagnostic_code -> the existing trap/host-abort attribution
+            // stays.
+            {
+                const auto failed_node_id =
+                    descriptor.nodes[*failed_node_index].node_id;
+                for (const auto &cap_call : facts.capability_calls) {
+                    if (cap_call.node_id != failed_node_id) {
+                        continue;
+                    }
+                    if (cap_call.result.status ==
+                            CapabilityCallStatus::Success ||
+                        cap_call.result.diagnostic_code.empty()) {
+                        continue;
+                    }
+                    node_facts.failure_code = cap_call.result.diagnostic_code;
+                    node_facts.failure_message = cap_call.result.error_message;
+                    break;
+                }
+            }
         } else {
             node_facts.terminal = WasmNodeRunFacts::Terminal::Skipped;
             // P2-1: align with the evaluator's NodeSkipped semantics. On

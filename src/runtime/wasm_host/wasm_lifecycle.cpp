@@ -4,6 +4,8 @@
 #include "runtime/wasm_host/wasm_lifecycle.hpp"
 #include "runtime/wasm_host/wasm_error_codes.hpp"
 
+#include "runtime/engine/capability_event_projection.hpp"
+
 #include "ahfl/runtime/execution_report.hpp"
 
 #include <algorithm>
@@ -219,13 +221,15 @@ void emit_workflow_events(WorkflowResult &result,
             });
         }
 
-        // Capability lifecycle: emit CapabilityStarted / CapabilityCompleted
-        // for each capability call from this node, matching the evaluator's
-        // event order (between AgentStateEntered and the node terminal).
-        // The wasm lane does not retry, so there is exactly one
-        // CapabilityStarted (attempt=1) and one CapabilityCompleted per
-        // call. Real attempts / cache_hit / usage are carried through from
-        // the CapabilityCallResult rather than hardcoded.
+        // Capability lifecycle: project each collected call's aggregate
+        // CapabilityCallResult into the event stream via the SHARED
+        // capability_event_projection helper (the SAME synthesis the
+        // evaluator uses). The wasm lane projects post-run (events are
+        // buffered during invoke_run2 and projected here, before the node
+        // terminal); the projection input (CapabilityCallResult) and output
+        // (event stream) are identical to the evaluator's call-time
+        // projection. The first invocation id is allocated by the helper
+        // (the wasm lane has no pre-invocation idempotency context).
         for (auto &cap_call : facts.capability_calls) {
             auto node_it = plan.node_by_id.find(cap_call.node_id);
             if (node_it == plan.node_by_id.end() ||
@@ -236,36 +240,21 @@ void emit_workflow_events(WorkflowResult &result,
                 plan.capability_by_name.count(cap_call.capability_name)
                     ? plan.capability_by_name.at(cap_call.capability_name)
                     : CapabilityId{};
-            const auto invocation =
-                result.metadata.add_invocation(node_id, cap_id);
-            emit(CapabilityStarted{
-                .invocation = invocation,
-                .node = node_id,
-                .capability = cap_id,
-                .provider = plan.provider,
-                .attempt = 1,
-            });
-            if (cap_call.usage.has_value()) {
-                emit(CapabilityUsageRecorded{
-                    .invocation = invocation,
-                    .prompt_tokens = cap_call.usage->prompt_tokens,
-                    .completion_tokens = cap_call.usage->completion_tokens,
-                    .total_tokens = cap_call.usage->total_tokens,
-                    .total_cost_usd = cap_call.usage->total_cost_usd,
-                    .cost_estimated = cap_call.usage->cost_estimated,
-                    .notices = cap_call.usage->notices,
-                });
-            }
             std::optional<RuntimeValueId> output_id;
-            if (cap_call.success && cap_call.output.has_value()) {
-                output_id = add_value(result, std::move(*cap_call.output));
+            if (cap_call.result.status == CapabilityCallStatus::Success &&
+                cap_call.result.value.has_value()) {
+                output_id =
+                    add_value(result, clone_value(*cap_call.result.value));
             }
-            emit(CapabilityCompleted{
-                .invocation = invocation,
-                .output = output_id,
-                .attempts = cap_call.attempts,
-                .cache_hit = cap_call.cache_hit,
-            });
+            project_capability_call_events(
+                result,
+                []() { return std::chrono::nanoseconds{0}; },
+                node_id,
+                cap_id,
+                plan.provider,
+                cap_call.result,
+                output_id,
+                InvocationId{});
         }
 
         if (node_facts.terminal == WasmNodeRunFacts::Terminal::Completed) {
@@ -419,48 +408,31 @@ bool finalize_wasm_agent_run(
         });
     }
 
-    // Capability lifecycle: emit CapabilityStarted / CapabilityCompleted
-    // for each capability call, matching the evaluator's event order
-    // (between AgentStateEntered and the node terminal). The wasm lane
-    // does not retry, so there is exactly one CapabilityStarted
-    // (attempt=1) and one CapabilityCompleted per call. Real attempts /
-    // cache_hit / usage are carried through from the CapabilityCallResult
-    // rather than hardcoded.
+    // Capability lifecycle: project each collected call's aggregate
+    // CapabilityCallResult into the event stream via the SHARED
+    // capability_event_projection helper (the SAME synthesis the
+    // evaluator uses). See the workflow lane above for the post-run
+    // projection rationale.
     for (auto &cap_call : capability_calls) {
         const auto cap_id =
             capability_by_name.count(cap_call.capability_name)
                 ? capability_by_name.at(cap_call.capability_name)
                 : CapabilityId{};
-        const auto invocation =
-            result.metadata.add_invocation(node_id, cap_id);
-        emit(CapabilityStarted{
-            .invocation = invocation,
-            .node = node_id,
-            .capability = cap_id,
-            .provider = provider,
-            .attempt = 1,
-        });
-        if (cap_call.usage.has_value()) {
-            emit(CapabilityUsageRecorded{
-                .invocation = invocation,
-                .prompt_tokens = cap_call.usage->prompt_tokens,
-                .completion_tokens = cap_call.usage->completion_tokens,
-                .total_tokens = cap_call.usage->total_tokens,
-                .total_cost_usd = cap_call.usage->total_cost_usd,
-                .cost_estimated = cap_call.usage->cost_estimated,
-                .notices = cap_call.usage->notices,
-            });
-        }
         std::optional<RuntimeValueId> cap_output_id;
-        if (cap_call.success && cap_call.output.has_value()) {
-            cap_output_id = add_value(result, std::move(*cap_call.output));
+        if (cap_call.result.status == CapabilityCallStatus::Success &&
+            cap_call.result.value.has_value()) {
+            cap_output_id =
+                add_value(result, clone_value(*cap_call.result.value));
         }
-        emit(CapabilityCompleted{
-            .invocation = invocation,
-            .output = cap_output_id,
-            .attempts = cap_call.attempts,
-            .cache_hit = cap_call.cache_hit,
-        });
+        project_capability_call_events(
+            result,
+            []() { return std::chrono::nanoseconds{0}; },
+            node_id,
+            cap_id,
+            provider,
+            cap_call.result,
+            cap_output_id,
+            InvocationId{});
     }
 
     if (status == RunTerminalStatus::Completed) {

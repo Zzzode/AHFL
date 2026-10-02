@@ -63,6 +63,30 @@ enum class CapabilityCallStatus {
 [[nodiscard]] std::string_view
 capability_call_status_name(CapabilityCallStatus status) noexcept;
 
+/// Classify a capability call status into a CapabilityFailureKind for the
+/// CapabilityFailed event. Relocated from workflow_runtime.cpp's anonymous
+/// namespace (WH-5c.8) so the shared capability event projection helper and
+/// the evaluator's node-capability-failure bookkeeping use one definition.
+/// Pending is not a failure (handled on the suspend path before failure
+/// classification); reaching here with Pending means a misrouted result,
+/// classified as Error (fail-closed) rather than asserted.
+[[nodiscard]] inline CapabilityFailureKind
+capability_failure_kind(CapabilityCallStatus status) noexcept {
+    switch (status) {
+    case CapabilityCallStatus::Success:
+    case CapabilityCallStatus::Error:
+    case CapabilityCallStatus::CircuitOpen:
+        return CapabilityFailureKind::Error;
+    case CapabilityCallStatus::Timeout:
+        return CapabilityFailureKind::Timeout;
+    case CapabilityCallStatus::RetryExhausted:
+        return CapabilityFailureKind::RetryExhausted;
+    case CapabilityCallStatus::Pending:
+        return CapabilityFailureKind::Error;
+    }
+    return CapabilityFailureKind::Error;
+}
+
 struct CapabilityUsage {
     std::size_t prompt_tokens{0};
     std::size_t completion_tokens{0};
@@ -91,6 +115,15 @@ struct CapabilityCallResult {
     std::size_t pending_cap_id{0};
     std::uint64_t pending_ordinal{0};
 };
+
+// Deep-clone a CapabilityCallResult (Rust `Clone::clone` pattern): Value is
+// non-copyable (MapValue holds unique_ptr pairs), so the implicit copy is
+// deleted. This explicit clone snapshots the optional output value so callers
+// can keep an independent copy (the wasm lanes collect a per-call copy for
+// event projection). The struct stays an aggregate so designated
+// initializers at the ~40 construction sites keep working.
+[[nodiscard]] CapabilityCallResult
+clone_capability_call_result(const CapabilityCallResult &other);
 
 using CapabilityInvoker =
     std::function<CapabilityCallResult(const std::string &name, const std::vector<Value> &args)>;

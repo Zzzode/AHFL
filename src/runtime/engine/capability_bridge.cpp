@@ -25,6 +25,27 @@ std::string_view capability_call_status_name(CapabilityCallStatus status) noexce
     return "unknown";
 }
 
+CapabilityCallResult
+clone_capability_call_result(const CapabilityCallResult &other) {
+    CapabilityCallResult clone;
+    clone.status = other.status;
+    if (other.value.has_value()) {
+        clone.value = clone_value(*other.value);
+    }
+    clone.error_message = other.error_message;
+    clone.attempts = other.attempts;
+    clone.failure_kind = other.failure_kind;
+    clone.provider_degraded = other.provider_degraded;
+    clone.degraded_provider_name = other.degraded_provider_name;
+    clone.selected_provider_name = other.selected_provider_name;
+    clone.cache_hit = other.cache_hit;
+    clone.diagnostic_code = other.diagnostic_code;
+    clone.usage = other.usage;
+    clone.pending_cap_id = other.pending_cap_id;
+    clone.pending_ordinal = other.pending_ordinal;
+    return clone;
+}
+
 // ============================================================================
 // CircuitBreakerState
 // ============================================================================

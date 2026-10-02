@@ -67,19 +67,16 @@ namespace {
 [[nodiscard]] evaluator::EvalResult
 capability_call_result_to_eval_result(const std::string &callee, CapabilityCallResult call_result) {
     if (call_result.status == CapabilityCallStatus::Success) {
-        evaluator::EvalResult result{
+        // WH-5c.8: usage.notices -> WARNING diagnostics are emitted by the
+        // shared capability_event_projection helper into the WorkflowResult's
+        // DiagnosticBag (the single implementation). They are NOT duplicated
+        // into the EvalResult bag here (that would double-count on the
+        // WorkflowRuntime path, where the agent runtime appends EvalResult
+        // diagnostics into the same WorkflowResult bag).
+        return evaluator::EvalResult{
             call_result.value.has_value() ? std::move(*call_result.value) : runtime::make_none(),
             {},
         };
-        if (call_result.usage.has_value()) {
-            for (const auto &notice : call_result.usage->notices) {
-                result.diagnostics.warning()
-                    .message(notice.message)
-                    .code(notice.diagnostic_code)
-                    .emit();
-            }
-        }
-        return result;
     }
 
     // RFC 0022 slice 3: a pending capability call suspends evaluation. Carry the

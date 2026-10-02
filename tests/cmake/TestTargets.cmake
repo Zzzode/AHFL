@@ -256,6 +256,15 @@ target_link_libraries(ahfl_capability_bridge_tests
 )
 ahfl_apply_project_warnings(ahfl_capability_bridge_tests)
 
+add_executable(ahfl_capability_event_projection_tests
+    unit/runtime/engine/capability_event_projection.cpp
+)
+target_link_libraries(ahfl_capability_event_projection_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_capability_event_projection_tests)
+
 add_executable(ahfl_host_abi_tests
     unit/runtime/engine/ahfl_host_abi.cpp
 )
@@ -2068,6 +2077,7 @@ foreach(_tgt
     ahfl_workflow_runtime_tests
     ahfl_workflow_recovery_tests
     ahfl_capability_bridge_tests
+    ahfl_capability_event_projection_tests
     ahfl_native_host_binding_tests
     ahfl_native_wasm_differential_tests
     ahfl_core_wire_codec_tests

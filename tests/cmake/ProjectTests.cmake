@@ -1063,6 +1063,10 @@ add_test(NAME ahfl.runtime.capability_bridge_all
     COMMAND $<TARGET_FILE:ahfl_capability_bridge_tests>
 )
 
+add_test(NAME ahfl.runtime.capability_event_projection_all
+    COMMAND $<TARGET_FILE:ahfl_capability_event_projection_tests>
+)
+
 add_test(NAME ahfl.runtime.host_abi_all
     COMMAND $<TARGET_FILE:ahfl_host_abi_tests>
 )

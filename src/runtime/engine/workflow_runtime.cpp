@@ -18,6 +18,7 @@
 #include "ahfl/compiler/ir/identity.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/capability_eval.hpp"
+#include "runtime/engine/capability_event_projection.hpp"
 #include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/core_wire_codec_recovery.hpp"
 #include "runtime/evaluator/evaluator.hpp"
@@ -290,25 +291,6 @@ void finalize_report(WorkflowResult &result) {
         return RunTerminalStatus::Failed;
     }
     return RunTerminalStatus::Failed;
-}
-
-[[nodiscard]] CapabilityFailureKind capability_failure_kind(CapabilityCallStatus status) {
-    switch (status) {    case CapabilityCallStatus::Success:
-        return CapabilityFailureKind::Error;
-    case CapabilityCallStatus::Error:
-    case CapabilityCallStatus::CircuitOpen:
-        return CapabilityFailureKind::Error;
-    case CapabilityCallStatus::Timeout:
-        return CapabilityFailureKind::Timeout;
-    case CapabilityCallStatus::RetryExhausted:
-        return CapabilityFailureKind::RetryExhausted;
-    case CapabilityCallStatus::Pending:
-        // Pending is not a failure; it is handled on the suspend path before
-        // failure classification. Reaching here means a Pending result was
-        // misrouted — classify as Error (fail-closed) rather than assert.
-        return CapabilityFailureKind::Error;
-    }
-    return CapabilityFailureKind::Error;
 }
 
 } // namespace
@@ -733,7 +715,8 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     NodeMemoState node_memo;
     if (effective_contextual_invoker.has_value() || config_.capability_invoker.has_value()) {
         runtime_invoker =
-            [this, &result, &emit, &node_capability_failures, &node_memo, runtime_provider,
+            [this, &result, &now, &started_at, &node_capability_failures, &node_memo,
+             runtime_provider,
              contextual_invoker = std::move(effective_contextual_invoker)](
                 const CapabilityInvocationContext &context,
                 const std::string &name,
@@ -1063,78 +1046,15 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 return call_result;
             }
 
-            const auto attempts = std::max<std::size_t>(call_result.attempts, 1U);
-            InvocationId previous;
-            for (std::size_t attempt = 1; attempt <= attempts; ++attempt) {
-                const auto attempt_invocation =
-                    attempt == 1
-                        ? invocation
-                        : result.metadata.add_invocation(context.workflow_node_id, *capability);
-                if (attempt > 1) {
-                    emit(CapabilityRetryScheduled{
-                        .previous_invocation = previous,
-                        .next_invocation = attempt_invocation,
-                        .next_attempt = attempt,
-                    });
-                }
-                emit(CapabilityStarted{
-                    .invocation = attempt_invocation,
-                    .node = context.workflow_node_id,
-                    .capability = *capability,
-                    .provider = runtime_provider,
-                    .attempt = attempt,
-                });
-
-                if (attempt == attempts && call_result.usage.has_value()) {
-                    emit(CapabilityUsageRecorded{
-                        .invocation = attempt_invocation,
-                        .prompt_tokens = call_result.usage->prompt_tokens,
-                        .completion_tokens = call_result.usage->completion_tokens,
-                        .total_tokens = call_result.usage->total_tokens,
-                        .total_cost_usd = call_result.usage->total_cost_usd,
-                        .cost_estimated = call_result.usage->cost_estimated,
-                        .notices = call_result.usage->notices,
-                    });
-                }
-
-                const bool terminal_success =
-                    attempt == attempts && call_result.status == CapabilityCallStatus::Success;
-                if (!terminal_success) {
-                    emit(CapabilityFailed{
-                        .invocation = attempt_invocation,
-                        .kind = call_result.failure_kind.value_or(
-                            capability_failure_kind(call_result.status)),
-                        .diagnostic = std::nullopt,
-                        .attempts = attempt,
-                        .retryable = attempt < attempts ||
-                                     call_result.status == CapabilityCallStatus::Timeout ||
-                                     call_result.status == CapabilityCallStatus::RetryExhausted,
-                    });
-                }
-                previous = attempt_invocation;
-            }
-
-            if (call_result.provider_degraded) {
-                const auto degraded = result.metadata.add_provider(
-                    call_result.degraded_provider_name.empty()
-                        ? std::string_view{"degraded"}
-                        : std::string_view{call_result.degraded_provider_name});
-                const auto selected = result.metadata.add_provider(
-                    call_result.selected_provider_name.empty()
-                        ? std::string_view{"fallback"}
-                        : std::string_view{call_result.selected_provider_name});
-                emit(ProviderDegraded{
-                    .invocation = previous,
-                    .provider = degraded,
-                    .fallback_provider = selected,
-                    .reason = ProviderDegradationReason::RetryExhausted,
-                });
-            }
-
+            // WH-5c.8: register the output value + push the memo entry on
+            // success BEFORE the shared event projection (the helper emits
+            // CapabilityCompleted with the pre-registered output id; the memo
+            // push emits no events so its position relative to the helper is
+            // invisible to the stream).
+            std::optional<RuntimeValueId> output_id;
             if (call_result.status == CapabilityCallStatus::Success) {
-                std::optional<RuntimeValueId> output;
                 if (call_result.value.has_value()) {
-                    output =
+                    output_id =
                         add_runtime_value(result, runtime::clone_value(*call_result.value));
                 }
                 // RFC 0022 (C5): record the completed call in the node memo so a
@@ -1156,14 +1076,28 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     .authoritative_json = std::nullopt,
                     .result_present = call_result.value.has_value(),
                 });
-                emit(CapabilityCompleted{
-                    .invocation = previous,
-                    .output = output,
-                    .attempts = call_result.attempts,
-                    .cache_hit = call_result.cache_hit,
-                });
-            } else if (context.workflow_node_id.valid() &&
-                       context.workflow_node_id.index() < node_capability_failures.size()) {
+            }
+
+            // WH-5c.8: the SINGLE event-projection implementation shared with
+            // the wasm lanes (wasm_lifecycle.cpp). The evaluator pre-allocates
+            // the first invocation id (stamped on the invocation context for
+            // the idempotency key); retry attempts are allocated by the helper.
+            project_capability_call_events(
+                result,
+                [&now, &started_at]() {
+                    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        now() - started_at);
+                },
+                context.workflow_node_id,
+                *capability,
+                runtime_provider,
+                call_result,
+                output_id,
+                invocation);
+
+            if (call_result.status != CapabilityCallStatus::Success &&
+                context.workflow_node_id.valid() &&
+                context.workflow_node_id.index() < node_capability_failures.size()) {
                 node_capability_failures[context.workflow_node_id.index()] =
                     call_result.failure_kind.value_or(
                         capability_failure_kind(call_result.status));

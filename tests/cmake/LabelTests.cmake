@@ -227,6 +227,7 @@ ahfl_label_tests(
     LABELS capability-bridge
     TESTS
         ahfl.runtime.capability_bridge_all
+        ahfl.runtime.capability_event_projection_all
 )
 
 ahfl_label_tests(

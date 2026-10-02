@@ -262,17 +262,19 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         if (result.failure_kind.has_value()) {
             collected_failures.push_back(*result.failure_kind);
         }
-        collected_cap_calls.push_back(WasmCapabilityCall{
-            .node_id = 0,
-            .capability_name = name,
-            .success = result.status == CapabilityCallStatus::Success,
-            .output = result.value.has_value()
-                          ? std::optional{clone_value(*result.value)}
-                          : std::nullopt,
-            .attempts = result.attempts,
-            .cache_hit = result.cache_hit,
-            .usage = result.usage,
-        });
+        // WH-5c.8: collect the FULL aggregate CapabilityCallResult (with the
+        // workflow lane's Pending skip — a Pending call has no terminal yet,
+        // so it is not projected; the node-level NodeSuspended terminal
+        // records the pause). The result is deep-cloned
+        // (clone_capability_call_result) so the collected copy is independent
+        // of the result returned to the import callback.
+        if (result.status != CapabilityCallStatus::Pending) {
+            WasmCapabilityCall cap_call;
+            cap_call.node_id = 0;
+            cap_call.capability_name = name;
+            cap_call.result = clone_capability_call_result(result);
+            collected_cap_calls.push_back(std::move(cap_call));
+        }
         return result;
     };
 

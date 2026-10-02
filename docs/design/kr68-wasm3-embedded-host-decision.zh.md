@@ -3791,6 +3791,18 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 - **§12.15.8(no version bump):** 不变。GAP 8/9 不增加 wire field(event projection 是 host-side;String carry 是 codegen 层 frame 操作)。AHFLXM v2 不 bump。
 - **§12.6/§12.14(memo/replay):** 保留。GAP 8/9 与 memo replay 正交(§12.15.18.1/18.2 交互节)。
 
+#### 12.15.18.7 落地记录(2026-10-03):WH-5c.8 GAP 8 共享 event projection + 对抗 review
+
+按 §12.15.18.1 builder 指令 1..8 落地(builder → 独立对抗 review → coordinator 复核)。新增 `src/runtime/engine/capability_event_projection.{hpp,cpp}` 作为 evaluator 与双 wasm lane 的唯一 per-attempt 事件合成实现;evaluator `workflow_runtime.cpp` synthesis loop 重构为 helper 调用(event stream 保持,workflow_runtime_all 等 pin 全绿);`capability_failure_kind` relocate 到 `capability_bridge.hpp`(`[[nodiscard]] inline`,旧匿名命名空间副本删除);`WasmCapabilityCall` big-bang 塌缩为 `{node_id, capability_name, CapabilityCallResult result}`,旧字段全部删除;wrapped_invoker 经新增 `clone_capability_call_result`(deep-clone Value)在双 lane 记录完整 result;failure path 在 facts.capability_calls 中查失败 node 的非空 diagnostic_code 覆盖 failure_code/failure_message(range 用 5c.6 capability resolver,无 code 时保持 wasm.trap/host-abort 归因);agent lane 对齐 Pending skip。
+
+**顺带修掉的既有隐患:** 删除 wasm lane 的 `cap_name_to_node` 名字→node 映射(5c.4 时代 symbol_to_schedule last-wins 同类问题),改用 `recorder.current_import()->node.index()`(import 时刻权威归因,shared-capability 多 node 不再错挂)。
+
+**notices → WARNING 归属变化(诚实记录):** 转换点从 `capability_eval.cpp` 的 EvalResult bag 移到 helper 的 WorkflowResult bag。workflow 路径(唯一生产调用方)诊断落点不变——agent runtime 的 EvalResult bag 本来就 append 进同一个 WorkflowResult bag;coordinator grep 确认 `AgentRuntime` 在 src/ 内无 workflow_runtime 之外的生产 standalone 调用方(DAP/REPL 不直接驱动它),故无在树消费者受影响;evaluator AgentRuntime 本身将在 WH-9 删除。理论上的外部 standalone embedder 会失去 notice WARNING——记为接受的收窄,不留双份实现(双份会在 workflow 路径重复计数)。
+
+**Review 结论 LAND(0 P0/P1,3 P2;coordinator 处置):** (1) 本条即 §12.15.18.1 Memo/replay 段的 append-only 勘误——原文称 replay 发射"一个 Started + 一个 Completed",实测双 lane replay **零事件**(`memo check 处直接返回,不 collect cap_call,helper 不可达),代码与 evaluator 行为一致,是决策文档措辞错误而非代码缺陷;(2) notices 收窄见上,接受;(3) 早期 coordinator 基线把 #79 归类为"pnpm 环境红"不准确:#79 的 evidence generator 内含 #422 provider smoke,GAP 8 修复后 #422 转绿、#79 级联转绿(同 5c.7 时 #79 因嵌套 #421 失败而红的日志证据);真正的环境红只有 #84(pnpm);#81 是经 #425 的 GAP 9 级联、#85 是 bundle artifact 缺失,均与本 slice 无关且失败原因不变。
+
+**证据:** #422 llm_provider_runtime_smoke 全部 5 case(fallback-stream provider_degraded==1 + cache_hit [False,True] + 2 completed;persistent-cache server request_count==1;budget-warn completed + TOKEN_BUDGET_EXCEEDED 进 stderr;budget-fail/cost-budget-fail exit!=0 + capability_failed 非 completed + ranged code);#426 llm_failure_matrix line 579-580 capability_failed 满足、整二进制绿;#428 capability_bindings 绿;新增 #232 helper 单测 9 case(attempts=1/2 顺序与 invocation id、degraded、failure 无 Completed、budget code、多 notice、Pending 零事件)。full unlabeled ctest 589 个:红恰为 #81/#84/#85/#425(#425=旧 #424 profile_and_output_contract,5c.9 gate),wasmtime skips #5/#7/#57/#60,无新增红;census #270 native 73/0、#267 Node 69/4 不变;WASM=OFF 构建绿;ASan 下 workflow_runtime_all/capability_bridge_all/capability_event_projection_all/workflow_session/agent_runner 5 个二进制绿无 sanitizer 报告。
+
 ### 12.15.19 WH-5c GAP 4 机制修订:per-node output stash table(2026-10-02,dedicated decision-revision agent)
 
 本节修订 §12.15.7 的 **per-node output host 可读性机制**(GAP 4)。§12.15.7 原文保留作历史档案(append-only),其 id 分配规则、fail-closed alignment、parity harness stripping 删除决策**不变**;仅"host 如何获得 per-node output"这一机制被替换。修订动因为协调者转交的经验证据(wh5c-builder-supplements.md §12.15.7):opaque WireJson lane 的 run2 只返回 final tuple,per-node result tuple 活在 scheduler local 里、host 不可读。所有代码断言已对工作树(HEAD `453d3888` + uncommitted WH-6 cutover)逐条复核。
