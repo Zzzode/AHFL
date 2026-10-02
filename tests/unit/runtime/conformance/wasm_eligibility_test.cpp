@@ -415,9 +415,20 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // P6Frame with a P4D_TO_JSON self-transcode for the constructed O_k
         // and a JSON_TO_P4D workflow-output crossing. Runnable on the
         // orchestration lane; the Node observation withholds on
-        // host_transcode_awaits_wh5b3 (the JS host lacks the ahfl_xcode
+        // host_transcode_awaits_node_port (the JS host lacks the ahfl_xcode
         // transcode adapter).
         {"wh5c4_construct_cap_final.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        // WH-5c.4 P0-3: a construct-capability terminal whose upstream is an
+        // opaque capability-final node. The construct node carries BOTH a
+        // JSON_TO_P4D input crossing AND a P4D_TO_JSON self-transcode; the
+        // two-slot scheduler table keeps both. Runnable on the orchestration
+        // lane; the Node observation withholds on
+        // host_transcode_awaits_node_port.
+        {"wh5c4_p03_opaque_upstream.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          "",

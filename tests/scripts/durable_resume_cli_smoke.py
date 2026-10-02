@@ -460,12 +460,12 @@ def main() -> int:
 
         # (2e): WH-5c.4 (GAP 2) suspend/resume parity for a constructed-arg
         # opaque final.  The agent's final state CONSTRUCTS the capability arg
-        # from multiple input fields (DraftInput { id, question }), so the wasm
-        # codegen emits a P4D_TO_JSON self-transcode before the opaque call.
-        # Two independent suspend->resume cycles with the SAME injected result
-        # must yield byte-identical run reports (the memo identity is per
-        # (node, ordinal, arg_hash); the constructed P4-D must transcode
-        # identically on origination and replay).
+        # from multiple input fields (DraftInput { id, question }).  The AHFL
+        # xcode transcode encodes the constructed P4-D frame to wire JSON
+        # identically on origination and fresh-instance replay, so the memo
+        # identity (node, ordinal, arg_hash) matches and the resumed run yields
+        # the same result.  Two independent suspend->resume cycles with the
+        # SAME injected result must yield byte-identical run reports.
         parity_pkg = work / "construct_parity_pkg"
         write_construct_parity_package(parity_pkg)
         parity_input = '{"_type":"parity::main::Ticket","id":"T-1","question":"what is AHFL?"}'

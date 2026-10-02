@@ -70,7 +70,14 @@ using ahfl::conformance::run_native_scenario;
 // WH-5c.4 (GAP 2): the construct-capability-final case
 // (wh5c4_construct_cap_final) constructs the capability argument in-module
 // and the wasm observation agrees with the evaluator: 69/0 -> 70/0.
-constexpr int kExpectedNativeAgreed = 70;
+// WH-5c.4 P0-3: the opaque-upstream construct-terminal case
+// (wh5c4_p03_opaque_upstream) carries BOTH a JSON_TO_P4D input crossing
+// and a P4D_TO_JSON self-transcode on one node; the two-slot scheduler
+// table keeps both, and the P6-frame opaque-node state collection
+// (workflow_session.cpp collect_opaque_node_states) recovers the opaque
+// producer's state transitions so the native observation matches the
+// evaluator: 70/0 -> 71/0.
+constexpr int kExpectedNativeAgreed = 71;
 constexpr int kExpectedNativeSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare

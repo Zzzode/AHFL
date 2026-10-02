@@ -388,6 +388,270 @@ static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t
     return program;
 }
 
+// WH-5c.4 P0-3: a workflow whose construct-capability terminal has an OPAQUE
+// upstream. The Producer is a capability-final opaque node (Echo rides the
+// wire-JSON lane); the ConstructAgent is a P6 construct-terminal that builds
+// its capability arg from the Producer's output field. The construct node
+// needs BOTH a JSON_TO_P4D input crossing (opaque output -> P4-D input) AND a
+// P4D_TO_JSON self-transcode (constructed Request -> wire-JSON). Before the
+// P0-3 fix the scheduler table was one slot per node (last-write-wins), so one
+// site was silently dropped.
+static ahfl::ir::core::CoreProgram make_p03_opaque_upstream_program() {
+    using namespace ahfl::ir;
+    using namespace ahfl::ir::core;
+    CoreProgram program;
+
+    // type 0: Request (one Int field "value"), type 1: Reply (one Int field
+    // "answer").
+    for (const char *tname : {"app::Request", "app::Reply"}) {
+        CoreTypeDecl decl;
+        decl.kind = CoreTypeDecl::Kind::Struct;
+        decl.name = tname;
+        decl.fields = {"value"};
+        decl.field_nominal_types = {CoreTypeId{}};
+        decl.field_has_default = {false};
+        decl.field_type_template_roots = {
+            CoreMemberTypeTemplateNodeId{0}};
+        decl.member_type_templates = {CoreMemberTypeTemplateNode{
+            CoreMemberTypeTemplateKind::Concrete,
+            CoreValueTypeId{1},
+            0,
+            CoreTypeId{},
+            std::nullopt,
+            {},
+            CoreMemberTypeTemplateNodeId{}}};
+        program.types.push_back(std::move(decl));
+    }
+    const CoreValueTypeId request_vt{0};
+    const CoreValueTypeId int_vt{1};
+    const CoreValueTypeId reply_vt{2};
+    program.value_types.push_back(CoreValueType{
+        CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}}); // vt0 Request
+    program.value_types.push_back(
+        CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+    program.value_types.push_back(CoreValueType{
+        CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Reply
+
+    // cap0: Echo(Request) -> Request (opaque upstream).
+    CoreCapabilityDecl echo;
+    echo.name = "Echo";
+    echo.symbol_ref = {SymbolRefKind::Capability, "app::Echo", "Echo", "app",
+                       350};
+    echo.param_types = {request_vt};
+    echo.return_type = request_vt;
+    program.capabilities.push_back(std::move(echo));
+
+    // cap1: DraftReply(Request) -> Reply (construct terminal).
+    CoreCapabilityDecl draft_reply;
+    draft_reply.name = "DraftReply";
+    draft_reply.symbol_ref = {SymbolRefKind::Capability, "app::DraftReply",
+                              "DraftReply", "app", 351};
+    draft_reply.param_types = {request_vt};
+    draft_reply.return_type = reply_vt;
+    program.capabilities.push_back(std::move(draft_reply));
+
+    const CoreValueTypeId unit_vt{3};
+    program.value_types.push_back(CoreValueType{CoreVtUnit{}}); // vt3 Unit
+
+    // --- Agent 0: Producer (opaque capability-final) ---
+    {
+        CoreAgentDecl agent;
+        agent.name = "Producer";
+        agent.symbol_ref = {SymbolRefKind::Agent, "app::Producer", "Producer",
+                            "app", 360};
+        agent.states = {"Done", "Start"};
+        agent.initial = CoreStateId{1};
+        agent.finals = {CoreStateId{0}};
+        agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+        agent.input_type = CoreTypeId{0};
+        agent.output_type = CoreTypeId{0};
+        agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+        agent.capabilities = {CoreCapabilityId{0}};
+        program.agents.push_back(std::move(agent));
+
+        CoreFlowDecl flow;
+        flow.target = CoreAgentId{0};
+        flow.agent_name = "Producer";
+        // expr0: input path (Request).
+        CorePathExpr input;
+        input.root = CorePathRoot::Input;
+        input.root_name = "input";
+        input.root_type = CoreTypeId{0};
+        flow.storage.exprs.push_back(
+            CoreExpr{std::move(input), std::nullopt, request_vt});
+        flow.storage.value_count = 2;
+        flow.storage.value_types = {request_vt, request_vt};
+        CoreFlowState done;
+        done.state = CoreStateId{0};
+        done.state_name = "Done";
+        done.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{1},
+                                            CoreCapabilityId{0}, "Echo",
+                                            {CoreValueId{0}}},
+                     std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+        flow.states.push_back(std::move(done));
+        CoreFlowState start;
+        start.state = CoreStateId{1};
+        start.state_name = "Start";
+        start.body.statements.push_back(
+            CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+        flow.states.push_back(std::move(start));
+        program.flows.push_back(std::move(flow));
+
+        CoreInstanceDecl instance;
+        instance.id = CoreInstanceId{0};
+        instance.instance_key = "_inst_Producer";
+        instance.origin = program.agents[0].symbol_ref;
+        instance.dispatch_types = {request_vt, unit_vt, request_vt};
+        instance.payload = CoreAgentInstance{
+            CoreAgentId{0}, CoreTypeId{0},
+            CoreAgentDecl::ContextKind::Unit, CoreTypeId{}, CoreTypeId{0}};
+        program.instances.push_back(std::move(instance));
+    }
+
+    // --- Agent 1: ConstructAgent (construct-capability terminal, P6) ---
+    {
+        CoreAgentDecl agent;
+        agent.name = "ConstructAgent";
+        agent.symbol_ref = {SymbolRefKind::Agent, "app::ConstructAgent",
+                            "ConstructAgent", "app", 361};
+        agent.states = {"Done", "Start"};
+        agent.initial = CoreStateId{1};
+        agent.finals = {CoreStateId{0}};
+        agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+        agent.input_type = CoreTypeId{0};
+        agent.output_type = CoreTypeId{1};
+        agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+        agent.capabilities = {CoreCapabilityId{1}};
+        program.agents.push_back(std::move(agent));
+
+        CoreFlowDecl flow;
+        flow.target = CoreAgentId{1};
+        flow.agent_name = "ConstructAgent";
+        // expr0: input.value (field projection, Int).
+        CorePathExpr field;
+        field.root = CorePathRoot::Input;
+        field.root_name = "input";
+        field.root_type = CoreTypeId{0};
+        field.members = {"value"};
+        field.projection = {CoreProjectionStep{
+            CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{}}};
+        field.projection_resolved = true;
+        flow.storage.exprs.push_back(
+            CoreExpr{std::move(field), std::nullopt, int_vt});
+        // expr1: construct Request{value: v0} (Request).
+        flow.storage.exprs.push_back(CoreExpr{
+            CoreConstructExpr{"app::Request", "", false, CoreTypeId{0},
+                              CoreVariantId{}, true,
+                              {CoreConstructArg{CoreFieldId{0},
+                                                CoreValueId{0}}}},
+            std::nullopt, request_vt});
+        flow.storage.value_count = 3;
+        flow.storage.value_types = {int_vt, request_vt, reply_vt};
+        // Done: let v0 = input.value; let v1 = construct; v2 = DraftReply(v1);
+        //       return v2.
+        CoreFlowState done;
+        done.state = CoreStateId{0};
+        done.state_name = "Done";
+        done.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{2},
+                                            CoreCapabilityId{1},
+                                            "DraftReply",
+                                            {CoreValueId{1}}},
+                     std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{2}}, std::nullopt});
+        flow.states.push_back(std::move(done));
+        CoreFlowState start;
+        start.state = CoreStateId{1};
+        start.state_name = "Start";
+        start.body.statements.push_back(
+            CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+        flow.states.push_back(std::move(start));
+        program.flows.push_back(std::move(flow));
+
+        CoreInstanceDecl instance;
+        instance.id = CoreInstanceId{1};
+        instance.instance_key = "_inst_ConstructAgent";
+        instance.origin = program.agents[1].symbol_ref;
+        instance.dispatch_types = {request_vt, unit_vt, reply_vt};
+        instance.payload = CoreAgentInstance{
+            CoreAgentId{1}, CoreTypeId{0},
+            CoreAgentDecl::ContextKind::Unit, CoreTypeId{}, CoreTypeId{1}};
+        program.instances.push_back(std::move(instance));
+    }
+
+    // --- Workflow: Producer(input) -> ConstructAgent(producer) ---
+    CoreWorkflowDecl workflow;
+    workflow.id = CoreWorkflowId{0};
+    workflow.name = "OpaqueUpstream";
+    workflow.symbol_ref = {SymbolRefKind::Workflow, "app::OpaqueUpstream",
+                           "OpaqueUpstream", "app", 362};
+    workflow.input_type = CoreTypeId{0};
+    workflow.output_type = CoreTypeId{1};
+    workflow.storage.value_count = 3;
+    workflow.storage.value_types = {request_vt, request_vt, reply_vt};
+    // expr0: WorkflowInput (Request).
+    CorePathExpr wf_input;
+    wf_input.root = CorePathRoot::WorkflowInput;
+    wf_input.root_name = "input";
+    wf_input.root_type = CoreTypeId{0};
+    workflow.storage.exprs.push_back(
+        CoreExpr{std::move(wf_input), std::nullopt, request_vt});
+    // expr1: WorkflowNodeOutput node 0 (Request, the Producer's output).
+    CorePathExpr producer_out;
+    producer_out.root = CorePathRoot::WorkflowNodeOutput;
+    producer_out.root_name = "producer";
+    producer_out.root_type = CoreTypeId{0};
+    producer_out.workflow_node = CoreWorkflowNodeId{0};
+    workflow.storage.exprs.push_back(
+        CoreExpr{std::move(producer_out), std::nullopt, request_vt});
+    // expr2: WorkflowNodeOutput node 1 (Reply, the ConstructAgent's output).
+    CorePathExpr construct_out;
+    construct_out.root = CorePathRoot::WorkflowNodeOutput;
+    construct_out.root_name = "construct";
+    construct_out.root_type = CoreTypeId{1};
+    construct_out.workflow_node = CoreWorkflowNodeId{1};
+    workflow.storage.exprs.push_back(
+        CoreExpr{std::move(construct_out), std::nullopt, reply_vt});
+
+    const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
+        auto region = std::make_unique<CoreRegion>();
+        region->statements.push_back(
+            CoreStmt{CoreLetStmt{value, expr}, std::nullopt});
+        region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
+        return region;
+    };
+    CoreWorkflowNode producer_node;
+    producer_node.id = CoreWorkflowNodeId{0};
+    producer_node.node_name = "producer";
+    producer_node.target_instance = CoreInstanceId{0};
+    producer_node.input_region =
+        yielding_region(CoreExprId{0}, CoreValueId{0});
+    workflow.nodes.push_back(std::move(producer_node));
+    CoreWorkflowNode construct_node;
+    construct_node.id = CoreWorkflowNodeId{1};
+    construct_node.node_name = "construct";
+    construct_node.target_instance = CoreInstanceId{1};
+    construct_node.after = {CoreWorkflowNodeId{0}};
+    construct_node.input_region =
+        yielding_region(CoreExprId{1}, CoreValueId{1});
+    workflow.nodes.push_back(std::move(construct_node));
+    workflow.return_region =
+        yielding_region(CoreExprId{2}, CoreValueId{2});
+    program.workflows.push_back(std::move(workflow));
+    return program;
+}
+
 static bool has_codegen_code(const ahfl::backends::CoreWasmCodegenResult &result,
                              std::string_view code) {
     for (const auto &diagnostic : result.diagnostics) {
@@ -4247,6 +4511,264 @@ int main() {
             check(has_ranged_diag,
                   "WH-5c.4: the scratch-overflow diagnostic carries a "
                   "non-empty SourceRange");
+        }
+
+        // WH-5c.4 P0-1/P0-2 fail-closed pin: an agent with TWO construct-
+        // capability final states is rejected with EXACTLY ONE ranged
+        // diagnostic (kUnsupportedCapabilityFrame). Before the fix the
+        // planning loop pushed synthetic states into a std::vector while the
+        // first builder held a const-ref to its element (UAF on the second
+        // push), and the manifest emitted cap_call_count=1 while looping more
+        // than one capability (hard decoder failure). The rejection uses the
+        // SECOND terminal's return-statement SourceRange and names the
+        // offending state and capability.
+        {
+            using namespace ahfl::ir;
+            using namespace ahfl::ir::core;
+            CoreProgram program;
+
+            // type 0: Request (one Int field "value"), type 1: Reply (one Int
+            // field "answer").
+            for (const char *tname : {"app::Request", "app::Reply"}) {
+                CoreTypeDecl decl;
+                decl.kind = CoreTypeDecl::Kind::Struct;
+                decl.name = tname;
+                decl.fields = {"value"};
+                decl.field_nominal_types = {CoreTypeId{}};
+                decl.field_has_default = {false};
+                decl.field_type_template_roots = {
+                    CoreMemberTypeTemplateNodeId{0}};
+                decl.member_type_templates = {CoreMemberTypeTemplateNode{
+                    CoreMemberTypeTemplateKind::Concrete,
+                    CoreValueTypeId{1},
+                    0,
+                    CoreTypeId{},
+                    std::nullopt,
+                    {},
+                    CoreMemberTypeTemplateNodeId{}}};
+                program.types.push_back(std::move(decl));
+            }
+            program.value_types.push_back(CoreValueType{
+                CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}}); // vt0 Request
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+            program.value_types.push_back(CoreValueType{
+                CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Reply
+
+            CoreCapabilityDecl cap;
+            cap.name = "DraftReply";
+            cap.symbol_ref = {SymbolRefKind::Capability, "app::DraftReply",
+                              "DraftReply", "app", 42};
+            cap.param_types = {CoreValueTypeId{0}};
+            cap.return_type = CoreValueTypeId{2};
+            program.capabilities.push_back(std::move(cap));
+
+            CoreAgentDecl agent;
+            agent.name = "Runner";
+            agent.states = {"DoneA", "DoneB", "Start"};
+            agent.initial = CoreStateId{2};
+            agent.finals = {CoreStateId{0}, CoreStateId{1}};
+            agent.transitions = {{CoreStateId{2}, CoreStateId{0}},
+                                 {CoreStateId{2}, CoreStateId{1}}};
+            agent.input_type = CoreTypeId{0};
+            agent.output_type = CoreTypeId{1};
+            agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+            agent.capabilities = {CoreCapabilityId{0}};
+            program.agents.push_back(std::move(agent));
+
+            CoreFlowDecl flow;
+            flow.target = CoreAgentId{0};
+            flow.agent_name = "Runner";
+            // expr0: literal i64 42 (vt1).
+            flow.storage.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "42"},
+                         ahfl::SourceRange{10, 20}, CoreValueTypeId{1}});
+            // expr1: construct Request{value: v1} (vt0) — DoneA.
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Request", "", false, CoreTypeId{0},
+                                  CoreVariantId{}, true,
+                                  {CoreConstructArg{CoreFieldId{0},
+                                                    CoreValueId{1}}}},
+                ahfl::SourceRange{20, 30}, CoreValueTypeId{0}});
+            // expr2: construct Request{value: v4} (vt0) — DoneB.
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Request", "", false, CoreTypeId{0},
+                                  CoreVariantId{}, true,
+                                  {CoreConstructArg{CoreFieldId{0},
+                                                    CoreValueId{4}}}},
+                ahfl::SourceRange{30, 40}, CoreValueTypeId{0}});
+            flow.storage.value_count = 7;
+            flow.storage.value_types = {
+                CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{0},
+                CoreValueTypeId{2}, CoreValueTypeId{1}, CoreValueTypeId{0},
+                CoreValueTypeId{2}};
+
+            // DoneA (state 0): let v1 = literal; let v2 = construct;
+            //                  v3 = DraftReply(v2); return v3.
+            CoreFlowState done_a;
+            done_a.state = CoreStateId{0};
+            done_a.state_name = "DoneA";
+            done_a.body.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{0}},
+                         ahfl::SourceRange{100, 105}});
+            done_a.body.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{1}},
+                         ahfl::SourceRange{105, 110}});
+            done_a.body.statements.push_back(
+                CoreStmt{CoreCapabilityCallStmt{CoreValueId{3},
+                                                CoreCapabilityId{0},
+                                                "DraftReply",
+                                                {CoreValueId{2}}},
+                         ahfl::SourceRange{110, 115}});
+            done_a.body.statements.push_back(
+                CoreStmt{CoreReturnStmt{true, CoreValueId{3}},
+                         ahfl::SourceRange{115, 120}});
+            flow.states.push_back(std::move(done_a));
+
+            // DoneB (state 1): same shape, distinct value IDs (SSA is
+            // flow-global) and a distinct SourceRange (the rejection must
+            // carry THIS terminal's return range).
+            CoreFlowState done_b;
+            done_b.state = CoreStateId{1};
+            done_b.state_name = "DoneB";
+            done_b.body.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{0}},
+                         ahfl::SourceRange{200, 205}});
+            done_b.body.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{2}},
+                         ahfl::SourceRange{205, 210}});
+            done_b.body.statements.push_back(
+                CoreStmt{CoreCapabilityCallStmt{CoreValueId{6},
+                                                CoreCapabilityId{0},
+                                                "DraftReply",
+                                                {CoreValueId{5}}},
+                         ahfl::SourceRange{210, 215}});
+            done_b.body.statements.push_back(
+                CoreStmt{CoreReturnStmt{true, CoreValueId{6}},
+                         ahfl::SourceRange{215, 220}});
+            flow.states.push_back(std::move(done_b));
+
+            // Start (state 2): goto DoneA.
+            CoreFlowState start;
+            start.state = CoreStateId{2};
+            start.state_name = "Start";
+            start.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "DoneA"},
+                         ahfl::SourceRange{300, 310}});
+            flow.states.push_back(std::move(start));
+            program.flows.push_back(std::move(flow));
+
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "WH-5c.4 P0-1/P0-2: two-construct-terminal fixture is "
+                  "verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            check(!emitted.artifact.has_value(),
+                  "WH-5c.4 P0-1/P0-2: a second construct-capability terminal "
+                  "rejects the build");
+            // Exactly ONE kUnsupportedCapabilityFrame diagnostic, carrying the
+            // SECOND terminal's (DoneB) return-statement SourceRange.
+            std::size_t cap_frame_diags = 0;
+            bool has_ranged_diag = false;
+            bool names_done_b = false;
+            for (const auto &diag : emitted.diagnostics) {
+                if (diag.code ==
+                    backends::core_wasm_diag::kUnsupportedCapabilityFrame) {
+                    ++cap_frame_diags;
+                    if (diag.source_range.has_value() &&
+                        !diag.source_range->empty() &&
+                        diag.source_range->begin_offset == 215 &&
+                        diag.source_range->end_offset == 220) {
+                        has_ranged_diag = true;
+                    }
+                    if (diag.message.find("DoneB") != std::string::npos &&
+                        diag.message.find("DraftReply") != std::string::npos) {
+                        names_done_b = true;
+                    }
+                }
+            }
+            check(cap_frame_diags == 1,
+                  "WH-5c.4 P0-1/P0-2: exactly one kUnsupportedCapabilityFrame "
+                  "diagnostic (no double-emit)");
+            check(has_ranged_diag,
+                  "WH-5c.4 P0-1/P0-2: the rejection carries the second "
+                  "terminal's return-statement SourceRange");
+            check(names_done_b,
+                  "WH-5c.4 P0-1/P0-2: the diagnostic names the offending "
+                  "state and capability");
+        }
+
+        // WH-5c.4 P0-3 emission pin: a construct-capability terminal with an
+        // opaque upstream carries BOTH a JSON_TO_P4D input crossing (opaque
+        // producer output -> P4-D input) AND a P4D_TO_JSON self-transcode
+        // (constructed Request -> wire-JSON). Before the fix the scheduler
+        // table was one slot per node (last-write-wins), so one site was
+        // silently dropped. The two-slot table keeps both.
+        {
+            using namespace ahfl::ir;
+            using namespace ahfl::ir::core;
+            auto program = make_p03_opaque_upstream_program();
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "WH-5c.4 P0-3: opaque-upstream fixture is verified Core "
+                  "with a layout");
+            const auto layouts = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layouts.table,
+                {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi});
+            check(emitted.artifact.has_value(),
+                  "WH-5c.4 P0-3: opaque-upstream construct-terminal workflow "
+                  "emits cleanly");
+            // Find the construct node's schedule position from the descriptor.
+            std::uint32_t construct_schedule_pos = 0;
+            bool found_construct = false;
+            if (emitted.descriptor.has_value()) {
+                for (const auto &node : emitted.descriptor->nodes) {
+                    if (node.name == "construct") {
+                        construct_schedule_pos = node.schedule_pos;
+                        found_construct = true;
+                        break;
+                    }
+                }
+            }
+            check(found_construct,
+                  "WH-5c.4 P0-3: the descriptor names the construct node");
+            // The descriptor's frame_section must carry BOTH transcode sites
+            // targeting the construct node.
+            if (emitted.descriptor.has_value() &&
+                emitted.descriptor->frame_section.has_value()) {
+                const auto &sites =
+                    emitted.descriptor->frame_section->transcode_sites;
+                bool has_json_to_p4d = false;
+                bool has_p4d_to_json = false;
+                for (const auto &site : sites) {
+                    if (site.target_node_ordinal !=
+                        construct_schedule_pos) {
+                        continue;
+                    }
+                    if (site.direction ==
+                        CoreFrameTranscodeSite::Direction::JsonToP4D) {
+                        has_json_to_p4d = true;
+                    }
+                    if (site.direction ==
+                            CoreFrameTranscodeSite::Direction::P4DToJson &&
+                        site.source ==
+                            CoreFrameTranscodeSite::Source::CapabilityParam) {
+                        has_p4d_to_json = true;
+                    }
+                }
+                check(has_json_to_p4d,
+                      "WH-5c.4 P0-3: JSON_TO_P4D input crossing targets the "
+                      "construct node");
+                check(has_p4d_to_json,
+                      "WH-5c.4 P0-3: P4D_TO_JSON CapabilityParam self-"
+                      "transcode targets the construct node");
+            } else {
+                check(false,
+                      "WH-5c.4 P0-3: the workflow descriptor carries a frame "
+                      "section");
+            }
         }
 
         // P6-5 (RFC 0026 KR6.6): bounded collections. A `List<Int>(4)` value is

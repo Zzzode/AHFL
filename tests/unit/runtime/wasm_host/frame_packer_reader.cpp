@@ -490,6 +490,75 @@ void test_schema_fail_closed(const std::filesystem::path &repo_root) {
               "fail_closed.bool_word");
     }
 
+    // 6b2. Float round-trip: the f64 pack/read branches are NOT dead code --
+    //      the durable-resume CLI smoke (#423) exercises a Float field in the
+    //      workflow output (RichReply.ratio) through the JSON_TO_P4D
+    //      workflow-output crossing, which calls pack_value_at. A Float wire
+    //      schema node with an F64 layout must pack and read back the exact
+    //      f64 bits (memcpy-identical, no epsilon).
+    //      (The P2-1 review finding claimed the f64 branches were dead code;
+    //      that was a factual error -- #423 depends on them. f64 support is
+    //      tracked for promotion in WH-5c.7.)
+    {
+        irc::CoreFrameLayoutSection section;
+        section.table.target = irc::TargetDataLayout{};
+        section.table.layouts.push_back(
+            irc::CoreLayout{8, 8, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::F64}});
+        section.input_layout = irc::CoreLayoutId{0};
+        section.output_layout = irc::CoreLayoutId{0};
+        section.payload_arena_base = 16384;
+        section.payload_arena_capacity = 4096;
+
+        irc::CoreWireSchemaTable wire;
+        wire.format_version = 1;
+        irc::CoreWireSchemaNode node;
+        node.shape = irc::CoreWireSchemaFloat{};
+        wire.nodes.push_back(node);
+        wire.frame_roots = irc::CoreWireFrameRoots{
+            irc::CoreWireSchemaNodeId{0}, irc::CoreWireSchemaNodeId{0}, {}, {}};
+
+        auto verified = irc::make_verified_wire_schema_table(std::move(wire));
+        check(verified.table.has_value(), "float_roundtrip.verified");
+        if (!verified.table.has_value()) {
+            return;
+        }
+        std::vector<irc::CoreLowerDiagnostic> diagnostics;
+        auto binding = irc::make_frame_binding_from_verified_table(
+            *verified.table, {irc::CoreWireFrameRootKind::Input}, diagnostics);
+        check(binding.has_value(), "float_roundtrip.binding");
+        if (!binding.has_value()) {
+            return;
+        }
+
+        constexpr double kFloatValue = 3.14;
+        std::vector<std::uint8_t> page(65536, 0);
+        auto packed = wh::pack_p6_input(page, section, *binding,
+                                        ahfl::runtime::make_float(kFloatValue));
+        check(packed.has_value(), "float_roundtrip.pack");
+
+        // Read back through the generic reader at the P6 input base.
+        wh::FrameWalkContext ctx(section, binding->table());
+        const std::vector<wh::StringRegion> no_strings;
+        auto read_back = wh::read_value_at(
+            ctx, page, binding->root(), section.input_layout,
+            irc::kP6AggregateInputBase, no_strings);
+        check(read_back.has_value(), "float_roundtrip.read");
+        if (read_back.has_value()) {
+            const auto *fv =
+                std::get_if<ahfl::runtime::FloatValue>(&read_back->node);
+            check(fv != nullptr, "float_roundtrip.is_float");
+            if (fv != nullptr) {
+                // Exact bit comparison (no epsilon: the round-trip is
+                // memcpy-identical f64 bits).
+                std::uint64_t expected_bits = 0;
+                std::uint64_t actual_bits = 0;
+                std::memcpy(&expected_bits, &kFloatValue, sizeof(expected_bits));
+                std::memcpy(&actual_bits, &fv->value, sizeof(actual_bits));
+                check(expected_bits == actual_bits, "float_roundtrip.bit_exact");
+            }
+        }
+    }
+
     // 6c. Enum tag out of range: v2b_enum_string output is Out{result:Match}
     //     with Miss=0, Hit=1. A tag of 2 must fail with EnumTagOutOfRange.
     {

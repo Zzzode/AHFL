@@ -240,7 +240,7 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     const bool declared_node_only =
         declared.node_observation_skip == Skip::EvaluatorSurfaceAwaitsKr68;
     const bool declared_host_transcode =
-        declared.node_observation_skip == Skip::HostTranscodeAwaitsWh5b3;
+        declared.node_observation_skip == Skip::HostTranscodeAwaitsNodePort;
     if (declared_node_only) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
@@ -253,7 +253,7 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     } else if (declared_host_transcode) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
-                   "'host_transcode_awaits_wh5b3' but the module does not emit on the "
+                   "'host_transcode_awaits_node_port' but the module does not emit on the "
                    "orchestration lane (" +
                    std::string{wasm_eligibility_verdict_name(verdict)} +
                    ": " + computed.reason +

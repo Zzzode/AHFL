@@ -82,29 +82,46 @@ mint_transcode_binding(const TranscodeConfig &config,
             return irc::make_frame_binding_from_verified_table(
                 verified, {irc::CoreWireFrameRootKind::Input}, diags);
         }
-        // NodeOutput: the P6 producer's own OUTPUT boundary root.
-        if (site.source_node_ordinal >= descriptor.nodes.size()) {
-            return std::nullopt;
-        }
-        const auto &node_desc = descriptor.nodes[site.source_node_ordinal];
-        // WH-5c.4 (GAP 2): a construct-capability terminal's transcode source
-        // is the capability's PARAM type (the in-module construct result), not
-        // the node's OUTPUT boundary root (the agent's output type). Mint a
-        // capability param binding so the P4-D read uses the correct wire
-        // schema root.
-        if (!node_desc.all_capabilities.empty()) {
+        // WH-5c.4 P1-2: a construct-capability terminal's self-transcode is
+        // EXPLICITLY marked Source::CapabilityParam (the codegen sets it; the
+        // host never infers a param binding from a capability-bearing node,
+        // which over-minted for ordinary P6 bridge nodes). The site's node is
+        // the construct terminal itself; its descriptor carries the capability
+        // whose PARAM type is the transcode source.
+        if (site.source == irc::CoreFrameTranscodeSite::Source::CapabilityParam) {
+            if (site.source_node_ordinal >= descriptor.nodes.size()) {
+                return std::nullopt;
+            }
+            const auto &node_desc = descriptor.nodes[site.source_node_ordinal];
+            if (node_desc.all_capabilities.empty()) {
+                return std::nullopt;
+            }
             const auto source_symbol = node_desc.all_capabilities.front().second;
             for (const auto &cap : config.wire_table.capabilities) {
-                if (cap.source_symbol == source_symbol && !cap.params.empty()) {
+                if (cap.source_symbol == source_symbol &&
+                    !cap.params.empty()) {
+                    // WH-5c.4 fix-forward P2-E: never let a frame-layout site
+                    // name a parameter the capability schema does not declare.
+                    // Codegen emits ordinal 0 against the single-param
+                    // construct shape, but the host treats an out-of-range
+                    // ordinal as a corrupt module and fails closed.
+                    if (site.param_ordinal >= cap.params.size()) {
+                        return std::nullopt;
+                    }
                     return irc::make_wire_binding_from_verified_table(
                         verified,
                         {cap.capability, source_symbol,
-                         irc::CoreWireRootKind::Param, 0},
+                         irc::CoreWireRootKind::Param, site.param_ordinal},
                         diags);
                 }
             }
             return std::nullopt;
         }
+        // NodeOutput: the P6 producer's own OUTPUT boundary root.
+        if (site.source_node_ordinal >= descriptor.nodes.size()) {
+            return std::nullopt;
+        }
+        const auto &node_desc = descriptor.nodes[site.source_node_ordinal];
         const auto p6_ord = node_desc.p6_block_ordinal;
         return irc::make_node_frame_binding_from_verified_table(
             verified, {p6_ord, irc::CoreWireNodeRootKind::Output}, diags);

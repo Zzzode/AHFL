@@ -231,6 +231,102 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return std::nullopt;
 }
 
+// WH-5c.4 P0-3: collect state transitions for OPAQUE (non-P6) nodes from
+// node-event records in a P6-frame module. P6 nodes' states are collected
+// from the trace ring (fire_state_entries); opaque nodes never write to the
+// trace ring, so their walks are only recoverable from the node-event
+// records the scheduler writes per completed node. Populates
+// states_per_node ONLY (no hook, no collected_states -- the caller rebuilds
+// collected_states and fires the hook in schedule order via
+// rebuild_and_fire_states).
+[[nodiscard]] std::optional<std::string> collect_opaque_node_states(
+    std::span<const std::uint8_t> linear_memory,
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
+    std::vector<std::vector<WasmNodeStateEntry>> &states_per_node) {
+    const auto &nodes = descriptor.nodes;
+    const auto &agents = descriptor.agents;
+
+    auto events =
+        ne::decode_node_events(linear_memory, descriptor.workflow_node_count);
+    if (!events.has_value()) {
+        return "node-event decode failed";
+    }
+    for (const auto &event : *events) {
+        const ahfl::backends::CoreWasmNodeDescriptor *node_desc = nullptr;
+        std::size_t node_schedule = 0;
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            if (nodes[i].node_id == event.workflow_node_id.value) {
+                node_desc = &nodes[i];
+                node_schedule = i;
+                break;
+            }
+        }
+        if (node_desc == nullptr) {
+            return "node-event record names unknown node";
+        }
+        // P6 nodes' states are already collected from the trace ring.
+        if (node_desc->is_p6) {
+            continue;
+        }
+        if (node_desc->runner >= agents.size()) {
+            return "node-event record runner index out of range";
+        }
+
+        // WH-5c.4 fix-forward P2-C: cross-check event capability kind +
+        // source_symbol against the descriptor node, exactly as the WireJson
+        // reconstruction does. A mismatch is evidence of a corrupt module;
+        // fail closed rather than firing the wrong agent's state walk.
+        const bool event_is_capability =
+            event.kind == core_wasm_resume::NodeKind::Capability;
+        if (event_is_capability != node_desc->has_capability) {
+            return "node-event record capability kind disagrees with descriptor";
+        }
+        if (node_desc->has_capability) {
+            if (event.source_symbol != node_desc->source_symbol) {
+                return "node-event record source_symbol disagrees with descriptor";
+            }
+        } else if (event.source_symbol != 0) {
+            return "identity node-event record has nonzero source_symbol";
+        }
+
+        const auto &agent = agents[node_desc->runner];
+        for (const auto &state_name : agent.walk) {
+            states_per_node[node_schedule].push_back(
+                {node_desc->runner, state_name});
+        }
+    }
+    return std::nullopt;
+}
+
+// WH-5c.4 P0-3: rebuild collected_states from states_per_node in schedule
+// order and fire state_entered_hook for every entry. In a P6-frame module
+// the trace ring fires P6 states live at import boundaries (out of schedule
+// order relative to opaque nodes); this post-run pass produces a single
+// schedule-ordered sequence that matches the evaluator's observation.
+void rebuild_and_fire_states(
+    std::vector<StateEntry> &collected_states,
+    const std::vector<std::vector<WasmNodeStateEntry>> &states_per_node,
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
+    const StateEnteredHook &state_entered_hook) {
+    collected_states.clear();
+    for (std::size_t i = 0; i < states_per_node.size(); ++i) {
+        const std::string_view node_name =
+            i < descriptor.nodes.size() ? descriptor.nodes[i].name
+                                        : std::string_view{};
+        for (const auto &entry : states_per_node[i]) {
+            if (entry.runner >= descriptor.agents.size()) {
+                continue;
+            }
+            const auto &agent = descriptor.agents[entry.runner];
+            collected_states.push_back({agent.agent, entry.state_name});
+            if (state_entered_hook) {
+                state_entered_hook(AgentId{entry.runner}, agent.agent,
+                                   node_name, entry.state_name);
+            }
+        }
+    }
+}
+
 // WH-4b: validate a recovery snapshot against the descriptor before a resume
 // run (the wasm mirror of the evaluator's validate_recovery_snapshot at
 // workflow_runtime.cpp:82-144). Fail-closed: any mismatch returns a
@@ -779,9 +875,11 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // `resume_pending_result` is captured by reference: it is a member
         // of the `config` parameter, which outlives every callback
         // invocation (callbacks fire only during invoke_run2).
+        // WH-5c.4 P0-3: state_entered_hook is NOT captured here -- P6
+        // trace states are collected without firing the hook; the hook
+        // fires post-run in schedule order via rebuild_and_fire_states.
         wrapped_callback =
-            [state_entered_hook = config.state_entered_hook,
-             &resume_pending_result = config.resume_pending_result,
+            [&resume_pending_result = config.resume_pending_result,
              resume_pending_result_wire_json =
                  config.resume_pending_result_wire_json,
              &engine, &recorder, &replay_divergence, &origination_failure,
@@ -798,9 +896,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         obs.whole_memory, section.state_trace_base,
                         section.state_trace_capacity);
                     if (decoded.has_value()) {
+                        // WH-5c.4 P0-3: collect P6 trace states into
+                        // states_per_node WITHOUT firing the hook; the hook
+                        // fires post-run in schedule order (matching the
+                        // evaluator) via rebuild_and_fire_states after opaque
+                        // node states are also collected.
                         auto err = fire_state_entries(
                             *decoded, last_trace_count, descriptor,
-                            state_entered_hook, collected_states,
+                            StateEnteredHook{}, collected_states,
                             states_per_node, runner_to_schedule);
                         if (err.has_value()) {
                             trace_error = std::move(*err);
@@ -1716,9 +1819,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     *mem, section.state_trace_base,
                     section.state_trace_capacity);
                 if (decoded.has_value() && decoded->size() > last_trace_count) {
+                    // WH-5c.4 P0-3: collect without firing the hook; the
+                    // hook fires post-run in schedule order via
+                    // rebuild_and_fire_states below.
                     auto err = fire_state_entries(
                         *decoded, last_trace_count, descriptor,
-                        config.state_entered_hook,
+                        StateEnteredHook{},
                         collected_states, states_per_node,
                         runner_to_schedule);
                     if (err.has_value() && run_ok) {
@@ -1750,6 +1856,36 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 // Proceed with whatever was collected (might be empty).
             }
         }
+    }
+
+    // --- 9c. WH-5c.4 P0-3: P6-frame opaque-node state collection +
+    //          schedule-ordered hook firing ---
+    // In a P6-frame module the trace ring carries ONLY P6 nodes' states
+    // (collected at import boundaries above, hook suppressed). Opaque
+    // nodes never write to the trace ring; their walks are recovered from
+    // the node-event records. Collect them, then rebuild collected_states
+    // from states_per_node in schedule order and fire the hook for the
+    // full sequence -- matching the evaluator's schedule-ordered
+    // state_entered_hook.
+    if (is_p6) {
+        // Only capability workflows have node-event records. An identity
+        // P6 workflow (no imports) shares the node-event region with the
+        // P6 input frame (node_blocks_base == kNodeEventLogBase), so the
+        // decode would read input bytes as event_count. Identity P6
+        // workflows have no opaque nodes anyway.
+        if (!descriptor.imports.empty()) {
+            auto mem = engine.read_whole_memory();
+            if (mem.has_value()) {
+                auto err =
+                    collect_opaque_node_states(*mem, descriptor, states_per_node);
+                if (err.has_value() && run_ok) {
+                    return std::unexpected(
+                        "run_workflow_session: " + std::move(*err));
+                }
+            }
+        }
+        rebuild_and_fire_states(collected_states, states_per_node, descriptor,
+                                config.state_entered_hook);
     }
 
     // --- 10. Post-run: decode node events, fire node_completed_hook, and

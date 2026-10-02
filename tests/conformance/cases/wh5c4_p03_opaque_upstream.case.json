@@ -1,0 +1,38 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/wh5c4_p03_opaque_upstream.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::wh5c4_p03_opaque_upstream::OpaqueUpstreamWorkflow",
+  "scenarios": [
+    {
+      "name": "opaque_upstream_construct_terminal",
+      "input": {"_type":"wasm::wh5c4_p03_opaque_upstream::Draft","id":"t1","question":"what is AHFL?"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": ["wasm::wh5c4_p03_opaque_upstream::Echo", "wasm::wh5c4_p03_opaque_upstream::DraftReply"],
+        "output_json": {"_type":"wasm::wh5c4_p03_opaque_upstream::Reply","answer":"AHFL is a DSL","id":"t1"}
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "wasm::wh5c4_p03_opaque_upstream::Echo",
+      "status": "ok",
+      "result_json": {"_type":"wasm::wh5c4_p03_opaque_upstream::Draft","id":"t1","question":"what is AHFL?"}
+    },
+    {
+      "name": "wasm::wh5c4_p03_opaque_upstream::DraftReply",
+      "status": "ok",
+      "result_json": {"_type":"wasm::wh5c4_p03_opaque_upstream::Reply","answer":"AHFL is a DSL","id":"t1"}
+    }
+  ],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "WH-5c.4 P0-3: construct-capability terminal with an opaque upstream; the construct node carries BOTH a JSON_TO_P4D input crossing (opaque producer output -> P4-D input) AND a P4D_TO_JSON self-transcode (constructed Request -> wire-JSON); the two-slot scheduler table keeps both",
+      "node_observation_skip": "host_transcode_awaits_node_port"
+    }
+  }
+}

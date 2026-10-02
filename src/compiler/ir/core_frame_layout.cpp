@@ -227,6 +227,9 @@ class Encoder {
                         u32(site.source_node_ordinal);
                         u32(site.target_node_ordinal);
                         id(site.layout);
+                        // WH-5c.4 P1-2: the dense capability parameter index
+                        // (Source::CapabilityParam only; 0 otherwise).
+                        u32(site.param_ordinal);
                     }
                 }
             }
@@ -622,8 +625,10 @@ class Decoder {
                         const auto source_node = cursor_.u32();
                         const auto target_node = cursor_.u32();
                         const auto layout = cursor_.id();
+                        const auto param_ordinal = cursor_.u32();
                         if (!import_ordinal || !direction || !source ||
-                            !source_node || !target_node || !layout.has_value()) {
+                            !source_node || !target_node || !layout.has_value() ||
+                            !param_ordinal) {
                             bad("frame-layout transcode-site record is truncated");
                             return result;
                         }
@@ -632,7 +637,7 @@ class Decoder {
                                     CoreFrameTranscodeSite::Direction::JsonToP4D) ||
                             *source >
                                 static_cast<std::uint8_t>(
-                                    CoreFrameTranscodeSite::Source::NodeOutput)) {
+                                    CoreFrameTranscodeSite::Source::CapabilityParam)) {
                             bad("frame-layout transcode-site carries an unknown direction or source");
                             return result;
                         }
@@ -644,6 +649,7 @@ class Decoder {
                         site.source_node_ordinal = *source_node;
                         site.target_node_ordinal = *target_node;
                         site.layout = *layout;
+                        site.param_ordinal = *param_ordinal;
                         section.transcode_sites.push_back(std::move(site));
                     }
                 }
@@ -1553,6 +1559,10 @@ class Decoder {
                 needed_entry_shadow_extent =
                     std::max(needed_entry_shadow_extent, needed);
             }
+            // A P4D_TO_JSON NodeOutput or CapabilityParam site reads the
+            // producer's own O_k block and needs NO host span (CapabilityParam
+            // is the construct-terminal self-transcode: its source is the
+            // node's constructed O_k, identical in placement to NodeOutput).
         }
         auto check_transcode_span =
             [&](bool required, std::uint64_t base, std::uint64_t extent,

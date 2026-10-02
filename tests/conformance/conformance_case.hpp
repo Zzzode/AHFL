@@ -138,10 +138,12 @@ enum class WasmNodeObservationSkip {
     EvaluatorSurfaceAwaitsKr68,
     /// The module emits and the evaluator agrees (the native wasm3 lane
     /// compares), but the Node embedded host lacks the ahfl_xcode transcode
-    /// adapter (WH-5b.3 host-side work), so the wasm module traps at its
-    /// P4D_TO_JSON / JSON_TO_P4D transcode sites. The Node observation is
-    /// withheld until the JS host gains transcode support.
-    HostTranscodeAwaitsWh5b3,
+    /// adapter: the C++ WH-5b.3 host-side transcode landed, but the Node
+    /// oracle JS port of ahfl_xcode is still a stub (returns [1,0,0]), so
+    /// the wasm module traps at its P4D_TO_JSON / JSON_TO_P4D transcode
+    /// sites. The Node observation is withheld until the JS host gains
+    /// transcode support.
+    HostTranscodeAwaitsNodePort,
 };
 
 struct WasmEngineEligibility {
@@ -518,9 +520,9 @@ class ConformanceCaseReader {
             return std::nullopt;
         }
         if (wasm.node_observation_skip ==
-                WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3 &&
+                WasmNodeObservationSkip::HostTranscodeAwaitsNodePort &&
             wasm.eligibility != WasmEligibility::Orchestration) {
-            error("engines.wasm.node_observation_skip 'host_transcode_awaits_wh5b3' "
+            error("engines.wasm.node_observation_skip 'host_transcode_awaits_node_port' "
                   "requires engines.wasm.eligible 'orchestration' (the module emits "
                   "but the Node host lacks transcode support)",
                   std::nullopt);
@@ -1083,12 +1085,12 @@ class ConformanceCaseReader {
         if (*value == "evaluator_surface_awaits_kr68") {
             return WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
         }
-        if (*value == "host_transcode_awaits_wh5b3") {
-            return WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3;
+        if (*value == "host_transcode_awaits_node_port") {
+            return WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
         }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
               "'blocked_kr66', 'evaluator_surface_awaits_kr68', or "
-              "'host_transcode_awaits_wh5b3', got '" +
+              "'host_transcode_awaits_node_port', got '" +
                   *value + "'",
               range_of(node));
         return std::nullopt;

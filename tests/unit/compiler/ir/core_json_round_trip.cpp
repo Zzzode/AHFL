@@ -675,6 +675,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // WH-5c.4 (GAP 2): opaque-lane capability-final agent that constructs
         // the capability argument in-module; lowers to verifier-clean Core.
         "wasm/wh5c4_construct_cap_final.ahfl",
+        // WH-5c.4 P0-3: construct-terminal with an opaque upstream; both
+        // JSON_TO_P4D and P4D_TO_JSON transcode sites on one node.
+        "wasm/wh5c4_p03_opaque_upstream.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

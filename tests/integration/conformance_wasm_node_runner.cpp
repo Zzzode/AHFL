@@ -156,9 +156,13 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // The Node embedded host withholds its observation because it lacks the
 // ahfl_xcode transcode adapter (WH-5b.3 host transcode building): the wasm
 // module traps at its P4D_TO_JSON / JSON_TO_P4D transcode sites. The Node
-// census is 69 agreed / 1 skipped (host_transcode_awaits_wh5b3).
+// census is 69 agreed / 2 skipped (host_transcode_awaits_node_port).
+// WH-5c.4 P0-3: the opaque-upstream construct-terminal case
+// (wh5c4_p03_opaque_upstream) also skips the Node lane (it carries
+// ahfl_xcode transcode sites the Node oracle JS port does not yet
+// implement): 69/1 -> 69/2.
 constexpr int kExpectedAgreed = 69;
-constexpr int kExpectedSkipped = 1;
+constexpr int kExpectedSkipped = 2;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
@@ -179,13 +183,16 @@ constexpr std::array<std::string_view, 7> kExpectedNodeOnlyStems{
 };
 
 // Pinned STEM SET of cases allowed to declare
-// engines.wasm.node_observation_skip='host_transcode_awaits_wh5b3'. The wasm
+// engines.wasm.node_observation_skip='host_transcode_awaits_node_port'. The wasm
 // module emits and the native wasm3 lane agrees with the evaluator, but the
-// Node embedded host lacks the ahfl_xcode transcode adapter (WH-5b.3), so the
-// module traps at its transcode sites. The pin moves deliberately when the JS
-// host gains transcode support. Keep sorted.
-constexpr std::array<std::string_view, 1> kExpectedHostTranscodeStems{
+// Node embedded host lacks the ahfl_xcode transcode adapter: the C++ WH-5b.3
+// host-side transcode landed, but the Node oracle JS port of ahfl_xcode is
+// still a stub (returns [1,0,0]), so the module traps at its transcode sites.
+// The pin moves deliberately when the JS host gains transcode support. Keep
+// sorted.
+constexpr std::array<std::string_view, 2> kExpectedHostTranscodeStems{
     "wh5c4_construct_cap_final",
+    "wh5c4_p03_opaque_upstream",
 };
 
 int g_failures = 0;
@@ -195,7 +202,7 @@ int g_skipped = 0;
 // this invocation; compared against kExpectedNodeOnlyStems on a full run.
 std::vector<std::string> g_node_only_stems;
 // Stems that skipped the Node observation due to missing ahfl_xcode transcode
-// support (host_transcode_awaits_wh5b3); compared against
+// support (host_transcode_awaits_node_port); compared against
 // kExpectedHostTranscodeStems on a full run.
 std::vector<std::string> g_host_transcode_stems;
 
@@ -502,13 +509,14 @@ int run_one(const CaseEntry &entry,
     //  - the FB-3b node-only lane (EvaluatorSurfaceAwaitsKr68): the module runs,
     //    but there is no evaluator reference, so the Node observation is
     //    compared directly against the manifest's blessed expectation below.
-    //  - the host-transcode lane (HostTranscodeAwaitsWh5b3): the module emits
+    //  - the host-transcode lane (HostTranscodeAwaitsNodePort): the module emits
     //    and the native wasm3 lane agrees, but the Node embedded host lacks the
-    //    ahfl_xcode transcode adapter (WH-5b.3), so the observation is withheld.
+    //    ahfl_xcode transcode adapter (the C++ WH-5b.3 transcode landed; the
+    //    Node oracle JS port is still a stub), so the observation is withheld.
     const bool node_only =
         declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
     const bool host_transcode_skip =
-        declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3;
+        declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
     if (declared_skip != WasmNodeObservationSkip::None && !node_only &&
         !host_transcode_skip) {
         std::cerr << "FAIL: " << label
@@ -530,13 +538,13 @@ int run_one(const CaseEntry &entry,
     // already agrees with the evaluator, but the Node embedded host stubs the
     // ahfl_xcode transcode imports with error returns, so the module traps at
     // its P4D_TO_JSON / JSON_TO_P4D sites. Withhold the Node observation until
-    // WH-5b.3 lands the JS transcode adapter.
+    // the Node oracle JS port of ahfl_xcode lands.
     if (host_transcode_skip) {
         ++g_skipped;
         g_host_transcode_stems.push_back(stem);
         std::cout << "SKIP[77] " << label
                   << ": Node embedded host lacks ahfl_xcode transcode support "
-                     "(WH-5b.3 host transcode building)\n";
+                     "(Node oracle JS port of ahfl_xcode not yet landed)\n";
         return 77;
     }
 
@@ -721,7 +729,7 @@ int mode_verify(const fs::path &repo_root,
             std::cerr << "} (an un-reviewed case moved onto the node-only lane?)\n";
             ++g_failures;
         }
-        // Exact-set pin of the host-transcode (host_transcode_awaits_wh5b3)
+        // Exact-set pin of the host-transcode (host_transcode_awaits_node_port)
         // stems: a manifest cannot silently move a differential case onto the
         // host-transcode skip lane (or add an un-reviewed one) while holding
         // the census steady.
@@ -735,7 +743,7 @@ int mode_verify(const fs::path &repo_root,
             expected_ht_stems.emplace_back(s);
         }
         if (g_host_transcode_stems != expected_ht_stems) {
-            std::cerr << "FAIL: host-transcode (host_transcode_awaits_wh5b3) stem set is {";
+            std::cerr << "FAIL: host-transcode (host_transcode_awaits_node_port) stem set is {";
             for (std::size_t i = 0; i < g_host_transcode_stems.size(); ++i) {
                 std::cerr << (i ? ", " : "") << g_host_transcode_stems[i];
             }

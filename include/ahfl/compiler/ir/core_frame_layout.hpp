@@ -106,8 +106,16 @@ struct CoreFrameTranscodeSite {
     std::uint32_t import_ordinal{0};
     enum class Direction : std::uint8_t { P4DToJson, JsonToP4D };
     Direction direction{Direction::P4DToJson};
-    enum class Source : std::uint8_t { Entry, NodeOutput };
+    // WH-5c.4 P1-2: CapabilityParam marks a construct-capability terminal's
+    // P4D_TO_JSON self-transcode (the source is the capability's PARAM type,
+    // i.e. the in-module construct result, not the node's OUTPUT boundary
+    // root). The host mints a capability-param binding ONLY for this source;
+    // it never infers one from a capability-bearing node (SSOT). param_ordinal
+    // is the dense parameter index (0 for the single-param construct shape).
+    enum class Source : std::uint8_t { Entry, NodeOutput, CapabilityParam };
     Source source{Source::Entry};
+    /// Dense parameter index (Source::CapabilityParam only; 0 otherwise).
+    std::uint32_t param_ordinal{0};
     /// Schedule ordinal of the producing node (Source::NodeOutput only).
     std::uint32_t source_node_ordinal{0};
     /// Schedule ordinal of the consuming node, or kTranscodeWorkflowOutput

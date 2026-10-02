@@ -1,0 +1,94 @@
+module wasm::wh5c4_p03_opaque_upstream;
+
+// WH-5c.4 P0-3 fixture: a construct-capability terminal whose upstream IS an
+// opaque-lane node. The Producer agent is a capability-final opaque node
+// (Echo rides the wire-JSON lane); the ConstructAgent is a P6 construct-
+// terminal that builds its capability arg from the Producer's output fields.
+// The construct node needs BOTH:
+//   1. a JSON_TO_P4D input crossing (Producer's wire-JSON output -> the
+//      construct node's P4-D input frame, before materialize), AND
+//   2. a P4D_TO_JSON self-transcode (the constructed Request -> wire-JSON,
+//      after the P6 runner returns).
+// Before the P0-3 fix the scheduler table was one slot per node
+// (last-write-wins), so one of the two sites was silently dropped.
+
+pub struct Draft {
+    id: String(0, 64);
+    question: String(0, 128);
+}
+
+pub struct Request {
+    id: String(0, 64);
+    question: String(0, 128);
+}
+
+pub struct Reply {
+    id: String(0, 64);
+    answer: String(0, 128);
+}
+
+capability Echo(draft: Draft) -> Draft {
+    effect: durable_write;
+}
+
+capability DraftReply(request: Request) -> Reply {
+    effect: durable_write;
+}
+
+// Opaque upstream: a capability-final agent that echoes its input.
+pub agent Producer {
+    input: Draft;
+    context: Unit;
+    output: Draft;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for Producer {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Echo(input);
+    }
+}
+
+// Construct-terminal: builds a Request from the (opaque) upstream's output
+// fields and calls DraftReply.
+pub agent ConstructAgent {
+    input: Draft;
+    context: Unit;
+    output: Reply;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DraftReply];
+    transition Init -> Done;
+}
+
+flow for ConstructAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return DraftReply(Request {
+            id: input.id,
+            question: input.question,
+        });
+    }
+}
+
+pub workflow OpaqueUpstreamWorkflow {
+    input: Draft;
+    output: Reply;
+
+    node producer: Producer(input);
+    node construct: ConstructAgent(producer) after [producer];
+
+    return: construct;
+}

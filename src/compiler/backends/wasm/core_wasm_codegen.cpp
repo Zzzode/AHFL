@@ -1467,15 +1467,23 @@ validate_canonical_input_let(const CoreProgram &program,
     return agent.input_type == agent.output_type;
 }
 
+// WH-5c.4 P2-2: the construct-shape probe is tri-state. `Absent` means the
+// handler is not the construct shape (no diagnostic; the caller falls through
+// to the canonical 3-statement validator). `Invalid` means the handler IS the
+// construct shape but failed a gate (a ranged diagnostic was already emitted;
+// the caller must stop, NOT fall through and emit a second diagnostic).
+// `Accepted` carries the planned capability action.
+struct ConstructFinalProbe {
+    enum class Outcome { Absent, Invalid, Accepted } outcome{Outcome::Absent};
+    CapabilityAction action{};
+};
+
 // WH-5c.4 (GAP 2): detect the construct-shape capability final. The handler's
 // last two statements are a capability call (whose single arg is a construct
 // expression) and a return of the call result. The construct's leaves are
 // input/context/literal references — cross-lane heap edges stay rejected (they
-// go through the WH-5b.3 xcode path, not in-module construction). Returns the
-// construct info on a match, or nullopt when the shape is absent (the caller
-// then tries the canonical 3-statement shape). Emits a ranged diagnostic and
-// returns nullopt when the shape IS present but invalid.
-[[nodiscard]] std::optional<CapabilityAction>
+// go through the WH-5b.3 xcode path, not in-module construction).
+[[nodiscard]] ConstructFinalProbe
 validate_construct_capability_final(const CoreProgram &program,
                                     const ir::core::CoreLayoutTable &layouts,
                                     const CoreAgentDecl &agent,
@@ -1485,7 +1493,7 @@ validate_construct_capability_final(const CoreProgram &program,
     const auto &statements = handler.body.statements;
     // Need at least: one construct let + capability call + return.
     if (statements.size() < 3) {
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Absent, {}};
     }
     const auto *call =
         std::get_if<CoreCapabilityCallStmt>(&statements[statements.size() - 2].node);
@@ -1493,7 +1501,7 @@ validate_construct_capability_final(const CoreProgram &program,
         std::get_if<CoreReturnStmt>(&statements[statements.size() - 1].node);
     if (call == nullptr || ret == nullptr || !ret->has_value ||
         ret->value != call->result || call->args.size() != 1) {
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Absent, {}};
     }
     // The capability call's single arg must be a construct expression bound by
     // an earlier let in this region.
@@ -1507,13 +1515,13 @@ validate_construct_capability_final(const CoreProgram &program,
                          core_wasm_diag::kInvalidCore,
                          "construct capability final names an out-of-range expression",
                          statements[i].source_range);
-                return std::nullopt;
+                return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
             }
             const auto &expr = flow.storage.exprs[let->expr.value];
             if (!std::holds_alternative<CoreConstructExpr>(expr.node)) {
                 // The arg is a let but not a construct — this is not the
                 // construct shape; let the canonical validator reject it.
-                return std::nullopt;
+                return ConstructFinalProbe{ConstructFinalProbe::Outcome::Absent, {}};
             }
             construct_expr = let->expr;
             break;
@@ -1522,7 +1530,7 @@ validate_construct_capability_final(const CoreProgram &program,
     if (!construct_expr.has_value()) {
         // The arg is not bound by a let in this region — not the construct
         // shape.
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Absent, {}};
     }
 
     // Validate the capability identity and types.
@@ -1531,7 +1539,7 @@ validate_construct_capability_final(const CoreProgram &program,
                  core_wasm_diag::kInvalidCore,
                  "construct capability final references an invalid capability",
                  statements[statements.size() - 2].source_range);
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
     if (std::find(agent.capabilities.begin(), agent.capabilities.end(),
                   call->capability) == agent.capabilities.end()) {
@@ -1539,7 +1547,7 @@ validate_construct_capability_final(const CoreProgram &program,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
                  "construct capability final call is not in the target agent whitelist",
                  statements[statements.size() - 2].source_range);
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
     const auto &capability = program.capabilities[call->capability.value];
     const auto construct_vt = flow.storage.value_types[arg_value.value];
@@ -1550,7 +1558,7 @@ validate_construct_capability_final(const CoreProgram &program,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
                  "construct capability frame types do not exactly match the Core signature",
                  statements[statements.size() - 2].source_range);
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
     const auto *result_nominal =
         std::get_if<CoreVtNominal>(&program.value_types[result_vt.value].node);
@@ -1559,7 +1567,7 @@ validate_construct_capability_final(const CoreProgram &program,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
                  "construct capability result is not the exact agent output nominal type",
                  statements[statements.size() - 2].source_range);
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
     if (!has_finalized_layout(layouts, construct_vt) ||
         !has_finalized_layout(layouts, result_vt)) {
@@ -1567,7 +1575,7 @@ validate_construct_capability_final(const CoreProgram &program,
                  core_wasm_diag::kInvalidLayout,
                  "construct capability boundary type has no finalized P4-D layout",
                  statements[statements.size() - 2].source_range);
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
     // The construct result is materialized into the output frame O_k by the P6
     // computed-final and then transcoded to wire-JSON. A zero-sized type has no
@@ -1581,14 +1589,16 @@ validate_construct_capability_final(const CoreProgram &program,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
                  "construct capability argument is a zero-sized type with no P4-D frame to materialize",
                  statements[statements.size() - 2].source_range);
-        return std::nullopt;
+        return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
 
-    return CapabilityAction{
-        .capability = call->capability,
-        .construct_expr = *construct_expr,
-        .construct_result = arg_value,
-        .is_construct = true};
+    return ConstructFinalProbe{
+        ConstructFinalProbe::Outcome::Accepted,
+        CapabilityAction{
+            .capability = call->capability,
+            .construct_expr = *construct_expr,
+            .construct_result = arg_value,
+            .is_construct = true}};
 }
 
 [[nodiscard]] std::optional<CapabilityAction>
@@ -1605,9 +1615,16 @@ validate_capability_final(const CoreProgram &program,
     // marking is done by the P6ComputationHandlerBuilder when the synthetic
     // computed-final region is planned; the capability call result is marked
     // by the caller after the builder succeeds.
-    if (auto construct_action = validate_construct_capability_final(
-            program, layouts, agent, flow, handler, result)) {
-        return construct_action;
+    // WH-5c.4 P2-2: the probe is tri-state. An Invalid probe already emitted
+    // a ranged diagnostic; stop here so the canonical validator below does not
+    // emit a second one for the same handler.
+    const auto construct_probe = validate_construct_capability_final(
+        program, layouts, agent, flow, handler, result);
+    if (construct_probe.outcome == ConstructFinalProbe::Outcome::Accepted) {
+        return construct_probe.action;
+    }
+    if (construct_probe.outcome == ConstructFinalProbe::Outcome::Invalid) {
+        return std::nullopt;
     }
     if (statements.size() != 3) {
         add_diag(result,
@@ -10932,6 +10949,13 @@ build_frame_section_plan(const CoreProgram &program,
     // these must outlive every planned handler (the emit loop below is the
     // last user).
     std::vector<ir::core::CoreFlowState> construct_synthetic_states;
+    // WH-5c.4 P0-1/P0-2: an agent may currently have at most ONE construct-
+    // capability terminal. A second terminal would (a) reallocate this vector
+    // and dangle the first builder's region reference (UAF at emit) and (b)
+    // make the exec-manifest emit cap_call_count=1 while looping more than one
+    // capability (hard decoder failure). Multi-terminal construct-capable
+    // support (a state-discriminated scheduler call) is a tracked follow-up.
+    std::uint32_t construct_terminal_count = 0;
 
     // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String
     // literal pool every ENTRY-HANDLER builder interns into while planning.
@@ -10992,6 +11016,26 @@ build_frame_section_plan(const CoreProgram &program,
                     return std::nullopt;
                 }
                 if (action->is_construct) {
+                    // WH-5c.4 P0-1/P0-2: enforce the single-construct-terminal
+                    // invariant (see construct_terminal_count above). Reject
+                    // the SECOND terminal using its own return statement's
+                    // SourceRange, naming the offending state and capability.
+                    if (construct_terminal_count != 0) {
+                        const auto &offending_cap =
+                            program.capabilities[action->capability.value];
+                        add_diag(result,
+                                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                                 "an agent may currently have at most one "
+                                 "construct-capability final state (offending "
+                                 "state '" +
+                                     handler->state_name + "' capability '" +
+                                     offending_cap.name +
+                                     "'); a multi-terminal construct-capable "
+                                     "agent is a tracked follow-up",
+                                 statements.back().source_range);
+                        return std::nullopt;
+                    }
+                    ++construct_terminal_count;
                     // WH-5c.4 (GAP 2): the capability argument is an in-module
                     // construct. Plan the construct lets as a P6 computed-final
                     // that materializes the construct into O_k; the scheduler
@@ -13827,24 +13871,31 @@ build_workflow_plan(const CoreProgram &program,
             if (agent_plan.construct_capability_terminals.empty()) {
                 continue;
             }
-            // One construct-capability terminal per agent for now (the
-            // scheduler calls the capability after the transcode; a
-            // multi-terminal agent would need a state-discriminated call).
+            // WH-5c.4 P0-1/P0-2: build_agent_plan enforces exactly one
+            // construct-capability terminal per agent, so .front() is the
+            // only terminal (a second one is rejected there with a ranged
+            // diagnostic).
             const auto &terminal = agent_plan.construct_capability_terminals.front();
             const CoreCapabilityDecl &cap_decl =
                 program.capabilities[terminal.capability.value];
             if (cap_decl.param_types.size() != 1) {
+                // WH-5c.4 P1-1: attach the capability declaration's
+                // SourceRange (never an empty range).
                 add_diag(result,
                          core_wasm_diag::kUnsupportedCapabilityFrame,
                          "a construct capability terminal must have exactly one parameter",
-                         ir::SourceRangeOpt{});
+                         cap_decl.source_range);
                 return std::nullopt;
             }
             ir::core::CoreFrameTranscodeSite site;
             site.direction =
                 ir::core::CoreFrameTranscodeSite::Direction::P4DToJson;
+            // WH-5c.4 P1-2: mark the site as a capability-param transcode so
+            // the host mints a PARAM binding from this explicit source (SSOT),
+            // never by inferring from a capability-bearing node.
             site.source =
-                ir::core::CoreFrameTranscodeSite::Source::NodeOutput;
+                ir::core::CoreFrameTranscodeSite::Source::CapabilityParam;
+            site.param_ordinal = 0;
             site.source_node_ordinal = schedule_position[node_id.value];
             site.target_node_ordinal = schedule_position[node_id.value];
             site.layout =
@@ -16804,6 +16855,16 @@ class WorkflowFrameMaterializer {
         }
         const std::uint64_t size = layouts_.layouts[layout_id.value].size;
         const std::uint64_t aligned = (size + 3u) & ~std::uint64_t{3u};
+        // Padding safety: the word copy below reads and writes `aligned`
+        // bytes, which over-reads the source and over-writes the destination
+        // by up to 3 bytes when `size` is not a multiple of 4. This is safe
+        // because BOTH endpoints are independently align8-reserved by the
+        // planner: the source is the JSON_TO_P4D shadow ingress region
+        // (transcode_shadow_base, extent >= align8(layout size)) and the
+        // destination is the wf_output region (workflow_output_base, sized to
+        // the same align8'd layout). The padding tail is reserved-but-unused
+        // memory inside both regions, so the stray bytes never touch a
+        // neighboring live placement or cross the page boundary.
         if (aligned == 0) {
             return true;
         }
@@ -17355,11 +17416,25 @@ void append_capability_dispatch(ByteBuffer &body,
     // WH-5b.3: index transcode sites by their target node's schedule position
     // so the scheduler loop can find the one call (if any) that must run
     // immediately before a node's materialize/runner.
-    std::vector<const ir::core::CoreFrameTranscodeSite *> transcode_by_target(
-        plan.schedule.size(), nullptr);
+    // WH-5c.4 P0-3: a construct-terminal node with an opaque upstream needs
+    // BOTH a JSON_TO_P4D input crossing (before materialize) AND a P4D_TO_JSON
+    // self-transcode (after the construct). A single slot per node silently
+    // drops one (last-write-wins), so key the lookup by (node, direction).
+    struct NodeXcodeSites {
+        const ir::core::CoreFrameTranscodeSite *json_to_p4d{nullptr};
+        const ir::core::CoreFrameTranscodeSite *p4d_to_json{nullptr};
+    };
+    std::vector<NodeXcodeSites> xcode_by_target(plan.schedule.size());
     for (const auto &site : plan.transcode_sites) {
-        if (site.target_node_ordinal < transcode_by_target.size()) {
-            transcode_by_target[site.target_node_ordinal] = &site;
+        if (site.target_node_ordinal >= xcode_by_target.size()) {
+            continue;
+        }
+        auto &slots = xcode_by_target[site.target_node_ordinal];
+        if (site.direction ==
+            ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D) {
+            slots.json_to_p4d = &site;
+        } else {
+            slots.p4d_to_json = &site;
         }
     }
 
@@ -17378,14 +17453,17 @@ void append_capability_dispatch(ByteBuffer &body,
         // function is unique to the node (node.runner_ordinal), so two nodes
         // reusing one packaged instance each dispatch their own runner.
         const bool p6_node = node.p6_block_ordinal != kInvalidP6Block;
-        // WH-5b.3: the transcode site (if any) targeting this node. A P6 node
-        // is always the JSON_TO_P4D direction (wire-JSON source -> shadow P4-D
-        // -> materialize into I_k); an opaque node is P4D_TO_JSON (P4-D source
-        // -> wire-JSON -> runner args).
-        const ir::core::CoreFrameTranscodeSite *xcode =
-            node.schedule_pos < transcode_by_target.size()
-                ? transcode_by_target[node.schedule_pos]
-                : nullptr;
+        // WH-5b.3 / WH-5c.4 P0-3: the transcode sites (if any) targeting this
+        // node, keyed by direction. A P6 node's input crossing is always
+        // JSON_TO_P4D (wire-JSON source -> shadow P4-D -> materialize into
+        // I_k); an opaque node's crossing is P4D_TO_JSON (P4-D source ->
+        // wire-JSON -> runner args); a construct-terminal P6 node additionally
+        // carries a P4D_TO_JSON self-transcode that runs AFTER the runner
+        // returns (below).
+        const NodeXcodeSites xcode =
+            node.schedule_pos < xcode_by_target.size()
+                ? xcode_by_target[node.schedule_pos]
+                : NodeXcodeSites{};
         if (p6_node) {
             const WorkflowNodeBlock &block =
                 plan.node_blocks[node.p6_block_ordinal];
@@ -17399,15 +17477,13 @@ void append_capability_dispatch(ByteBuffer &body,
             // WH-5b.3: a crossed P6 node (JSON_TO_P4D) transcodes its
             // wire-JSON source into the shadow region BEFORE materializing;
             // the materializer then reads from the shadow via emit_root_base.
-            // WH-5c.4: a construct-capability terminal has a P4D_TO_JSON
+            // WH-5c.4 P0-3: a construct-capability terminal with an opaque
+            // upstream carries BOTH this input crossing AND a P4D_TO_JSON
             // self-transcode that runs AFTER the runner returns (below).
-            const bool pre_materialize_xcode =
-                xcode != nullptr &&
-                xcode->direction ==
-                    ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D;
+            const bool pre_materialize_xcode = xcode.json_to_p4d != nullptr;
             if (pre_materialize_xcode) {
-                if (!append_transcode_call(body, plan, *xcode, status_local,
-                                           *ptr_local, *len_local)) {
+                if (!append_transcode_call(body, plan, *xcode.json_to_p4d,
+                                           status_local, *ptr_local, *len_local)) {
                     return false;
                 }
             }
@@ -17527,16 +17603,16 @@ void append_capability_dispatch(ByteBuffer &body,
             // P4D_TO_JSON self-transcode. After the P6 runner materializes
             // the construct into O_k, transcode it to wire-JSON and call the
             // capability at the scheduler boundary (never via bridge).
-            const bool construct_cap_terminal =
-                xcode != nullptr &&
-                xcode->direction ==
-                    ir::core::CoreFrameTranscodeSite::Direction::P4DToJson;
+            // WH-5c.4 P0-3: this site coexists with the JSON_TO_P4D input
+            // crossing above (both target this node); the two-slot table
+            // keeps both.
+            const bool construct_cap_terminal = xcode.p4d_to_json != nullptr;
             if (construct_cap_terminal) {
                 if (node.capabilities.empty()) {
                     return false;
                 }
-                if (!append_transcode_call(body, plan, *xcode, status_local,
-                                           *ptr_local, *len_local)) {
+                if (!append_transcode_call(body, plan, *xcode.p4d_to_json,
+                                           status_local, *ptr_local, *len_local)) {
                     return false;
                 }
                 const auto import_index = workflow_import_function_index(
@@ -17574,12 +17650,13 @@ void append_capability_dispatch(ByteBuffer &body,
             append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
             continue;
         }
-        if (xcode != nullptr) {
+        if (xcode.p4d_to_json != nullptr) {
             // WH-5b.3: P4D_TO_JSON. Transcode the P4-D source (entry shadow
             // or a P6 producer's O_k) to wire-JSON, then push the result as
-            // the opaque runner's (ptr, len) argument.
-            if (!append_transcode_call(body, plan, *xcode, status_local,
-                                       *ptr_local, *len_local)) {
+            // the opaque runner's (ptr, len) argument. An opaque node never
+            // carries a JSON_TO_P4D site (that direction targets a P6 node).
+            if (!append_transcode_call(body, plan, *xcode.p4d_to_json,
+                                       status_local, *ptr_local, *len_local)) {
                 return false;
             }
             append_indexed_op(body, kOpLocalGet, *ptr_local);

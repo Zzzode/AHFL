@@ -546,6 +546,34 @@ TEST_CASE("frame-layout verifier accepts a direction-consistent mixed "
     CHECK(*decoded.section == section);
 }
 
+TEST_CASE("frame-layout codec round-trips a CapabilityParam transcode site "
+          "with param_ordinal") {
+    // WH-5c.4 P1-2: a construct-capability terminal's P4D_TO_JSON self-
+    // transcode is explicitly marked Source::CapabilityParam (the host mints
+    // a PARAM binding from this source, never by inferring from a capability-
+    // bearing node). Like NodeOutput, it reads the producer's own O_k and
+    // needs NO host span. The param_ordinal field (dense parameter index)
+    // must survive the encode/decode round-trip. A non-zero ordinal proves
+    // the field is actually serialized (not just defaulting to 0).
+    auto section = workflow_node_section();
+    auto site = transcode_site(
+        CoreFrameTranscodeSite::Direction::P4DToJson,
+        CoreFrameTranscodeSite::Source::CapabilityParam, 0, 1,
+        CoreLayoutId{0});
+    site.param_ordinal = 3;
+    section.transcode_sites.push_back(site);
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    auto decoded = decode_core_frame_layout_section(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.section.has_value());
+    CHECK(*decoded.section == section);
+    REQUIRE(decoded.section->transcode_sites.size() == 1);
+    CHECK(decoded.section->transcode_sites[0].source ==
+          CoreFrameTranscodeSite::Source::CapabilityParam);
+    CHECK(decoded.section->transcode_sites[0].param_ordinal == 3);
+}
+
 TEST_CASE("frame-layout verifier rejects a present-but-unneeded transcode "
           "span at guest address zero") {
     // A P4D_TO_JSON NODE_OUTPUT site needs no host span. Declaring a shadow
