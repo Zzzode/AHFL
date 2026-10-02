@@ -128,6 +128,13 @@ struct CapabilityImportState {
     std::optional<std::string> last_capability_error;
     /// WH-5c.1: the precise sub-reason when last_error is ArgDecodeFailed.
     std::optional<ArgDecodeSubReason> last_arg_decode_sub_reason;
+    /// WH-5c.6: the source_symbol of the most recent RESOLVED capability
+    /// call (set at the same sites as context.source_capability_symbol_id).
+    /// The session uses it to resolve the capability declaration's
+    /// SourceRange for a failure diagnostic, but ONLY when last_error /
+    /// last_capability_error is also set -- a symbol from an earlier
+    /// SUCCESSFUL call must not be blamed for an unrelated later trap.
+    std::optional<std::uint64_t> last_source_symbol;
 };
 
 /// Configuration for the capability-import callback. All references must

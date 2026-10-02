@@ -3534,6 +3534,28 @@ rich fixture 单 node,per-node blocks 不改变 capacity 模型。construct scra
 - **§12.15.10(string-leaf bridge case):** 保留。String 跨 bridge(PtrLen spill)与 f64/Decimal/Duration/Set/Map 的 bridge reject 正交(§12.15.17.2 bridge-crossability 节)。
 - **§12.15.8(no version bump):** 不变。GAP 6/7 不增加 wire field(range 是 host-side sidecar;rich types 已有 P4-D 布局)。AHFLXM v2 不 bump。
 
+#### 12.15.17.8 落地记录(2026-10-02):WH-5c.6 GAP 6 实现 + 对抗 review fix-forward
+
+Option A 按本节决策落地(builder → 独立对抗 review → coordinator fix-forward),机制与决策一致,另有两处 review 发现的加固:
+
+1. **facade 预算两张表(ctor,与 `capability_effects_` 同生命周期,不存储 ProgramIndex):** `node_ranges_by_workflow_` 按 workflow name 保存 source-order 的 `WorkflowNode::source_range` vector;`capability_ranges_` 按 `capability.symbol_ref.id`(u64,absent id 跳过)保存 `CapabilityDecl::provenance.source_range`。`run()` 用 `descriptor.nodes[].node_id`(dense source-order id)把 source-order vector 重排成 schedule-order vector(node_id OOB 与 schedule_pos OOB 双重 guard),在 session config 上装 `node_range_resolver(schedule_pos)` 与 `capability_range_resolver(source_symbol)`——与 `name_resolver` 同 seam。
+2. **`CapabilityImportState.last_source_symbol`:** 仅在两个 call-site 解析成功后的站点(`capability_import.cpp` opaque/bridge,即原 `context.source_capability_symbol_id = call_site.source_symbol()` 两处)记录。
+3. **session 失败 range:** per-node output-decode 站点立即解析"被 decode 的 node"的 range(唯一有 node 在 scope 的 kOutputDecodeFailed 站点);其余失败在 section 13 兜底——capability 声明 range 仅当 `(last_error || last_capability_error) && last_source_symbol` 成立,否则/fallback 用 failed node 的 `WorkflowNode::source_range`。workflow-output / stash-region decode 站点无 node 在 scope(此时所有 node 已 completed、failed_node_index 为空),range 为 nullopt——这是诚实的失败形态,不是漏挂。
+4. **单一 DiagnosticId:** `add_error` 增加 `SourceRangeOpt` 参数(engaged 才调 `.range()`);NodeFailed 发射一条带 range 的诊断并把 id 存入 facts,WorkflowFailed **复用该 id**(删除重复 bag entry,与 evaluator `workflow_runtime.cpp:1594-1597` 同构);只有"全 node completed 但 workflow 级失败"的 fallback 才由 workflow 级发一条带 range 诊断。agent lane 继续传 nullopt(agent lane 不持有 ir::Program,超出本 slice)。
+5. **诚实 parity 注记(代码注释中声明):** evaluator 附 capability **call-site** range;wasm lane 附 capability **声明** range(manifest v2 只携带声明 symbol)。call-site parity 仍需 descriptor 携带 per-call-site range,保持推迟。
+
+**Review fix-forward(P1 ×2 + P2 ×1,coordinator 应用):**
+
+- **P1 stale-symbol 错挂:** review 发现 `last_source_symbol` 跨 call 不清空——node 0 capability 成功后,node 1 的 call 在**解析前**站点(name resolve / arg decode)失败时,`last_error` 与上一次成功的 symbol 同时成立,section 13 会把成功 capability 的声明 range 错挂到 node 1 的失败上。修复:import callback 入口(`resolve_import_call_site` 之前)无条件 `last_source_symbol = nullopt`,每次 attempt 从干净状态开始。
+- **P1 新 golden 未入 pinned corpus:** `wh5c6_cap_then_trap.ahfl`(成功 cap + 除零 trap 的 precedence fixture)被 `ahfl.ir.core_json_round_trip` 的 corpus-pin 发现但未登记,该测试不在 wasm label 内(builder 的 88/88 无法暴露)。已登记;同时新增第二个 fixture `wh5c6_reorder_trap.ahfl` 一并登记。
+- **P2 reordered-DAG range pin(补强):** 新增 fixture 中 trap node `b` **source id = 0 但 schedule pos = 1**(`b after [a]`,Kahn 调度 `[a,b]`),断言失败 range 等于 b 的 source range 且不等于 echo node 的 range。该 pin 对"schedule pos 当 source index 用"的 remap 变异非空转(identity remap 会挂到 echo node range 而失败),并先非空地 pin 住 `nodes[0].node_id==1 / nodes[1].node_id==0` 的前置条件。
+
+**测试证据:** workflow_session 单测 615 checks(新增 7 个 WH-5c.6 case:capability error / host-abort / generic trap / 无 resolver 安全 / P6 O_k decode fail-closed / cap-then-trap precedence / reordered-DAG remap);wasm_runner 单测扩展 single-id + range 断言;`-L wasm` 88/88;`ahfl.ir.core_json_round_trip` 绿。
+
+**Gate #425 状态(诚实):** range/dup 断言(line 523-545)已全部通过——实测 failed-run 的 node_failed 与 workflow_failed 共享 `diagnostic_id: 0`,诊断携带 `range: {begin:145,end:191}`,经独立复核正是 fixture 中 `capability Echo ... -> Response` 的**声明** range(非 call-site)。#425 仍红,但**唯一**剩余失败是 line 579-580 要求 `capability_failed` 事件:wasm lane 当前对失败 call 发射 `capability_completed`(output_value_id=null),这是已记录的 **GAP 8(§12.15.18.1)**,随 WH-5c.8 的共享 projection helper 落地。GAP 6 本身关闭;#425 的完整转绿依赖 5c.8,与 §12.15.18.1 builder 指令 #6(失败路径用 cap_call 的 diagnostic_code + 5c.6 的 capability resolver 提供 range)的排序一致。
+
+**不变量:** module bytes / descriptor / wire schema 零变更(无 `src/compiler/`、`include/ahfl/compiler/` diff),golden SHA freeze 不动,conformance 文件不碰,census 维持 native 72/0、Node 69/3。
+
 ### 12.15.18 WH-5c residual gaps 8/9 (2026-10-02, dedicated decision agent)
 
 本节记录 WH-5c cutover-blocking 普查暴露的最后两个 wasm-lane gap 的机制决策。GAP 8(#421 provider-runtime capability lifecycle event parity)与 GAP 9(#424 non-final String PtrLen carry + cross-node String edges)都不阻塞 WH-5c.2/5c.3 的实现(2026-10-02 实现完成、独立 review 中),但阻塞 WH-6 cutover 的 test-green gate。所有代码断言已对工作树(HEAD 70419ba1 + uncommitted WH-5c.2/5c.3)逐条复核。本节是 append-only;§12.15.1-12.15.17 原文保留。

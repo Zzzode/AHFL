@@ -284,6 +284,9 @@ handle_opaque(const CapabilityImportConfig &config,
     // P2-2: set the per-call source_symbol so the session layer resolves the
     // owning agent/node per-import, not by name-keyed first-wins.
     config.context.source_capability_symbol_id = call_site.source_symbol();
+    // WH-5c.6: record the resolved symbol so the session can attach the
+    // capability declaration's SourceRange to a failure diagnostic.
+    config.state.last_source_symbol = call_site.source_symbol();
     std::vector<runtime::Value> args;
     args.push_back(std::move(*decoded.value));
     auto result = config.invoker(config.context, *name, args);
@@ -400,6 +403,9 @@ handle_bridge(const CapabilityImportConfig &config,
     // P2-2: set the per-call source_symbol so the session layer resolves the
     // owning agent/node per-import, not by name-keyed first-wins.
     config.context.source_capability_symbol_id = call_site.source_symbol();
+    // WH-5c.6: record the resolved symbol so the session can attach the
+    // capability declaration's SourceRange to a failure diagnostic.
+    config.state.last_source_symbol = call_site.source_symbol();
     auto result = config.invoker(config.context, *name, *args);
     const auto raw_status = map_status_to_raw(result.status);
 
@@ -755,6 +761,12 @@ eng::ImportCallback
 make_capability_import_callback(CapabilityImportConfig config) {
     return [config = std::move(config)](const eng::ImportObservation &obs)
                -> eng::ImportCallbackResult {
+        // WH-5c.6: each import attempt starts with no attributed source
+        // symbol. The symbol is recorded only AFTER call-site resolution
+        // succeeds (handle_opaque/handle_bridge), so a failure on this call
+        // before that point can never blame a symbol left over from an
+        // earlier (possibly successful) call.
+        config.state.last_source_symbol = std::nullopt;
         // Resolve the call site from the import ordinal.
         auto call_site = resolve_import_call_site(config.module, obs.import_ordinal);
         if (!call_site.has_value()) {

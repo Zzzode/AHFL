@@ -1705,6 +1705,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     std::optional<WorkflowFailureKind> run_failure_kind;
     std::string run_failure_code;
     std::string run_failure_message;
+    // WH-5c.6: the SourceRange attached to the failure diagnostic. Resolved
+    // at the per-node output-decode site (the decoded node's range) or in
+    // section 13 (capability declaration range for a capability failure,
+    // else the failed node's range). Nullopt when no resolver is installed
+    // or the lookup misses -- the diagnostic stays code+message.
+    ahfl::ir::SourceRangeOpt run_failure_range;
     bool run_ok = false;
     bool run_suspended = false;
     const eng::Run2ResultTuple *tuple = nullptr;
@@ -2067,6 +2073,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         std::string{wasm_diag::kOutputDecodeFailed};
                     run_failure_message =
                         "run_workflow_session: node output failed to decode";
+                    // WH-5c.6: the decoded node's range (i is the schedule
+                    // index; the descriptor nodes array is schedule order).
+                    if (config.node_range_resolver) {
+                        run_failure_range = config.node_range_resolver(
+                            static_cast<std::uint32_t>(i));
+                    }
                     break;
                 }
                 continue; // failure path: secondary, no hook
@@ -2278,6 +2290,37 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
+    // WH-5c.6: resolve the failure diagnostic's SourceRange when the
+    // per-node output-decode site did not already set one. A capability
+    // failure (host-abort or executed-capability trap) uses the capability
+    // declaration's provenance range; otherwise (and as a fallback when the
+    // capability lookup misses) the failed node's WorkflowNode::source_range.
+    // The last_error/last_capability_error guard matters: a source_symbol
+    // recorded for an EARLIER SUCCESSFUL call must not be blamed for an
+    // unrelated later generic trap. Covers Run2HostAborted, Run2Trapped
+    // (with/without capability context), invoke_run2 engine error, non-zero
+    // status, replay divergence, origination failure, and the suspend
+    // invariant-violation downgrade (section 10b).
+    if (!run_failure_range.has_value() && failed_node_index.has_value()) {
+        if ((import_state.last_error.has_value() ||
+             import_state.last_capability_error.has_value()) &&
+            import_state.last_source_symbol.has_value() &&
+            config.capability_range_resolver) {
+            run_failure_range = config.capability_range_resolver(
+                *import_state.last_source_symbol);
+        }
+        if (!run_failure_range.has_value() && config.node_range_resolver) {
+            run_failure_range = config.node_range_resolver(
+                static_cast<std::uint32_t>(*failed_node_index));
+        }
+    }
+
+    // WH-5c.6: snapshot the resolved range into the workflow facts AFTER the
+    // section-13 resolution so the lifecycle helper's workflow-level fallback
+    // (no node failed -- e.g. the P6 O_k decode fail-closed where every node
+    // completed during run2) carries the same range as the node facts.
+    facts.failure_range = run_failure_range;
+
     for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
         WasmNodeRunFacts node_facts;
         node_facts.states = std::move(states_per_node[i]);
@@ -2299,6 +2342,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             node_facts.failure_kind = NodeFailureKind::AgentFailed;
             node_facts.failure_code = run_failure_code;
             node_facts.failure_message = run_failure_message;
+            // WH-5c.6: the single shared diagnostic carries this range
+            // (the Failed node's NodeFailed and the workflow's
+            // WorkflowFailed reference one ranged bag entry).
+            node_facts.failure_range = run_failure_range;
         } else {
             node_facts.terminal = WasmNodeRunFacts::Terminal::Skipped;
             // P2-1: align with the evaluator's NodeSkipped semantics. On

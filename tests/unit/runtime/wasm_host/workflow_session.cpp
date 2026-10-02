@@ -29,6 +29,7 @@
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
+#include "ahfl/compiler/ir/program_view.hpp"
 #include "ahfl/runtime/execution_event.hpp"
 #include "ahfl/runtime/execution_report.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
@@ -204,6 +205,121 @@ emit_workflow(const std::filesystem::path &source_path) {
         .descriptor = std::move(*emitted.descriptor),
         .program = std::move(*program),
     };
+}
+
+// WH-5c.6: build the SAME host-side range resolvers the facade builds
+// (design 12.15.17.1, Option A), so the session tests exercise the
+// range-resolver seam without constructing a WasmWorkflowRuntime.
+struct SessionRangeResolvers {
+    std::function<ir::SourceRangeOpt(std::uint32_t)> node;
+    std::function<ir::SourceRangeOpt(std::uint64_t)> capability;
+};
+
+[[nodiscard]] SessionRangeResolvers
+make_range_resolvers(const EmittedWorkflow &wf) {
+    SessionRangeResolvers resolvers;
+    ir::ProgramIndex idx(wf.program);
+
+    // Source-order node ranges for the descriptor's workflow.
+    std::vector<ir::SourceRangeOpt> source_ranges;
+    for (const auto *decl : idx.workflows()) {
+        if (decl != nullptr && decl->name == wf.descriptor.workflow_name) {
+            source_ranges.reserve(decl->nodes.size());
+            for (const auto &node : decl->nodes) {
+                source_ranges.push_back(node.source_range);
+            }
+            break;
+        }
+    }
+    // Schedule-order vector: descriptor.nodes[i].node_id indexes the
+    // source-order vector (invariant nodes[i].schedule_pos == i).
+    std::vector<ir::SourceRangeOpt> schedule_ranges;
+    schedule_ranges.reserve(wf.descriptor.nodes.size());
+    for (const auto &node_desc : wf.descriptor.nodes) {
+        if (node_desc.node_id < source_ranges.size()) {
+            schedule_ranges.push_back(source_ranges[node_desc.node_id]);
+        } else {
+            schedule_ranges.push_back(std::nullopt);
+        }
+    }
+    resolvers.node =
+        [schedule_ranges = std::move(schedule_ranges)](
+            std::uint32_t schedule_pos) -> ir::SourceRangeOpt {
+            if (schedule_pos < schedule_ranges.size()) {
+                return schedule_ranges[schedule_pos];
+            }
+            return std::nullopt;
+        };
+
+    // Capability declaration ranges by source_symbol.
+    std::unordered_map<std::uint64_t, ir::SourceRangeOpt> cap_ranges;
+    for (const auto *cap : idx.capabilities()) {
+        if (cap != nullptr && cap->symbol_ref.id.has_value()) {
+            cap_ranges.emplace(
+                static_cast<std::uint64_t>(*cap->symbol_ref.id),
+                cap->provenance.source_range);
+        }
+    }
+    resolvers.capability =
+        [cap_ranges = std::move(cap_ranges)](
+            std::uint64_t source_symbol) -> ir::SourceRangeOpt {
+            auto it = cap_ranges.find(source_symbol);
+            if (it != cap_ranges.end()) {
+                return it->second;
+            }
+            return std::nullopt;
+        };
+    return resolvers;
+}
+
+// WH-5c.6: the first (and only) capability declaration's provenance range,
+// for the expected-range assertions (the fixtures carry one capability).
+[[nodiscard]] ir::SourceRangeOpt
+first_capability_range(const ir::Program &program) {
+    ir::ProgramIndex idx(program);
+    for (const auto *cap : idx.capabilities()) {
+        if (cap != nullptr) {
+            return cap->provenance.source_range;
+        }
+    }
+    return std::nullopt;
+}
+
+// WH-5c.6: the source-order node range for a workflow by node index.
+[[nodiscard]] ir::SourceRangeOpt
+node_source_range(const ir::Program &program,
+                  const std::string &workflow_name, std::size_t node_index) {
+    ir::ProgramIndex idx(program);
+    for (const auto *decl : idx.workflows()) {
+        if (decl != nullptr && decl->name == workflow_name &&
+            node_index < decl->nodes.size()) {
+            return decl->nodes[node_index].source_range;
+        }
+    }
+    return std::nullopt;
+}
+
+// WH-5c.6: the NodeFailed / WorkflowFailed diagnostic ids from the event
+// stream (each appears at most once on the wasm lane).
+struct FailedEventIds {
+    std::optional<ahfl::runtime::DiagnosticId> node_failed;
+    std::optional<ahfl::runtime::DiagnosticId> workflow_failed;
+};
+
+[[nodiscard]] FailedEventIds
+failed_event_ids(const ahfl::runtime::WorkflowResult &result) {
+    FailedEventIds ids;
+    for (const auto &event : result.events.events()) {
+        if (const auto *nf =
+                std::get_if<ahfl::runtime::NodeFailed>(&event.payload)) {
+            ids.node_failed = nf->diagnostic;
+        } else if (const auto *wf =
+                       std::get_if<ahfl::runtime::WorkflowFailed>(
+                           &event.payload)) {
+            ids.workflow_failed = wf->diagnostic;
+        }
+    }
+    return ids;
 }
 
 // P2-3 (spec AC1): run the SAME fixture source through the in-process
@@ -3407,6 +3523,508 @@ void test_gap4_p6_ok_corruption_fail_closed(
     check(found_decode_failed, "gap4_p6.found_diagnostic");
 }
 
+// ==== WH-5c.6: failure-diagnostic SourceRange + single-id parity ====
+
+// Shared assertions for a failed run with the range resolvers installed:
+// NodeFailed and WorkflowFailed reference the SAME DiagnosticId, the bag
+// holds exactly one entry with `expected_code`, and that entry's range is
+// present (when `expect_range`) and equals `expected_range`.
+void check_wh5c6_failure_diagnostic(
+    const ahfl::runtime::WorkflowResult &wr, std::string_view expected_code,
+    bool expect_range, ir::SourceRangeOpt expected_range,
+    std::string_view label) {
+    const auto ids = failed_event_ids(wr);
+    check(ids.node_failed.has_value(),
+          std::string(label) + ".node_failed_event");
+    check(ids.workflow_failed.has_value(),
+          std::string(label) + ".wf_failed_event");
+    check(ids.node_failed.has_value() && ids.workflow_failed.has_value() &&
+              *ids.node_failed == *ids.workflow_failed,
+          std::string(label) + ".shared_diagnostic_id");
+
+    std::size_t code_count = 0;
+    const ahfl::Diagnostic *found = nullptr;
+    for (const auto &diag : wr.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == expected_code) {
+            ++code_count;
+            found = &diag;
+        }
+    }
+    check(code_count == 1, std::string(label) + ".single_entry");
+    check(found != nullptr, std::string(label) + ".entry_present");
+    if (found == nullptr) {
+        return;
+    }
+    check(!found->message.empty(), std::string(label) + ".message_present");
+    if (expect_range) {
+        check(found->range.has_value(),
+              std::string(label) + ".range_present");
+        if (expected_range.has_value()) {
+            check(found->range.has_value() && *found->range == *expected_range,
+                  std::string(label) + ".range_value");
+        }
+    } else {
+        check(!found->range.has_value(),
+              std::string(label) + ".range_absent");
+    }
+}
+
+// Workflow-level failure check (EvaluationFailed: every node completed during
+// run2 but the workflow still failed -- e.g. the P6 O_k output-decode
+// fail-closed path). No NodeFailed event is emitted; the WorkflowFailed event
+// references a single ranged bag entry.
+void check_wh5c6_workflow_only_failure(
+    const ahfl::runtime::WorkflowResult &wr, std::string_view expected_code,
+    ir::SourceRangeOpt expected_range, std::string_view label) {
+    const auto ids = failed_event_ids(wr);
+    check(!ids.node_failed.has_value(),
+          std::string(label) + ".no_node_failed");
+    check(ids.workflow_failed.has_value(),
+          std::string(label) + ".wf_failed_event");
+
+    std::size_t code_count = 0;
+    const ahfl::Diagnostic *found = nullptr;
+    for (const auto &diag : wr.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == expected_code) {
+            ++code_count;
+            found = &diag;
+        }
+    }
+    check(code_count == 1, std::string(label) + ".single_entry");
+    check(found != nullptr, std::string(label) + ".entry_present");
+    if (found == nullptr) {
+        return;
+    }
+    check(!found->message.empty(), std::string(label) + ".message_present");
+    check(found->range.has_value(), std::string(label) + ".range_present");
+    if (expected_range.has_value()) {
+        check(found->range.has_value() && *found->range == *expected_range,
+              std::string(label) + ".range_value");
+    }
+    // The WorkflowFailed event references the bag entry's diagnostic id.
+    if (ids.workflow_failed.has_value()) {
+        const auto idx = ids.workflow_failed->index();
+        check(idx < wr.diagnostics.entries().size(),
+              std::string(label) + ".diag_idx_oob");
+        if (idx < wr.diagnostics.entries().size()) {
+            const auto &diag = wr.diagnostics.entries()[idx];
+            check(diag.code.has_value() && *diag.code == expected_code,
+                  std::string(label) + ".wf_event_code");
+        }
+    }
+}
+// AHFL_CAP_ERROR reply as a non-zero run2 status (wasm.run-failed), and the
+// diagnostic carries the capability declaration's provenance range (the
+// section-13 resolution fires on last_capability_error).
+void test_wh5c6_capability_error_range(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_cap_err.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "wh5c6_cap_err.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto resolvers = make_range_resolvers(*wf);
+    const auto expected_cap_range = first_capability_range(wf->program);
+    check(expected_cap_range.has_value(), "wh5c6_cap_err.cap_range");
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        r.error_message = "boom";
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    config.node_range_resolver = resolvers.node;
+    config.capability_range_resolver = resolvers.capability;
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "wh5c6_cap_err.session");
+    if (!result.has_value()) {
+        return;
+    }
+    check_wh5c6_failure_diagnostic(result->result, "wasm.run-failed", true,
+                                   expected_cap_range, "wh5c6_cap_err");
+}
+
+// (2) A host-abort (capability import failure): the diagnostic carries the
+// capability declaration's provenance range.
+void test_wh5c6_host_abort_capability_range(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_host_abort.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "wh5c6_host_abort.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto resolvers = make_range_resolvers(*wf);
+    const auto expected_cap_range = first_capability_range(wf->program);
+    check(expected_cap_range.has_value(), "wh5c6_host_abort.cap_range");
+
+    // Resolve to a name NOT in the wire schema; the import executor
+    // host-aborts (ResultSchemaInvalid on the NoneValue reply).
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "WrongCapability";
+    };
+    config.node_range_resolver = resolvers.node;
+    config.capability_range_resolver = resolvers.capability;
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "wh5c6_host_abort.session");
+    if (!result.has_value()) {
+        return;
+    }
+    check_wh5c6_failure_diagnostic(result->result, "wasm.host-abort", true,
+                                   expected_cap_range, "wh5c6_host_abort");
+}
+
+// (3) A generic trap (no capability context): the diagnostic carries the
+// failed node's WorkflowNode::source_range.
+void test_wh5c6_trap_node_range(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh4_trap_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_trap_node.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input =
+        value_from_json(R"({"_type":"wasm::wh4_trap_workflow::Frame","n":1})");
+    check(input.has_value(), "wh5c6_trap_node.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto resolvers = make_range_resolvers(*wf);
+    const auto expected_node_range = node_source_range(
+        wf->program, wf->descriptor.workflow_name, 0);
+    check(expected_node_range.has_value(), "wh5c6_trap_node.node_range");
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+    config.node_range_resolver = resolvers.node;
+    config.capability_range_resolver = resolvers.capability;
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "wh5c6_trap_node.session");
+    if (!result.has_value()) {
+        return;
+    }
+    check_wh5c6_failure_diagnostic(result->result, "wasm.trap", true,
+                                   expected_node_range, "wh5c6_trap_node");
+}
+
+// (4) Resolver safety: with neither resolver installed, the same failing run
+// still produces code+message diagnostics with a null range and no crash.
+void test_wh5c6_no_resolvers_safe(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh4_trap_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_no_res.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input =
+        value_from_json(R"({"_type":"wasm::wh4_trap_workflow::Frame","n":1})");
+    check(input.has_value(), "wh5c6_no_res.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+    // Deliberately NO node_range_resolver / capability_range_resolver.
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "wh5c6_no_res.session");
+    if (!result.has_value()) {
+        return;
+    }
+    check_wh5c6_failure_diagnostic(result->result, "wasm.trap", false,
+                                   std::nullopt, "wh5c6_no_res");
+}
+
+// (5) Output-decode fail-closed: the kOutputDecodeFailed entry carries the
+// decoded node's range (the P6 O_k corruption pin).
+void test_wh5c6_decode_node_range(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_rich_fidelity.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_decode.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(!desc.nodes.empty(), "wh5c6_decode.nodes_nonempty");
+    check(desc.nodes[0].is_p6, "wh5c6_decode.node0_is_p6");
+    check(desc.frame_section.has_value(), "wh5c6_decode.frame_section");
+    if (!desc.frame_section.has_value() ||
+        desc.frame_section->node_blocks.empty()) {
+        return;
+    }
+    const auto ok_base = desc.frame_section->node_blocks[0].output_base;
+    const auto ok_size = desc.frame_section->node_blocks[0].output_size;
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b_hybrid_rich_fidelity::Frame",)"
+        R"("n":1,"flag":true,)"
+        R"("color":{"_enum":"wasm::wh5b_hybrid_rich_fidelity::Color","_variant":"Green"},)"
+        R"("label":"rich"})");
+    check(input.has_value(), "wh5c6_decode.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto resolvers = make_range_resolvers(*wf);
+    const auto expected_node_range = node_source_range(
+        wf->program, desc.workflow_name, 0);
+    check(expected_node_range.has_value(), "wh5c6_decode.node_range");
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    config.node_range_resolver = resolvers.node;
+    config.capability_range_resolver = resolvers.capability;
+    config.post_run2_memory_mutator =
+        [ok_base, ok_size](std::span<std::uint8_t> mem) {
+            if (ok_base < mem.size()) {
+                const auto n =
+                    std::min<std::size_t>(ok_size, mem.size() - ok_base);
+                std::memset(mem.data() + ok_base, 0xFF, n);
+            }
+        };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, desc, *input,
+                                           std::move(config));
+    check(result.has_value(), "wh5c6_decode.session");
+    if (!result.has_value()) {
+        return;
+    }
+    // The O_k corruption is a workflow-level EvaluationFailed (all nodes
+    // completed during run2; the decode fail-closed fires afterward), so no
+    // NodeFailed event is emitted -- the WorkflowFailed references the single
+    // ranged wasm.output-decode-failed bag entry.
+    check_wh5c6_workflow_only_failure(result->result,
+                                      "wasm.output-decode-failed",
+                                      expected_node_range, "wh5c6_decode");
+}
+
+// (6) Capability-range precedence: a SUCCESSFUL capability call on node 0
+// followed by a generic trap on node 1 must attach node 1's range, NOT the
+// successful capability's declaration range (encodes the last_error /
+// last_capability_error guard in the section-13 resolution).
+void test_wh5c6_capability_precedence(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c6_cap_then_trap.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_prec.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5c6_cap_then_trap::Frame",)"
+        R"("n":1,"value":"echo"})");
+    check(input.has_value(), "wh5c6_prec.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto resolvers = make_range_resolvers(*wf);
+    const auto expected_node_range = node_source_range(
+        wf->program, wf->descriptor.workflow_name, 1);
+    const auto cap_range = first_capability_range(wf->program);
+    check(expected_node_range.has_value(), "wh5c6_prec.node_range");
+    check(cap_range.has_value(), "wh5c6_prec.cap_range");
+
+    wh::WorkflowSessionConfig config;
+    // Echo SUCCEEDS on node 0; node 1 then divides by zero (generic trap).
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    config.node_range_resolver = resolvers.node;
+    config.capability_range_resolver = resolvers.capability;
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "wh5c6_prec.session");
+    if (!result.has_value()) {
+        return;
+    }
+    check_wh5c6_failure_diagnostic(result->result, "wasm.trap", true,
+                                   expected_node_range, "wh5c6_prec");
+    // The diagnostic must NOT carry the successful capability's range.
+    const auto ids = failed_event_ids(result->result);
+    if (ids.node_failed.has_value() &&
+        ids.node_failed->index() < result->result.diagnostics.entries().size()) {
+        const auto &diag =
+            result->result.diagnostics.entries()[ids.node_failed->index()];
+        check(diag.range.has_value(), "wh5c6_prec.diag_range_present");
+        if (diag.range.has_value() && cap_range.has_value()) {
+            check(!(*diag.range == *cap_range),
+                  "wh5c6_prec.not_capability_range");
+        }
+    }
+}
+
+// (7) Schedule/source remap: the trap node is source id 0 but schedule
+// position 1. The failure range MUST resolve through the descriptor
+// node_id remap to the trap node's source range; indexing the source-order
+// vector by schedule position would blame the successful echo node.
+void test_wh5c6_reordered_schedule_range(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c6_reorder_trap.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c6_reorder.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Pin the precondition non-vacuously: descriptor nodes are in schedule
+    // order and the trap node b (source id 0) is at schedule position 1.
+    const auto &desc = wf->descriptor;
+    check(desc.nodes.size() == 2, "wh5c6_reorder.two_nodes");
+    if (desc.nodes.size() == 2) {
+        check(desc.nodes[0].name == "a" && desc.nodes[0].node_id == 1,
+              "wh5c6_reorder.schedule0_is_a");
+        check(desc.nodes[1].name == "b" && desc.nodes[1].node_id == 0,
+              "wh5c6_reorder.schedule1_is_b");
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5c6_reorder_trap::Frame",)"
+        R"("n":1,"value":"echo"})");
+    check(input.has_value(), "wh5c6_reorder.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto resolvers = make_range_resolvers(*wf);
+    const auto expected_trap_range = node_source_range(
+        wf->program, desc.workflow_name, 0);
+    const auto echo_node_range = node_source_range(
+        wf->program, desc.workflow_name, 1);
+    check(expected_trap_range.has_value(), "wh5c6_reorder.trap_range");
+    check(echo_node_range.has_value(), "wh5c6_reorder.echo_range");
+
+    wh::WorkflowSessionConfig config;
+    // Echo SUCCEEDS (schedule position 0); the trap then fires at schedule
+    // position 1 with no capability context.
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    config.node_range_resolver = resolvers.node;
+    config.capability_range_resolver = resolvers.capability;
+
+    auto result = wh::run_workflow_session(wf->module_bytes, desc,
+                                           *input, std::move(config));
+    check(result.has_value(), "wh5c6_reorder.session");
+    if (!result.has_value()) {
+        return;
+    }
+    check_wh5c6_failure_diagnostic(result->result, "wasm.trap", true,
+                                   expected_trap_range, "wh5c6_reorder");
+    // The range must not be the echo node's source range (the value a
+    // schedule-position-as-source-index bug would attach).
+    const auto ids = failed_event_ids(result->result);
+    if (ids.node_failed.has_value() &&
+        ids.node_failed->index() <
+            result->result.diagnostics.entries().size()) {
+        const auto &diag =
+            result->result.diagnostics.entries()[ids.node_failed->index()];
+        if (diag.range.has_value() && echo_node_range.has_value()) {
+            check(!(*diag.range == *echo_node_range),
+                  "wh5c6_reorder.not_echo_node_range");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -3454,6 +4072,14 @@ int main() {
     test_wh5b2_case3_bridge_site_oob_fail_closed(repo_root);
     // WH-5c.5 GAP 4 pin (d): P6 O_k corruption fails closed.
     test_gap4_p6_ok_corruption_fail_closed(repo_root);
+    // WH-5c.6: failure-diagnostic SourceRange + single-id parity.
+    test_wh5c6_capability_error_range(repo_root);
+    test_wh5c6_host_abort_capability_range(repo_root);
+    test_wh5c6_trap_node_range(repo_root);
+    test_wh5c6_no_resolvers_safe(repo_root);
+    test_wh5c6_decode_node_range(repo_root);
+    test_wh5c6_capability_precedence(repo_root);
+    test_wh5c6_reordered_schedule_range(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

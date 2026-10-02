@@ -234,9 +234,9 @@ void test_workflow_session_failure_facade(
         return;
     }
 
-    // The invoker returns Error; the workflow's capability node traps
-    // (unreachable on non-zero status). The FACADE must map the session
-    // failure to a failed WorkflowResult (wasm.session-failed), NOT crash.
+    // The invoker returns Error; the guest propagates AHFL_CAP_ERROR as a
+    // non-zero run2 status (wasm.run-failed). The FACADE must map the session
+    // failure to a failed WorkflowResult, NOT crash.
     wr::WasmWorkflowRuntimeConfig config;
     config.invoker = [](const CapabilityInvocationContext &,
                         const std::string &,
@@ -261,9 +261,42 @@ void test_workflow_session_failure_facade(
     auto result = runtime.run("wasm::e3_capability_workflow::CapabilityPipeline",
                               std::move(*input));
     // P2-10: the FACADE must return a failed WorkflowResult when the
-    // underlying session fails (trap from Error invoker).
+    // underlying session fails (non-zero status from Error invoker).
     check(result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
           "wf_sess_fail.node_failed");
+
+    // WH-5c.6: the facade pre-computes the range tables and the lifecycle
+    // helper emits ONE ranged diagnostic shared by NodeFailed and
+    // WorkflowFailed (no duplicate bag entry).
+    std::optional<ahfl::runtime::DiagnosticId> node_failed_id;
+    std::optional<ahfl::runtime::DiagnosticId> workflow_failed_id;
+    for (const auto &event : result.events.events()) {
+        if (const auto *nf =
+                std::get_if<ahfl::runtime::NodeFailed>(&event.payload)) {
+            node_failed_id = nf->diagnostic;
+        } else if (const auto *wf =
+                       std::get_if<ahfl::runtime::WorkflowFailed>(
+                           &event.payload)) {
+            workflow_failed_id = wf->diagnostic;
+        }
+    }
+    check(node_failed_id.has_value(), "wf_sess_fail.node_failed_event");
+    check(workflow_failed_id.has_value(),
+          "wf_sess_fail.workflow_failed_event");
+    check(node_failed_id.has_value() && workflow_failed_id.has_value() &&
+              *node_failed_id == *workflow_failed_id,
+          "wf_sess_fail.shared_diagnostic_id");
+
+    std::size_t failure_count = 0;
+    bool failure_has_range = false;
+    for (const auto &diag : result.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == "wasm.run-failed") {
+            ++failure_count;
+            failure_has_range = diag.range.has_value();
+        }
+    }
+    check(failure_count == 1, "wf_sess_fail.single_failure_entry");
+    check(failure_has_range, "wf_sess_fail.failure_has_range");
 }
 
 // ==== 2b. P2-5: WireJson reconstruction set -- resume fixture ====

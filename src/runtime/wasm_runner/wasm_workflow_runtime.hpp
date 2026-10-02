@@ -21,6 +21,7 @@
 #include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 
+#include "ahfl/compiler/ir/expr.hpp"
 #include "ahfl/compiler/ir/program.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
@@ -110,6 +111,15 @@ class WasmWorkflowRuntime {
     // would require the program to outlive the facade).
     std::unordered_map<std::string, ir::CapabilityEffectKind>
         capability_effects_;
+    // WH-5c.6: per-workflow SOURCE-ORDER node source ranges, indexed by the
+    // descriptor's dense node_id. Pre-computed from the IR program for the
+    // session's node_range_resolver (same lifetime pattern as
+    // capability_effects_: avoids storing a ProgramIndex).
+    std::unordered_map<std::string, std::vector<ir::SourceRangeOpt>>
+        node_ranges_by_workflow_;
+    // WH-5c.6: capability source_symbol (SymbolId u64) -> declaration
+    // provenance source range, for the session's capability_range_resolver.
+    std::unordered_map<std::uint64_t, ir::SourceRangeOpt> capability_ranges_;
     // WH-6 (kr68 §12.7.8): compilation diagnostics from the IR->Core->wasm
     // pipeline (lowering / layout / codegen), each carrying its own code +
     // message + SourceRange. Populated by the constructor when the pipeline

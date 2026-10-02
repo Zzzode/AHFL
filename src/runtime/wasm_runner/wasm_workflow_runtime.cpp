@@ -70,6 +70,31 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
         }
     }
 
+    // WH-5c.6: pre-compute the host-side range tables for the session's
+    // failure-diagnostic range resolvers (design 12.15.17.1, Option A). The
+    // facade is the only wasm-lane component holding the ir::Program; ranges
+    // are NOT encoded in the wasm modules, they ride into the session via
+    // the WorkflowSessionConfig resolver seam. Same lifetime pattern as
+    // capability_effects_: no ProgramIndex stored.
+    for (const auto *wf : prog_index.workflows()) {
+        if (wf == nullptr) {
+            continue;
+        }
+        auto &ranges = node_ranges_by_workflow_[wf->name];
+        ranges.reserve(wf->nodes.size());
+        for (const auto &node : wf->nodes) {
+            ranges.push_back(node.source_range);
+        }
+    }
+    for (const auto *cap : prog_index.capabilities()) {
+        if (cap == nullptr || !cap->symbol_ref.id.has_value()) {
+            continue;
+        }
+        capability_ranges_.emplace(
+            static_cast<std::uint64_t>(*cap->symbol_ref.id),
+            cap->provenance.source_range);
+    }
+
     // Lower AHFL-IR to Core-IR.
     auto core = irc::lower_ahfl_to_core(program);
     if (!core.ok()) {
@@ -154,6 +179,46 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
     session_config.post_run2_memory_mutator =
         std::move(config_.post_run2_memory_mutator);
     session_config.name_resolver = config_.name_resolver;
+
+    // WH-5c.6: install the failure-diagnostic range resolvers (design
+    // 12.15.17.1). Build the SCHEDULE-ORDER range vector for this run: the
+    // descriptor's nodes array IS the schedule (invariant
+    // nodes[i].schedule_pos == i), and each node's dense node_id indexes the
+    // workflow's source-order range vector. An out-of-range node_id yields
+    // nullopt -- range resolution must never crash on a corrupt descriptor.
+    std::vector<ir::SourceRangeOpt> schedule_ranges;
+    if (auto ranges_it = node_ranges_by_workflow_.find(workflow_name);
+        ranges_it != node_ranges_by_workflow_.end()) {
+        schedule_ranges.reserve(it->second.descriptor.nodes.size());
+        for (const auto &node_desc : it->second.descriptor.nodes) {
+            const auto &source_ranges = ranges_it->second;
+            if (node_desc.node_id < source_ranges.size()) {
+                schedule_ranges.push_back(source_ranges[node_desc.node_id]);
+            } else {
+                schedule_ranges.push_back(std::nullopt);
+            }
+        }
+    }
+    session_config.node_range_resolver =
+        [schedule_ranges = std::move(schedule_ranges)](
+            std::uint32_t schedule_pos) -> ir::SourceRangeOpt {
+            if (schedule_pos < schedule_ranges.size()) {
+                return schedule_ranges[schedule_pos];
+            }
+            return std::nullopt;
+        };
+    // The session completes synchronously within run(), so capturing the
+    // facade's map by reference is safe (same pattern as the intent wrapper
+    // capturing &capability_effects_).
+    session_config.capability_range_resolver =
+        [&cap_ranges = capability_ranges_](
+            std::uint64_t source_symbol) -> ir::SourceRangeOpt {
+            auto cap_it = cap_ranges.find(source_symbol);
+            if (cap_it != cap_ranges.end()) {
+                return cap_it->second;
+            }
+            return std::nullopt;
+        };
 
     // WH-4b: intent-emitting wrapper. Mirrors the evaluator at
     // workflow_runtime.cpp:1050-1058: right BEFORE a durable_write /

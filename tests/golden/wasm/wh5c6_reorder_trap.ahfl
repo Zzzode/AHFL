@@ -1,0 +1,78 @@
+module wasm::wh5c6_reorder_trap;
+
+// WH-5c.6 schedule/source remap fixture: the trap node `b` is DECLARED
+// FIRST (dense source node id 0) but depends on `a`, so the Kahn schedule
+// runs [a, b] and `b` sits at schedule position 1. The failure range must
+// land on b's WorkflowNode::source_range through the facade remap
+// (schedule_ranges[schedule_pos] = source_ranges[node_id]); a naive
+// schedule-position-as-source-index lookup would blame node `a`.
+
+pub struct Frame {
+    n: Int;
+    value: String;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+// Opaque capability-final agent: calls Echo and returns its result.
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+// P6 agent that divides by zero in Done (a real wasm trap, no capability).
+pub agent TrapAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for TrapAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        let x: Int = 1;
+        let y: Int = 0;
+        let z: Int = x / y;
+        return Frame { n: z, value: input.value };
+    }
+}
+
+pub workflow ReorderTrap {
+    input: Frame;
+    output: Frame;
+
+    // Declared in NON-Kahn order: b depends on a. Source ids are
+    // b=0, a=1; the Kahn schedule is [a, b] so b is schedule position 1.
+    node b: TrapAgent(input) after [a];
+    node a: EchoAgent(input);
+
+    return: b;
+}

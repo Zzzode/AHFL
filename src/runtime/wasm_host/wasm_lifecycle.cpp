@@ -27,13 +27,17 @@ namespace bd = ::ahfl::backends;
     return id;
 }
 
-// Add an error diagnostic to the result and return its id.
+// Add an error diagnostic to the result and return its id. WH-5c.6: when
+// `range` is present it is attached to the diagnostic (Principle 5); a
+// nullopt range leaves the diagnostic code+message only.
 [[nodiscard]] DiagnosticId
-add_error(WorkflowResult &result, std::string code, std::string message) {
+add_error(WorkflowResult &result, std::string code, std::string message,
+          ahfl::ir::SourceRangeOpt range = std::nullopt) {
     const DiagnosticId id{result.diagnostics.entries().size()};
     result.diagnostics.error()
         .code(std::move(code))
         .message(std::move(message))
+        .range(std::move(range))
         .emit();
     return id;
 }
@@ -284,9 +288,15 @@ void emit_workflow_events(WorkflowResult &result,
                 .pending_ordinal = node_facts.pending_ordinal,
             });
         } else {
+            // WH-5c.6: emit ONE ranged diagnostic and record its id so the
+            // workflow-level WorkflowFailed reuses it (no duplicate bag
+            // entry, mirroring the evaluator at
+            // workflow_runtime.cpp:1594-1597).
             const auto diag_id =
                 add_error(result, node_facts.failure_code,
-                          node_facts.failure_message);
+                          node_facts.failure_message,
+                          node_facts.failure_range);
+            facts.node_failure_diagnostic = diag_id;
             emit(NodeFailed{
                 .node = node_id,
                 .diagnostic = diag_id,
@@ -327,8 +337,18 @@ void emit_workflow_events(WorkflowResult &result,
             .pending_ordinal = pending_ordinal,
         });
     } else {
-        const auto diag_id =
-            add_error(result, facts.failure_code, facts.failure_message);
+        // WH-5c.6: when a node failed, reuse its diagnostic id (the bag
+        // holds exactly one entry referenced by both NodeFailed and
+        // WorkflowFailed). Only when no node produced one (all nodes
+        // completed but the workflow still failed -- theoretically
+        // unreachable) emit a single workflow-level ranged diagnostic.
+        DiagnosticId diag_id;
+        if (facts.node_failure_diagnostic.has_value()) {
+            diag_id = *facts.node_failure_diagnostic;
+        } else {
+            diag_id = add_error(result, facts.failure_code,
+                                facts.failure_message, facts.failure_range);
+        }
         emit(WorkflowFailed{
             .workflow = plan.workflow,
             .diagnostic = diag_id,
@@ -451,9 +471,12 @@ bool finalize_wasm_agent_run(
         emit(NodeCompleted{.node = node_id, .output = output_id});
         emit(WorkflowCompleted{.workflow = workflow_id, .output = output_id});
     } else {
+        // WH-5c.6: agent-lane range resolution is out of scope for this
+        // slice; the agent lane's NodeFailed/WorkflowFailed already share
+        // one id, so the duplicate-entry fix does not apply here.
         const auto diag_id =
             add_error(result, std::move(failure_code),
-                      std::move(failure_message));
+                      std::move(failure_message), std::nullopt);
         emit(NodeFailed{
             .node = node_id,
             .diagnostic = diag_id,

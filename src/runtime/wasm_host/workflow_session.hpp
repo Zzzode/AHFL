@@ -26,6 +26,7 @@
 #include "runtime/value/value.hpp"
 
 #include "ahfl/runtime/execution_event.hpp"
+#include "ahfl/compiler/ir/expr.hpp"
 #include "runtime/engine/workflow_result.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
@@ -72,6 +73,19 @@ struct WorkflowSessionConfig {
 
     // Resolves a capability's source_symbol to its canonical name.
     std::function<std::optional<std::string>(std::uint64_t)> name_resolver;
+
+    // WH-5c.6: optional failure-diagnostic range resolvers (design
+    // 12.15.17.1). The facade pre-computes host-side range tables from the
+    // ir::Program and installs these so a run failure (trap / host-abort /
+    // output-decode) carries a SourceRange in its diagnostic (Principle 5).
+    // node_range_resolver maps a schedule position to the failed node's
+    // WorkflowNode::source_range; capability_range_resolver maps a
+    // source_symbol to the capability declaration's provenance range. A null
+    // resolver is safe: every call site guards `if (config.x_resolver)`.
+    std::function<ahfl::ir::SourceRangeOpt(std::uint32_t schedule_pos)>
+        node_range_resolver;
+    std::function<ahfl::ir::SourceRangeOpt(std::uint64_t source_symbol)>
+        capability_range_resolver;
 
     // WH-4b: recovery snapshot for a resume run. When set, the session loads
     // the snapshot's memo + pending frontier into its recorder and replays:

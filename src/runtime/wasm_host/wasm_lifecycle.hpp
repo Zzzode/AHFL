@@ -15,6 +15,9 @@
 #include "runtime/engine/capability_bridge.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
+#include "ahfl/compiler/ir/expr.hpp"
+#include "ahfl/runtime/execution_event.hpp"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -46,6 +49,11 @@ struct WasmNodeRunFacts {
     // result's DiagnosticBag and references it from NodeFailed).
     std::string failure_code;
     std::string failure_message;
+    // WH-5c.6: the SourceRange attached to the failure diagnostic (the
+    // failed node's WorkflowNode::source_range, or the capability
+    // declaration range when a capability failed). Nullopt when no resolver
+    // is installed or the lookup missed.
+    ahfl::ir::SourceRangeOpt failure_range;
     // For Skipped: blocking dependency node_ids (dense source-order).
     std::vector<std::uint32_t> blocking_dependencies;
     // WH-4b: for Suspended, the pending capability identity + per-node ordinal
@@ -95,6 +103,13 @@ struct WasmWorkflowRunFacts {
     // For workflow-level failure: the diagnostic code + message.
     std::string failure_code;
     std::string failure_message;
+    // WH-5c.6: the SourceRange attached to the failure diagnostic.
+    ahfl::ir::SourceRangeOpt failure_range;
+    // WH-5c.6: the DiagnosticId of the failed node's NodeFailed diagnostic,
+    // so the workflow-level WorkflowFailed reuses it (one bag entry
+    // referenced by both events, mirroring the evaluator at
+    // workflow_runtime.cpp:1594-1597). Nullopt when no node failed.
+    std::optional<DiagnosticId> node_failure_diagnostic;
 };
 
 // Populate metadata from the descriptor, emit the lifecycle event stream

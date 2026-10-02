@@ -682,6 +682,13 @@ lower_golden_file(const std::filesystem::path &path) {
         // the per-node output stash table makes every node output
         // host-observable (design 12.15.19.11.1).
         "wasm/wh5c5_gap4_stash_parity.ahfl",
+        // WH-5c.6 GAP 6: successful capability on node 0 then a divide-by-zero
+        // trap on node 1; pins that a failure range blames the failed node,
+        // not the earlier successful capability's declaration range.
+        "wasm/wh5c6_cap_then_trap.ahfl",
+        // WH-5c.6: trap node is source id 0 but schedule position 1; pins
+        // the facade schedule/source range remap on a reordered DAG.
+        "wasm/wh5c6_reorder_trap.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;
