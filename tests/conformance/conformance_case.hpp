@@ -136,6 +136,12 @@ enum class WasmNodeObservationSkip {
     /// differential against. The Node embedded-engine run is the
     /// authoritative evidence; that evaluator surface retires with KR6.8.
     EvaluatorSurfaceAwaitsKr68,
+    /// The module emits and the evaluator agrees (the native wasm3 lane
+    /// compares), but the Node embedded host lacks the ahfl_xcode transcode
+    /// adapter (WH-5b.3 host-side work), so the wasm module traps at its
+    /// P4D_TO_JSON / JSON_TO_P4D transcode sites. The Node observation is
+    /// withheld until the JS host gains transcode support.
+    HostTranscodeAwaitsWh5b3,
 };
 
 struct WasmEngineEligibility {
@@ -508,6 +514,15 @@ class ConformanceCaseReader {
             wasm.eligibility != WasmEligibility::Computation) {
             error("engines.wasm.node_observation_skip 'blocked_kr66' requires "
                   "engines.wasm.eligible 'computation' (a KR6.6 seam blocks the emit)",
+                  std::nullopt);
+            return std::nullopt;
+        }
+        if (wasm.node_observation_skip ==
+                WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3 &&
+            wasm.eligibility != WasmEligibility::Orchestration) {
+            error("engines.wasm.node_observation_skip 'host_transcode_awaits_wh5b3' "
+                  "requires engines.wasm.eligible 'orchestration' (the module emits "
+                  "but the Node host lacks transcode support)",
                   std::nullopt);
             return std::nullopt;
         }
@@ -1068,8 +1083,12 @@ class ConformanceCaseReader {
         if (*value == "evaluator_surface_awaits_kr68") {
             return WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
         }
+        if (*value == "host_transcode_awaits_wh5b3") {
+            return WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3;
+        }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
-              "'blocked_kr66', or 'evaluator_surface_awaits_kr68', got '" +
+              "'blocked_kr66', 'evaluator_surface_awaits_kr68', or "
+              "'host_transcode_awaits_wh5b3', got '" +
                   *value + "'",
               range_of(node));
         return std::nullopt;

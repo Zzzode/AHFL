@@ -600,6 +600,22 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::wh5c_instance_reuse_fanout::ReuseFanout",
             0, 1, WasmEligibility::Orchestration,
         },
+        // WH-5c.4 (GAP 2): an opaque-lane capability-final agent that
+        // constructs the capability argument in-module. The wasm codegen emits
+        // a P4D_TO_JSON self-transcode for the constructed O_k and a
+        // JSON_TO_P4D workflow-output crossing. The native wasm3 lane agrees
+        // with the evaluator; the Node observation withholds on
+        // host_transcode_awaits_wh5b3 (the JS host lacks the ahfl_xcode
+        // transcode adapter, WH-5b.3).
+        {
+            "wh5c4_construct_cap_final.case.json",
+            "tests/golden/wasm/wh5c4_construct_cap_final.ahfl",
+            CaseKind::Workflow,
+            "wasm::wh5c4_construct_cap_final::ReplyWorkflow",
+            1, 1, WasmEligibility::Orchestration,
+            /*evaluator=*/true,
+            WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";
@@ -1049,6 +1065,24 @@ void test_malformed_manifests() {
                        "node_observation_skip": "blocked_kr66"}}
 })",
                     "engines.wasm.eligible 'computation'");
+
+    expect_rejected("host transcode skip on a computation lane",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "x",
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "computation", "reason": "r",
+                       "node_observation_skip": "host_transcode_awaits_wh5b3"}}
+})",
+                    "engines.wasm.eligible 'orchestration'");
 
     expect_rejected("pending capability carries result",
                     R"({

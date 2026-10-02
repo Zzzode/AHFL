@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace ahfl::runtime::wasm_host {
@@ -86,6 +87,33 @@ checked_mul_u32(std::uint64_t a, std::uint64_t b) noexcept {
         return std::nullopt;
     }
     return static_cast<std::uint32_t>(a * b);
+}
+
+// --- Option variant resolution ----------------------------------------------
+
+// AHFL's Option<T> defines Some(T) as variant 0 and None as variant 1, but the
+// wire schema's Option shape is order-agnostic. Find the Some (payload) and
+// None (no payload) variant indices by their payload properties. Returns
+// {some_idx, none_idx} or nullopt when the enum is not a 2-variant Option
+// shape (one zero-payload variant + one payload variant).
+[[nodiscard]] inline std::optional<std::pair<std::uint32_t, std::uint32_t>>
+option_variant_indices(const ir::core::CoreLayoutEnum &e) noexcept {
+    if (e.variant_payload_sizes.size() != 2) {
+        return std::nullopt;
+    }
+    std::optional<std::uint32_t> none_idx;
+    std::optional<std::uint32_t> some_idx;
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        if (e.variant_payload_sizes[i] == 0) {
+            none_idx = i;
+        } else {
+            some_idx = i;
+        }
+    }
+    if (!none_idx.has_value() || !some_idx.has_value()) {
+        return std::nullopt;
+    }
+    return std::make_pair(*some_idx, *none_idx);
 }
 
 // --- String region authorization --------------------------------------------

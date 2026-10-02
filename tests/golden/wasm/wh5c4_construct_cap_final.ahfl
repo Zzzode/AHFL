@@ -1,0 +1,56 @@
+module wasm::wh5c4_construct_cap_final;
+
+// WH-5c.4 (GAP 2) fixture: an opaque-lane capability-final agent that
+// CONSTRUCTS the capability argument in-module. The agent's final state
+// builds a Request from the input fields and returns DraftReply(request) —
+// the capability result is the agent's output. The capability declares
+// durable_write so it rides the opaque wire-JSON lane; the wasm codegen
+// emits a P4D_TO_JSON self-transcode for the constructed O_k and a
+// JSON_TO_P4D workflow-output crossing for the opaque result.
+
+pub struct Request {
+    id: String(0, 64);
+    question: String(0, 128);
+}
+
+pub struct Reply {
+    id: String(0, 64);
+    answer: String(0, 128);
+}
+
+capability DraftReply(request: Request) -> Reply {
+    effect: durable_write;
+}
+
+pub agent ReplyAgent {
+    input: Request;
+    context: Unit;
+    output: Reply;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DraftReply];
+    transition Init -> Done;
+}
+
+flow for ReplyAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return DraftReply(Request {
+            id: input.id,
+            question: input.question,
+        });
+    }
+}
+
+pub workflow ReplyWorkflow {
+    input: Request;
+    output: Reply;
+
+    node reply: ReplyAgent(input);
+
+    return: reply;
+}

@@ -672,6 +672,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // WH-5c.2: two P6 nodes reusing ONE packaged agent instance; lowers
         // to verifier-clean Core (Approach B per-node node-frame blocks).
         "wasm/wh5c_instance_reuse_fanout.ahfl",
+        // WH-5c.4 (GAP 2): opaque-lane capability-final agent that constructs
+        // the capability argument in-module; lowers to verifier-clean Core.
+        "wasm/wh5c4_construct_cap_final.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

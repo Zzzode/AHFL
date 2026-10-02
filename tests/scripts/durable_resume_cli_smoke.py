@@ -169,6 +169,93 @@ def write_rich_package(pkg_dir: Path) -> None:
     (pkg_dir / "main.ahfl").write_text(_RICH_SOURCE, encoding="utf-8")
 
 
+# WH-5c.4 (GAP 2): a package fixture whose opaque-lane capability-final agent
+# CONSTRUCTS the capability argument from multiple input fields (mirroring the
+# shipped durable-resume example).  The suspend/resume parity test proves the
+# constructed P4-D frame transcodes to wire-JSON identically on origination and
+# replay, so the memo identity (node, ordinal, arg_hash) matches and the resumed
+# run yields the same result.
+_CONSTRUCT_PARITY_MANIFEST = """manifest_version = 1
+
+[package]
+name = "g4d-construct-parity"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "parity"
+root = "."
+
+[targets.workflow]
+kind = "handoff"
+entry = "parity::main::ParityWorkflow"
+exports = [
+  { kind = "workflow", name = "parity::main::ParityWorkflow" },
+  { kind = "agent", name = "parity::main::ParityAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }
+"""
+
+_CONSTRUCT_PARITY_SOURCE = """module parity::main;
+
+pub struct Ticket {
+    id: String;
+    question: String;
+}
+
+pub struct DraftInput {
+    id: String;
+    question: String;
+}
+
+pub struct Reply {
+    id: String = "";
+    answer: String = "";
+}
+
+pub capability DraftReply(request: DraftInput) -> Reply {
+    effect: durable_write;
+}
+
+pub agent ParityAgent {
+    input: Ticket;
+    context: Unit;
+    output: Reply;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DraftReply];
+    transition Init -> Done;
+}
+
+flow for ParityAgent {
+    state Init { goto Done; }
+    state Done {
+        return DraftReply(DraftInput {
+            id: input.id,
+            question: input.question,
+        });
+    }
+}
+
+pub workflow ParityWorkflow {
+    input: Ticket;
+    output: Reply;
+    node reply: ParityAgent(input);
+    return: reply;
+}
+"""
+
+
+def write_construct_parity_package(pkg_dir: Path) -> None:
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "ahfl.toml").write_text(_CONSTRUCT_PARITY_MANIFEST, encoding="utf-8")
+    (pkg_dir / "main.ahfl").write_text(_CONSTRUCT_PARITY_SOURCE, encoding="utf-8")
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("usage: durable_resume_cli_smoke.py <ahflc> <work-dir> [<repo-root>]",
@@ -370,6 +457,62 @@ def main() -> int:
             "note": 9,
             "nothing": None,
         }, f"rich Some resume output mismatch, got {some_out}")
+
+        # (2e): WH-5c.4 (GAP 2) suspend/resume parity for a constructed-arg
+        # opaque final.  The agent's final state CONSTRUCTS the capability arg
+        # from multiple input fields (DraftInput { id, question }), so the wasm
+        # codegen emits a P4D_TO_JSON self-transcode before the opaque call.
+        # Two independent suspend->resume cycles with the SAME injected result
+        # must yield byte-identical run reports (the memo identity is per
+        # (node, ordinal, arg_hash); the constructed P4-D must transcode
+        # identically on origination and replay).
+        parity_pkg = work / "construct_parity_pkg"
+        write_construct_parity_package(parity_pkg)
+        parity_input = '{"_type":"parity::main::Ticket","id":"T-1","question":"what is AHFL?"}'
+        parity_result = '{"_type":"parity::main::Reply","id":"T-1","answer":"a DSL"}'
+        parity_base = [
+            str(ahflc), "run",
+            "--manifest", str(parity_pkg / "ahfl.toml"),
+            "--target", "workflow",
+            "--sysroot", str(sysroot_root()),
+            "--workflow", "parity::main::ParityWorkflow",
+            "--input", parity_input,
+            "--llm-config", str(config),
+            "--output-format", "json",
+        ]
+        parity_reports: list[str] = []
+        for cycle in range(2):
+            snap = work / f"parity_cycle{cycle}.snapshot"
+            if snap.exists():
+                snap.unlink()
+            cycle_base = parity_base + ["--recovery-store", str(snap)]
+            cyc_suspend = subprocess.run(
+                cycle_base + ["--suspend-capability", "parity::main::DraftReply"],
+                env=env, check=False, capture_output=True, text=True, timeout=30,
+            )
+            require(cyc_suspend.returncode == 0,
+                    f"parity cycle {cycle} suspend should exit 0, got "
+                    f"{cyc_suspend.returncode}: {cyc_suspend.stderr}")
+            require(snap.exists(), f"parity cycle {cycle} suspend must persist a resume record")
+            require(json.loads(cyc_suspend.stdout)["audit"]["workflow_completed"] == 0,
+                    f"parity cycle {cycle} suspend must not complete")
+            cyc_resume = subprocess.run(
+                cycle_base + ["--resume-pending-result", parity_result],
+                env=env, check=False, capture_output=True, text=True, timeout=30,
+            )
+            require(cyc_resume.returncode == 0,
+                    f"parity cycle {cycle} resume should exit 0, got "
+                    f"{cyc_resume.returncode}: {cyc_resume.stderr}")
+            cyc_report = json.loads(cyc_resume.stdout)
+            require(cyc_report["audit"]["workflow_completed"] == 1,
+                    f"parity cycle {cycle} resume must complete")
+            cyc_out = cyc_report.get("result", cyc_report.get("output"))
+            require(cyc_out is not None and cyc_out.get("answer") == "a DSL",
+                    f"parity cycle {cycle} resume output mismatch, got {cyc_out}")
+            parity_reports.append(cyc_resume.stdout)
+        require(parity_reports[0] == parity_reports[1],
+                "constructed-arg opaque final suspend/resume must yield "
+                "byte-identical run reports across cycles")
 
         # (3): a malformed --resume-pending-result is rejected by the Phase A.3
         # syntax admission (before secrets/network) with a NONZERO exit and a

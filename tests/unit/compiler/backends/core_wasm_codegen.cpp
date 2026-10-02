@@ -4152,6 +4152,103 @@ int main() {
                   "contributor's SourceRange");
         }
 
+        // WH-5c.4 (GAP 2) fail-closed pin: a construct expression whose
+        // aggregate exceeds the 5120-byte scratch arena fails closed with
+        // kResourceExhausted and the construct expression's SourceRange
+        // (never a silent truncation or a misrouted kUnsupportedOrchestration).
+        {
+            auto program = make_e1_core_program();
+            // 641 Int fields -> 5128 bytes > the 5120-byte scratch arena.
+            constexpr std::size_t kBigFields = 641;
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+            const CoreTypeId big_type{
+                static_cast<std::uint32_t>(program.types.size())};
+            CoreTypeDecl big_decl;
+            big_decl.kind = CoreTypeDecl::Kind::Struct;
+            big_decl.name = "app::Big";
+            for (std::size_t i = 0; i < kBigFields; ++i) {
+                big_decl.fields.push_back("f" + std::to_string(i));
+                big_decl.field_nominal_types.push_back(CoreTypeId{});
+                big_decl.field_has_default.push_back(false);
+                big_decl.field_type_template_roots.push_back(
+                    CoreMemberTypeTemplateNodeId{
+                        static_cast<std::uint32_t>(i)});
+                big_decl.member_type_templates.push_back(
+                    CoreMemberTypeTemplateNode{
+                        CoreMemberTypeTemplateKind::Concrete,
+                        CoreValueTypeId{1},
+                        0,
+                        CoreTypeId{},
+                        std::nullopt,
+                        {},
+                        CoreMemberTypeTemplateNodeId{}});
+            }
+            program.types.push_back(std::move(big_decl));
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{big_type, {}, std::nullopt}}); // vt2 Big
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // expr1: one literal i64 reused for every field.
+            flow.storage.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+                         ahfl::SourceRange{100, 200},
+                         CoreValueTypeId{1}});
+            // expr2: construct Big from the literal (641 fields).
+            std::vector<CoreConstructArg> args;
+            args.reserve(kBigFields);
+            for (std::size_t i = 0; i < kBigFields; ++i) {
+                args.push_back(
+                    CoreConstructArg{CoreFieldId{static_cast<std::uint32_t>(i)},
+                                     CoreValueId{1}});
+            }
+            flow.storage.exprs.push_back(
+                CoreExpr{CoreConstructExpr{"app::Big", "", false, big_type,
+                                           CoreVariantId{}, true,
+                                           std::move(args)},
+                         ahfl::SourceRange{200, 300},
+                         CoreValueTypeId{2}});
+            flow.storage.value_count = 3;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1},
+                                        CoreValueTypeId{2}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}},
+                         std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}},
+                         std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "WH-5c.4 scratch-overflow fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(emitted,
+                                       backends::core_wasm_diag::kResourceExhausted),
+                  "WH-5c.4: an over-capacity construct fails closed with "
+                  "kResourceExhausted");
+            bool has_ranged_diag = false;
+            for (const auto &diag : emitted.diagnostics) {
+                if (diag.code ==
+                        backends::core_wasm_diag::kResourceExhausted &&
+                    diag.source_range.has_value() &&
+                    !diag.source_range->empty()) {
+                    has_ranged_diag = true;
+                    break;
+                }
+            }
+            check(has_ranged_diag,
+                  "WH-5c.4: the scratch-overflow diagnostic carries a "
+                  "non-empty SourceRange");
+        }
+
         // P6-5 (RFC 0026 KR6.6): bounded collections. A `List<Int>(4)` value is
         // an i32 handle to its INLINE `(ptr,len)` header; every backing fact
         // (stride, capacity, backing size, header offsets) comes from the P4-D

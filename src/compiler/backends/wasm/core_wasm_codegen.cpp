@@ -335,6 +335,15 @@ struct IdentityAction {
 };
 struct CapabilityAction {
     CoreCapabilityId capability{};
+    // WH-5c.4 (GAP 2): when the capability-final argument is an in-module
+    // construct, the construct expression and its result value. The agent is
+    // packaged as P6 (computed-final construct handler) and the scheduler
+    // transcodes the constructed P4-D output frame to wire-JSON before the
+    // capability call. Zero/false for the canonical bare-input forwarding
+    // shape.
+    CoreExprId construct_expr{};
+    CoreValueId construct_result{};
+    bool is_construct{false};
     [[nodiscard]] friend bool operator==(CapabilityAction, CapabilityAction) noexcept = default;
 };
 // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL. The state's
@@ -628,6 +637,15 @@ struct AgentPlan {
     // frame-region planner fills each site's block/result coordinates BEFORE
     // the handler bodies are emitted.
     std::vector<BridgeCallPlan> bridge_calls;
+    // WH-5c.4 (GAP 2): construct-shape capability terminals. Each entry records
+    // a final state whose handler builds the capability argument in-module (P6
+    // computed-final construct) and whose capability the scheduler invokes
+    // after a P4D_TO_JSON self-transcode of the constructed output frame.
+    struct ConstructCapabilityTerminal {
+        CoreStateId state{};
+        CoreCapabilityId capability{};
+    };
+    std::vector<ConstructCapabilityTerminal> construct_capability_terminals;
     // The physical P6-frame section plan (boundary table, placements, payload
     // arena, rodata span, V2-C bridge page frame) populated when this agent
     // emits on the frame lane; null on the opaque wire-JSON lane. Owned by
@@ -1449,6 +1467,130 @@ validate_canonical_input_let(const CoreProgram &program,
     return agent.input_type == agent.output_type;
 }
 
+// WH-5c.4 (GAP 2): detect the construct-shape capability final. The handler's
+// last two statements are a capability call (whose single arg is a construct
+// expression) and a return of the call result. The construct's leaves are
+// input/context/literal references — cross-lane heap edges stay rejected (they
+// go through the WH-5b.3 xcode path, not in-module construction). Returns the
+// construct info on a match, or nullopt when the shape is absent (the caller
+// then tries the canonical 3-statement shape). Emits a ranged diagnostic and
+// returns nullopt when the shape IS present but invalid.
+[[nodiscard]] std::optional<CapabilityAction>
+validate_construct_capability_final(const CoreProgram &program,
+                                    const ir::core::CoreLayoutTable &layouts,
+                                    const CoreAgentDecl &agent,
+                                    const CoreFlowDecl &flow,
+                                    const ir::core::CoreFlowState &handler,
+                                    CoreWasmCodegenResult &result) {
+    const auto &statements = handler.body.statements;
+    // Need at least: one construct let + capability call + return.
+    if (statements.size() < 3) {
+        return std::nullopt;
+    }
+    const auto *call =
+        std::get_if<CoreCapabilityCallStmt>(&statements[statements.size() - 2].node);
+    const auto *ret =
+        std::get_if<CoreReturnStmt>(&statements[statements.size() - 1].node);
+    if (call == nullptr || ret == nullptr || !ret->has_value ||
+        ret->value != call->result || call->args.size() != 1) {
+        return std::nullopt;
+    }
+    // The capability call's single arg must be a construct expression bound by
+    // an earlier let in this region.
+    const CoreValueId arg_value = call->args[0];
+    std::optional<CoreExprId> construct_expr;
+    for (std::size_t i = 0; i + 2 < statements.size(); ++i) {
+        const auto *let = std::get_if<CoreLetStmt>(&statements[i].node);
+        if (let != nullptr && let->result == arg_value) {
+            if (let->expr.value >= flow.storage.exprs.size()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "construct capability final names an out-of-range expression",
+                         statements[i].source_range);
+                return std::nullopt;
+            }
+            const auto &expr = flow.storage.exprs[let->expr.value];
+            if (!std::holds_alternative<CoreConstructExpr>(expr.node)) {
+                // The arg is a let but not a construct — this is not the
+                // construct shape; let the canonical validator reject it.
+                return std::nullopt;
+            }
+            construct_expr = let->expr;
+            break;
+        }
+    }
+    if (!construct_expr.has_value()) {
+        // The arg is not bound by a let in this region — not the construct
+        // shape.
+        return std::nullopt;
+    }
+
+    // Validate the capability identity and types.
+    if (call->capability.value >= program.capabilities.size()) {
+        add_diag(result,
+                 core_wasm_diag::kInvalidCore,
+                 "construct capability final references an invalid capability",
+                 statements[statements.size() - 2].source_range);
+        return std::nullopt;
+    }
+    if (std::find(agent.capabilities.begin(), agent.capabilities.end(),
+                  call->capability) == agent.capabilities.end()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "construct capability final call is not in the target agent whitelist",
+                 statements[statements.size() - 2].source_range);
+        return std::nullopt;
+    }
+    const auto &capability = program.capabilities[call->capability.value];
+    const auto construct_vt = flow.storage.value_types[arg_value.value];
+    const auto result_vt = flow.storage.value_types[call->result.value];
+    if (capability.param_types.size() != 1 || capability.param_types[0] != construct_vt ||
+        capability.return_type != result_vt) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "construct capability frame types do not exactly match the Core signature",
+                 statements[statements.size() - 2].source_range);
+        return std::nullopt;
+    }
+    const auto *result_nominal =
+        std::get_if<CoreVtNominal>(&program.value_types[result_vt.value].node);
+    if (result_nominal == nullptr || result_nominal->base != agent.output_type) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "construct capability result is not the exact agent output nominal type",
+                 statements[statements.size() - 2].source_range);
+        return std::nullopt;
+    }
+    if (!has_finalized_layout(layouts, construct_vt) ||
+        !has_finalized_layout(layouts, result_vt)) {
+        add_diag(result,
+                 core_wasm_diag::kInvalidLayout,
+                 "construct capability boundary type has no finalized P4-D layout",
+                 statements[statements.size() - 2].source_range);
+        return std::nullopt;
+    }
+    // The construct result is materialized into the output frame O_k by the P6
+    // computed-final and then transcoded to wire-JSON. A zero-sized type has no
+    // P4-D bytes to materialize and no frame address to transcode, so the
+    // construct-final lane cannot serve it. Reject here (a capability-frame
+    // diagnostic) rather than letting the P6 scalar scaffold reject it later
+    // with the generic orchestration code.
+    const auto construct_layout_id = layouts.value_layouts[construct_vt.value];
+    if (layouts.layouts[construct_layout_id.value].is_zero_sized) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "construct capability argument is a zero-sized type with no P4-D frame to materialize",
+                 statements[statements.size() - 2].source_range);
+        return std::nullopt;
+    }
+
+    return CapabilityAction{
+        .capability = call->capability,
+        .construct_expr = *construct_expr,
+        .construct_result = arg_value,
+        .is_construct = true};
+}
+
 [[nodiscard]] std::optional<CapabilityAction>
 validate_capability_final(const CoreProgram &program,
                           const ir::core::CoreLayoutTable &layouts,
@@ -1459,6 +1601,14 @@ validate_capability_final(const CoreProgram &program,
                           std::vector<bool> &used_values,
                           CoreWasmCodegenResult &result) {
     const auto &statements = handler.body.statements;
+    // WH-5c.4: try the construct shape first. The construct lets' expr/value
+    // marking is done by the P6ComputationHandlerBuilder when the synthetic
+    // computed-final region is planned; the capability call result is marked
+    // by the caller after the builder succeeds.
+    if (auto construct_action = validate_construct_capability_final(
+            program, layouts, agent, flow, handler, result)) {
+        return construct_action;
+    }
     if (statements.size() != 3) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
@@ -4844,7 +4994,10 @@ class P6ComputationHandlerBuilder {
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
         if (start + size > scratch_capacity() ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
-            return reject("constructor scratch arena is exhausted", range);
+            return reject_with_code(
+                core_wasm_diag::kResourceExhausted,
+                "constructor scratch arena is exhausted",
+                range);
         }
         construct_addrs_[id.value] = static_cast<std::uint32_t>(start);
         scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
@@ -5721,7 +5874,10 @@ class P6ComputationHandlerBuilder {
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
         if (start + size > scratch_capacity() ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
-            return reject("constructor scratch arena is exhausted", range);
+            return reject_with_code(
+                core_wasm_diag::kResourceExhausted,
+                "constructor scratch arena is exhausted",
+                range);
         }
         construct_addrs_[id.value] = static_cast<std::uint32_t>(start);
         scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
@@ -10771,6 +10927,12 @@ build_frame_section_plan(const CoreProgram &program,
     };
     std::vector<PlannedComputedHandler> planned_handlers;
 
+    // WH-5c.4: synthetic handler states for construct-shape capability finals.
+    // The P6ComputationHandlerBuilder stores a reference to the region, so
+    // these must outlive every planned handler (the emit loop below is the
+    // last user).
+    std::vector<ir::core::CoreFlowState> construct_synthetic_states;
+
     // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String
     // literal pool every ENTRY-HANDLER builder interns into while planning.
     // It is frozen before handler bodies are emitted and, when non-empty, the
@@ -10828,6 +10990,117 @@ build_frame_section_plan(const CoreProgram &program,
                     program, layouts, agent, *flow, *handler, used_exprs, used_values, result);
                 if (!action.has_value()) {
                     return std::nullopt;
+                }
+                if (action->is_construct) {
+                    // WH-5c.4 (GAP 2): the capability argument is an in-module
+                    // construct. Plan the construct lets as a P6 computed-final
+                    // that materializes the construct into O_k; the scheduler
+                    // then transcodes O_k to wire-JSON and calls the capability.
+                    if (!policy.allow_computed_goto) {
+                        add_diag(result,
+                                 policy.unsupported_code,
+                                 "KR6.5 " + std::string(policy.slice) +
+                                     " does not yet package a construct capability-final handler",
+                                 statements.front().source_range);
+                        return std::nullopt;
+                    }
+                    const CoreValueTypeId construct_vt =
+                        flow->storage.value_types[action->construct_result.value];
+                    const std::uint32_t effective_output_capacity =
+                        policy.frame_relocation != nullptr
+                            ? policy.frame_relocation->output_capacity
+                            : kP6AggregateOutputCapacity;
+                    // The construct expression's owning nominal type drives the
+                    // output-frame fit gate (fits_frame_region takes CoreTypeId).
+                    const auto &construct_expr_node =
+                        flow->storage.exprs[action->construct_expr.value].node;
+                    const auto *construct =
+                        std::get_if<CoreConstructExpr>(&construct_expr_node);
+                    if (construct == nullptr) {
+                        add_diag(result,
+                                 core_wasm_diag::kInvalidCore,
+                                 "construct capability final expression is not a construct",
+                                 statements.front().source_range);
+                        return std::nullopt;
+                    }
+                    if (!fits_frame_region(program,
+                                           layouts,
+                                           construct->type_id,
+                                           effective_output_capacity,
+                                           "construct output",
+                                           result)) {
+                        return std::nullopt;
+                    }
+                    // Build the synthetic region: every statement before the
+                    // capability call (the construct lets) plus a return of the
+                    // construct result. CoreStmt is non-copyable (the variant
+                    // holds non-copyable alternatives), so each let is
+                    // reconstructed from its trivially-copyable payload.
+                    ir::core::CoreFlowState synthetic;
+                    synthetic.state = handler->state;
+                    synthetic.state_name = handler->state_name;
+                    synthetic.policy = handler->policy;
+                    const std::size_t construct_let_count = statements.size() - 2;
+                    synthetic.body.statements.reserve(construct_let_count + 1);
+                    for (std::size_t i = 0; i < construct_let_count; ++i) {
+                        const auto *let =
+                            std::get_if<CoreLetStmt>(&statements[i].node);
+                        if (let == nullptr) {
+                            add_diag(result,
+                                     core_wasm_diag::kInvalidCore,
+                                     "construct capability final contains a non-let statement before the capability call",
+                                     statements[i].source_range);
+                            return std::nullopt;
+                        }
+                        synthetic.body.statements.emplace_back(
+                            ir::core::CoreStmt{
+                                ir::core::CoreStmtNode{*let},
+                                statements[i].source_range});
+                    }
+                    synthetic.body.statements.emplace_back(
+                        ir::core::CoreStmt{
+                            ir::core::CoreStmtNode{ir::core::CoreReturnStmt{
+                                .has_value = true,
+                                .value = action->construct_result}},
+                            statements.back().source_range});
+                    construct_synthetic_states.push_back(std::move(synthetic));
+                    auto builder =
+                        std::make_unique<P6ComputationHandlerBuilder>(program,
+                                                                      layouts,
+                                                                      *flow,
+                                                                      construct_synthetic_states.back(),
+                                                                      policy.unsupported_code,
+                                                                      used_exprs,
+                                                                      used_values,
+                                                                      result);
+                    builder->enable_computed_final(construct_vt, state);
+                    builder->install_rodata_pool(&rodata_pool);
+                    if (policy.workflow_packaging_lane) {
+                        builder->mark_workflow_packaging_lane();
+                    }
+                    if (policy.admit_normalized_entry_frame) {
+                        builder->admit_normalized_entry_frame();
+                    }
+                    if (!builder->plan()) {
+                        return std::nullopt;
+                    }
+                    const bool final_reads_raw = builder->reads_raw_input_frame();
+                    planned_handlers.push_back(PlannedComputedHandler{
+                        state, std::move(builder), {}, final_reads_raw,
+                        /*is_final_return=*/true});
+                    // The capability call result is consumed by the original
+                    // return (the scheduler forwards the capability result as
+                    // the node output); mark it used so the hidden-value gate
+                    // passes.
+                    const auto *call_stmt =
+                        std::get_if<CoreCapabilityCallStmt>(&statements[statements.size() - 2].node);
+                    if (call_stmt != nullptr &&
+                        call_stmt->result.value < used_values.size()) {
+                        used_values[call_stmt->result.value] = true;
+                    }
+                    plan.construct_capability_terminals.push_back(
+                        {CoreStateId{state}, action->capability});
+                    continue;
                 }
                 plan.actions[state] = *action;
                 continue;
@@ -11189,6 +11462,14 @@ build_frame_section_plan(const CoreProgram &program,
             plan.imports.push_back(capability->capability);
         }
     }
+    // WH-5c.4: construct-shape capability terminals are packaged as computed
+    // finals (their action is ComputedReturnAction, not CapabilityAction), so
+    // the loop above does not see their capability. Import it here.
+    for (const auto &terminal : plan.construct_capability_terminals) {
+        if (reachable_state[terminal.state.value]) {
+            plan.imports.push_back(terminal.capability);
+        }
+    }
     // V2-C fix-forward: now that reachability is exact (it sees the planned
     // computed-handler targets), compact the planned handlers DOWN to the
     // reachable set BEFORE any bridge-site table, import table, fn fixed point
@@ -11442,13 +11723,40 @@ build_frame_section_plan(const CoreProgram &program,
     // capabilities are tested (a later runner's site cannot legitimize or
     // incriminate an import here); a capability the runner bridges is found
     // through the per-runner site predicate.
+    //
+    // WH-5c.4 (GAP 2): a construct-capability terminal's opaque capability is
+    // called by the SCHEDULER (after the computed-final handler materializes
+    // the construct into O_k and the scheduler transcodes it to wire-JSON),
+    // never by the handler itself. It is therefore not an in-handler opaque
+    // reach and is excluded from this gate.
     if (has_planned_computed_final) {
+        std::vector<CoreCapabilityId> construct_terminal_caps;
+        construct_terminal_caps.reserve(plan.construct_capability_terminals.size());
+        for (const auto &terminal : plan.construct_capability_terminals) {
+            construct_terminal_caps.push_back(terminal.capability);
+        }
+        std::sort(construct_terminal_caps.begin(), construct_terminal_caps.end(),
+                  [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+        construct_terminal_caps.erase(
+            std::unique(construct_terminal_caps.begin(),
+                        construct_terminal_caps.end()),
+            construct_terminal_caps.end());
+        const auto is_construct_terminal = [&](CoreCapabilityId id) {
+            return std::binary_search(
+                construct_terminal_caps.begin(), construct_terminal_caps.end(), id,
+                [](CoreCapabilityId lhs, CoreCapabilityId rhs) {
+                    return lhs.value < rhs.value;
+                });
+        };
         const std::span<const CoreCapabilityId> checked_imports =
             workflow_bridge_lane ? std::span<const CoreCapabilityId>{runner_reachable_imports}
                                  : std::span<const CoreCapabilityId>{plan.imports};
         const bool opaque_imports =
             std::any_of(checked_imports.begin(), checked_imports.end(),
                         [&](CoreCapabilityId id) {
+                            if (is_construct_terminal(id)) {
+                                return false;
+                            }
                             return workflow_bridge_lane
                                 ? !effective_bridge_registry.uses_capability_for_runner(
                                       id, policy.wf_runner)
@@ -13238,6 +13546,20 @@ build_workflow_plan(const CoreProgram &program,
         plan.agent_plans = std::move(fact_plans);
     }
 
+    // WH-5c.4 (GAP 2): a construct-capability terminal is a P6 node whose
+    // agent builds the capability argument in-module and whose capability the
+    // scheduler invokes after a P4D_TO_JSON self-transcode. Its O_k holds the
+    // CONSTRUCT (capability param), not the capability result; the result
+    // lands in the node's (ptr,len) locals as wire-JSON. Defined here so both
+    // the inline-child gate and the transcode-site classification can query
+    // it.
+    const auto node_is_construct_terminal = [&plan](CoreWorkflowNodeId n) -> bool {
+        const auto runner =
+            workflow_runner_index(plan, plan.nodes[n.value].target_instance);
+        return runner.has_value() && *runner < plan.agent_plans.size() &&
+               !plan.agent_plans[*runner].construct_capability_terminals.empty();
+    };
+
     // V2-D fix-forward: the scheduler materializer copies every P6 node's I_k
     // and the workflow output frame from INLINE sources (the host-packed
     // workflow Input and every upstream node's inline O_k block) using
@@ -13284,7 +13606,28 @@ build_workflow_plan(const CoreProgram &program,
                 return std::nullopt;
             }
         }
-        if (region_reads_inline_child(plan.return_region)) {
+        // WH-5c.4 (GAP 2): a bare-forward return from a construct-capability
+        // terminal reads the capability result from the JSON_TO_P4D shadow
+        // (INLINE), which the materializer bulk-copies; the inline-child gate
+        // does not apply to that specific let shape.
+        const auto return_region_reads_inline_child = [&]() -> bool {
+            for (const WorkflowFrameLet &let : plan.return_region.lets) {
+                if (let.is_construct || let.path == nullptr) {
+                    continue;
+                }
+                if (let.source.kind == WorkflowFrameSourceKind::NodeOutput &&
+                    node_is_construct_terminal(let.source.node) &&
+                    let.path->projection.empty()) {
+                    continue;
+                }
+                if (workflow_inline_path_needs_child_dereference(
+                        program, layouts, *let.path, let.value_type)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (return_region_reads_inline_child()) {
             add_diag(result,
                      core_wasm_diag::kUnsupportedWorkflowFrame,
                      "the workflow return frame projects through a nested struct/enum of an "
@@ -13425,12 +13768,19 @@ build_workflow_plan(const CoreProgram &program,
         // shadow, then the materializer reads from the shadow to build
         // wf_output_base. A multi-source construct return is a later rung
         // (same rejection as a multi-source node input).
+        // WH-5c.4 (GAP 2): a construct-capability terminal is a P6 node whose
+        // O_k holds the construct (capability param), not the capability
+        // result; the result lands in the node's (ptr,len) locals as
+        // wire-JSON. A workflow return reading this node's output crosses
+        // through the SAME JSON_TO_P4D workflow-output transcode, so the
+        // condition extends to construct-capability terminals.
         if (plan.has_p6_nodes) {
             const auto return_upstreams = region_upstreams(plan.return_region);
             if (return_upstreams.size() > 1) {
                 for (const auto &u : return_upstreams) {
                     if (u.kind == WorkflowFrameSourceKind::NodeOutput &&
-                        !node_lane_p6(u.node)) {
+                        (!node_lane_p6(u.node) ||
+                         node_is_construct_terminal(u.node))) {
                         add_diag(result,
                                  core_wasm_diag::kUnsupportedWorkflowFrame,
                                  "a workflow return constructs from a cross-lane node output; "
@@ -13441,7 +13791,8 @@ build_workflow_plan(const CoreProgram &program,
             } else if (return_upstreams.size() == 1) {
                 const WorkflowFrameSource &src = return_upstreams.front();
                 if (src.kind == WorkflowFrameSourceKind::NodeOutput &&
-                    !node_lane_p6(src.node)) {
+                    (!node_lane_p6(src.node) ||
+                     node_is_construct_terminal(src.node))) {
                     ir::core::CoreFrameTranscodeSite site;
                     site.direction =
                         ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D;
@@ -13461,9 +13812,49 @@ build_workflow_plan(const CoreProgram &program,
                 }
             }
         }
+        // WH-5c.4 (GAP 2): construct-shape capability terminals. A P6 node
+        // whose agent builds the capability argument in-module (computed-final
+        // construct) needs a P4D_TO_JSON self-transcode: the scheduler
+        // transcodes the constructed O_k to wire-JSON, then calls the
+        // capability. The source and target are the SAME node.
+        for (const auto node_id : plan.schedule) {
+            const auto runner =
+                workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
+            if (!runner.has_value() || *runner >= plan.agent_plans.size()) {
+                continue;
+            }
+            const AgentPlan &agent_plan = plan.agent_plans[*runner];
+            if (agent_plan.construct_capability_terminals.empty()) {
+                continue;
+            }
+            // One construct-capability terminal per agent for now (the
+            // scheduler calls the capability after the transcode; a
+            // multi-terminal agent would need a state-discriminated call).
+            const auto &terminal = agent_plan.construct_capability_terminals.front();
+            const CoreCapabilityDecl &cap_decl =
+                program.capabilities[terminal.capability.value];
+            if (cap_decl.param_types.size() != 1) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedCapabilityFrame,
+                         "a construct capability terminal must have exactly one parameter",
+                         ir::SourceRangeOpt{});
+                return std::nullopt;
+            }
+            ir::core::CoreFrameTranscodeSite site;
+            site.direction =
+                ir::core::CoreFrameTranscodeSite::Direction::P4DToJson;
+            site.source =
+                ir::core::CoreFrameTranscodeSite::Source::NodeOutput;
+            site.source_node_ordinal = schedule_position[node_id.value];
+            site.target_node_ordinal = schedule_position[node_id.value];
+            site.layout =
+                layouts.value_layouts[cap_decl.param_types[0].value];
+            site.import_ordinal =
+                static_cast<std::uint32_t>(plan.imports.size()) + ordinal;
+            plan.transcode_sites.push_back(std::move(site));
+            ++ordinal;
+        }
     }
-
-    // V2-D physical planning: run the D6 compile-time single-page capacity
     // family over the node-frame blocks, the merged bridge control page frame,
     // the merged rodata image, the host-packed entry arena and the per-call-site
     // result placements. The workflow MODULE packaging (relocated handler
@@ -13716,6 +14107,13 @@ build_workflow_plan(const CoreProgram &program,
                      "a packaged workflow instance has no exact dispatch triplet");
             return false;
         }
+        const auto *agent_payload =
+            std::get_if<CoreAgentInstance>(&instance->payload);
+        if (agent_payload == nullptr) {
+            add_diag(result, core_wasm_diag::kInvalidCore,
+                     "a packaged workflow instance is not an agent instance");
+            return false;
+        }
         const auto nominal_base = [&](CoreValueTypeId vt) -> std::optional<CoreTypeId> {
             if (vt.value >= program.value_types.size()) {
                 return std::nullopt;
@@ -13728,20 +14126,42 @@ build_workflow_plan(const CoreProgram &program,
             return nominal->base;
         };
         const auto input_type = nominal_base(instance->dispatch_types[0]);
-        const auto context_type = nominal_base(instance->dispatch_types[1]);
         const auto output_type = nominal_base(instance->dispatch_types[2]);
-        if (!input_type.has_value() || !context_type.has_value() || !output_type.has_value()) {
+        if (!input_type.has_value() || !output_type.has_value()) {
             add_diag(result, core_wasm_diag::kInvalidLayout,
                      "a packaged workflow node dispatch type is not a nominal");
             return false;
         }
         const auto input_vt = frame_boundary_value_type(program, *input_type);
-        const auto context_vt = frame_boundary_value_type(program, *context_type);
         const auto output_vt = frame_boundary_value_type(program, *output_type);
-        if (!input_vt.has_value() || !context_vt.has_value() || !output_vt.has_value()) {
+        if (!input_vt.has_value() || !output_vt.has_value()) {
             add_diag(result, core_wasm_diag::kInvalidLayout,
                      "a packaged workflow node boundary has no finalized value type");
             return false;
+        }
+        // WH-5c.4: a Unit context is not a nominal; use its dispatch value type
+        // directly (it has a finalized P4-D layout, sized by the capacity family).
+        std::optional<CoreValueTypeId> context_vt;
+        if (agent_payload->context_kind == CoreAgentDecl::ContextKind::Unit) {
+            context_vt = instance->dispatch_types[1];
+            if (!has_finalized_layout(layouts, *context_vt)) {
+                add_diag(result, core_wasm_diag::kInvalidLayout,
+                         "a packaged workflow node Unit context has no finalized P4-D layout");
+                return false;
+            }
+        } else {
+            const auto context_type = nominal_base(instance->dispatch_types[1]);
+            if (!context_type.has_value()) {
+                add_diag(result, core_wasm_diag::kInvalidLayout,
+                         "a packaged workflow node context dispatch type is not a nominal");
+                return false;
+            }
+            context_vt = frame_boundary_value_type(program, *context_type);
+            if (!context_vt.has_value()) {
+                add_diag(result, core_wasm_diag::kInvalidLayout,
+                         "a packaged workflow node context has no finalized value type");
+                return false;
+            }
         }
         node_input_vts.push_back(*input_vt);
         node_context_vts.push_back(*context_vt);
@@ -13807,6 +14227,45 @@ build_workflow_plan(const CoreProgram &program,
                          ? "a P6 workflow frame nests a bounded collection in backing storage"
                          : "a P6 workflow boundary layout is not finalizable into the frame table");
             return false;
+        }
+    }
+    // WH-5c.4 (GAP 2): a construct-capability terminal's self-transcode site
+    // names the capability PARAM type as its layout.  That type is neither a
+    // node input nor a node output, so it is not interned by the boundary
+    // emission above.  Emit it here so the transcode site can reference its
+    // dense id in the frame table.
+    std::unordered_map<std::uint32_t, ir::core::CoreLayoutId>
+        construct_dense_by_source;
+    {
+        std::unordered_set<std::uint32_t> emitted_full;
+        emitted_full.insert(wf_input_full.value);
+        emitted_full.insert(wf_output_full.value);
+        for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
+            emitted_full.insert(
+                layouts.value_layouts[node_input_vts[p6].value].value);
+            emitted_full.insert(
+                layouts.value_layouts[node_context_vts[p6].value].value);
+            emitted_full.insert(
+                layouts.value_layouts[node_output_vts[p6].value].value);
+        }
+        for (const ir::core::CoreFrameTranscodeSite &site :
+             plan.transcode_sites) {
+            if (!emitted_full.insert(site.layout.value).second) {
+                continue;
+            }
+            const ir::core::CoreLayoutId dense =
+                builder.emit_fixed(site.layout, /*from_input=*/false);
+            if (builder.failed()) {
+                add_diag(result,
+                         builder.nested_container()
+                             ? core_wasm_diag::kUnsupportedWorkflowFrame
+                             : core_wasm_diag::kInvalidLayout,
+                         builder.nested_container()
+                             ? "a P6 workflow frame nests a bounded collection in backing storage"
+                             : "a P6 workflow boundary layout is not finalizable into the frame table");
+                return false;
+            }
+            construct_dense_by_source.emplace(site.layout.value, dense);
         }
     }
     plan.dense_wf_output_layout = wf_output_dense;
@@ -14059,10 +14518,11 @@ build_workflow_plan(const CoreProgram &program,
         section.node_blocks.push_back(std::move(out));
     }
     // WH-5b.3: populate the transcode extension. Each site's source layout id
-    // is already interned by the node boundary emission above (a transcode
-    // site always names a node input or output layout), so map it to its dense
-    // id rather than re-emitting (a container-bearing aggregate would
-    // duplicate).
+    // is interned by the node boundary emission above (a transcode site names
+    // a node input or output layout) or by the construct-capability emission
+    // (WH-5c.4 GAP 2: a self-transcode site names the capability param type),
+    // so map it to its dense id rather than re-emitting (a container-bearing
+    // aggregate would duplicate).
     {
         std::unordered_map<std::uint32_t, ir::core::CoreLayoutId> dense_by_source;
         for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
@@ -14072,6 +14532,9 @@ build_workflow_plan(const CoreProgram &program,
             dense_by_source.emplace(
                 layouts.value_layouts[node_output_vts[p6].value].value,
                 plan.dense_node_output_layouts[p6]);
+        }
+        for (const auto &[full, dense] : construct_dense_by_source) {
+            dense_by_source.emplace(full, dense);
         }
         section.transcode_sites.reserve(plan.transcode_sites.size());
         for (const ir::core::CoreFrameTranscodeSite &site : plan.transcode_sites) {
@@ -14125,9 +14588,11 @@ build_workflow_plan(const CoreProgram &program,
             section.table, plan.dense_node_output_layouts[p6],
             *projection.table, roots->node_outputs[p6]);
         if (!in_diags.empty() || !out_diags.empty()) {
+            const auto &diags = !in_diags.empty() ? in_diags : out_diags;
             add_diag(result,
                      core_wasm_diag::kUnsupportedWorkflowFrame,
-                     "a P6 workflow node layout/wire boundary is inconsistent");
+                     "a P6 workflow node layout/wire boundary is inconsistent: " +
+                         diags.front().message);
             return false;
         }
     }
@@ -15110,18 +15575,35 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
             if (node.p6_block_ordinal >= bridge_sites_by_node.size()) {
                 return std::nullopt;
             }
-            // P6 bridge node: identity at the scheduler boundary (tag-0 event
-            // record, zero capability fields). Its in-handler bridge imports
-            // are accounted in the in-node bridge-site table below.
-            out.byte(0); // cap_call_count = 0 (identity)
-            // capabilities array is empty for a P6 bridge node.
             const auto &bridge_sites = bridge_sites_by_node[node.p6_block_ordinal];
-            out.byte(static_cast<std::uint8_t>(bridge_sites.size()));
-            for (const auto &bs : bridge_sites) {
-                out.byte(bs.ordinal);
-                out.u32(bs.call_site_id);
-                out.u32(bs.capability.value);
-                out.u64(bs.source_symbol);
+            if (bridge_sites.empty() && !node.capabilities.empty()) {
+                // WH-5c.4 (GAP 2): construct-capability terminal. The P6
+                // runner materializes the construct into O_k; the scheduler
+                // transcodes O_k to wire-JSON and calls the capability at the
+                // scheduler boundary (never via bridge). Emit cap_call_count=1
+                // and the capability; no in-handler bridge sites.
+                out.byte(1); // cap_call_count = 1
+                for (const auto &[cap, sym] : node.capabilities) {
+                    if (cap.value == CoreCapabilityId::kInvalid) {
+                        return std::nullopt;
+                    }
+                    out.u32(cap.value);
+                    out.u64(sym);
+                }
+                out.byte(0); // bridge_site_count = 0
+            } else {
+                // P6 bridge node or pure compute node: identity at the
+                // scheduler boundary (tag-0 event record, zero capability
+                // fields). In-handler bridge imports are accounted in the
+                // in-node bridge-site table below.
+                out.byte(0); // cap_call_count = 0 (identity)
+                out.byte(static_cast<std::uint8_t>(bridge_sites.size()));
+                for (const auto &bs : bridge_sites) {
+                    out.byte(bs.ordinal);
+                    out.u32(bs.call_site_id);
+                    out.u32(bs.capability.value);
+                    out.u64(bs.source_symbol);
+                }
             }
         } else {
             // Opaque cap site (cap_call_count=1) or pure identity (0). The
@@ -16306,6 +16788,68 @@ class WorkflowFrameMaterializer {
         body_->u32(0);
     }
 
+    // WH-5c.4 (GAP 2): bulk-copy an INLINE P4-D frame (the JSON_TO_P4D
+    // workflow-output shadow) to the destination, one i32 word at a time.
+    // copy_aggregate speaks the module POINTER-TREE form (child aggregates
+    // are behind addresses); the shadow packs children inline, so a
+    // field-by-field copy would dereference inline bytes as addresses. A
+    // whole-extent word copy is correct because source and destination
+    // share the same layout (the workflow output nominal).
+    [[nodiscard]] bool emit_bulk_copy(std::uint32_t src_local,
+                                      std::uint32_t dst_base,
+                                      std::uint32_t dst_off,
+                                      CoreLayoutId layout_id) {
+        if (layout_id.value >= layouts_.layouts.size()) {
+            return fail("a workflow bulk copy walks an out-of-range layout");
+        }
+        const std::uint64_t size = layouts_.layouts[layout_id.value].size;
+        const std::uint64_t aligned = (size + 3u) & ~std::uint64_t{3u};
+        if (aligned == 0) {
+            return true;
+        }
+        if (aligned > std::numeric_limits<std::uint32_t>::max() ||
+            static_cast<std::uint64_t>(dst_base) + dst_off + aligned >
+                std::numeric_limits<std::uint32_t>::max()) {
+            return fail("a workflow bulk copy exceeds the wasm32 address domain");
+        }
+        const auto copy_size = static_cast<std::uint32_t>(aligned);
+        const std::uint32_t dst_start = dst_base + dst_off;
+        // Byte-offset counter in the zero-fill cursor (free during emit_yield).
+        append_const(*body_, 0);
+        append_indexed_op(*body_, kOpLocalSet, cursor_local_);
+        body_->byte(kOpBlock);
+        body_->byte(kEmptyBlock);
+        body_->byte(kOpLoop);
+        body_->byte(kEmptyBlock);
+        append_indexed_op(*body_, kOpLocalGet, cursor_local_);
+        append_const(*body_, copy_size);
+        body_->byte(kOpI32GeU);
+        body_->byte(kOpBrIf);
+        body_->u32(1u);
+        // dst[off] = src[off] (i32)
+        append_const(*body_, dst_start);
+        append_indexed_op(*body_, kOpLocalGet, cursor_local_);
+        body_->byte(kOpI32Add);
+        append_indexed_op(*body_, kOpLocalGet, src_local);
+        append_indexed_op(*body_, kOpLocalGet, cursor_local_);
+        body_->byte(kOpI32Add);
+        body_->byte(kOpI32Load);
+        body_->u32(kAlignI32);
+        body_->u32(0);
+        body_->byte(kOpI32Store);
+        body_->u32(kAlignI32);
+        body_->u32(0);
+        append_indexed_op(*body_, kOpLocalGet, cursor_local_);
+        append_const(*body_, 4u);
+        body_->byte(kOpI32Add);
+        append_indexed_op(*body_, kOpLocalSet, cursor_local_);
+        body_->byte(kOpBr);
+        body_->u32(0u);
+        body_->byte(kOpEnd); // loop
+        body_->byte(kOpEnd); // block
+        return true;
+    }
+
     // Expand the yield value's frame into [dst_base + dst_off].
     [[nodiscard]] bool emit_yield(CoreValueId value, CoreLayoutId dst_layout,
                                   std::uint32_t dst_base, std::uint64_t dst_off) {
@@ -16334,6 +16878,15 @@ class WorkflowFrameMaterializer {
             // Bare root: the value IS the source frame.
             if (!latch_path_slot(*let, 0)) {
                 return fail("a workflow bare yield root is not materializable");
+            }
+            // WH-5c.4 (GAP 2): when the source is the JSON_TO_P4D shadow
+            // (INLINE), bulk-copy the whole extent; copy_aggregate speaks
+            // pointer-tree form and would dereference inline bytes as
+            // addresses.
+            if (shadow_root_base_ != 0) {
+                return emit_bulk_copy(addr_local(0), dst_base,
+                                      static_cast<std::uint32_t>(dst_off),
+                                      dst_layout);
             }
             return copy_aggregate(dst_layout, 0, 0, dst_base, dst_off);
         }
@@ -16687,6 +17240,88 @@ void append_word_zero_fill(ByteBuffer &body,
     body.byte(kOpEnd);
 }
 
+// WH-5c.4: the capability-workflow status dispatch shared by the opaque node
+// path and the construct-capability terminal path (a P6 node that transcodes
+// its constructed O_k to wire-JSON and calls the capability at the scheduler
+// boundary). Emits the PENDING latch, the OK/ERROR normalization, the
+// defensive event_count bound, the tag-1 capability event record and the
+// completed_count bump. The (status, ptr, len) must already be in the named
+// locals.
+void append_capability_dispatch(ByteBuffer &body,
+                                const WorkflowNodePlan &node,
+                                std::uint32_t status_local,
+                                std::uint32_t ptr_local,
+                                std::uint32_t len_local) {
+    // PENDING: only a null result_ptr is a legal suspend -> set the latch and
+    // return (PENDING,0,0). A PENDING with a non-null ptr is malformed ->
+    // ERROR and does NOT latch.
+    append_indexed_op(body, kOpLocalGet, status_local);
+    append_const(body, AHFL_CAP_PENDING);
+    body.byte(kOpI32Eq);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    append_indexed_op(body, kOpLocalGet, ptr_local);
+    body.byte(kOpI32Eqz);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    append_const(body, 1);
+    append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalPendingLatched);
+    append_const(body, AHFL_CAP_PENDING);
+    append_const(body, 0);
+    append_const(body, 0);
+    body.byte(kOpReturn);
+    body.byte(kOpEnd);
+    // PENDING with a non-null ptr is malformed.
+    append_error_return(body);
+    body.byte(kOpEnd);
+    // Not PENDING. A completion is OK ONLY when status==OK AND ptr!=0 AND
+    // len!=0; every other case (ERROR, unknown, OK-empty) is (ERROR,0,0).
+    append_indexed_op(body, kOpLocalGet, status_local);
+    append_const(body, AHFL_CAP_OK);
+    body.byte(kOpI32Eq);
+    body.byte(kOpI32Eqz);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    append_error_return(body);
+    body.byte(kOpEnd);
+    append_indexed_op(body, kOpLocalGet, ptr_local);
+    body.byte(kOpI32Eqz);
+    append_indexed_op(body, kOpLocalGet, len_local);
+    body.byte(kOpI32Eqz);
+    body.byte(kOpI32Or);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    append_error_return(body); // OK-empty (null ptr or zero len) is ERROR.
+    body.byte(kOpEnd);
+    // Defensive event_count bound (section 4.4): before writing the record
+    // verify the runtime header event_count == this node's schedule_pos.
+    append_const(body, kNodeEventLogBase + 0u);
+    body.byte(kOpI32Load);
+    body.u32(2u);
+    body.u32(0u);
+    append_const(body, node.schedule_pos);
+    body.byte(kOpI32Eq);
+    body.byte(kOpI32Eqz);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    append_error_return(body);
+    body.byte(kOpEnd);
+    // OK: write the single node-event record (full body first), then publish
+    // event_count = schedule_pos + 1 AFTER the full 40-byte body store, and
+    // bump completed_count.
+    append_event_record_write(body, node, status_local,
+                              /*identity_tag=*/false);
+    append_const(body, kNodeEventLogBase + 0u);
+    append_const(body, node.schedule_pos + 1u);
+    body.byte(kOpI32Store);
+    body.u32(2u);
+    body.u32(0u);
+    append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
+    append_const(body, 1);
+    body.byte(kOpI32Add);
+    append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
+}
+
 [[nodiscard]] bool append_workflow_schedule(ByteBuffer &body,
                                             const CoreProgram &program,
                                             const ir::core::CoreLayoutTable &layouts,
@@ -16764,7 +17399,13 @@ void append_word_zero_fill(ByteBuffer &body,
             // WH-5b.3: a crossed P6 node (JSON_TO_P4D) transcodes its
             // wire-JSON source into the shadow region BEFORE materializing;
             // the materializer then reads from the shadow via emit_root_base.
-            if (xcode != nullptr) {
+            // WH-5c.4: a construct-capability terminal has a P4D_TO_JSON
+            // self-transcode that runs AFTER the runner returns (below).
+            const bool pre_materialize_xcode =
+                xcode != nullptr &&
+                xcode->direction ==
+                    ir::core::CoreFrameTranscodeSite::Direction::JsonToP4D;
+            if (pre_materialize_xcode) {
                 if (!append_transcode_call(body, plan, *xcode, status_local,
                                            *ptr_local, *len_local)) {
                     return false;
@@ -16820,7 +17461,7 @@ void append_word_zero_fill(ByteBuffer &body,
                                        /*entry_ptr_local=*/0,
                                        cursor_local,
                                        addr_local_base,
-                                       /*shadow_root_base=*/xcode != nullptr
+                                       /*shadow_root_base=*/pre_materialize_xcode
                                            ? plan.transcode_shadow_base
                                            : 0u)) {
                     return false;
@@ -16882,6 +17523,37 @@ void append_word_zero_fill(ByteBuffer &body,
             body.byte(kEmptyBlock);
             body.byte(kOpUnreachable);
             body.byte(kOpEnd);
+            // WH-5c.4 (GAP 2): a construct-capability terminal has a
+            // P4D_TO_JSON self-transcode. After the P6 runner materializes
+            // the construct into O_k, transcode it to wire-JSON and call the
+            // capability at the scheduler boundary (never via bridge).
+            const bool construct_cap_terminal =
+                xcode != nullptr &&
+                xcode->direction ==
+                    ir::core::CoreFrameTranscodeSite::Direction::P4DToJson;
+            if (construct_cap_terminal) {
+                if (node.capabilities.empty()) {
+                    return false;
+                }
+                if (!append_transcode_call(body, plan, *xcode, status_local,
+                                           *ptr_local, *len_local)) {
+                    return false;
+                }
+                const auto import_index = workflow_import_function_index(
+                    plan.imports, node.capabilities.front().first);
+                if (!import_index.has_value()) {
+                    return false;
+                }
+                append_indexed_op(body, kOpLocalGet, *ptr_local);
+                append_indexed_op(body, kOpLocalGet, *len_local);
+                append_indexed_op(body, kOpCall, *import_index);
+                append_indexed_op(body, kOpLocalSet, *len_local);
+                append_indexed_op(body, kOpLocalSet, *ptr_local);
+                append_indexed_op(body, kOpLocalSet, status_local);
+                append_capability_dispatch(body, node, status_local,
+                                           *ptr_local, *len_local);
+                continue;
+            }
             // WH-5b.1 fix (b): in a hybrid module (event region exists) a P6
             // node writes its tag-0 identity record and publishes
             // event_count = schedule_pos + 1, so the next cap node's defensive
@@ -16940,80 +17612,11 @@ void append_word_zero_fill(ByteBuffer &body,
             continue;
         }
 
-        // Capability-workflow status dispatch, normalized to the E2 `ahfl_cap`
-        // postcondition (P0-1 / L2 / L3 / L4 + scheduler P0s).
-        // PENDING: only a null result_ptr is a legal suspend -> set the latch and
-        // return (PENDING,0,0). A PENDING with a non-null ptr is malformed ->
-        // ERROR and does NOT latch.
-        append_indexed_op(body, kOpLocalGet, status_local);
-        append_const(body, AHFL_CAP_PENDING);
-        body.byte(kOpI32Eq);
-        body.byte(kOpIf);
-        body.byte(kEmptyBlock);
-        append_indexed_op(body, kOpLocalGet, *ptr_local);
-        body.byte(kOpI32Eqz);
-        body.byte(kOpIf);
-        body.byte(kEmptyBlock);
-        append_const(body, 1);
-        append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalPendingLatched);
-        append_const(body, AHFL_CAP_PENDING);
-        append_const(body, 0);
-        append_const(body, 0);
-        body.byte(kOpReturn);
-        body.byte(kOpEnd);
-        // PENDING with a non-null ptr is malformed.
-        append_error_return(body);
-        body.byte(kOpEnd);
-        // Not PENDING. A completion is OK ONLY when status==OK AND ptr!=0 AND
-        // len!=0; every other case (ERROR, unknown, OK-empty) is (ERROR,0,0).
-        append_indexed_op(body, kOpLocalGet, status_local);
-        append_const(body, AHFL_CAP_OK);
-        body.byte(kOpI32Eq);
-        body.byte(kOpI32Eqz);
-        body.byte(kOpIf);
-        body.byte(kEmptyBlock);
-        append_error_return(body);
-        body.byte(kOpEnd);
-        append_indexed_op(body, kOpLocalGet, *ptr_local);
-        body.byte(kOpI32Eqz);
-        append_indexed_op(body, kOpLocalGet, *len_local);
-        body.byte(kOpI32Eqz);
-        body.byte(kOpI32Or);
-        body.byte(kOpIf);
-        body.byte(kEmptyBlock);
-        append_error_return(body); // OK-empty (null ptr or zero len) is ERROR.
-        body.byte(kOpEnd);
-        // Defensive event_count bound (§4.4): before writing the record verify the
-        // runtime header event_count == this node's schedule_pos. `completed_count`
-        // (a mutable export the host could tamper) is NOT trusted as the
-        // coordinate. schedule_pos < node_count holds by construction (the region
-        // is statically sized to node_count). A mismatch returns (ERROR,0,0) with
-        // no body/count write.
-        append_const(body, kNodeEventLogBase + 0u);
-        body.byte(kOpI32Load);
-        body.u32(2u);
-        body.u32(0u);
-        append_const(body, node.schedule_pos);
-        body.byte(kOpI32Eq);
-        body.byte(kOpI32Eqz);
-        body.byte(kOpIf);
-        body.byte(kEmptyBlock);
-        append_error_return(body);
-        body.byte(kOpEnd);
-        // OK: write the single node-event record (full body first), then publish
-        // event_count = schedule_pos + 1 AFTER the full 40-byte body store (so the
-        // host never reads a partial record), and bump completed_count.
-        append_event_record_write(body, node, status_local,
-                                  /*identity_tag=*/false);
-        append_const(body, kNodeEventLogBase + 0u);
-        append_const(body, node.schedule_pos + 1u);
-        body.byte(kOpI32Store);
-        body.u32(2u);
-        body.u32(0u);
-        append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
-        append_const(body, 1);
-        body.byte(kOpI32Add);
-        append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
+        // Capability-workflow status dispatch (PENDING latch, OK/ERROR
+        // normalization, defensive event_count bound, tag-1 event,
+        // completed_count bump).
+        append_capability_dispatch(body, node, status_local, *ptr_local,
+                                   *len_local);
     }
     return true;
 }

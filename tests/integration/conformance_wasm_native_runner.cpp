@@ -67,7 +67,10 @@ using ahfl::conformance::run_native_scenario;
 // shape; the per-node cardinality flip (one node-frame block + runner
 // function per P6 NODE) lowers both nodes onto their own block/runner and
 // the wasm observation agrees with the evaluator: 68/0 -> 69/0.
-constexpr int kExpectedNativeAgreed = 69;
+// WH-5c.4 (GAP 2): the construct-capability-final case
+// (wh5c4_construct_cap_final) constructs the capability argument in-module
+// and the wasm observation agrees with the evaluator: 69/0 -> 70/0.
+constexpr int kExpectedNativeAgreed = 70;
 constexpr int kExpectedNativeSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare

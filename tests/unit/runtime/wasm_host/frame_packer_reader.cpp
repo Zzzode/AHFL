@@ -825,12 +825,17 @@ void test_nested_closure_pack_rejected(const std::filesystem::path &repo_root) {
         irc::CoreFrameLayoutSection section;
         section.table.target = irc::TargetDataLayout{};
         // layout 0: Enum (Option) with tag@0, payload@4; layout 1: None
-        // payload (unused); layout 2: Some payload (Int i32).
+        // payload (unused); layout 2: Some payload (one-slot struct wrapping
+        // the Int i32, matching the real builder's aggregate-wrapped enum
+        // payloads); layout 3: the Int i32 scalar.
         section.table.layouts.push_back(
             irc::CoreLayout{8, 4, false,
                             irc::CoreLayoutEnum{4, 4, {{1}, {2}}, {0, 4}}});
         section.table.layouts.push_back(
             irc::CoreLayout{0, 1, true, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+        section.table.layouts.push_back(
+            irc::CoreLayout{4, 4, false,
+                            irc::CoreLayoutStruct{{0}, {{3}}}});
         section.table.layouts.push_back(
             irc::CoreLayout{4, 4, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
         section.input_layout = irc::CoreLayoutId{0};

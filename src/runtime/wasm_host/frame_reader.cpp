@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <span>
 #include <string>
@@ -177,6 +178,21 @@ read_value_at(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
         return make_int(word);
     }
 
+    // Float: f64 by layout repr.
+    if (std::holds_alternative<ir::core::CoreWireSchemaFloat>(w->shape)) {
+        const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
+        if (scalar == nullptr || scalar->repr != CoreScalarRepr::F64) {
+            return std::unexpected(FrameReadError::ShapeMismatch);
+        }
+        const auto wide = read_u64_le(page, addr);
+        if (!wide.has_value()) {
+            return std::unexpected(FrameReadError::PageBoundsExceeded);
+        }
+        double d = 0.0;
+        std::memcpy(&d, &*wide, sizeof(d));
+        return make_float(d);
+    }
+
     // String: (ptr,len) + region authorization.
     if (const auto *w_str = std::get_if<CoreWireSchemaString>(&w->shape)) {
         if (std::get_if<CoreLayoutPtrLen>(&l->shape) == nullptr) {
@@ -241,26 +257,46 @@ read_value_at(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
         if (l_enum == nullptr) {
             return std::unexpected(FrameReadError::ShapeMismatch);
         }
+        const auto variants = option_variant_indices(*l_enum);
+        if (!variants.has_value()) {
+            return std::unexpected(FrameReadError::ShapeMismatch);
+        }
+        const auto [some_idx, none_idx] = *variants;
         const auto tag = read_u32_le(page, addr);
         if (!tag.has_value()) {
             return std::unexpected(FrameReadError::PageBoundsExceeded);
         }
-        if (*tag == 0u) {
+        if (*tag == none_idx) {
             return make_option_none();
         }
-        if (*tag != 1u) {
+        if (*tag != some_idx) {
             return std::unexpected(FrameReadError::OptionTagInvalid);
-        }
-        if (l_enum->variant_payload_layouts.size() < 2) {
-            return std::unexpected(FrameReadError::ShapeMismatch);
         }
         const auto payload_addr =
             checked_add_u32(addr, static_cast<std::uint64_t>(l_enum->payload_offset));
         if (!payload_addr.has_value()) {
             return std::unexpected(FrameReadError::ArithmeticOverflow);
         }
+        // The Some variant's payload is a one-slot struct (the enum payload
+        // wrapper); the inner value lives at the struct's sole field.
+        const auto *payload_layout =
+            ctx.layout(l_enum->variant_payload_layouts[some_idx]);
+        const auto *payload_struct =
+            payload_layout != nullptr
+                ? std::get_if<CoreLayoutStruct>(&payload_layout->shape)
+                : nullptr;
+        if (payload_struct == nullptr ||
+            payload_struct->field_layouts.size() != 1) {
+            return std::unexpected(FrameReadError::ShapeMismatch);
+        }
+        const auto inner_addr = checked_add_u32(
+            *payload_addr,
+            static_cast<std::uint64_t>(payload_struct->field_offsets[0]));
+        if (!inner_addr.has_value()) {
+            return std::unexpected(FrameReadError::ArithmeticOverflow);
+        }
         auto inner = read_value_at(ctx, page, w_opt->value,
-                                l_enum->variant_payload_layouts[1], *payload_addr,
+                                payload_struct->field_layouts[0], *inner_addr,
                                 string_regions);
         if (!inner.has_value()) {
             return inner;

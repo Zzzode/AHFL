@@ -228,8 +228,19 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     // validated below as being attached to a genuinely RUNNABLE artifact (a
     // blocked case may not claim it), and the Node runner enforces the exact
     // set via its pinned census. Every other skip must equal the computed one.
+    //
+    // WH-5c.4 (GAP 2): a case that RUNS on the wasm orchestration lane and
+    // agrees with the evaluator on the native wasm3 lane, but whose wasm
+    // module reaches ahfl_xcode transcode sites the Node embedded host does
+    // not yet implement (WH-5b.3 host transcode building). The compiler-derived
+    // emit facts cannot detect the JS host gap, so this skip is the manifest's
+    // honest claim; it is validated as attached to a genuinely RUNNABLE
+    // artifact, and the Node runner enforces the exact set via its pinned
+    // census.
     const bool declared_node_only =
         declared.node_observation_skip == Skip::EvaluatorSurfaceAwaitsKr68;
+    const bool declared_host_transcode =
+        declared.node_observation_skip == Skip::HostTranscodeAwaitsWh5b3;
     if (declared_node_only) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
@@ -238,6 +249,15 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
                    std::string{wasm_eligibility_verdict_name(verdict)} +
                    ": " + computed.reason +
                    ") -- a node-only observation requires a runnable artifact";
+        }
+    } else if (declared_host_transcode) {
+        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
+            return "manifest declares engines.wasm.node_observation_skip="
+                   "'host_transcode_awaits_wh5b3' but the module does not emit on the "
+                   "orchestration lane (" +
+                   std::string{wasm_eligibility_verdict_name(verdict)} +
+                   ": " + computed.reason +
+                   ") -- a host-transcode skip requires a runnable artifact";
         }
     } else if (declared.node_observation_skip != required_skip) {
         return "manifest's engines.wasm.node_observation_skip declaration does not match the "

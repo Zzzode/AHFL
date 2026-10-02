@@ -1810,12 +1810,30 @@ class ConsistencyChecker {
                 },
                 [&](const CoreWireSchemaOption &schema) {
                     const auto *e = std::get_if<CoreLayoutEnum>(&layout.shape);
-                    if (e == nullptr || e->variant_payload_layouts.size() != 2 ||
-                        e->variant_payload_sizes[0] != 0) {
+                    if (e == nullptr || e->variant_payload_layouts.size() != 2) {
                         ok(false, "frame layout/wire disagree on Option enum shape");
                         return;
                     }
-                    const CoreLayoutId some_payload = e->variant_payload_layouts[1];
+                    // AHFL's Option<T> defines Some(T) as variant 0 and None as
+                    // variant 1; the wire schema's Option shape is
+                    // order-agnostic. Find the None variant (zero payload) and
+                    // the Some variant (one-slot payload) by their payload
+                    // properties, not by a hard-coded index.
+                    std::optional<std::uint32_t> none_idx;
+                    std::optional<std::uint32_t> some_idx;
+                    for (std::uint32_t i = 0; i < 2; ++i) {
+                        if (e->variant_payload_sizes[i] == 0) {
+                            none_idx = i;
+                        } else {
+                            some_idx = i;
+                        }
+                    }
+                    if (!none_idx.has_value() || !some_idx.has_value()) {
+                        ok(false, "frame layout/wire disagree on Option enum shape");
+                        return;
+                    }
+                    const CoreLayoutId some_payload =
+                        e->variant_payload_layouts[*some_idx];
                     if (!layout_valid(some_payload)) {
                         ok(false, "frame layout/wire Option payload edge is out of range");
                         return;

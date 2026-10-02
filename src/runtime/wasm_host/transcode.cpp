@@ -86,8 +86,26 @@ mint_transcode_binding(const TranscodeConfig &config,
         if (site.source_node_ordinal >= descriptor.nodes.size()) {
             return std::nullopt;
         }
-        const auto p6_ord =
-            descriptor.nodes[site.source_node_ordinal].p6_block_ordinal;
+        const auto &node_desc = descriptor.nodes[site.source_node_ordinal];
+        // WH-5c.4 (GAP 2): a construct-capability terminal's transcode source
+        // is the capability's PARAM type (the in-module construct result), not
+        // the node's OUTPUT boundary root (the agent's output type). Mint a
+        // capability param binding so the P4-D read uses the correct wire
+        // schema root.
+        if (!node_desc.all_capabilities.empty()) {
+            const auto source_symbol = node_desc.all_capabilities.front().second;
+            for (const auto &cap : config.wire_table.capabilities) {
+                if (cap.source_symbol == source_symbol && !cap.params.empty()) {
+                    return irc::make_wire_binding_from_verified_table(
+                        verified,
+                        {cap.capability, source_symbol,
+                         irc::CoreWireRootKind::Param, 0},
+                        diags);
+                }
+            }
+            return std::nullopt;
+        }
+        const auto p6_ord = node_desc.p6_block_ordinal;
         return irc::make_node_frame_binding_from_verified_table(
             verified, {p6_ord, irc::CoreWireNodeRootKind::Output}, diags);
     }

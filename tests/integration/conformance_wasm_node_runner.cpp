@@ -150,8 +150,15 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // shape; the per-node cardinality flip (one node-frame block + runner
 // function per P6 NODE) lowers both nodes onto their own block/runner and
 // the Node observation agrees with the evaluator: 68/0 -> 69/0.
+// WH-5c.4 (GAP 2): the construct-capability-final case
+// (wh5c4_construct_cap_final) constructs the capability argument in-module
+// and the native wasm3 observation agrees with the evaluator: 69/0 -> 70/0.
+// The Node embedded host withholds its observation because it lacks the
+// ahfl_xcode transcode adapter (WH-5b.3 host transcode building): the wasm
+// module traps at its P4D_TO_JSON / JSON_TO_P4D transcode sites. The Node
+// census is 69 agreed / 1 skipped (host_transcode_awaits_wh5b3).
 constexpr int kExpectedAgreed = 69;
-constexpr int kExpectedSkipped = 0;
+constexpr int kExpectedSkipped = 1;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
@@ -171,12 +178,26 @@ constexpr std::array<std::string_view, 7> kExpectedNodeOnlyStems{
     "fb4_effect_clause_pure_body",
 };
 
+// Pinned STEM SET of cases allowed to declare
+// engines.wasm.node_observation_skip='host_transcode_awaits_wh5b3'. The wasm
+// module emits and the native wasm3 lane agrees with the evaluator, but the
+// Node embedded host lacks the ahfl_xcode transcode adapter (WH-5b.3), so the
+// module traps at its transcode sites. The pin moves deliberately when the JS
+// host gains transcode support. Keep sorted.
+constexpr std::array<std::string_view, 1> kExpectedHostTranscodeStems{
+    "wh5c4_construct_cap_final",
+};
+
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
 // Stems that actually ran the node-only (evaluator_surface_awaits_kr68) lane in
 // this invocation; compared against kExpectedNodeOnlyStems on a full run.
 std::vector<std::string> g_node_only_stems;
+// Stems that skipped the Node observation due to missing ahfl_xcode transcode
+// support (host_transcode_awaits_wh5b3); compared against
+// kExpectedHostTranscodeStems on a full run.
+std::vector<std::string> g_host_transcode_stems;
 
 void check(bool condition, std::string_view name) {
     if (!condition) {
@@ -476,13 +497,20 @@ int run_one(const CaseEntry &entry,
 
     // The module emitted. A manifest that declares a Node-observation skip for a
     // case that actually produces a comparable module is a stale skip claim --
-    // fail before running the Node host so neither outcome can mask it. The one
-    // exception is the FB-3b node-only lane (EvaluatorSurfaceAwaitsKr68): the
-    // module runs, but there is no evaluator reference, so the Node observation
-    // is compared directly against the manifest's blessed expectation below.
+    // fail before running the Node host so neither outcome can mask it. The two
+    // exceptions are:
+    //  - the FB-3b node-only lane (EvaluatorSurfaceAwaitsKr68): the module runs,
+    //    but there is no evaluator reference, so the Node observation is
+    //    compared directly against the manifest's blessed expectation below.
+    //  - the host-transcode lane (HostTranscodeAwaitsWh5b3): the module emits
+    //    and the native wasm3 lane agrees, but the Node embedded host lacks the
+    //    ahfl_xcode transcode adapter (WH-5b.3), so the observation is withheld.
     const bool node_only =
         declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
-    if (declared_skip != WasmNodeObservationSkip::None && !node_only) {
+    const bool host_transcode_skip =
+        declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsWh5b3;
+    if (declared_skip != WasmNodeObservationSkip::None && !node_only &&
+        !host_transcode_skip) {
         std::cerr << "FAIL: " << label
                   << " emits a comparable module but its manifest declares a "
                      "engines.wasm.node_observation_skip expectation; the skip did not "
@@ -496,6 +524,20 @@ int run_one(const CaseEntry &entry,
                      "structured skip\n";
         ++g_failures;
         return 1;
+    }
+
+    // The host-transcode lane: the module emits and the native wasm3 lane
+    // already agrees with the evaluator, but the Node embedded host stubs the
+    // ahfl_xcode transcode imports with error returns, so the module traps at
+    // its P4D_TO_JSON / JSON_TO_P4D sites. Withhold the Node observation until
+    // WH-5b.3 lands the JS transcode adapter.
+    if (host_transcode_skip) {
+        ++g_skipped;
+        g_host_transcode_stems.push_back(stem);
+        std::cout << "SKIP[77] " << label
+                  << ": Node embedded host lacks ahfl_xcode transcode support "
+                     "(WH-5b.3 host transcode building)\n";
+        return 77;
     }
 
     // The evaluator observation is the differential reference, EXCEPT on the
@@ -677,6 +719,31 @@ int mode_verify(const fs::path &repo_root,
                 std::cerr << (i ? ", " : "") << expected_stems[i];
             }
             std::cerr << "} (an un-reviewed case moved onto the node-only lane?)\n";
+            ++g_failures;
+        }
+        // Exact-set pin of the host-transcode (host_transcode_awaits_wh5b3)
+        // stems: a manifest cannot silently move a differential case onto the
+        // host-transcode skip lane (or add an un-reviewed one) while holding
+        // the census steady.
+        std::sort(g_host_transcode_stems.begin(), g_host_transcode_stems.end());
+        g_host_transcode_stems.erase(
+            std::unique(g_host_transcode_stems.begin(), g_host_transcode_stems.end()),
+            g_host_transcode_stems.end());
+        std::vector<std::string> expected_ht_stems;
+        expected_ht_stems.reserve(kExpectedHostTranscodeStems.size());
+        for (const std::string_view s : kExpectedHostTranscodeStems) {
+            expected_ht_stems.emplace_back(s);
+        }
+        if (g_host_transcode_stems != expected_ht_stems) {
+            std::cerr << "FAIL: host-transcode (host_transcode_awaits_wh5b3) stem set is {";
+            for (std::size_t i = 0; i < g_host_transcode_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << g_host_transcode_stems[i];
+            }
+            std::cerr << "} but the pinned set is {";
+            for (std::size_t i = 0; i < expected_ht_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << expected_ht_stems[i];
+            }
+            std::cerr << "} (an un-reviewed case moved onto the host-transcode lane?)\n";
             ++g_failures;
         }
     }

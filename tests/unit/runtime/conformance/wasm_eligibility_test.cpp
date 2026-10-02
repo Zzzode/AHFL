@@ -410,6 +410,18 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // WH-5c.4 (GAP 2): an opaque-lane capability-final agent that
+        // constructs the capability argument in-module. The module emits
+        // P6Frame with a P4D_TO_JSON self-transcode for the constructed O_k
+        // and a JSON_TO_P4D workflow-output crossing. Runnable on the
+        // orchestration lane; the Node observation withholds on
+        // host_transcode_awaits_wh5b3 (the JS host lacks the ahfl_xcode
+        // transcode adapter).
+        {"wh5c4_construct_cap_final.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

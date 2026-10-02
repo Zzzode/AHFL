@@ -199,6 +199,24 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         return {};
     }
 
+    // Float: f64 by layout repr.
+    if (std::holds_alternative<ir::core::CoreWireSchemaFloat>(w->shape)) {
+        const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
+        if (scalar == nullptr || scalar->repr != CoreScalarRepr::F64) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto *fv = std::get_if<FloatValue>(&value.node);
+        if (fv == nullptr) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &fv->value, sizeof(bits));
+        if (!write_u64_le(page, addr, bits)) {
+            return std::unexpected(FramePackError::PageBoundsExceeded);
+        }
+        return {};
+    }
+
     // String: (ptr,len) with bytes bump-allocated in the payload arena.
     if (const auto *w_str = std::get_if<CoreWireSchemaString>(&w->shape)) {
         if (std::get_if<CoreLayoutPtrLen>(&l->shape) == nullptr) {
@@ -257,22 +275,26 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
                           addr, arena_cursor, arena_base, arena_capacity);
     }
 
-    // Option: None=0 / Some=1 + inner at payload_offset.
+    // Option: resolve Some/None variant indices by payload properties (AHFL's
+    // Option<T> defines Some(T) as variant 0 and None as variant 1, but the
+    // wire schema's Option shape is order-agnostic).
     if (const auto *w_opt = std::get_if<CoreWireSchemaOption>(&w->shape)) {
         const auto *l_enum = std::get_if<CoreLayoutEnum>(&l->shape);
         if (l_enum == nullptr) {
             return std::unexpected(FramePackError::ShapeMismatch);
         }
+        const auto variants = option_variant_indices(*l_enum);
+        if (!variants.has_value()) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto [some_idx, none_idx] = *variants;
         // None: a bare null or an Option::None.
         if (std::holds_alternative<NoneValue>(value.node) ||
             is_optional_none(value)) {
-            if (!write_u32_le(page, addr, 0u)) {
+            if (!write_u32_le(page, addr, none_idx)) {
                 return std::unexpected(FramePackError::PageBoundsExceeded);
             }
             return {};
-        }
-        if (l_enum->variant_payload_layouts.size() < 2) {
-            return std::unexpected(FramePackError::ShapeMismatch);
         }
         const auto payload_addr =
             checked_add_u32(addr, static_cast<std::uint64_t>(l_enum->payload_offset));
@@ -288,13 +310,31 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         }
         // Pack the payload BEFORE writing the tag, so a non-encodable inner
         // (e.g. a closure) fails closed without leaving a partial Some tag.
+        // The Some variant's payload is a one-slot struct (the enum payload
+        // wrapper); the inner value lands at the struct's sole field.
+        const auto *payload_layout =
+            ctx.layout(l_enum->variant_payload_layouts[some_idx]);
+        const auto *payload_struct =
+            payload_layout != nullptr
+                ? std::get_if<CoreLayoutStruct>(&payload_layout->shape)
+                : nullptr;
+        if (payload_struct == nullptr ||
+            payload_struct->field_layouts.size() != 1) {
+            return std::unexpected(FramePackError::ShapeMismatch);
+        }
+        const auto inner_addr = checked_add_u32(
+            *payload_addr,
+            static_cast<std::uint64_t>(payload_struct->field_offsets[0]));
+        if (!inner_addr.has_value()) {
+            return std::unexpected(FramePackError::ArithmeticOverflow);
+        }
         auto packed = pack_value_at(ctx, page, w_opt->value,
-                                 l_enum->variant_payload_layouts[1], *inner,
-                                 *payload_addr, arena_cursor, arena_base, arena_capacity);
+                                 payload_struct->field_layouts[0], *inner,
+                                 *inner_addr, arena_cursor, arena_base, arena_capacity);
         if (!packed.has_value()) {
             return packed;
         }
-        if (!write_u32_le(page, addr, 1u)) {
+        if (!write_u32_le(page, addr, some_idx)) {
             return std::unexpected(FramePackError::PageBoundsExceeded);
         }
         return {};
