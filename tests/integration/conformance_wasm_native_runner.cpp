@@ -77,7 +77,11 @@ using ahfl::conformance::run_native_scenario;
 // (workflow_session.cpp collect_opaque_node_states) recovers the opaque
 // producer's state transitions so the native observation matches the
 // evaluator: 70/0 -> 71/0.
-constexpr int kExpectedNativeAgreed = 71;
+// WH-5c.5: the GAP 4 stash-parity case (wh5c5_gap4_stash_parity) joins
+// the agreed set (three-node identity+capability+identity workflow; the
+// per-node output stash table makes every node output host-observable):
+// 71/0 -> 72/0.
+constexpr int kExpectedNativeAgreed = 72;
 constexpr int kExpectedNativeSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare

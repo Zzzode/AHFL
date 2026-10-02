@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -70,6 +71,13 @@ struct WasmWorkflowRuntimeConfig {
     std::function<void(std::uint64_t idempotency_key,
                        std::string_view capability_name)>
         durable_write_intent_sink;
+
+    // WH-5c.5 test seam: forwarded to WorkflowSessionConfig after run2
+    // returns, before the post-run per-node output join. A fail-closed
+    // mutation pin corrupts the stash table / output bytes and asserts the
+    // host decodes the corruption as kOutputDecodeFailed. Production code
+    // never sets this.
+    std::function<void(std::span<std::uint8_t>)> post_run2_memory_mutator;
 };
 
 // The wasm3-backed workflow runtime. Compiles every workflow in the program

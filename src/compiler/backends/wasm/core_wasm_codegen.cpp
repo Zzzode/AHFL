@@ -108,6 +108,7 @@ using ir::core::CoreVtString;
 using ir::core::CoreWildcardPat;
 using ir::core::CoreWorkflowDecl;
 using ir::core::CoreWorkflowId;
+using ir::core::CoreWorkflowNode;
 using ir::core::CoreWorkflowNodeId;
 using ir::core::CoreYieldStmt;
 using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
@@ -116,6 +117,7 @@ using ir::core::kNodeEventHeaderBytes;
 using ir::core::kNodeEventLogBase;
 using ir::core::kNodeEventRecordBytes;
 using ir::core::kNodeEventRecordsBase;
+using ir::core::kNodeStashRecordBytes;
 using ir::core::kP6AggregateContextBase;
 using ir::core::kP6AggregateContextCapacity;
 using ir::core::kP6AggregateInputBase;
@@ -12564,6 +12566,61 @@ validate_workflow_region(const CoreProgram &program,
         layouts, layouts.value_layouts[leaf_value_type.value], 0u);
 }
 
+// WH-5c.5: true when the workflow schedules at least one opaque (non-P6)
+// node. Only opaque nodes own a stash slot; a pure-P6 workflow reserves no
+// stash region and stays byte-identical (design 12.15.19.4).
+[[nodiscard]] bool workflow_has_opaque_nodes(const WorkflowPlan &plan) {
+    for (const CoreWorkflowNodeId id : plan.schedule) {
+        if (id.value < plan.nodes.size() &&
+            plan.nodes[id.value].p6_block_ordinal == kInvalidP6Block) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// WH-5c.5: the per-node output stash table base (design 12.15.19.4). Pure
+// arithmetic from the ABI constants + node count + imports flag, shared by
+// the emitter (baked store addresses) and the embedded host (post-run join).
+// The caller has already validated the wasm32 domain (compute_event_layout's
+// two-phase arithmetic), so this plain u32 product is safe here.
+[[nodiscard]] std::uint32_t workflow_stash_base(std::uint32_t node_count,
+                                                bool has_imports) {
+    return has_imports
+               ? kNodeEventRecordsBase + node_count * kNodeEventRecordBytes
+               : kNodeEventLogBase;
+}
+
+// Best-attributable source range for a workflow-level capacity failure: the
+// entry node's first input-region statement (the workflow starts there),
+// falling back to the return region's first statement. Every capacity axis
+// names a range (Principle 5, design 12.15.19.8 / 12.15.9 style); a workflow
+// whose statements carry no source range at all has no attributable source.
+[[nodiscard]] ir::SourceRangeOpt workflow_capacity_source_range(
+    const CoreWorkflowDecl &workflow, const WorkflowPlan &plan) {
+    if (!plan.schedule.empty()) {
+        const auto entry_id = plan.schedule.front();
+        if (entry_id.value < workflow.nodes.size()) {
+            const CoreWorkflowNode &entry = workflow.nodes[entry_id.value];
+            if (entry.input_region != nullptr) {
+                for (const CoreStmt &stmt : entry.input_region->statements) {
+                    if (stmt.source_range.has_value()) {
+                        return stmt.source_range;
+                    }
+                }
+            }
+        }
+    }
+    if (workflow.return_region != nullptr) {
+        for (const CoreStmt &stmt : workflow.return_region->statements) {
+            if (stmt.source_range.has_value()) {
+                return stmt.source_range;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 // V2-D D6: the compile-time single-page capacity family for a workflow that
 // contains at least one P6-frame node. Every extent is a compile-time constant;
 // nothing here is runtime-growable. Layout order (frame-bridge v2 design
@@ -12598,32 +12655,10 @@ validate_workflow_region(const CoreProgram &program,
                  std::string("the workflow ") + std::string(region) +
                      " extent overflows the wasm32 address domain");
     };
-    // Best-attributable source range for a workflow-level capacity failure:
-    // the entry node's first input-region statement (the workflow starts
-    // there), falling back to the return region's first statement. Every D6
-    // exhaustion axis names a range (Principle 5); a workflow whose statements
-    // carry no source range at all has no attributable source and is reported
-    // as such rather than emitted sourceless.
+    // Best-attributable source range for a workflow-level capacity failure
+    // (shared with encode_workflow_module's event/stash layout gate).
     const auto workflow_capacity_range = [&]() -> ir::SourceRangeOpt {
-        if (!plan.schedule.empty()) {
-            const ir::core::CoreWorkflowNode &entry =
-                workflow.nodes[plan.schedule.front().value];
-            if (entry.input_region != nullptr) {
-                for (const CoreStmt &stmt : entry.input_region->statements) {
-                    if (stmt.source_range.has_value()) {
-                        return stmt.source_range;
-                    }
-                }
-            }
-        }
-        if (workflow.return_region != nullptr) {
-            for (const CoreStmt &stmt : workflow.return_region->statements) {
-                if (stmt.source_range.has_value()) {
-                    return stmt.source_range;
-                }
-            }
-        }
-        return std::nullopt;
+        return workflow_capacity_source_range(workflow, plan);
     };
     // WH-5c.3 fix-forward: the D6 capacity family's RESOURCE-class rejection.
     // Every axis carries a SourceRange (Principle 5): the rodata axis uses the
@@ -12670,9 +12705,11 @@ validate_workflow_region(const CoreProgram &program,
         return false;
     }
 
-    // Cursor start: immediately above the node-event region on a capability
-    // workflow (the same two-phase math compute_event_layout performs); the
-    // fixed event base on an identity-shape workflow.
+    // Cursor start: immediately above the node-event region (and, WH-5c.5, the
+    // per-node output stash table when the workflow has an opaque node) on a
+    // capability workflow (the same two-phase math compute_event_layout
+    // performs); the fixed event base on an identity-shape workflow.
+    const bool has_opaque_nodes = workflow_has_opaque_nodes(plan);
     std::uint64_t cursor = kNodeEventLogBase;
     if (!plan.imports.empty()) {
         const std::uint32_t n = static_cast<std::uint32_t>(workflow.nodes.size());
@@ -12689,6 +12726,18 @@ validate_workflow_region(const CoreProgram &program,
             return false;
         }
         cursor = event_end;
+    }
+    if (has_opaque_nodes) {
+        // WH-5c.5: reserve the 8*N stash table above the event region (or
+        // above the log base on an identity workflow) before the P6 cursor
+        // regions begin (design 12.15.19.4).
+        const std::uint64_t stash_extent =
+            std::uint64_t{workflow.nodes.size()} * kNodeStashRecordBytes;
+        if (cursor > std::numeric_limits<std::uint32_t>::max() - stash_extent) {
+            overflow("node-output stash region");
+            return false;
+        }
+        cursor += stash_extent;
     }
 
     // (1) Merged bridge control-block page frame: dense fixed-stride blocks for
@@ -15446,17 +15495,22 @@ encode_module(const CoreProgram &program,
     return body;
 }
 
-// RFC 0026 E4-B2-C: two-phase capability-workflow memory sizing (seam §4.4/§5.2).
-// PHASE 1 (checked wasm32 arithmetic): node_count * 40, + header, + align, all
-// verified against the wasm32 domain; any overflow is a BINARY_OVERFLOW. PHASE 2
-// (capacity): only once a legal heap_base exists, heap_base > 65536 is a
-// RESOURCE_EXHAUSTED. Returns the computed heap_base, or a diagnostic code in
-// `overflow_is_binary` selecting which failure to raise. node_count = 1612 fits
-// (heap_base 65512); node_count = 1613 is rejected (65552).
+// RFC 0026 E4-B2-C + WH-5c.5: two-phase capability-workflow memory sizing
+// (seam §4.4/§5.2). PHASE 1 (checked wasm32 arithmetic): node_count * 40, +
+// header, + the per-node output stash table (8 * node_count, only when the
+// workflow has at least one opaque node -- design 12.15.19.4), + align, all
+// verified against the wasm32 domain; any overflow is a BINARY_OVERFLOW.
+// PHASE 2 (capacity): only once a legal heap_base exists, heap_base > 65536
+// is a RESOURCE_EXHAUSTED. Returns the computed heap_base, or a diagnostic
+// code in `overflow_is_binary` selecting which failure to raise. With the
+// stash term a capability workflow budgets 48 bytes/node: N=1343 fits
+// (heap_base 65496); N=1344 is rejected (65544). Without opaque nodes the
+// 40-byte layout is unchanged: N=1612 fits (65512), N=1613 rejected (65552).
 struct EventLayout {
     std::uint32_t heap_base{0};
 };
 [[nodiscard]] std::optional<EventLayout> compute_event_layout(std::size_t node_count,
+                                                              bool has_opaque_nodes,
                                                               bool &overflow_is_binary) {
     overflow_is_binary = false;
     // Phase 1: checked wasm32 arithmetic.
@@ -15471,11 +15525,21 @@ struct EventLayout {
         return std::nullopt;
     }
     const std::uint32_t event_bytes = kNodeEventHeaderBytes + n * kNodeEventRecordBytes;
+    // WH-5c.5: the per-node output stash table (design 12.15.19.4). Zero on a
+    // pure-P6 capability workflow, whose modules stay byte-identical.
+    const std::uint32_t stash_bytes =
+        has_opaque_nodes ? n * kNodeStashRecordBytes : 0u;
     if (event_bytes > std::numeric_limits<std::uint32_t>::max() - kNodeEventLogBase) {
         overflow_is_binary = true;
         return std::nullopt;
     }
     std::uint32_t unaligned = kNodeEventLogBase + event_bytes;
+    if (stash_bytes != 0 &&
+        unaligned > std::numeric_limits<std::uint32_t>::max() - stash_bytes) {
+        overflow_is_binary = true;
+        return std::nullopt;
+    }
+    unaligned += stash_bytes;
     if (unaligned > std::numeric_limits<std::uint32_t>::max() - 7u) {
         overflow_is_binary = true;
         return std::nullopt;
@@ -17266,6 +17330,34 @@ void append_event_record_write(ByteBuffer &body,
     append_i32_store_const(body, record_addr + 36u, 0u);
 }
 
+// WH-5c.5: write one opaque node's output (ptr, len) into the per-node output
+// stash table (design 12.15.19.6). Emitted as the last act of node completion:
+// after all OK validation, before the workflow_completed_count bump, so a
+// trapping / PENDING / ERROR node never owns a stash entry. The (status, ptr,
+// len) must already be in the named locals. `stash_base` is the compile-time
+// table base (workflow_stash_base); the slot address is baked. P6 nodes never
+// stash (their output is read from O_k by the host).
+void append_node_stash_store(ByteBuffer &body,
+                             std::uint32_t stash_base,
+                             const WorkflowNodePlan &node,
+                             std::uint32_t ptr_local,
+                             std::uint32_t len_local) {
+    const std::uint32_t slot_addr =
+        stash_base + node.schedule_pos * kNodeStashRecordBytes;
+    // [0..4): output ptr (u32-LE).
+    append_const(body, slot_addr);
+    append_indexed_op(body, kOpLocalGet, ptr_local);
+    body.byte(kOpI32Store);
+    body.u32(2u); // alignment (log2(4))
+    body.u32(0u); // offset
+    // [4..8): output len (u32-LE).
+    append_const(body, slot_addr);
+    append_indexed_op(body, kOpLocalGet, len_local);
+    body.byte(kOpI32Store);
+    body.u32(2u); // alignment (log2(4))
+    body.u32(4u); // offset
+}
+
 // V2-D: zero-fill one node-frame sub-span one i32 word at a time using the
 // caller's cursor local (the scheduler zeroes C_k before the packaged runner
 // executes, so a context field without a literal default is deterministically
@@ -17307,12 +17399,15 @@ void append_word_zero_fill(ByteBuffer &body,
 // boundary). Emits the PENDING latch, the OK/ERROR normalization, the
 // defensive event_count bound, the tag-1 capability event record and the
 // completed_count bump. The (status, ptr, len) must already be in the named
-// locals.
+// locals. WH-5c.5: `stash_base` is the per-node output stash table base for an
+// opaque node (design 12.15.19.6); 0 means no stash (the construct-capability
+// terminal is a P6 node whose output the host reads from O_k).
 void append_capability_dispatch(ByteBuffer &body,
                                 const WorkflowNodePlan &node,
                                 std::uint32_t status_local,
                                 std::uint32_t ptr_local,
-                                std::uint32_t len_local) {
+                                std::uint32_t len_local,
+                                std::uint32_t stash_base) {
     // PENDING: only a null result_ptr is a legal suspend -> set the latch and
     // return (PENDING,0,0). A PENDING with a non-null ptr is malformed ->
     // ERROR and does NOT latch.
@@ -17377,6 +17472,12 @@ void append_capability_dispatch(ByteBuffer &body,
     body.byte(kOpI32Store);
     body.u32(2u);
     body.u32(0u);
+    // WH-5c.5: stash the opaque node's output (ptr, len) before the
+    // completed_count bump so the host can join it post-run (design
+    // 12.15.19.6). A P6 construct-capability terminal passes stash_base=0.
+    if (stash_base != 0) {
+        append_node_stash_store(body, stash_base, node, ptr_local, len_local);
+    }
     append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
     append_const(body, 1);
     body.byte(kOpI32Add);
@@ -17394,6 +17495,15 @@ void append_capability_dispatch(ByteBuffer &body,
                                             std::uint32_t addr_local_base,
                                             CoreWasmCodegenResult &result) {
     const bool capability_workflow = !plan.imports.empty();
+    // WH-5c.5: the per-node output stash table base (design 12.15.19.4). Zero
+    // when the workflow has no opaque node (pure-P6 modules stay
+    // byte-identical: no stash region, no stash store). The scheduler bakes
+    // this compile-time constant into each opaque node's stash store.
+    const std::uint32_t stash_base =
+        workflow_has_opaque_nodes(plan)
+            ? workflow_stash_base(static_cast<std::uint32_t>(plan.nodes.size()),
+                                  capability_workflow)
+            : 0u;
     append_const(body, 0);
     append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalTransitionCount);
     append_const(body, 0);
@@ -17626,8 +17736,11 @@ void append_capability_dispatch(ByteBuffer &body,
                 append_indexed_op(body, kOpLocalSet, *len_local);
                 append_indexed_op(body, kOpLocalSet, *ptr_local);
                 append_indexed_op(body, kOpLocalSet, status_local);
+                // A P6 construct-capability terminal owns no stash slot (the
+                // host reads its output from O_k); pass stash_base=0.
                 append_capability_dispatch(body, node, status_local,
-                                           *ptr_local, *len_local);
+                                           *ptr_local, *len_local,
+                                           /*stash_base=*/0u);
                 continue;
             }
             // WH-5b.1 fix (b): in a hybrid module (event region exists) a P6
@@ -17682,6 +17795,13 @@ void append_capability_dispatch(ByteBuffer &body,
             body.byte(kEmptyBlock);
             body.byte(kOpUnreachable);
             body.byte(kOpEnd);
+            // WH-5c.5: stash the opaque node's output before the
+            // completed_count bump (design 12.15.19.6). P6 nodes in an
+            // identity workflow take the block above and never reach here.
+            if (stash_base != 0) {
+                append_node_stash_store(body, stash_base, node, *ptr_local,
+                                        *len_local);
+            }
             append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
             append_const(body, 1);
             body.byte(kOpI32Add);
@@ -17691,9 +17811,11 @@ void append_capability_dispatch(ByteBuffer &body,
 
         // Capability-workflow status dispatch (PENDING latch, OK/ERROR
         // normalization, defensive event_count bound, tag-1 event,
-        // completed_count bump).
+        // completed_count bump). An opaque node stashes its output; the
+        // construct-capability terminal (P6) passes 0.
         append_capability_dispatch(body, node, status_local, *ptr_local,
-                                   *len_local);
+                                   *len_local,
+                                   p6_node ? 0u : stash_base);
     }
     return true;
 }
@@ -17891,16 +18013,22 @@ encode_workflow_module(const CoreProgram &program,
     const auto import_count = static_cast<std::uint32_t>(
         plan.imports.size() + plan.transcode_sites.size());
 
-    // RFC 0026 E4-B2-C two-phase memory sizing (seam §4.4/§5.2). PHASE 1 checked
-    // wasm32 arithmetic -> BINARY_OVERFLOW; PHASE 2 capacity vs the fixed 64 KiB
-    // page -> RESOURCE_EXHAUSTED. Identity workflows keep heap_base = 1024. A
-    // V2-D p6 workflow has no node-event region (its nodes carry no opaque
-    // capability); its bump heap starts at the log base and is unused by the
-    // relocated frame handlers (they build in static scratch).
+    // RFC 0026 E4-B2-C + WH-5c.5 two-phase memory sizing (seam §4.4/§5.2,
+    // design 12.15.19.4). PHASE 1 checked wasm32 arithmetic -> BINARY_OVERFLOW;
+    // PHASE 2 capacity vs the fixed 64 KiB page -> RESOURCE_EXHAUSTED (with a
+    // SourceRange, naming the node-event + per-node-output-stash regions).
+    // Identity workflows keep heap_base = 1024 unless they schedule an opaque
+    // node, in which case the 8*N stash table sits above the log base. A V2-D
+    // p6 workflow's bump heap starts above the planned frame high-water (which
+    // already reserves the stash table when opaque nodes exist).
+    const bool has_opaque_nodes = workflow_has_opaque_nodes(plan);
+    const auto capacity_range =
+        workflow_capacity_source_range(program.workflows[plan.workflow.value], plan);
     std::uint32_t heap_base = kNodeEventLogBase;
     if (capability_workflow) {
         bool overflow_is_binary = false;
-        auto layout = compute_event_layout(plan.nodes.size(), overflow_is_binary);
+        auto layout = compute_event_layout(plan.nodes.size(), has_opaque_nodes,
+                                           overflow_is_binary);
         if (!layout.has_value()) {
             if (overflow_is_binary) {
                 add_diag(result,
@@ -17910,12 +18038,33 @@ encode_workflow_module(const CoreProgram &program,
             } else {
                 add_diag(result,
                          core_wasm_diag::kResourceExhausted,
-                         "capability-workflow node-event region and heap exceed the "
-                         "fixed 64 KiB linear-memory page");
+                         "the capability-workflow node-event records and per-node "
+                         "output stash table exceed the fixed 64 KiB linear-memory "
+                         "page; split the workflow or reduce the node count",
+                         capacity_range);
             }
             return std::nullopt;
         }
         heap_base = layout->heap_base;
+    } else if (has_opaque_nodes) {
+        // WH-5c.5: an identity workflow with opaque nodes reserves the 8*N
+        // stash table above the log base (design 12.15.19.4: heap_base =
+        // 1024 + 8*N, already 8-aligned). N=8064 fits (65536); N=8065 is
+        // rejected.
+        const std::uint64_t stash_extent =
+            std::uint64_t{plan.nodes.size()} * kNodeStashRecordBytes;
+        const std::uint64_t identity_heap =
+            std::uint64_t{kNodeEventLogBase} + stash_extent;
+        if (identity_heap > kCoreWasmFixedLinearMemoryCapacityBytes) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "the identity-workflow per-node output stash table exceeds the "
+                     "fixed 64 KiB linear-memory page; split the workflow or reduce "
+                     "the node count",
+                     capacity_range);
+            return std::nullopt;
+        }
+        heap_base = static_cast<std::uint32_t>(identity_heap);
     }
     // WH-5b.3: a P6 workflow's node-frame blocks (and transcode shadow
     // spans) are allocated above the event region by the capacity planning.
@@ -17927,7 +18076,8 @@ encode_workflow_module(const CoreProgram &program,
             add_diag(result,
                      core_wasm_diag::kResourceExhausted,
                      "the workflow P6 frame high-water and heap exceed the "
-                     "fixed 64 KiB linear-memory page");
+                     "fixed 64 KiB linear-memory page",
+                     capacity_range);
             return std::nullopt;
         }
     }
@@ -18718,16 +18868,33 @@ build_import_descriptors(const CoreProgram &program,
         }
     }
 
-    // The bump heap starts above the node-event region only for a capability
-    // workflow (the same two-phase layout encode_workflow_module performs); an
-    // identity workflow's heap starts at the log base.
+    // The bump heap starts above the node-event region (and, WH-5c.5, the
+    // per-node output stash table when the workflow has an opaque node) for a
+    // capability workflow; above the log base for an identity workflow; above
+    // the planned frame high-water for a P6 workflow. This mirrors
+    // encode_workflow_module's sizing exactly so the host's stash validation
+    // (stash_base + 8*N <= heap_base) uses the module's real heap base.
+    const bool has_opaque_nodes = workflow_has_opaque_nodes(plan);
     descriptor.heap_base = ir::core::kNodeEventLogBase;
     if (!plan.imports.empty()) {
         bool overflow_is_binary = false;
-        if (auto layout = compute_event_layout(plan.nodes.size(), overflow_is_binary);
+        if (auto layout = compute_event_layout(plan.nodes.size(), has_opaque_nodes,
+                                               overflow_is_binary);
             layout.has_value()) {
             descriptor.heap_base = layout->heap_base;
         }
+    } else if (has_opaque_nodes) {
+        // Widen to 64 bits BEFORE the multiply, exactly as
+        // encode_workflow_module does for the identity lane; encode's
+        // capacity gate already rejected an overflow, but the descriptor
+        // derives the value independently and must not wrap.
+        descriptor.heap_base = static_cast<std::uint32_t>(
+            static_cast<std::uint64_t>(ir::core::kNodeEventLogBase) +
+            static_cast<std::uint64_t>(plan.nodes.size()) *
+                ir::core::kNodeStashRecordBytes);
+    }
+    if (plan.has_p6_nodes) {
+        descriptor.heap_base = plan.wf_heap_base;
     }
 
     // Runner table: one entry per runner FUNCTION, in emission order (P6 node

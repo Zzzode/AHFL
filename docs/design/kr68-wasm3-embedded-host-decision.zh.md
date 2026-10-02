@@ -3906,10 +3906,21 @@ i32.store align=2 offset=4
 2. **parity harness stripping 删除(big-bang):** `wasm_runner.cpp:1223-1238` 的 `strip_output_value_id` 与 `:1335-1338` 调用点删除;`e3_identity_workflow`、`e3_capability_workflow`、`p2_14_diamond_dag` 三个 WireJson fixture 在**不 strip** 下 byte-parity。
 3. **fail-closed pins:** (a) forged stash entry(ptr 越界)→ `kOutputDecodeFailed`;(b) completed opaque node 的 stash slot 为零 → `kOutputDecodeFailed`;(c) node-output JSON 损坏 → `kOutputDecodeFailed`(非 silent `NoneValue`);(d) P6 node-output decode 失败 → `kOutputDecodeFailed`(原 silent)。
 4. **page capacity:** stash + event + 固定区域超 65536 的 workflow → `kResourceExhausted` + SourceRange。
-5. **byte parity:** pure-P6 workflow(无 opaque node)module bytes 与现状逐字节相同(无 stash region、无 stash store)——既有 P6 conformance golden 验证。
+5. **byte parity:** pure-P6 workflow(无 opaque node)module bytes 与现状逐字节相同(无 stash region、无 stash store)。**落地修订(2026-10-02):** conformance golden 只比较 observation 不比较 bytes,故 pure-P6 byte-identity 不能由"既有 P6 conformance golden"保证;`wasm_workflow_cap_binary_gate.py` 新增 pure-P6 freeze(`wh5c_instance_reuse_fanout.ahfl`,1513 bytes + SHA-256 + 无 import section),stash guard 一旦回退就 fail。
 6. **replay:** 带 opaque node 的 suspend/resume workflow,resume run 的 stash 重建、`output_value_id` 序列与 evaluator 一致。
-7. **census:** `kExpectedAgreed = 73` 不变(GAP 4 已计入 §12.15.17.4 的 72→73 预测;机制修订不新增 case)。
+7. **census(落地校正 2026-10-02):** WH-5c.5 落地后 native `kExpectedAgreed = 72`(71→72,新增 `wh5c5_gap4_stash_parity` agreed case)、Node `kExpectedAgreed = 69` / `kExpectedSkipped = 3`。73 的最终 census 仍是 §12.15.17.4 的 WH-5c.7 后预测(5c.5 的 +1 在 68→72 批次内;5c.7 的 +1 → 73 待落地)。机制修订**新增** GAP 4 conformance case 到 corpus(§12.15.17.4 的 +4 批次已预测,但此前缺席),不是"不新增 case"。
 8. **gates:** ASan build & test clean;WASM=OFF build clean;fresh build `-Werror` clean(CLAUDE.md memory:develop 可积累 -Werror breakage,commit 前 fresh build)。
+
+##### 12.15.19.11.9 落地记录(2026-10-02):Node skip 理由纠偏 + review P2 处置
+
+独立对抗评审判定机制正确(stash 算术/发射位置/host join/fail-closed/replay 全部核实),一处 P1 诚实性问题:
+
+- **P1(已修):** `wh5c5_gap4_stash_parity` 是全 opaque(identity→capability→identity)**无 ahfl_xcode transcode site** 的 workflow,原 manifest 声明 `host_transcode_awaits_node_port` 是假标签(C++ Node runner 仅凭声明短路,真实原因是 Node oracle host 早于 WH-5c.5 stash-table join:不读 per-node stash slot,且 ok-null 归一化自检假设 capability 在 schedule position 0)。新增枚举 `WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin`(manifest 字符串 `node_host_awaits_multinode_stash_join`),parser/eligibility/Node runner exact-set pin(`kExpectedMultiNodeStashStems`,与 `kExpectedHostTranscodeStems` 不相交)同步。两个 skip 理由永久分离:带 transcode site 的缺口不得挂 stash-join 标签,反之亦然。
+- **P2-1(已修):** 见验收标准 5 的 pure-P6 byte-freeze gate。
+- **P2-2(挂账):** host hook 顺序仍是"全部 state_entered → 全部 node_completed",不是 §12.9.4 修订的 per-node 顺序;属既有行为,GAP 4 未回退,不在本 slice 范围。
+- **P2-3(挂账):** `workflow_session.cpp` cap-name 解析失败时静默归因 node 0(应 fail-closed);既有问题,parity harness 用 canonical `module::Echo` 名称绕开。
+- **P2-4(已修):** descriptor identity 路径的 `1024 + n*8` 改为先 widen 64-bit 再乘,与 `encode_workflow_module` 一致。
+- **P2-5(已修):** identity 路径"Identity P6 workflows have no opaque nodes anyway"过时注释更正(import-free 才是跳过 event decode 的真实原因)。
 
 #### 12.15.19.12 AHFL-specific divergence + prior-decision preservation
 

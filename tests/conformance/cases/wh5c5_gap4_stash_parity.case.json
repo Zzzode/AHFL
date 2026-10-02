@@ -1,0 +1,33 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/wh5c5_gap4_stash_parity.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::wh5c5_gap4_stash::StashParityPipeline",
+  "scenarios": [
+    {
+      "name": "pipeline",
+      "input": {"_type":"wasm::wh5c5_gap4_stash::Frame","value":"stash-parity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": ["wasm::wh5c5_gap4_stash::Echo"],
+        "output_json": {"_type":"wasm::wh5c5_gap4_stash::Frame","value":"stash-parity"}
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "wasm::wh5c5_gap4_stash::Echo",
+      "status": "ok",
+      "result_json": {"_type":"wasm::wh5c5_gap4_stash::Frame","value":"stash-parity"}
+    }
+  ],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "three-node workflow DAG (identity, capability, identity); WH-5c.5 per-node output stash table makes every node output host-observable, so output_value_id parity holds on the orchestration wasm subset",
+      "node_observation_skip": "node_host_awaits_multinode_stash_join"
+    }
+  }
+}

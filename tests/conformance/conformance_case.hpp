@@ -144,6 +144,18 @@ enum class WasmNodeObservationSkip {
     /// sites. The Node observation is withheld until the JS host gains
     /// transcode support.
     HostTranscodeAwaitsNodePort,
+    /// The module emits and the evaluator agrees (the native wasm3 lane
+    /// compares), but the workflow is a MULTI-NODE all-opaque schedule
+    /// (identity + capability mixed, with no ahfl_xcode transcode sites)
+    /// whose per-node outputs only become host-observable through the
+    /// WH-5c.5 guest stash-table join. The Node oracle host predates that
+    /// join: it never reads the per-node stash slots, and its capability
+    /// normalization self-test assumes the capability node sits at
+    /// schedule position 0. The Node observation is withheld until the JS
+    /// host ports the WH-5c.5 stash-table join; this reason MUST NOT be
+    /// used for a module that emits ahfl_xcode sites (that gap is
+    /// HostTranscodeAwaitsNodePort).
+    NodeHostAwaitsMultiNodeStashJoin,
 };
 
 struct WasmEngineEligibility {
@@ -525,6 +537,16 @@ class ConformanceCaseReader {
             error("engines.wasm.node_observation_skip 'host_transcode_awaits_node_port' "
                   "requires engines.wasm.eligible 'orchestration' (the module emits "
                   "but the Node host lacks transcode support)",
+                  std::nullopt);
+            return std::nullopt;
+        }
+        if (wasm.node_observation_skip ==
+                WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin &&
+            wasm.eligibility != WasmEligibility::Orchestration) {
+            error("engines.wasm.node_observation_skip "
+                  "'node_host_awaits_multinode_stash_join' "
+                  "requires engines.wasm.eligible 'orchestration' (the module emits "
+                  "but the Node host lacks the WH-5c.5 multi-node stash-table join)",
                   std::nullopt);
             return std::nullopt;
         }
@@ -1088,9 +1110,13 @@ class ConformanceCaseReader {
         if (*value == "host_transcode_awaits_node_port") {
             return WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
         }
+        if (*value == "node_host_awaits_multinode_stash_join") {
+            return WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin;
+        }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
-              "'blocked_kr66', 'evaluator_surface_awaits_kr68', or "
-              "'host_transcode_awaits_node_port', got '" +
+              "'blocked_kr66', 'evaluator_surface_awaits_kr68', "
+              "'host_transcode_awaits_node_port', or "
+              "'node_host_awaits_multinode_stash_join', got '" +
                   *value + "'",
               range_of(node));
         return std::nullopt;

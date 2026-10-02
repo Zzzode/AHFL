@@ -678,6 +678,10 @@ lower_golden_file(const std::filesystem::path &path) {
         // WH-5c.4 P0-3: construct-terminal with an opaque upstream; both
         // JSON_TO_P4D and P4D_TO_JSON transcode sites on one node.
         "wasm/wh5c4_p03_opaque_upstream.ahfl",
+        // WH-5c.5 GAP 4: three-node identity+capability+identity workflow;
+        // the per-node output stash table makes every node output
+        // host-observable (design 12.15.19.11.1).
+        "wasm/wh5c5_gap4_stash_parity.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

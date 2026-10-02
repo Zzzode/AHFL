@@ -27,6 +27,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -1215,42 +1216,18 @@ void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
     return out.str();
 }
 
-// For WireJson workflows the wasm lane cannot observe individual node outputs
-// (the module passes them through its own heap; only the workflow output is
-// host-observable via run2). The evaluator stores node outputs in its value
-// store, so output_value_id differs. This helper strips that field from both
-// JSON strings so the rest of the report can be byte-compared.
-[[nodiscard]] std::string strip_output_value_id(std::string json) {
-    const std::string key = "\"output_value_id\":";
-    std::size_t pos = 0;
-    while ((pos = json.find(key, pos)) != std::string::npos) {
-        // Find the value start (skip the key and any whitespace).
-        std::size_t val_start = pos + key.size();
-        // Skip the value (null, number, ...) up to the next comma or brace.
-        std::size_t val_end = val_start;
-        while (val_end < json.size() && json[val_end] != ',' &&
-               json[val_end] != '}') {
-            ++val_end;
-        }
-        json.replace(pos, val_end - pos, "\"output_value_id\":null");
-        pos = pos + key.size() + 4; // skip past the replaced null
-    }
-    return json;
-}
-
 // Byte-compare the ahfl.run-report JSON from the evaluator-backed
 // WorkflowRuntime and the wasm-backed WasmWorkflowRuntime on a shared
 // fixture. The evaluator gets a deterministic monotonic clock (all offsets
 // 0, matching the wasm lane's std::chrono::nanoseconds{0}).
 //
-// For P6-frame fixtures node outputs ARE host-observable (O_k blocks), so
-// the full report byte-compares. For WireJson fixtures node outputs are not
-// host-observable, so output_value_id is stripped before comparison.
+// WH-5c.5 (design 12.15.19): the wasm lane decodes every node output (P6
+// from O_k, opaque from the per-node output stash table), so the full
+// report byte-compares with no stripping.
 void byte_compare_fixture(
     const std::filesystem::path &repo_root, std::string_view fixture_path,
     std::string_view workflow_name, std::string_view input_json,
-    std::string_view expected_output_json, bool has_capability,
-    bool is_p6_frame) {
+    std::string_view expected_output_json, bool has_capability) {
     const auto source = repo_root / fixture_path;
     std::string error;
     auto program = conf::compile_conformance_source(source, error);
@@ -1293,17 +1270,15 @@ void byte_compare_fixture(
 
     // --- Wasm lane ---
     wr::WasmWorkflowRuntimeConfig wasm_config;
-    // The wasm lane decodes P6-frame node outputs only when
-    // node_completed_hook is set (the decode is gated on the hook to avoid
-    // reading guest memory when no consumer wants it). Set a no-op hook so
-    // the lifecycle events carry real output_value_ids for P6-frame fixtures.
+    // WH-5c.5: the wasm lane decodes every node output unconditionally (P6
+    // from O_k, opaque from the stash table) and fires node_completed_hook
+    // with the real output. Set a no-op hook so the lifecycle events carry
+    // real output_value_ids and the hook is verified to fire.
     int hook_count = 0;
-    if (is_p6_frame) {
-        wasm_config.hooks.node_completed_hook =
-            [&hook_count](AgentId, std::string_view, const Value &) {
-                ++hook_count;
-            };
-    }
+    wasm_config.hooks.node_completed_hook =
+        [&hook_count](AgentId, std::string_view, const Value &) {
+            ++hook_count;
+        };
     if (has_capability) {
         wasm_config.invoker =
             [](const CapabilityInvocationContext &, const std::string &,
@@ -1315,9 +1290,19 @@ void byte_compare_fixture(
             }
             return r;
         };
+        // The descriptor's cap_name_to_node map keys on the fully qualified
+        // canonical name (module::Capability). Returning a bare "Echo" fails
+        // the lookup and silently defaults to node 0 -- correct only when the
+        // capability is on node 0. Derive the module from the workflow name
+        // so the attribution is correct for any node position.
+        const auto wf_name = std::string(workflow_name);
+        const auto last_sep = wf_name.rfind("::");
+        const auto module_prefix =
+            last_sep != std::string::npos ? wf_name.substr(0, last_sep) : "";
+        const auto canonical_echo = module_prefix + "::Echo";
         wasm_config.name_resolver =
-            [](std::uint64_t) -> std::optional<std::string> {
-            return "Echo";
+            [canonical_echo](std::uint64_t) -> std::optional<std::string> {
+            return canonical_echo;
         };
     }
     wr::WasmWorkflowRuntime wasm_runtime(*program, std::move(wasm_config));
@@ -1325,18 +1310,11 @@ void byte_compare_fixture(
                                         ahfl::runtime::clone_value(*input));
     check(wasm_result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "byte_compare.wasm_completed");
-    if (is_p6_frame) {
-        check(hook_count > 0, "byte_compare.node_completed_hook_fired");
-    }
+    check(hook_count > 0, "byte_compare.node_completed_hook_fired");
 
     // --- Byte-compare ---
     auto eval_json = render_report_json(eval_result);
     auto wasm_json = render_report_json(wasm_result);
-    if (!is_p6_frame) {
-        // WireJson: node outputs are not host-observable on the wasm lane.
-        eval_json = strip_output_value_id(std::move(eval_json));
-        wasm_json = strip_output_value_id(std::move(wasm_json));
-    }
     if (eval_json != wasm_json) {
         std::cerr << "  EVAL: " << eval_json << "\n";
         std::cerr << "  WASM: " << wasm_json << "\n";
@@ -1355,25 +1333,23 @@ void byte_compare_fixture(
 
 void test_byte_compare(const std::filesystem::path &repo_root) {
     // Agent-direct (WireJson, two identity agents, no capabilities):
-    // e3_identity_workflow. Node outputs are not host-observable on the
-    // WireJson lane, so output_value_id is stripped before comparison.
+    // e3_identity_workflow. WH-5c.5: node outputs are host-observable via
+    // the stash table, so the full report byte-compares.
     byte_compare_fixture(
         repo_root, "tests/golden/wasm/e3_identity_workflow.ahfl",
         "wasm::e3_workflow::IdentityPipeline",
         R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
         R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
-        /*has_capability=*/false,
-        /*is_p6_frame=*/false);
+        /*has_capability=*/false);
 
     // Workflow with capability (WireJson, two agents, one Echo):
-    // e3_capability_workflow. Same output_value_id stripping.
+    // e3_capability_workflow. Same full-report byte parity.
     byte_compare_fixture(
         repo_root, "tests/golden/wasm/e3_capability_workflow.ahfl",
         "wasm::e3_capability_workflow::CapabilityPipeline",
         R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})",
         R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})",
-        /*has_capability=*/true,
-        /*is_p6_frame=*/false);
+        /*has_capability=*/true);
 
     // P2-14: diamond DAG (WireJson, four identity agents, no capabilities):
     // p2_14_diamond_dag. Topology A -> B, A -> C, B+C -> D. Verifies
@@ -1383,8 +1359,19 @@ void test_byte_compare(const std::filesystem::path &repo_root) {
         "wasm::p2_14_diamond_dag::DiamondPipeline",
         R"({"_type":"wasm::p2_14_diamond_dag::Frame","value":"diamond"})",
         R"({"_type":"wasm::p2_14_diamond_dag::Frame","value":"diamond"})",
-        /*has_capability=*/false,
-        /*is_p6_frame=*/false);
+        /*has_capability=*/false);
+
+    // WH-5c.5 GAP 4 (design 12.15.19.11.1): three-node identity + capability
+    // + identity chain. The per-node output stash table makes every node
+    // output host-observable, so the output_value_id sequence (0, 1, 2 for
+    // the nodes, 3 for the workflow) matches the evaluator byte-for-byte
+    // with no stripping.
+    byte_compare_fixture(
+        repo_root, "tests/golden/wasm/wh5c5_gap4_stash_parity.ahfl",
+        "wasm::wh5c5_gap4_stash::StashParityPipeline",
+        R"({"_type":"wasm::wh5c5_gap4_stash::Frame","value":"stash-parity"})",
+        R"({"_type":"wasm::wh5c5_gap4_stash::Frame","value":"stash-parity"})",
+        /*has_capability=*/true);
 }
 
 // ==== 8b. P2-15: failure-path byte parity ====
@@ -1462,6 +1449,206 @@ void test_failure_path_byte_parity(const std::filesystem::path &repo_root) {
           "fail_byte.wasm_has_diag");
 }
 
+// ==== 9. WH-5c.5 GAP 4: fail-closed mutation pins ====
+//
+// The per-node output stash table (design 12.15.19) writes each opaque
+// node's output (ptr, len) into a fixed host-known page table indexed by
+// schedule_pos. The host range-checks every stash entry and decodes the
+// JSON bytes. A corrupt / forged entry MUST fail closed with
+// kOutputDecodeFailed -- never a silent NoneValue. These pins corrupt the
+// stash table (or the JSON it points to) via the post_run2_memory_mutator
+// test seam and assert the host decodes the corruption as a hard failure.
+//
+// e3_identity_workflow: 2 opaque nodes, no imports.
+//   stash_base = 1024 (kNodeEventLogBase, imports empty)
+//   stash_extent = 8 * 2 = 16
+//   heap_base = 1024 + 16 = 1040
+//   slot 0 (first):  [1024..1032)  ptr@1024 len@1028
+//   slot 1 (second): [1032..1040)  ptr@1032 len@1036
+
+void check_decode_failed(const ahfl::runtime::WorkflowResult &result,
+                         std::string_view label) {
+    check(result.status() == ahfl::runtime::WorkflowStatus::EvalError,
+          std::string(label) + ".eval_error");
+    check(result.report.status == ahfl::runtime::RunTerminalStatus::Failed,
+          std::string(label) + ".report_failed");
+    check(!result.report.output.has_value(),
+          std::string(label) + ".no_output");
+    bool found = false;
+    for (const auto &diag : result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.output-decode-failed") {
+            found = true;
+            break;
+        }
+    }
+    check(found, std::string(label) + ".found_diagnostic");
+}
+
+void test_gap4_forged_stash_ptr(const std::filesystem::path &repo_root) {
+    // Pin (a): forge stash slot 0's ptr to point outside the 64 KiB page.
+    // ptr=65000, len=60000 -> out_end=125000 > 65536. The host range-checks
+    // ptr+len <= 65536 and MUST fail closed.
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "gap4_forged.compile");
+    if (!program.has_value()) {
+        return;
+    }
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.post_run2_memory_mutator = [](std::span<std::uint8_t> mem) {
+        constexpr std::uint32_t kSlot0 = 1024;
+        constexpr std::uint32_t kForgedPtr = 65000;
+        constexpr std::uint32_t kForgedLen = 60000;
+        std::memcpy(mem.data() + kSlot0, &kForgedPtr, 4);
+        std::memcpy(mem.data() + kSlot0 + 4, &kForgedLen, 4);
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
+    check(input.has_value(), "gap4_forged.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
+                              std::move(*input));
+    check_decode_failed(result, "gap4_forged");
+}
+
+void test_gap4_zero_stash_slot(const std::filesystem::path &repo_root) {
+    // Pin (b): zero out stash slot 0 (ptr=0, len=0). The host checks
+    // ptr != 0 && len != 0 and MUST fail closed.
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "gap4_zero.compile");
+    if (!program.has_value()) {
+        return;
+    }
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.post_run2_memory_mutator = [](std::span<std::uint8_t> mem) {
+        constexpr std::uint32_t kSlot0 = 1024;
+        constexpr std::uint32_t kZero = 0;
+        std::memcpy(mem.data() + kSlot0, &kZero, 4);
+        std::memcpy(mem.data() + kSlot0 + 4, &kZero, 4);
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
+    check(input.has_value(), "gap4_zero.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
+                              std::move(*input));
+    check_decode_failed(result, "gap4_zero");
+}
+
+void test_gap4_corrupted_json(const std::filesystem::path &repo_root) {
+    // Pin (c): corrupt the JSON bytes that stash slot 0 points to. Read the
+    // ptr from the slot (the guest wrote it during run2), then overwrite the
+    // first byte with 0xFF. value_from_json rejects the garbage and the host
+    // MUST fail closed.
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "gap4_corrupt.compile");
+    if (!program.has_value()) {
+        return;
+    }
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.post_run2_memory_mutator = [](std::span<std::uint8_t> mem) {
+        constexpr std::uint32_t kSlot0 = 1024;
+        std::uint32_t ptr = 0;
+        std::memcpy(&ptr, mem.data() + kSlot0, 4);
+        // The guest wrote a valid ptr >= heap_base (1040). Corrupt the
+        // first JSON byte so value_from_json rejects it.
+        if (ptr != 0 && ptr < mem.size()) {
+            mem[ptr] = 0xFF;
+        }
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
+    check(input.has_value(), "gap4_corrupt.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
+                              std::move(*input));
+    check_decode_failed(result, "gap4_corrupt");
+}
+
+void test_gap4_identity_slot0_safety(
+    const std::filesystem::path &repo_root) {
+    // Safety pin: after an identity run, [1024,1032) parses as stash slot 0
+    // (non-zero ptr, len, ptr >= heap_base=1040). The host decodes the
+    // stash, not event records. The workflow completes successfully with
+    // the correct output -- proving the slot-0/event-header overlap is safe
+    // (identity workflows never write the event header).
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "gap4_safety.compile");
+    if (!program.has_value()) {
+        return;
+    }
+
+    std::uint32_t slot0_ptr = 0;
+    std::uint32_t slot0_len = 0;
+    wr::WasmWorkflowRuntimeConfig config;
+    config.post_run2_memory_mutator =
+        [&slot0_ptr, &slot0_len](std::span<std::uint8_t> mem) {
+            constexpr std::uint32_t kSlot0 = 1024;
+            std::memcpy(&slot0_ptr, mem.data() + kSlot0, 4);
+            std::memcpy(&slot0_len, mem.data() + kSlot0 + 4, 4);
+        };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
+    check(input.has_value(), "gap4_safety.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
+                              std::move(*input));
+    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "gap4_safety.completed");
+
+    // The stash slot at [1024,1032) must be a valid entry: non-zero ptr,
+    // non-zero len, ptr >= heap_base (1040), ptr+len <= 65536.
+    check(slot0_ptr != 0, "gap4_safety.slot0_ptr_nonzero");
+    check(slot0_len != 0, "gap4_safety.slot0_len_nonzero");
+    check(slot0_ptr >= 1040, "gap4_safety.slot0_ptr_above_heap");
+    check(std::uint64_t{slot0_ptr} + std::uint64_t{slot0_len} <= 65536,
+          "gap4_safety.slot0_within_page");
+
+    const auto *output = result.output();
+    check(output != nullptr, "gap4_safety.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
+              "gap4_safety.output_value");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1484,6 +1671,10 @@ int main() {
     test_v2c_bridge_fixtures(repo_root);
     test_byte_compare(repo_root);
     test_failure_path_byte_parity(repo_root);
+    test_gap4_forged_stash_ptr(repo_root);
+    test_gap4_zero_stash_slot(repo_root);
+    test_gap4_corrupted_json(repo_root);
+    test_gap4_identity_slot0_safety(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;

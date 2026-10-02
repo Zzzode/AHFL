@@ -6,6 +6,11 @@ against a committed package manifest (isolated into a TemporaryDirectory next to
 copy of the committed golden source, per the B4 ruling) and locks, precisely:
   * the no-capability E3 identity workflow byte-freeze (exact size + SHA-256)
     across the B2-C landing;
+  * the pure-P6 workflow byte-freeze (exact size + SHA-256): WH-5c.5 adds the
+    per-node output stash stores ONLY when the workflow has an opaque node, so
+    a pure-P6 module must stay byte-identical -- the freeze fails if the
+    has_opaque_nodes / stash guards ever regress and stash bytes leak into a
+    pure-P6 emission;
   * byte identity between the ahflc package entry and the emit-only Core producer;
   * cross-run determinism of the CLI emission;
   * the import section is present (the ahfl_cap ABI);
@@ -40,12 +45,25 @@ WASM_HEADER = b"\x00asm\x01\x00\x00\x00"
 EXEC_MANIFEST_NAME = "ahfl.wasm-exec-manifest.v1"
 WIRE_SCHEMA_NAME = "ahfl.wire-schema.v1"
 
-# Hard-lock the no-capability E3 identity workflow byte-freeze across the B2-C
-# landing: the E3 module must remain exactly this size + digest (import_count == 0
-# keeps its bytes and indices unchanged). Independently reproduced from the
-# pre-B2-C artifact.
-E3_IDENTITY_SIZE = 470
-E3_IDENTITY_SHA256 = "7485b0f95d6bf4fe13efe0013835d51d8a2f32e7d6a1915a9c4265e14286fff6"
+# Hard-lock the no-capability E3 identity workflow byte-freeze. WH-5c.5
+# (design 12.15.19) intentionally adds the per-node output stash stores to
+# every opaque node, so the identity workflow grew from 470 to 502 bytes
+# (2 nodes x 16 bytes of i32.store pairs); only a pure-P6 workflow (no
+# opaque nodes) stays byte-identical. Independently reproduced from the
+# WH-5c.5 artifact.
+E3_IDENTITY_SIZE = 502
+E3_IDENTITY_SHA256 = "8eb0bb9f9a64a0930c44e50939e22e40dfd4aac6fdde1359dd16c55544b3d3ff"
+
+# Hard-lock the pure-P6 workflow byte-freeze. WH-5c.5 reserves the stash
+# region and emits the per-node (ptr,len) stores ONLY when the schedule has an
+# opaque node (workflow_has_opaque_nodes / stash_base != 0 guards). This
+# fixture is a two-node all-P6 fan-out with zero imports; its bytes must not
+# move when the stash machinery lands, so this freeze fails loudly if the
+# guards regress and stash bytes leak into a pure-P6 emission. Independently
+# reproduced from the WH-5c.5 artifact.
+PURE_P6_GOLDEN_NAME = "wh5c_instance_reuse_fanout.ahfl"
+PURE_P6_SIZE = 1513
+PURE_P6_SHA256 = "ca80b9d1bb02e3e0e1480de1ccb0c5bc18e25f0dee766a1632cc6ab3fe39636b"
 
 
 def fail(message: str) -> "NoReturn":
@@ -164,6 +182,19 @@ def main(argv: "list[str]") -> int:
     e3_digest = hashlib.sha256(e3_bytes).hexdigest()
     if e3_digest != E3_IDENTITY_SHA256:
         fail(f"E3 identity workflow byte-freeze broken: {e3_digest}")
+
+    # Hard-lock the pure-P6 workflow byte-freeze (WH-5c.5 stash guards):
+    # zero imports, zero stash bytes, byte-identical emission.
+    p6_golden = golden.parent / PURE_P6_GOLDEN_NAME
+    p6_bytes = emit_via_probe(probe, p6_golden)
+    if len(p6_bytes) != PURE_P6_SIZE:
+        fail(f"pure-P6 workflow size changed: {len(p6_bytes)} != {PURE_P6_SIZE}")
+    p6_digest = hashlib.sha256(p6_bytes).hexdigest()
+    if p6_digest != PURE_P6_SHA256:
+        fail(f"pure-P6 workflow byte-freeze broken: {p6_digest}")
+    p6_sections = parse_sections(p6_bytes)
+    if any(sid == 2 for sid, _, _ in p6_sections):
+        fail("pure-P6 freeze fixture unexpectedly carries an import section")
 
     cli_first = emit_via_cli(ahflc, manifest, golden)
     cli_second = emit_via_cli(ahflc, manifest, golden)

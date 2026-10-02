@@ -1,0 +1,87 @@
+module wasm::wh5c5_gap4_stash;
+
+// WH-5c.5 GAP 4 conformance case (design 12.15.19.11.1): a multi-node
+// workflow with BOTH identity and capability nodes, all opaque (no P6
+// packaging). The per-node output stash table carries one (ptr, len) slot
+// per node, so the wasm lane's output_value_id sequence (0, 1, 2 for the
+// nodes, 3 for the workflow) matches the evaluator byte-for-byte.
+
+pub struct Frame {
+    value: String;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent LeadIdentityAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for LeadIdentityAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub agent MiddleCapabilityAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for MiddleCapabilityAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub agent TailIdentityAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for TailIdentityAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow StashParityPipeline {
+    input: Frame;
+    output: Frame;
+
+    node lead: LeadIdentityAgent(input);
+    node middle: MiddleCapabilityAgent(lead) after [lead];
+    node tail: TailIdentityAgent(middle) after [middle];
+
+    return: tail;
+}

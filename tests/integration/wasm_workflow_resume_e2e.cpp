@@ -2492,6 +2492,218 @@ void test_p2e_pending_cap_unresolvable(
     }
 }
 
+// ==== 8. WH-5c.5 GAP 4: replay stash-rebuild parity ====
+//
+// The wh5c5_gap4_stash_parity fixture is a 3-node opaque pipeline:
+// lead (identity) -> middle (Echo capability) -> tail (identity).
+// Echo returns PENDING on the first call, so the workflow suspends
+// AFTER lead completes (lead's output is in the stash table at
+// suspend time). On resume (fresh facade, cold-start from the on-disk
+// snapshot), lead re-runs deterministically, Echo is frontier-injected
+// (zero live calls), and tail runs. The per-node output stash table is
+// rebuilt during the resume run, so the host decodes every node output
+// and the output_value_id sequence is contiguous (no gaps, no
+// NoneValue fallbacks).
+//
+// Value-ID accounting: on a fresh run the wasm lane emits a
+// CapabilityCompleted for Echo (cap output -> value ID 1), so the node
+// output_value_ids are [0, 2, 3] and the workflow output is 4. On a
+// resumed run the frontier injection bypasses the invoker wrapper (no
+// CapabilityStarted/CapabilityCompleted, mirroring the evaluator), so
+// the node output_value_ids are [0, 1, 2] and the workflow output is
+// 3. Both sequences are contiguous; the fresh-vs-resumed delta is
+// exactly the skipped capability event. The test pins both sequences
+// and verifies the output VALUES are identical.
+
+void test_wh5c5_gap4_replay_stash_parity(
+    const std::filesystem::path &repo_root,
+    const std::filesystem::path &work_dir) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c5_gap4_stash_parity.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "wh5c5rp.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    static constexpr std::string_view kWorkflow =
+        "wasm::wh5c5_gap4_stash::StashParityPipeline";
+    static constexpr std::string_view kFrameJson =
+        R"({"_type":"wasm::wh5c5_gap4_stash::Frame","value":"stash-parity"})";
+
+    auto make_resolver = [] {
+        return [](std::uint64_t) -> std::optional<std::string> {
+            return "wasm::wh5c5_gap4_stash::Echo";
+        };
+    };
+
+    // Collect node output_value_id indices from a completed WorkflowResult.
+    auto collect_node_ids =
+        [](const ahfl::runtime::WorkflowResult &result)
+        -> std::vector<std::size_t> {
+        std::vector<std::size_t> ids;
+        for (const auto &node : result.report.nodes) {
+            ids.push_back(node.output.has_value() ? node.output->index()
+                                                  : std::size_t{0});
+        }
+        return ids;
+    };
+
+    // ---- Fresh run: Echo returns Success, all nodes complete. ----
+    std::vector<std::size_t> fresh_node_ids;
+    std::optional<std::size_t> fresh_wf_id;
+    {
+        auto state = std::make_shared<InvokerState>();
+        state->echo_pending = false;
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.name_resolver = make_resolver();
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "wh5c5rp.fresh_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto result =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+        check(result.status() == WorkflowStatus::Completed,
+              "wh5c5rp.fresh_completed");
+        check(!result.has_errors(), "wh5c5rp.fresh_no_errors");
+        fresh_node_ids = collect_node_ids(result);
+        fresh_wf_id = result.report.output.has_value()
+                          ? std::optional<std::size_t>(
+                                result.report.output->index())
+                          : std::nullopt;
+    }
+
+    // Fresh-run expectation: cap output is value 1, so node ids are
+    // [0, 2, 3] and the workflow output is 4.
+    check(fresh_node_ids.size() == 3, "wh5c5rp.fresh_3_nodes");
+    if (fresh_node_ids.size() == 3) {
+        check(fresh_node_ids[0] == 0, "wh5c5rp.fresh_node0_id0");
+        check(fresh_node_ids[1] == 2, "wh5c5rp.fresh_node1_id2");
+        check(fresh_node_ids[2] == 3, "wh5c5rp.fresh_node2_id3");
+    }
+    check(fresh_wf_id.has_value() && *fresh_wf_id == 4,
+          "wh5c5rp.fresh_wf_id4");
+
+    // ---- Suspend: Echo returns PENDING, workflow suspends after lead. ----
+    const auto snapshot_path = work_dir / "wh5c5rp-snapshot.json";
+    std::error_code ec;
+    std::filesystem::remove(snapshot_path, ec);
+    {
+        auto state = std::make_shared<InvokerState>();
+        state->echo_pending = true;
+        WorkflowRecoveryStore store(snapshot_path);
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.recovery_store = &store;
+        config.name_resolver = make_resolver();
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "wh5c5rp.suspend_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto suspended =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+        check(suspended.status() == WorkflowStatus::Suspended,
+              "wh5c5rp.suspended");
+        check(!suspended.has_errors(), "wh5c5rp.suspend_no_errors");
+        check(state->echo_calls == 1, "wh5c5rp.echo_called_once");
+        check(suspended.suspended.has_value(),
+              "wh5c5rp.has_resume_record");
+    }
+
+    check(std::filesystem::exists(snapshot_path),
+          "wh5c5rp.snapshot_on_disk");
+
+    // ---- Resume: cold-start, inject Echo result via wire JSON. ----
+    std::vector<std::size_t> resumed_node_ids;
+    std::optional<std::size_t> resumed_wf_id;
+    {
+        auto state = std::make_shared<InvokerState>();
+        state->echo_pending = false; // Echo would return Success if called
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "wh5c5rp.snapshot_loaded");
+        if (!loaded.has_value()) {
+            return;
+        }
+
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.recovery_snapshot = std::move(*loaded);
+        config.resume_pending_result_wire_json = std::string(kFrameJson);
+        config.name_resolver = make_resolver();
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "wh5c5rp.resume_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto resumed =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+        check(resumed.status() == WorkflowStatus::Completed,
+              "wh5c5rp.resumed_completed");
+        check(!resumed.has_errors(), "wh5c5rp.resume_no_errors");
+        // Zero live side effects: Echo is frontier-injected.
+        check(state->echo_calls == 0, "wh5c5rp.zero_live_calls");
+
+        resumed_node_ids = collect_node_ids(resumed);
+        resumed_wf_id = resumed.report.output.has_value()
+                            ? std::optional<std::size_t>(
+                                  resumed.report.output->index())
+                            : std::nullopt;
+
+        // The workflow output value must be correct.
+        const auto *output = resumed.output();
+        check(output != nullptr, "wh5c5rp.resumed_has_output");
+        if (output != nullptr) {
+            const auto json = ahfl::runtime::value_to_json(*output);
+            check(json == std::string(kFrameJson),
+                  "wh5c5rp.resumed_output_value");
+        }
+    }
+
+    // Resumed-run expectation: no CapabilityCompleted on the frontier
+    // path (mirrors the evaluator), so node ids are [0, 1, 2] and the
+    // workflow output is 3. The stash table was rebuilt: every node has
+    // a decoded output (no NoneValue fallback).
+    check(resumed_node_ids.size() == 3, "wh5c5rp.resumed_3_nodes");
+    if (resumed_node_ids.size() == 3) {
+        check(resumed_node_ids[0] == 0, "wh5c5rp.resumed_node0_id0");
+        check(resumed_node_ids[1] == 1, "wh5c5rp.resumed_node1_id1");
+        check(resumed_node_ids[2] == 2, "wh5c5rp.resumed_node2_id2");
+    }
+    check(resumed_wf_id.has_value() && *resumed_wf_id == 3,
+          "wh5c5rp.resumed_wf_id3");
+
+    // The fresh-vs-resumed delta is exactly the skipped capability
+    // event: resumed ids are fresh ids shifted down by 1 for nodes at
+    // or after the capability node (index 1).
+    if (fresh_node_ids.size() == 3 && resumed_node_ids.size() == 3) {
+        check(resumed_node_ids[0] == fresh_node_ids[0],
+              "wh5c5rp.node0_id_stable");
+        check(resumed_node_ids[1] == fresh_node_ids[1] - 1,
+              "wh5c5rp.node1_id_shifted");
+        check(resumed_node_ids[2] == fresh_node_ids[2] - 1,
+              "wh5c5rp.node2_id_shifted");
+    }
+    if (fresh_wf_id.has_value() && resumed_wf_id.has_value()) {
+        check(*resumed_wf_id == *fresh_wf_id - 1,
+              "wh5c5rp.wf_id_shifted");
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -2537,6 +2749,9 @@ int main(int argc, char **argv) {
     test_p2b_frontier_never_hit(repo, work);
     test_p2c_zero_length_memo_replay(repo, work);
     test_p2e_pending_cap_unresolvable(repo, work);
+
+    // WH-5c.5 GAP 4: replay stash-rebuild parity.
+    test_wh5c5_gap4_replay_stash_parity(repo, work);
 
     std::cout << g_pass << "/" << g_checks << " e2e checks passed\n";
     return (g_pass == g_checks) ? EXIT_SUCCESS : EXIT_FAILURE;

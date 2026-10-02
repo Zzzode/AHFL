@@ -58,6 +58,15 @@ struct WorkflowSessionConfig {
     std::function<void(AgentId, std::string_view node_name, const Value &)>
         node_completed_hook;
 
+    // WH-5c.5 test seam: invoked AFTER run2 returns and its outcome is
+    // classified, BEFORE the post-run per-node output join (section 10).
+    // Receives a mutable span of the whole linear memory so a fail-closed
+    // mutation pin can corrupt the per-node output stash table or the output
+    // JSON bytes and assert the host decodes the corruption as
+    // kOutputDecodeFailed (never a silent NoneValue). Production code never
+    // sets this.
+    std::function<void(std::span<std::uint8_t>)> post_run2_memory_mutator;
+
     // The contextual capability invoker (production host capability dispatch).
     ContextualCapabilityInvoker invoker;
 

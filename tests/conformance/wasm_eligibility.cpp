@@ -237,10 +237,20 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     // honest claim; it is validated as attached to a genuinely RUNNABLE
     // artifact, and the Node runner enforces the exact set via its pinned
     // census.
+    //
+    // WH-5c.5 (GAP 4): a multi-node all-opaque workflow (no ahfl_xcode sites)
+    // RUNS on the orchestration lane and agrees on the native wasm3 lane via
+    // the guest stash-table join, but the Node oracle host predates that join
+    // (it never reads per-node stash slots and its normalization self-test
+    // assumes cap-on-node-0). Same manifest-claim treatment; the Node runner
+    // pins an exact stem set. This reason MUST NOT be used where the module
+    // actually emits ahfl_xcode sites (that is the HostTranscode reason).
     const bool declared_node_only =
         declared.node_observation_skip == Skip::EvaluatorSurfaceAwaitsKr68;
     const bool declared_host_transcode =
         declared.node_observation_skip == Skip::HostTranscodeAwaitsNodePort;
+    const bool declared_multinode_stash =
+        declared.node_observation_skip == Skip::NodeHostAwaitsMultiNodeStashJoin;
     if (declared_node_only) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
@@ -258,6 +268,15 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
                    std::string{wasm_eligibility_verdict_name(verdict)} +
                    ": " + computed.reason +
                    ") -- a host-transcode skip requires a runnable artifact";
+        }
+    } else if (declared_multinode_stash) {
+        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
+            return "manifest declares engines.wasm.node_observation_skip="
+                   "'node_host_awaits_multinode_stash_join' but the module does not emit on "
+                   "the orchestration lane (" +
+                   std::string{wasm_eligibility_verdict_name(verdict)} +
+                   ": " + computed.reason +
+                   ") -- a multi-node stash-join skip requires a runnable artifact";
         }
     } else if (declared.node_observation_skip != required_skip) {
         return "manifest's engines.wasm.node_observation_skip declaration does not match the "

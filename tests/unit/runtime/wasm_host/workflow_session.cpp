@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -3300,6 +3301,112 @@ void test_wh5b2_case3_bridge_site_oob_fail_closed(
     }
 }
 
+// ==== WH-5c.5 GAP 4 pin (d): P6 O_k corruption fails closed ====
+//
+// The per-node output join (design 12.15.19.6) reads a P6 node's output
+// from its runner's O_k block via read_value_at. A corrupt O_k block MUST
+// fail closed with kOutputDecodeFailed -- never a silent NoneValue. This
+// pin corrupts the P6 compute node's O_k bytes via the
+// post_run2_memory_mutator test seam and asserts the host decodes the
+// corruption as a hard failure.
+//
+// Fixture: wh5b_hybrid_rich_fidelity (P6 compute + opaque echo). The P6
+// node's Frame carries a Bool field; writing 0xFF to the O_k block makes
+// the Bool word 0xFFFFFFFF (not 0/1) -> BoolWordInvalid -> decode failure.
+void test_gap4_p6_ok_corruption_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_rich_fidelity.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "gap4_p6.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "gap4_p6.is_workflow");
+    check(desc.workflow_node_count == 2, "gap4_p6.two_nodes");
+    check(desc.frame_section.has_value(), "gap4_p6.frame_section");
+    if (!desc.frame_section.has_value()) {
+        return;
+    }
+    // Node 0 (compute) is the P6 node; its O_k block is node_blocks[0].
+    check(!desc.nodes.empty(), "gap4_p6.nodes_nonempty");
+    check(desc.nodes[0].is_p6, "gap4_p6.node0_is_p6");
+    check(desc.frame_section->node_blocks.size() >= 1,
+          "gap4_p6.node_blocks_nonempty");
+    if (desc.frame_section->node_blocks.empty()) {
+        return;
+    }
+    const auto ok_base = desc.frame_section->node_blocks[0].output_base;
+    const auto ok_size = desc.frame_section->node_blocks[0].output_size;
+    check(ok_base != 0, "gap4_p6.ok_base_nonzero");
+    check(ok_size > 0, "gap4_p6.ok_size_positive");
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5b_hybrid_rich_fidelity::Frame",)"
+        R"("n":1,"flag":true,)"
+        R"("color":{"_enum":"wasm::wh5b_hybrid_rich_fidelity::Color","_variant":"Green"},)"
+        R"("label":"rich"})");
+    check(input.has_value(), "gap4_p6.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    // Corrupt the P6 node's O_k block after run2 returns. The host reads
+    // the O_k block in the post-run per-node output join; 0xFF bytes make
+    // the Bool field's word 0xFFFFFFFF (not 0/1) -> BoolWordInvalid.
+    config.post_run2_memory_mutator =
+        [ok_base, ok_size](std::span<std::uint8_t> mem) {
+            if (ok_base < mem.size()) {
+                const auto n =
+                    std::min<std::size_t>(ok_size, mem.size() - ok_base);
+                std::memset(mem.data() + ok_base, 0xFF, n);
+            }
+        };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, desc, *input,
+                                           std::move(config));
+    check(result.has_value(), "gap4_p6.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    // The session ran (no pre-run setup failure); the run MUST be Failed
+    // with kOutputDecodeFailed, never Completed-with-null.
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::EvalError,
+          "gap4_p6.eval_error");
+    check(result->result.report.status ==
+              ahfl::runtime::RunTerminalStatus::Failed,
+          "gap4_p6.report_failed");
+    check(!result->result.report.output.has_value(), "gap4_p6.no_output");
+
+    bool found_decode_failed = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.output-decode-failed") {
+            found_decode_failed = true;
+            break;
+        }
+    }
+    check(found_decode_failed, "gap4_p6.found_diagnostic");
+}
+
 } // namespace
 
 int main() {
@@ -3345,6 +3452,8 @@ int main() {
     // WH-5b.2 §12.14.9 case 3: forged frame-section bridge result regions
     // beyond the fixed 64 KiB page are rejected at session admission.
     test_wh5b2_case3_bridge_site_oob_fail_closed(repo_root);
+    // WH-5c.5 GAP 4 pin (d): P6 O_k corruption fails closed.
+    test_gap4_p6_ok_corruption_fail_closed(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

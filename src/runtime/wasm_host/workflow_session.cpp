@@ -90,6 +90,16 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return regions;
 }
 
+// WH-5c.5: little-endian u32 load from an already-bounds-checked byte offset
+// (the per-node output stash slot reader; mirrors the node-events decoder's
+// load_u32).
+[[nodiscard]] std::uint32_t load_u32_le(const std::uint8_t *p) {
+    return static_cast<std::uint32_t>(p[0]) |
+           (static_cast<std::uint32_t>(p[1]) << 8) |
+           (static_cast<std::uint32_t>(p[2]) << 16) |
+           (static_cast<std::uint32_t>(p[3]) << 24);
+}
+
 // Fire state_entered_hook for a batch of new trace records. Also populates
 // states_per_node for lifecycle event emission. Fail-closed: a record whose
 // runner or state is out of range is evidence of a corrupt module (D-B: no
@@ -1799,6 +1809,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             "pending call was never reached";
     }
 
+    // WH-5c.5 test seam: a fail-closed mutation pin may corrupt the stash
+    // table / output bytes here (after run2, before the post-run join).
+    if (config.post_run2_memory_mutator) {
+        if (auto mem = engine.mutable_whole_memory(); mem.has_value()) {
+            config.post_run2_memory_mutator(*mem);
+        }
+    }
+
     // --- 9. Post-run: decode the FULL trace ring and fire remaining
     //        state_entered_hook (P6-frame) ---
     if (has_trace) {
@@ -1868,11 +1886,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // full sequence -- matching the evaluator's schedule-ordered
     // state_entered_hook.
     if (is_p6) {
-        // Only capability workflows have node-event records. An identity
-        // P6 workflow (no imports) shares the node-event region with the
-        // P6 input frame (node_blocks_base == kNodeEventLogBase), so the
-        // decode would read input bytes as event_count. Identity P6
-        // workflows have no opaque nodes anyway.
+        // Node-event records are written ONLY by the capability dispatch
+        // path, so an import-free module never writes them. Skipping the
+        // decode here is not about opaque-node presence (an identity
+        // workflow can mix P6 and opaque nodes): for an import-free P6
+        // workflow the node-event region overlaps the P6 input frame
+        // (node_blocks_base == kNodeEventLogBase), so decoding it would
+        // read input bytes as an event count.
         if (!descriptor.imports.empty()) {
             auto mem = engine.read_whole_memory();
             if (mem.has_value()) {
@@ -1888,103 +1908,174 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 config.state_entered_hook);
     }
 
-    // --- 10. Post-run: decode node events, fire node_completed_hook, and
-    //         decode P6-frame node outputs (reuse for lifecycle events) ---
-    // WH-4b: the node-event buffer is decoded unconditionally (not only when
-    // node_completed_hook is set) so node_completed is accurate for the
-    // suspended-snapshot completed_nodes projection.
+    // --- 10. Post-run: per-node output join (design 12.15.19.7) ---
+    // The completion authority is the workflow_completed_count global (NOT
+    // the node-event records, which stay decoded for capability lifecycle in
+    // 9b/9c). The scheduler bumps it once per node completion in schedule
+    // order, so the first `count` nodes completed and the rest never ran.
+    // Each completed node's output is decoded in schedule order: P6 nodes
+    // from their O_k block (read_value_at), opaque nodes from the per-node
+    // output stash table (value_from_json). Every decode failure fails
+    // closed (kOutputDecodeFailed) -- the old silent NoneValue branch is
+    // deleted big-bang (design 12.15.19.8).
     std::vector<std::optional<Value>> node_outputs(descriptor.nodes.size());
     std::vector<bool> node_completed(descriptor.nodes.size(), false);
 
-    if (descriptor.workflow_node_count > 0) {
-        auto mem = engine.read_whole_memory();
-        if (mem.has_value()) {
-            auto events = ne::decode_node_events(*mem,
-                                                 descriptor.workflow_node_count);
-            if (events.has_value()) {
-                const auto string_regions =
-                    is_p6 && descriptor.frame_section.has_value()
-                        ? build_string_regions(*descriptor.frame_section)
-                        : std::vector<StringRegion>{};
+    std::uint32_t workflow_completed_count = 0;
+    if (auto wc = engine.read_exported_global_u32(
+            "workflow_completed_count")) {
+        workflow_completed_count = *wc;
+    }
 
-                for (const auto &event : *events) {
-                    // Find the node descriptor by schedule_pos.
-                    const ahfl::backends::CoreWasmNodeDescriptor *node_desc =
-                        nullptr;
-                    std::size_t node_schedule = 0;
-                    for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
-                        if (descriptor.nodes[i].schedule_pos ==
-                            event.schedule_pos.value) {
-                            node_desc = &descriptor.nodes[i];
-                            node_schedule = i;
-                            break;
-                        }
+    // P2-4: validate workflow_completed_count against
+    // descriptor.workflow_node_count. A successful run MUST complete every
+    // scheduled node; a failed run completes at most every node. A mismatch
+    // is evidence of a corrupt module (mirrors the JS oracle's validation).
+    if (run_ok) {
+        if (workflow_completed_count != descriptor.workflow_node_count) {
+            return std::unexpected(
+                "run_workflow_session: workflow_completed_count (" +
+                std::to_string(workflow_completed_count) +
+                ") disagrees with descriptor.workflow_node_count (" +
+                std::to_string(descriptor.workflow_node_count) + ")");
+        }
+    } else {
+        if (workflow_completed_count > descriptor.workflow_node_count) {
+            return std::unexpected(
+                "run_workflow_session: workflow_completed_count (" +
+                std::to_string(workflow_completed_count) +
+                ") exceeds descriptor.workflow_node_count (" +
+                std::to_string(descriptor.workflow_node_count) + ")");
+        }
+    }
+    for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+        node_completed[i] = i < workflow_completed_count;
+    }
+
+    // WH-5c.5: the per-node output stash table (design 12.15.19.4). Only a
+    // workflow with at least one opaque (non-P6) node reserves it; stash_base
+    // is pure arithmetic from the ABI constants + node count + imports flag
+    // (no descriptor field). A corrupt module whose stash region exceeds the
+    // heap base fails closed.
+    bool has_opaque_nodes = false;
+    for (const auto &node : descriptor.nodes) {
+        if (!node.is_p6) {
+            has_opaque_nodes = true;
+            break;
+        }
+    }
+    std::uint32_t stash_base = 0;
+    bool stash_available = false;
+    if (has_opaque_nodes) {
+        const std::uint32_t n = descriptor.workflow_node_count;
+        stash_base = descriptor.imports.empty()
+                         ? irc::kNodeEventLogBase
+                         : irc::kNodeEventRecordsBase +
+                               n * irc::kNodeEventRecordBytes;
+        const std::uint64_t stash_end =
+            std::uint64_t{stash_base} +
+            std::uint64_t{n} * irc::kNodeStashRecordBytes;
+        if (stash_end <= descriptor.heap_base) {
+            stash_available = true;
+        } else if (run_ok) {
+            run_ok = false;
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::EvaluationFailed;
+            run_failure_code = std::string{wasm_diag::kOutputDecodeFailed};
+            run_failure_message =
+                "run_workflow_session: the per-node output stash region "
+                "exceeds the module heap base";
+        }
+    }
+
+    // Decode each completed node's output in schedule order and fire
+    // node_completed_hook with the real output (this also closes the old
+    // identity-workflow hook gap). On the failure path a decode error is
+    // secondary (the run already failed for a primary reason); the node
+    // keeps a nullopt output and no hook fires for it.
+    if (auto mem = engine.read_whole_memory(); mem.has_value()) {
+        const auto string_regions =
+            is_p6 && descriptor.frame_section.has_value()
+                ? build_string_regions(*descriptor.frame_section)
+                : std::vector<StringRegion>{};
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            if (i >= workflow_completed_count) {
+                continue; // not completed; node_outputs[i] stays nullopt
+            }
+            const auto &node_desc = descriptor.nodes[i];
+            std::optional<Value> decoded;
+            if (node_desc.is_p6 &&
+                descriptor.frame_section.has_value() &&
+                descriptor.wire_schema.has_value()) {
+                // P6 node: read the output from its runner's O_k block.
+                const auto &section = *descriptor.frame_section;
+                const auto &wire = *descriptor.wire_schema;
+                const auto p6_ord = node_desc.p6_block_ordinal;
+                if (p6_ord < section.node_blocks.size() &&
+                    wire.frame_roots.has_value() &&
+                    p6_ord < wire.frame_roots->node_outputs.size()) {
+                    const auto &block = section.node_blocks[p6_ord];
+                    const auto w_id =
+                        wire.frame_roots->node_outputs[p6_ord];
+                    const auto l_id = block.output_layout;
+                    FrameWalkContext ctx(section, wire);
+                    auto output = read_value_at(
+                        ctx, *mem, w_id, l_id, block.output_base,
+                        string_regions);
+                    if (output.has_value()) {
+                        decoded = std::move(*output);
                     }
-                    if (node_desc == nullptr) {
-                        if (run_ok) {
-                            return std::unexpected(
-                                "run_workflow_session: node-event record "
-                                "references unknown schedule_pos");
-                        }
-                        continue;
-                    }
-
-                    node_completed[node_schedule] = true;
-
-                    const auto runner = node_desc->runner;
-                    if (runner >= descriptor.agents.size()) {
-                        if (run_ok) {
-                            return std::unexpected(
-                                "run_workflow_session: node-event record "
-                                "runner index out of range");
-                        }
-                        continue;
-                    }
-
-                    // P6-frame: read the node output from its runner's O_k
-                    // block. WireJson/opaque: individual node outputs are not
-                    // host-observable (the module's compiled code passes them
-                    // through its own heap), so fire with Unit.
-                    // WH-5b.1: guard on the per-node is_p6 flag (not the
-                    // module-level frame contract) and index node_blocks /
-                    // node_outputs by the P6-only ordinal.
-                    Value node_output{NoneValue{}};
-                    if (node_desc->is_p6 &&
-                        descriptor.frame_section.has_value() &&
-                        descriptor.wire_schema.has_value()) {
-                        const auto &section = *descriptor.frame_section;
-                        const auto &wire = *descriptor.wire_schema;
-                        const auto p6_ord = node_desc->p6_block_ordinal;
-                        if (p6_ord < section.node_blocks.size() &&
-                            wire.frame_roots.has_value() &&
-                            p6_ord <
-                                wire.frame_roots->node_outputs.size()) {
-                            const auto &block = section.node_blocks[p6_ord];
-                            const auto w_id =
-                                wire.frame_roots->node_outputs[p6_ord];
-                            const auto l_id = block.output_layout;
-                            FrameWalkContext ctx(section, wire);
-                            auto output = read_value_at(
-                                ctx, *mem, w_id, l_id, block.output_base,
-                                string_regions);
-                            if (output.has_value()) {
-                                node_output = std::move(*output);
+                }
+            } else if (stash_available) {
+                // Opaque node: read the (ptr, len) stash slot the scheduler
+                // wrote at stash_base + schedule_pos*8 and range-check the
+                // JSON span against the fixed 64 KiB page (design
+                // 12.15.19.4/8: ptr >= heap_base, ptr+len <= 65536, both
+                // non-zero -- a forged/corrupt entry fails closed).
+                const std::size_t slot_addr =
+                    stash_base + i * irc::kNodeStashRecordBytes;
+                if (slot_addr + irc::kNodeStashRecordBytes <= mem->size()) {
+                    const auto *slot = mem->data() + slot_addr;
+                    const std::uint32_t ptr = load_u32_le(slot);
+                    const std::uint32_t len = load_u32_le(slot + 4);
+                    if (ptr != 0 && len != 0 &&
+                        ptr >= descriptor.heap_base) {
+                        const std::size_t out_end =
+                            std::size_t{ptr} + std::size_t{len};
+                        if (out_end <=
+                                irc::kCoreWasmFixedLinearMemoryCapacityBytes &&
+                            out_end <= mem->size()) {
+                            const std::string output_json(
+                                reinterpret_cast<const char *>(
+                                    mem->data() + ptr),
+                                len);
+                            auto parsed = value_from_json(output_json);
+                            if (parsed.has_value()) {
+                                decoded = std::move(*parsed);
                             }
                         }
                     }
-                    // P1-3: store the decoded output for lifecycle events
-                    // (reuse, don't decode twice).
-                    node_outputs[node_schedule] = std::move(node_output);
-                    if (config.node_completed_hook) {
-                        Value none_value{NoneValue{}};
-                        const Value &hook_output =
-                            node_outputs[node_schedule]
-                                ? *node_outputs[node_schedule]
-                                : none_value;
-                        config.node_completed_hook(
-                            AgentId{runner}, node_desc->name, hook_output);
-                    }
                 }
+            }
+            if (!decoded.has_value()) {
+                if (run_ok) {
+                    run_ok = false;
+                    run_status = RunTerminalStatus::Failed;
+                    run_failure_kind =
+                        WorkflowFailureKind::EvaluationFailed;
+                    run_failure_code =
+                        std::string{wasm_diag::kOutputDecodeFailed};
+                    run_failure_message =
+                        "run_workflow_session: node output failed to decode";
+                    break;
+                }
+                continue; // failure path: secondary, no hook
+            }
+            node_outputs[i] = std::move(decoded);
+            if (config.node_completed_hook) {
+                config.node_completed_hook(
+                    AgentId{node_desc.runner}, node_desc.name,
+                    *node_outputs[i]);
             }
         }
     }
@@ -2139,53 +2230,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
-    // --- 12. Read transition_count and workflow_completed_count globals ---
+    // --- 12. Read transition_count global ---
+    // WH-5c.5: workflow_completed_count is read and validated in section 10
+    // (the per-node output join needs it as the completion authority before
+    // the suspend snapshot and the facts builder consume node_completed).
     std::uint32_t transition_count = 0;
     if (auto tc = engine.read_exported_global_u32("transition_count")) {
         transition_count = *tc;
-    }
-    std::uint32_t workflow_completed_count = 0;
-    if (auto wc = engine.read_exported_global_u32("workflow_completed_count")) {
-        workflow_completed_count = *wc;
-    }
-
-    // P2-4: validate workflow_completed_count against
-    // descriptor.workflow_node_count. A successful run MUST complete every
-    // scheduled node; a failed run completes at most every node. A mismatch
-    // is evidence of a corrupt module (mirrors the JS oracle's validation).
-    if (run_ok) {
-        if (workflow_completed_count != descriptor.workflow_node_count) {
-            return std::unexpected(
-                "run_workflow_session: workflow_completed_count (" +
-                std::to_string(workflow_completed_count) +
-                ") disagrees with descriptor.workflow_node_count (" +
-                std::to_string(descriptor.workflow_node_count) + ")");
-        }
-    } else {
-        if (workflow_completed_count > descriptor.workflow_node_count) {
-            return std::unexpected(
-                "run_workflow_session: workflow_completed_count (" +
-                std::to_string(workflow_completed_count) +
-                ") exceeds descriptor.workflow_node_count (" +
-                std::to_string(descriptor.workflow_node_count) + ")");
-        }
-    }
-
-    // For identity workflows (no capability imports, no event buffer) the
-    // module writes no node-event records, so node_completed is derived from
-    // the workflow_completed_count global: the module increments it once per
-    // node completion (core_wasm_codegen.cpp), so the first
-    // workflow_completed_count nodes (in schedule order) completed and the
-    // rest never executed. On a failed run the node at index
-    // workflow_completed_count is the trapping node (it produced states but
-    // did not complete); subsequent nodes are Skipped. The previous
-    // state-collection heuristic (!states_per_node[i].empty()) misattributed
-    // the trapping node as Completed because a trap mid-walk still leaves
-    // state entries behind.
-    if (descriptor.imports.empty()) {
-        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
-            node_completed[i] = i < workflow_completed_count;
-        }
     }
 
     // --- 13. Build per-node run facts and finalize via the lifecycle helper ---

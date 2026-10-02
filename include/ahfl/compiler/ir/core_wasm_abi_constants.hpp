@@ -209,6 +209,35 @@ static_assert(kNodeEventRecordsBase == 1032,
 static_assert(kNodeEventRecordBytes == 40, "one node-event record is 40 bytes");
 
 // ----------------------------------------------------------------------------
+// WH-5c.5 per-node output stash table (design 12.15.19)
+// ----------------------------------------------------------------------------
+//
+// A workflow module with at least one opaque (non-P6) node reserves a fixed
+// per-node output stash table immediately ABOVE the node-event region and
+// BELOW the bump heap / P6 cursor. The scheduler writes each opaque node's
+// output (ptr, len) pair into the slot indexed by its dense schedule_pos as
+// the last act of node completion (after all OK validation, before the
+// workflow_completed_count bump), so the host can join every per-node output
+// post-run in schedule order (P6 nodes keep their O_k read_value_at path and
+// own no slot content; their slot stays zero). The slot layout is:
+//
+//   [0..4)  ptr  u32-LE  bump-heap address of the node's output JSON bytes
+//   [4..8)  len  u32-LE  byte length of the node's output JSON
+//
+// stash_base is PURE ARITHMETIC shared by the emitter and the host (no
+// descriptor field): imports.empty() ? kNodeEventLogBase (1024)
+// : kNodeEventRecordsBase + N * kNodeEventRecordBytes (1032 + 40*N). The
+// table reserves 8*N bytes ONLY when the workflow has at least one opaque
+// node; a pure-P6 workflow reserves nothing and stays byte-identical. An
+// identity workflow (no imports) reuses [1024,1032) for slot 0 safely: it
+// never writes the node-event header and the host never decodes event
+// records for it (completion is derived from workflow_completed_count).
+inline constexpr std::uint32_t kNodeStashRecordBytes = 8;
+
+static_assert(kNodeStashRecordBytes == 8,
+              "one stash slot is exactly a (ptr:i32, len:i32) pair");
+
+// ----------------------------------------------------------------------------
 // RFC 0026 FB-2: outlined-fn native recursion stack budget
 // ----------------------------------------------------------------------------
 //

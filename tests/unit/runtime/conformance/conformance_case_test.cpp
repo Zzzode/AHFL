@@ -124,6 +124,17 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             WasmEligibility::Orchestration,
         },
         {
+            "wh5c5_gap4_stash_parity.case.json",
+            "tests/golden/wasm/wh5c5_gap4_stash_parity.ahfl",
+            CaseKind::Workflow,
+            "wasm::wh5c5_gap4_stash::StashParityPipeline",
+            1,
+            1,
+            WasmEligibility::Orchestration,
+            /*evaluator=*/true,
+            WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin,
+        },
+        {
             "enum_variant_e2e.case.json",
             "tests/golden/runtime/enum_variant_e2e.ahfl",
             CaseKind::Workflow,
@@ -1098,6 +1109,27 @@ void test_malformed_manifests() {
               "wasm": {"eligible": "computation", "reason": "r",
                        "node_observation_skip": "host_transcode_awaits_node_port"}}
 })",
+                    "engines.wasm.eligible 'orchestration'");
+
+    expect_rejected("multi-node stash-join skip on a computation lane",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "x",
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "computation", "reason": "r",
+                       "node_observation_skip":
+                           "node_host_awaits_multinode_stash_join"}}
+})",
+                    "engines.wasm.node_observation_skip "
+                    "'node_host_awaits_multinode_stash_join' requires "
                     "engines.wasm.eligible 'orchestration'");
 
     expect_rejected("pending capability carries result",

@@ -156,13 +156,25 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // The Node embedded host withholds its observation because it lacks the
 // ahfl_xcode transcode adapter (WH-5b.3 host transcode building): the wasm
 // module traps at its P4D_TO_JSON / JSON_TO_P4D transcode sites. The Node
-// census is 69 agreed / 2 skipped (host_transcode_awaits_node_port).
+// census is 69 agreed / 3 skipped (2 host_transcode_awaits_node_port plus
+// 1 node_host_awaits_multinode_stash_join after WH-5c.5).
 // WH-5c.4 P0-3: the opaque-upstream construct-terminal case
 // (wh5c4_p03_opaque_upstream) also skips the Node lane (it carries
 // ahfl_xcode transcode sites the Node oracle JS port does not yet
 // implement): 69/1 -> 69/2.
+// WH-5c.5: the GAP 4 stash-parity case (wh5c5_gap4_stash_parity) skips
+// the Node lane under a SEPARATE, truthful reason
+// (node_host_awaits_multinode_stash_join): the golden is all-opaque
+// (identity -> capability -> identity) and emits NO ahfl_xcode sites, so
+// the host-transcode label would be false. The Node embedded host predates
+// the WH-5c.5 per-node stash-table join -- it never reads the guest stash
+// slots, and its capability normalization self-test assumes the capability
+// node sits at schedule position 0 (here node 0 is an identity node, so an
+// ok-null capability result finds completed_count already 1): 69/2 ->
+// 69/3. The Node observation is withheld until the JS host ports the
+// WH-5c.5 stash-table join.
 constexpr int kExpectedAgreed = 69;
-constexpr int kExpectedSkipped = 2;
+constexpr int kExpectedSkipped = 3;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
@@ -195,6 +207,20 @@ constexpr std::array<std::string_view, 2> kExpectedHostTranscodeStems{
     "wh5c4_p03_opaque_upstream",
 };
 
+// Pinned STEM SET of cases allowed to declare
+// engines.wasm.node_observation_skip=
+// 'node_host_awaits_multinode_stash_join'. The module is an all-opaque
+// multi-node workflow that emits NO ahfl_xcode sites and agrees on the native
+// wasm3 lane via the WH-5c.5 guest stash-table join; the Node oracle host
+// predates that join (no per-node stash reads; its normalization self-test
+// assumes the capability sits at schedule position 0). This reason is
+// deliberately distinct from host_transcode_awaits_node_port so a transcode
+// gap can never be mislabeled as a stash-join gap (or vice versa). Keep
+// sorted.
+constexpr std::array<std::string_view, 1> kExpectedMultiNodeStashStems{
+    "wh5c5_gap4_stash_parity",
+};
+
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
@@ -205,6 +231,10 @@ std::vector<std::string> g_node_only_stems;
 // support (host_transcode_awaits_node_port); compared against
 // kExpectedHostTranscodeStems on a full run.
 std::vector<std::string> g_host_transcode_stems;
+// Stems that skipped the Node observation because the Node host predates the
+// WH-5c.5 multi-node stash-table join; compared against
+// kExpectedMultiNodeStashStems on a full run.
+std::vector<std::string> g_multinode_stash_stems;
 
 void check(bool condition, std::string_view name) {
     if (!condition) {
@@ -513,12 +543,18 @@ int run_one(const CaseEntry &entry,
     //    and the native wasm3 lane agrees, but the Node embedded host lacks the
     //    ahfl_xcode transcode adapter (the C++ WH-5b.3 transcode landed; the
     //    Node oracle JS port is still a stub), so the observation is withheld.
+    //  - the multi-node stash-join lane (NodeHostAwaitsMultiNodeStashJoin):
+    //    an all-opaque multi-node workflow emits no transcode sites and agrees
+    //    natively via the WH-5c.5 stash table, but the Node host predates that
+    //    join, so the observation is withheld.
     const bool node_only =
         declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
     const bool host_transcode_skip =
         declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
+    const bool multinode_stash_skip =
+        declared_skip == WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin;
     if (declared_skip != WasmNodeObservationSkip::None && !node_only &&
-        !host_transcode_skip) {
+        !host_transcode_skip && !multinode_stash_skip) {
         std::cerr << "FAIL: " << label
                   << " emits a comparable module but its manifest declares a "
                      "engines.wasm.node_observation_skip expectation; the skip did not "
@@ -545,6 +581,21 @@ int run_one(const CaseEntry &entry,
         std::cout << "SKIP[77] " << label
                   << ": Node embedded host lacks ahfl_xcode transcode support "
                      "(Node oracle JS port of ahfl_xcode not yet landed)\n";
+        return 77;
+    }
+
+    // The WH-5c.5 multi-node stash-join lane: the module is an all-opaque
+    // multi-node workflow with no ahfl_xcode sites; the native wasm3 lane
+    // observes every node output through the guest stash table, but the Node
+    // oracle host never reads those slots and its capability normalization
+    // self-test assumes cap-on-node-0. Withhold until the JS host ports the
+    // WH-5c.5 stash-table join.
+    if (multinode_stash_skip) {
+        ++g_skipped;
+        g_multinode_stash_stems.push_back(stem);
+        std::cout << "SKIP[77] " << label
+                  << ": Node embedded host lacks the WH-5c.5 multi-node "
+                     "stash-table join (all-opaque workflow, no transcode sites)\n";
         return 77;
     }
 
@@ -752,6 +803,35 @@ int mode_verify(const fs::path &repo_root,
                 std::cerr << (i ? ", " : "") << expected_ht_stems[i];
             }
             std::cerr << "} (an un-reviewed case moved onto the host-transcode lane?)\n";
+            ++g_failures;
+        }
+        // Exact-set pin of the WH-5c.5 multi-node stash-join
+        // (node_host_awaits_multinode_stash_join) stems: keeps the two
+        // Node-host gap reasons disjoint -- a case that really traps at
+        // ahfl_xcode sites cannot be filed under the stash-join gap.
+        std::sort(g_multinode_stash_stems.begin(),
+                  g_multinode_stash_stems.end());
+        g_multinode_stash_stems.erase(
+            std::unique(g_multinode_stash_stems.begin(),
+                        g_multinode_stash_stems.end()),
+            g_multinode_stash_stems.end());
+        std::vector<std::string> expected_mn_stems;
+        expected_mn_stems.reserve(kExpectedMultiNodeStashStems.size());
+        for (const std::string_view s : kExpectedMultiNodeStashStems) {
+            expected_mn_stems.emplace_back(s);
+        }
+        if (g_multinode_stash_stems != expected_mn_stems) {
+            std::cerr << "FAIL: multi-node stash-join "
+                         "(node_host_awaits_multinode_stash_join) stem set is {";
+            for (std::size_t i = 0; i < g_multinode_stash_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << g_multinode_stash_stems[i];
+            }
+            std::cerr << "} but the pinned set is {";
+            for (std::size_t i = 0; i < expected_mn_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << expected_mn_stems[i];
+            }
+            std::cerr << "} (an un-reviewed case moved onto the multi-node "
+                         "stash-join lane?)\n";
             ++g_failures;
         }
     }

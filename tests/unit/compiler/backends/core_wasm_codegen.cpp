@@ -309,10 +309,11 @@ static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
 // A linear-chain workflow of exactly `node_count` nodes, ALL targeting a single
 // packaged capability-bearing instance (packaged_instances stays 1; a repeated
 // capability across nodes is legal), node i reading node i-1's output (node 0
-// reads the workflow input). Drives the node-event region's compile-time capacity
-// boundary (N=1612 fits the 64 KiB page at heap_base 65512; N=1613 is
-// RESOURCE_EXHAUSTED) through the real public emitter, exercising the actual plan
-// carriers + preflight, not a copied formula.
+// reads the workflow input). Drives the node-event + stash region's compile-time
+// capacity boundary (WH-5c.5: every node is opaque, so 48 bytes/node; N=1343
+// fits the 64 KiB page at heap_base 65496; N=1344 is RESOURCE_EXHAUSTED) through
+// the real public emitter, exercising the actual plan carriers + preflight, not a
+// copied formula.
 static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t node_count) {
     using namespace ahfl::ir;
     using namespace ahfl::ir::core;
@@ -364,10 +365,16 @@ static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t
         workflow.storage.exprs.push_back(CoreExpr{std::move(out), std::nullopt, frame_value});
     }
 
+    // WH-5c.5: attach a non-empty SourceRange to each region's first
+    // statement so the capacity-failure diagnostic carries a SourceRange
+    // (design 12.15.19.8 / Principle 5); the entry node's range is the
+    // attributable site the emitter resolves.
     const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
         auto region = std::make_unique<CoreRegion>();
-        region->statements.push_back(CoreStmt{CoreLetStmt{value, expr}, std::nullopt});
-        region->statements.push_back(CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
+        region->statements.push_back(
+            CoreStmt{CoreLetStmt{value, expr}, ahfl::SourceRange{1, 2}});
+        region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
         return region;
     };
     for (std::uint32_t i = 0; i < node_count; ++i) {
@@ -1735,21 +1742,26 @@ int main() {
         const bool traps_before_effect =
             current_body == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}} &&
             step_body == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}};
-        const bool runners_are_frame_opaque =
-            first_runner.has_value() && second_runner.has_value() &&
-            std::none_of(first_runner->begin(), first_runner->end(), [](std::uint8_t byte) {
-                return byte >= 0x28 && byte <= 0x3e;
-            }) &&
-            std::none_of(second_runner->begin(), second_runner->end(), [](std::uint8_t byte) {
-                return byte >= 0x28 && byte <= 0x3e;
-            }) &&
-            workflow_run.has_value() && workflow_run2.has_value() &&
-            std::none_of(workflow_run->begin(), workflow_run->end(), [](std::uint8_t byte) {
-                return byte >= 0x28 && byte <= 0x3e;
-            }) &&
-            std::none_of(workflow_run2->begin(), workflow_run2->end(), [](std::uint8_t byte) {
+        const auto has_no_memory_ops = [](const std::vector<std::uint8_t> &body) {
+            return std::none_of(body.begin(), body.end(), [](std::uint8_t byte) {
                 return byte >= 0x28 && byte <= 0x3e;
             });
+        };
+        // WH-5c.5: the scheduler (run2) now emits the per-node output stash
+        // stores -- two i32.store (0x36) pairs per opaque node. It must still
+        // emit no loads and no stores other than i32.store (no frame memory
+        // ops, no wider stores).
+        const auto has_only_i32_stores = [](const std::vector<std::uint8_t> &body) {
+            return std::none_of(body.begin(), body.end(), [](std::uint8_t byte) {
+                return (byte >= 0x28 && byte <= 0x35) || (byte >= 0x37 && byte <= 0x3e);
+            });
+        };
+        const bool runners_are_frame_opaque =
+            first_runner.has_value() && second_runner.has_value() &&
+            has_no_memory_ops(*first_runner) &&
+            has_no_memory_ops(*second_runner) &&
+            workflow_run.has_value() && has_no_memory_ops(*workflow_run) &&
+            workflow_run2.has_value() && has_only_i32_stores(*workflow_run2);
         const bool schedule_calls_in_order =
             workflow_run2.has_value() &&
             small_fixture_call_indices(*workflow_run2) ==
@@ -1962,13 +1974,17 @@ int main() {
                   cap_schedule_calls,
               "E4-B2-C run2 latch-first + body-before-count + checked alloc + shifted dispatch");
 
-        // RFC 0026 E4-B2-C node-event region capacity boundary through the real
-        // public emitter (scaled Core builder, single reused capability instance).
-        // N=1612: heap_base = align_up(1024 + 8 + 1612*40, 8) = 65512 <= 65536, so
-        // the module emits with no RESOURCE/BINARY diagnostic. N=1613: 65552 >
-        // 65536, so it fails closed with EXACTLY wasm.RESOURCE_EXHAUSTED and no
-        // artifact (never a misreported BINARY_OVERFLOW).
-        const auto fits = make_n_node_capability_workflow(1612);
+        // RFC 0026 E4-B2-C + WH-5c.5 node-event + stash region capacity
+        // boundary through the real public emitter (scaled Core builder,
+        // single reused capability instance). Every node is opaque, so the
+        // low-page budget is 48 bytes/node (40-byte event record + 8-byte
+        // stash slot, design 12.15.19.4): heap_base = align_up(1032 + 48*N,
+        // 8). N=1343: 65496 <= 65536, so the module emits with no
+        // RESOURCE/BINARY diagnostic. N=1344: 65544 > 65536, so it fails
+        // closed with EXACTLY wasm.RESOURCE_EXHAUSTED (carrying a
+        // SourceRange, design 12.15.19.8) and no artifact (never a
+        // misreported BINARY_OVERFLOW).
+        const auto fits = make_n_node_capability_workflow(1343);
         const auto fits_layouts = compute_core_layouts(fits);
         const auto fits_result =
             (verify_core_program(fits).ok() && fits_layouts.ok() &&
@@ -1982,9 +1998,9 @@ int main() {
                                     backends::core_wasm_diag::kResourceExhausted) &&
                   !has_codegen_code(fits_result,
                                     backends::core_wasm_diag::kBinaryOverflow),
-              "E4-B2-C N=1612 node-event region fits the 64 KiB page and emits");
+              "WH-5c.5 N=1343 event+stash region fits the 64 KiB page and emits");
 
-        const auto exceeds = make_n_node_capability_workflow(1613);
+        const auto exceeds = make_n_node_capability_workflow(1344);
         const auto exceeds_layouts = compute_core_layouts(exceeds);
         const auto exceeds_result =
             (verify_core_program(exceeds).ok() && exceeds_layouts.ok() &&
@@ -1993,17 +2009,18 @@ int main() {
                       exceeds, *exceeds_layouts.table,
                       {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi})
                 : backends::CoreWasmCodegenResult{};
-        // Exactly one diagnostic, the stable range-less RESOURCE_EXHAUSTED code,
-        // and no artifact — locking both the priority (no BINARY_OVERFLOW) and the
-        // range-less/no-echo property of the new stable diagnostic.
+        // Exactly one diagnostic, the stable RESOURCE_EXHAUSTED code carrying
+        // a SourceRange (Principle 5, design 12.15.19.8), and no artifact --
+        // locking both the priority (no BINARY_OVERFLOW) and the
+        // SourceRange/no-echo property of the stable diagnostic.
         const bool exceeds_exact =
             !exceeds_result.artifact.has_value() &&
             exceeds_result.diagnostics.size() == 1 &&
             exceeds_result.diagnostics.front().code ==
                 backends::core_wasm_diag::kResourceExhausted &&
-            !exceeds_result.diagnostics.front().source_range.has_value();
+            exceeds_result.diagnostics.front().source_range.has_value();
         check(exceeds_exact,
-              "E4-B2-C N=1613 fails closed with exactly one range-less RESOURCE_EXHAUSTED");
+              "WH-5c.5 N=1344 fails closed with exactly one SourceRange RESOURCE_EXHAUSTED");
 
         auto workflow_capability = make_e3_workflow_program();
         CoreCapabilityDecl workflow_cap;

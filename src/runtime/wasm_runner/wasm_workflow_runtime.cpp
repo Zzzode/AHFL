@@ -151,6 +151,8 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         std::move(config_.hooks.capability_result_observer);
     session_config.node_completed_hook =
         std::move(config_.hooks.node_completed_hook);
+    session_config.post_run2_memory_mutator =
+        std::move(config_.post_run2_memory_mutator);
     session_config.name_resolver = config_.name_resolver;
 
     // WH-4b: intent-emitting wrapper. Mirrors the evaluator at

@@ -182,6 +182,9 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // WH-5c.5 GAP 4: three-node identity+capability+identity workflow; the
+        // per-node output stash table makes every node output host-observable.
+        {"wh5c5_gap4_stash_parity.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7: landed KR6.6 (P6) computation slices emit cleanly on the agent
         // lane with an identity final forwarding the borrowed wire frame.
