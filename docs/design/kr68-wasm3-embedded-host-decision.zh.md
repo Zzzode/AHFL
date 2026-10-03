@@ -4247,3 +4247,11 @@ KR6.8 WH-6 在 HEAD 952f0c4d 之上 LANDED(builder -> 独立对抗 review -> fix
 - manifest 车道**运行时**(WH-5c.6 node/capability)诊断的 line:col 仍需 session locator 按 node=workflow 文件 / capability=各自文件解析,§12.16.6 边界继续有效,留独立未来 slice。
 - CoreFnDecl 无 source_module,verify_fns 的 fn 级诊断不归属模块(§12.16.13 P2-3,backlog)。
 - 评估器 WorkflowRuntime 保留至 WH-9 原子删除;WH-7(REPL)/WH-8(DAP)按 §12.7.3 顺序各自 cutover,§12.7.1 WASM=OFF 产品策略两 slice 继承。
+
+### 12.17.4 落地后全套测试修复(2026-10-03):workflow 作用域越界解引用 P0
+
+WH-6 提交(91ddd558)后的完整无标签 ctest(594 项)暴露一个定向评审集未覆盖的 P0:`ahfl.backends.wasm_all`(#371,`ahfl_core_wasm_codegen_tests`)确定性 `std::bad_alloc` 中止。
+
+- 根因:`emit_core_wasm` workflow 分支在安装 `ActiveSourceModuleScope` 时直接索引 `program.workflows[target.value].source_module`,该索引发生在**越界入口检查之前**。测试以 `CoreWorkflowId{9}`(程序仅 1 个 workflow)断言 fail-closed `kEntryNotFound`,越界读到的 `source_module` 是垃圾字节,由 string_view 构造 std::string 时按 7.5e18 字节容量抛 bad_alloc。
+- 修复(one-big-bang,无 shim):在作用域安装前先做 `workflow->value >= program.workflows.size()` 越界检查,越界即发 whole-program `kEntryNotFound` 并返回(与 §12.16/§12.16.12 "entry-resolution 诊断故意 module 为空" 一致;`build_workflow_plan` 内部原有同名检查保留,供其其他调用者)。审计另两个作用域站点均安全:build_workflow_plan :13582 在自身检查之后;build_agent_plan :11178 有 agent 越界检查 + flow null 检查。
+- 验证:复现(gdb 栈定位到 :19490/:1218)→ 修复后 #371 单独通过(3.31s)→ wasm 标签 88/88(4 个 wasmtime skip 为预期)。教训记入流程:codegen 改动的定向集必须包含 ahfl_core_wasm_codegen_tests(#371),不能只跑 CLI/runner 侧。

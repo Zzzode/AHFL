@@ -19483,6 +19483,15 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     }
 
     if (const auto *workflow = std::get_if<CoreWorkflowId>(&target.entry)) {
+        // kr68 §12.16: out-of-range entry resolution is a whole-program reject
+        // with no owning decl; it must fire BEFORE the workflow scope indexes
+        // the declaration vector (build_workflow_plan re-checks for its other
+        // callers).
+        if (workflow->value >= program.workflows.size()) {
+            add_diag(
+                result, core_wasm_diag::kEntryNotFound, "explicit Core workflow entry is out of range");
+            return result;
+        }
         // kr68 §12.16: every reject in the workflow branch (planning, wire-
         // schema projection, encoding) attributes to the workflow
         // declaration's owning module.
