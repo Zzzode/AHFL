@@ -1924,8 +1924,26 @@ add_test(NAME ahfl.repl.repl_all
 )
 
 add_test(NAME ahfl.repl.process_smoke
-    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl>
+    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl> baseline
 )
+
+# RFC 0026 KR6.8 WH-7 (kr68 §12.8.10.9): WASM=ON eval smoke. Gated on the
+# backend option so a WASM=OFF build does not register it (the eval path
+# refuses there; see the wasm-off registration below).
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.repl.process_smoke_wasm
+        COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl> wasm
+    )
+endif()
+
+# WH-7: WASM=OFF eval refusal smoke. Registered only when the backend is
+# disabled; the eval path returns the byte-exact refusal while :type and the
+# Unit short-circuit stay functional.
+if(NOT AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.repl.process_smoke_wasm_off
+        COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl> wasm-off
+    )
+endif()
 
 add_test(NAME ahfl.dap.basic_all
     COMMAND $<TARGET_FILE:ahfl_tooling_dap_tests>

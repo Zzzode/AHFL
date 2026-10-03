@@ -5,11 +5,19 @@
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
-#include "runtime/evaluator/evaluator.hpp"
+#include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "ahfl/compiler/semantics/types.hpp"
+#include "runtime/value/value.hpp"
+// RFC 0026 KR6.8 WH-7 (kr68 §12.8.10): the wasm3-backed agent runner. Included
+// ungated exactly like src/tooling/cli/workflow_run.cpp (WH-6): the header
+// chain is self-contained (pimpl engine, no vendored wasm3 headers), and only
+// the eval body is #ifdef-gated so a WASM=OFF build links without the runner.
+#include "runtime/wasm_runner/wasm_agent_runner.hpp"
 #include "verification/formal/bmc.hpp"
 #include "verification/formal/nuxmv_backend.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <queue>
 #include <sstream>
@@ -24,12 +32,18 @@ namespace ahfl::repl {
 
 namespace {
 
+// The compiler pipeline phase that produced a failure. infer_repl_type adds a
+// fourth Internal phase for post-typecheck extraction-invariant failures.
+enum class PipelineFailurePhase { Parse, Resolve, Typecheck };
+
 struct PipelineResult {
     bool success = false;
     std::string error;
     ahfl::ParseResult parse_result;
     ahfl::ResolveResult resolve_result;
     ahfl::TypeCheckResult typecheck_result;
+    // Only meaningful when !success: the phase that produced `error`.
+    PipelineFailurePhase failure_phase{PipelineFailurePhase::Parse};
 };
 
 PipelineResult run_pipeline(const std::string &source) {
@@ -42,6 +56,7 @@ PipelineResult run_pipeline(const std::string &source) {
             oss << diag.message << "\n";
         }
         p.error = oss.str().empty() ? "parse error" : oss.str();
+        p.failure_phase = PipelineFailurePhase::Parse;
         return p;
     }
 
@@ -53,6 +68,7 @@ PipelineResult run_pipeline(const std::string &source) {
             oss << diag.message << "\n";
         }
         p.error = oss.str().empty() ? "resolution error" : oss.str();
+        p.failure_phase = PipelineFailurePhase::Resolve;
         return p;
     }
 
@@ -64,6 +80,7 @@ PipelineResult run_pipeline(const std::string &source) {
             oss << diag.message << "\n";
         }
         p.error = oss.str().empty() ? "type error" : oss.str();
+        p.failure_phase = PipelineFailurePhase::Typecheck;
         return p;
     }
 
@@ -71,26 +88,96 @@ PipelineResult run_pipeline(const std::string &source) {
     return p;
 }
 
-std::string default_type_handler(const std::string &input) {
-    // Wrap input as a const declaration to get type inference
-    std::string wrapped = "const __repl_expr__ = " + input + ";";
+// Stage-1 type inference for a REPL expression (kr68 §12.8.10.2).
+//
+// Wraps the expression in a probe fn whose unannotated `let` binding captures
+// the expression's inferred type on the TypedProgram let statement. A const
+// wrapper cannot work: constDecl requires an explicit type annotation, and the
+// leading-underscore name is an illegal IDENT. The fn-wrapper shape is the
+// proven mechanism — every fn body is typechecked even when never called.
+//
+// The wrapper is newline-delimited after the expr (P1-1): a trailing line
+// comment (`1 + 2 // c`) would otherwise eat the wrapper tail (`; return
+// {}; }`) on the same physical line. WS skips newlines, so the template
+// shape is unchanged.
+//
+// `failure_phase` is only meaningful when `type == nullptr`. Parse/Resolve
+// mirror the pipeline phase; Internal means the probe fn compiled but the
+// TypedProgram extraction invariants broke (a compiler-invariant violation).
+// The eval handler uses it to decide whether the stage-1 error or the
+// declaration-fallback parse dump is the honest face (P2-2).
+enum class InferFailurePhase { Parse, Resolve, Typecheck, Internal };
+
+struct ReplInferredType {
+    ahfl::TypePtr type{nullptr};
+    InferFailurePhase failure_phase{InferFailurePhase::Internal};
+};
+
+[[nodiscard]] ReplInferredType
+infer_repl_type(const std::string &expr, std::string &error) {
+    ReplInferredType result;
+    const std::string wrapped =
+        "fn repl_probe() -> Unit { let repl_val = " + expr + "\n; return {}; }";
     auto pipeline = run_pipeline(wrapped);
     if (!pipeline.success) {
-        return "Error: " + pipeline.error;
+        error = pipeline.error;
+        switch (pipeline.failure_phase) {
+        case PipelineFailurePhase::Parse:
+            result.failure_phase = InferFailurePhase::Parse;
+            break;
+        case PipelineFailurePhase::Resolve:
+            result.failure_phase = InferFailurePhase::Resolve;
+            break;
+        case PipelineFailurePhase::Typecheck:
+            result.failure_phase = InferFailurePhase::Typecheck;
+            break;
+        }
+        return result;
     }
 
-    // Extract type from typed_program expressions
-    const auto &expressions = pipeline.typecheck_result.typed_program.expressions;
-    if (!expressions.empty()) {
-        // Return the last expression type found
-        const auto &last = expressions.back();
-        if (last.type) {
-            std::ostringstream oss;
-            oss << last.type->describe();
-            return oss.str();
+    const auto &program = pipeline.typecheck_result.typed_program;
+    for (const auto &decl : program.declarations) {
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl.payload);
+        if (fn == nullptr || fn->local_name != "repl_probe") {
+            continue;
         }
+        if (fn->body_block_index == UINT32_MAX ||
+            fn->body_block_index >= program.blocks.size()) {
+            error = "(internal) repl type extraction failed: repl_probe body block index is "
+                    "out of range";
+            return {};
+        }
+        const auto &block = program.blocks[fn->body_block_index];
+        if (block.statement_indexes.empty() ||
+            block.statement_indexes.front() >= program.statements.size()) {
+            error = "(internal) repl type extraction failed: repl_probe body has no statements";
+            return {};
+        }
+        const auto &stmt = program.statements[block.statement_indexes.front()];
+        if (stmt.kind != ahfl::TypedStmtKind::Let || stmt.target_name != "repl_val" ||
+            stmt.let_type_ref_strategy != ahfl::LetTypeRefStrategy::FromInitializerType) {
+            error = "(internal) repl type extraction failed: first statement is not the "
+                    "repl_val let binding";
+            return {};
+        }
+        if (stmt.let_type == nullptr) {
+            error = "(internal) repl type extraction failed: repl_val let has no inferred type";
+            return {};
+        }
+        result.type = stmt.let_type;
+        return result;
     }
-    return "(type could not be determined)";
+    error = "(internal) repl type extraction failed: repl_probe declaration not found";
+    return result;
+}
+
+std::string default_type_handler(const std::string &input) {
+    std::string error;
+    auto inferred = infer_repl_type(input, error);
+    if (inferred.type == nullptr) {
+        return "Error: " + error;
+    }
+    return inferred.type->describe();
 }
 
 std::string default_verify_handler(const std::string &input) {
@@ -267,17 +354,69 @@ std::string default_simulate_handler(const std::string &input) {
     return result.str();
 }
 
+// Map a WorkflowStatus to its enumerator name (P2-1). The REPL renders the
+// name, not the raw int, so a non-Completed run is actionable without a
+// header lookup. [[maybe_unused]]: only the WASM=ON eval lane reaches a
+// non-Completed run; WASM=OFF refuses before running.
+[[maybe_unused]] std::string_view
+workflow_status_name(ahfl::runtime::WorkflowStatus status) noexcept {
+    switch (status) {
+    case ahfl::runtime::WorkflowStatus::Completed:
+        return "Completed";
+    case ahfl::runtime::WorkflowStatus::NodeFailed:
+        return "NodeFailed";
+    case ahfl::runtime::WorkflowStatus::DependencyFailed:
+        return "DependencyFailed";
+    case ahfl::runtime::WorkflowStatus::EvalError:
+        return "EvalError";
+    case ahfl::runtime::WorkflowStatus::Suspended:
+        return "Suspended";
+    }
+    return "Unknown";
+}
+
+// Render the first diagnostic's code + message with the CLI's punctuation
+// (workflow_run.cpp renders `error [code]: message`; the REPL already carries
+// the Error: severity prefix, so only the code + message tail is appended).
+// [[maybe_unused]]: only the WASM=ON eval lane reads run diagnostics.
+[[maybe_unused]] std::string
+render_first_diagnostic(const ahfl::DiagnosticBag &diagnostics) {
+    const auto &entries = diagnostics.entries();
+    if (entries.empty()) {
+        return {};
+    }
+    const auto &diag = entries.front();
+    std::string rendered;
+    if (diag.code.has_value()) {
+        rendered += "[";
+        rendered += *diag.code;
+        rendered += "]: ";
+    }
+    rendered += diag.message;
+    return rendered;
+}
+
 std::string default_eval_handler(const std::string &input) {
-    // Try to parse and evaluate as a program with a const expression
-    std::string wrapped = "const __repl_result__ = " + input + ";";
-    auto pipeline = run_pipeline(wrapped);
-    if (!pipeline.success) {
-        // Try direct pipeline
+    // Stage-1: infer the expression type via the fn-wrapper probe.
+    std::string error;
+    auto inferred = infer_repl_type(input, error);
+    if (inferred.type == nullptr) {
+        // Declaration fallback: declaration-bearing inputs (const/struct/fn/...)
+        // cannot be wrapped in the probe fn, so a stage-1 failure on a
+        // declaration input is expected. Emit the IR dump as before.
         auto direct = run_pipeline(input);
         if (!direct.success) {
+            // P2-2: a stage-1 Typecheck (or Internal) failure means the input
+            // IS a well-formed expression whose real diagnostic is the
+            // stage-1 type error; the fallback top-level parse dump would
+            // mask it. Parse/Resolve stage-1 failures defer to the fallback
+            // error (the pinned nominal/resolve face, §12.8.10.12 1.4).
+            if (inferred.failure_phase != InferFailurePhase::Parse &&
+                inferred.failure_phase != InferFailurePhase::Resolve) {
+                return "Error: " + error;
+            }
             return "Error: " + direct.error;
         }
-        // Successfully parsed - emit IR summary
         auto ir = ahfl::lower_program_ir(
             *direct.parse_result.program, direct.resolve_result, direct.typecheck_result);
         std::ostringstream oss;
@@ -285,25 +424,114 @@ std::string default_eval_handler(const std::string &input) {
         return oss.str();
     }
 
+    // Unit short-circuit: a Unit-typed expression renders as {} without a
+    // wasm run — the codegen lane rejects a Unit output struct field.
+    if (inferred.type->holds<ahfl::types::UnitT>()) {
+        std::ostringstream oss;
+        ahfl::runtime::print_value(ahfl::runtime::Value{ahfl::runtime::UnitValue{}}, oss);
+        return oss.str();
+    }
+
+#ifdef AHFL_ENABLE_BACKEND_WASM
+    // Stage-2: synthetic two-state agent wrapping the expression as its
+    // output. Zero-field input struct (proven to survive the full pack/run/
+    // read pipeline), one-field output struct carrying the expression value.
+    // No module declaration (would prefix nominal types with repl::), no pub
+    // (prologue types are package-internal). The prologue is empty: the REPL
+    // takes one expression per line, and declaration-bearing inputs are
+    // handled by the fallback above.
+    //
+    // P1-1: the state Done line is newline-delimited after the expr so a
+    // trailing line comment (`1 + 2 // c`) cannot eat the closing `};`.
+    const std::string synthetic =
+        "struct ReplIn {}\n"
+        "struct ReplOut {\n"
+        "    value: " + inferred.type->describe() + ";\n"
+        "}\n"
+        "agent ReplAgent {\n"
+        "    input: ReplIn;\n"
+        "    context: Unit;\n"
+        "    output: ReplOut;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "flow for ReplAgent {\n"
+        "    state Init { goto Done; }\n"
+        "    state Done { return ReplOut { value: " + input + "\n        }; }\n"
+        "}\n";
+
+    auto pipeline = run_pipeline(synthetic);
+    if (!pipeline.success) {
+        return "Error: " + pipeline.error;
+    }
     auto ir = ahfl::lower_program_ir(
         *pipeline.parse_result.program, pipeline.resolve_result, pipeline.typecheck_result);
 
-    // Try to find a const and evaluate its initializer
-    for (const auto &decl : ir.declarations) {
-        auto *constant = std::get_if<ahfl::ir::ConstDecl>(&decl);
-        if (constant == nullptr)
-            continue;
-        if (constant->name == "__repl_result__" && constant->value) {
-            ahfl::evaluator::EvalContext ctx;
-            auto eval_result = ahfl::evaluator::eval_expr(*constant->value, ctx);
-            if (!eval_result.has_errors()) {
-                std::ostringstream val_oss;
-                ahfl::runtime::print_value(eval_result.value, val_oss);
-                return val_oss.str();
-            }
-        }
+    ahfl::runtime::wasm_runner::WasmAgentRunnerConfig config;
+    // Defensive: the synthetic agent declares zero capabilities, so the runner
+    // never reaches an import. This invoker only fires on a compiler invariant
+    // violation, and fails closed.
+    config.invoker = [](const ahfl::runtime::CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<ahfl::runtime::Value> &)
+        -> ahfl::runtime::CapabilityCallResult {
+        return ahfl::runtime::CapabilityCallResult{
+            .status = ahfl::runtime::CapabilityCallStatus::Error,
+            .error_message = "REPL evaluation agent has no capabilities",
+        };
+    };
+
+    const ahfl::runtime::Value repl_input{
+        ahfl::runtime::StructValue{.type_name = "", .fields = ahfl::runtime::FieldMap{}}};
+
+    auto run_result = ahfl::runtime::wasm_runner::run_wasm_agent(
+        ir, "ReplAgent", repl_input, std::move(config));
+    if (!run_result.has_value()) {
+        return "Error: " + run_result.error();
     }
-    return "(evaluation produced no result)";
+
+    const auto &workflow_result = run_result->result;
+    if (workflow_result.status() != ahfl::runtime::WorkflowStatus::Completed) {
+        // P2-1: render the enumerator NAME (not the raw int) and append the
+        // first diagnostic's code + message in the CLI's punctuation, so the
+        // failure is actionable (e.g. a div-by-zero trap surfaces
+        // `[wasm.trap]: run_wasm_agent: runv trapped`).
+        std::string message =
+            "Error: agent did not complete (status: " +
+            std::string(workflow_status_name(workflow_result.status())) + ")";
+        if (const auto diagnostic = render_first_diagnostic(workflow_result.diagnostics);
+            !diagnostic.empty()) {
+            message += ": ";
+            message += diagnostic;
+        }
+        return message;
+    }
+    const ahfl::runtime::Value *output = workflow_result.output();
+    if (output == nullptr) {
+        return "Error: agent produced no output";
+    }
+    const auto *frame = std::get_if<ahfl::runtime::StructValue>(&output->node);
+    if (frame == nullptr) {
+        return "Error: agent output is not a struct";
+    }
+    const ahfl::runtime::Value *value = frame->fields.get("value");
+    if (value == nullptr) {
+        return "Error: agent output struct has no value field";
+    }
+    std::ostringstream oss;
+    ahfl::runtime::print_value(*value, oss);
+    return oss.str();
+#else
+    // WASM=OFF (kr68 §12.8.5): the eval path refuses with an actionable
+    // diagnostic. Stage-1 inference, the Unit short-circuit, and the
+    // declaration fallback above stay functional (pure compiler/value code).
+    return "Error: evaluation requires the embedded wasm engine; this build was "
+           "configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default "
+           "(ON) to evaluate expressions.";
+#endif
 }
 
 } // namespace

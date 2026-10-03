@@ -1469,6 +1469,251 @@ Error: evaluation requires the embedded wasm engine; this build was configured w
 
 **跨切片注记(WH-8 继承):** DAP 的 WASM=OFF 策略(§12.7.1)、facade config 的 hooks/cancellation/monotonic_clock 字段(§12.7.2 推迟项)、ctor 编译失败语义(§12.7.8)均由 WH-8 继承,不再重开决策。DAP 切换(`debug_session.cpp:291` `unique_ptr<WorkflowRuntime>` → `WasmWorkflowRuntime`)是 hooks 同签名的机械替换(`WasmRuntimeHooks` 已携带全部 5 个 hook,`wasm_runtime_hooks.hpp`),加 cancellation 在 import 边界检查。
 
+## 12.8.10 WH-7 §12.8 修订记录(2026-10-03,dedicated decision agent,no human gate)
+
+WH-7 builder 在编码前 STOP(coordinator 已独立复现全部事实):§12.8.1 的逐字合成形状在 HEAD `b9c75736` 无效。专用决策代理对 HEAD 逐条复核,并用 5 个 scratch harness(v1-v5,已全部删除,工作树零残留)在真实 wasm3 车道端到端实证后给出本修订。本节是 §12.8 的权威修订;builder 按 12.8.10.2 / 12.8.10.3 / 12.8.10.9 / 12.8.10.10 实现。
+
+### 12.8.10.1 Coordinator 验证的无效事实(file:line)
+
+**无效 1 — stage-1 const 包装不可解析。** `grammar/AHFL.g4:121` `constDecl: 'const' IDENT ':' type_ '=' constExpr ';';` 强制显式类型标注;`grammar/AHFL.g4:717` `IDENT: LETTER (LETTER | DIGIT | '_')*;` 禁止前导下划线。`const __repl_result__ = <expr>;` lex 为 stray `_`;shipped 的 `:type` handler(`repl.cpp:76`)与 eval handler(`repl.cpp:272`)对真实表达式从未工作过(`:type 1 + 2` 实测报 `mismatched input '_' expecting IDENT`)。git archaeology:自 `62b38665` 起;unit tests 从未驱动 default eval handler。
+
+**无效 2 — agent I/O 为 Unit 被 schema 边界拒绝。** `src/compiler/semantics/typecheck.cpp:2688-2702` `check_schema_boundary_decl_type` 仅 `StructT` 通过;UnitT 唯一例外是 `SchemaBoundaryKind::AgentContextDefault`(仅 `context:` 槽位)。实测 `input: Unit` / `output: Unit` 均报 "must resolve to a struct type"。
+
+**无效 3 — 名称 `__repl__` 本身不合法。** 同 IDENT 规则,前导下划线禁止。
+
+**推论:** §12.8.1 的 `run_wasm_agent(..., Value{UnitValue{}}, ...)` + whole-output `print_value` 不可达。无 wasm golden fixture 使用 Unit I/O(全部 struct Frame);"proven e3 shape" 主张混淆了两态 transition 形状(已证)与 Unit frame(从未尝试)。
+
+### 12.8.10.2 D1 — Stage-1 类型推断机制(替代失效 const 包装)
+
+**FINAL stage-1 包装文本(verbatim):**
+
+```
+fn repl_probe() -> Unit { let repl_val = <expr>; return {}; }
+```
+
+为何有效(全部 file:line 实证):
+
+1. 语法合法:`fnDecl` 显式 `-> Unit`;无标注 `let`;`return {};` 为 unit literal(`AHFL.g4:366`)。
+2. 所有 fn body 均被 typecheck,即使从未被调用:`typecheck.cpp:3448` `check_fns_in_program` 遍历全部 fn,有 body 即 `check_fn_body`(:3472)。
+3. 无标注 fn 默认 Pure:`typecheck_decls.cpp:1199` EffectJudgement 默认 `make_pure()`。
+4. NO_DECREASES 不触发:`typecheck_decls.cpp:1277-1283` 的检查在 `if (decl.get().effect_clause)`(:1249)内;无标注 fn `effect_clause` 为 nullopt,永不进入。
+5. 能力调用在 stage-1 即被拒:body ⊑ declared,Pure declared + CapabilitySet body → EFFECT_UNDERDECLARED(`typecheck_decls.cpp:1371`)。实测 `http_get("http://x")` → "function 'repl_probe' declares effect Pure but its body infers effect CapabilitySet; declared effect must be an upper bound of the body effect"。
+6. `?` 在 Unit 返回类型 fn 中被拒:`typecheck_expr.cpp:2630-2631` TRY_REQUIRES_OPTION_OR_RESULT / `:2695-2696` TRY_INCOMPATIBLE_RETURN_TYPE。
+7. 不带 `-> Unit` 的包装在 IR lowering 边界 crash("TypedProgram contains an error type");stage-1 只到 typecheck(`run_pipeline` 不 lowering),不受影响,但显式 `-> Unit` 是必须的。
+
+**FINAL TypedProgram 提取路径(file:line):**
+
+```
+typed_program.declarations
+  -> TypedDecl, std::get_if<FnTypeInfo>(&decl.payload) 且 local_name == "repl_probe"
+     (FnTypeInfo: include/ahfl/compiler/semantics/declaration_info.hpp:374-401)
+  -> FnTypeInfo::body_block_index                         (:401)
+  -> typed_program.blocks[body_block_index]
+      .statement_indexes[0]                               (typed_hir.hpp:521)
+  -> typed_program.statements[stmt_idx]
+  -> 断言 kind == TypedStmtKind::Let
+     target_name == "repl_val"                            (:539)
+     let_type_ref_strategy == FromInitializerType         (:552; enum :236)
+  -> stmt.let_type                                         (:553) = 推断 TypePtr
+```
+
+权威节点是 let statement 的 `let_type`,**不是** `expressions.back()`:无标注时 typecheck.cpp:3992-4002 记录 `let_strategy = FromInitializerType`、`let_type = initializer.type->clone()`;typed_hir.hpp:550-551 注释明确 let_type 是 lowering 的权威语义输入;表达式 arena 顺序不保证用户表达式在最后。
+
+**EnumVariantT 特例:** `Shape::Circle(42)` 推断为 `EnumVariantT` 而非 parent enum,`describe()` 产出不可解析的 `Shape::Circle`。必须经 `EnumVariantT::symbol`(`types.hpp:125-131`,= parent enum 的 SymbolId)→ `typed_program.find_symbol(id)`(`typed_hir.hpp:684`)取 parent enum 的 canonical_name + type_args,手工拼写 parent 类型(如 `MyOpt<Int>`)。
+
+### 12.8.10.3 D2 — 合成 agent I/O 形状(替代 Unit frame)
+
+**FINAL 合成源码模板(verbatim;无 module 声明;合成声明全部非 pub):**
+
+```
+<prologue>
+struct ReplIn {}
+struct ReplOut {
+    value: <describe(parent_or_inferred_type)>;
+}
+agent ReplAgent {
+    input: ReplIn;
+    context: Unit;
+    output: ReplOut;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+flow for ReplAgent {
+    state Init { goto Done; }
+    state Done { return ReplOut { value: <expr> }; }
+}
+```
+
+设计决策(实证):
+
+1. **Input = 零字段 struct** `struct ReplIn {}`:实证探针确认零字段 struct 存活 Core lowering → `compute_core_layouts` → `emit_core_wasm` → frame_packer → wasm3 run → frame_reader 全管线(packer 遍历零字段无操作)。host 构造空 StructValue(type_name 为空,fields 空;packer 不校验零字段 struct 的 type_name)。
+2. **Output = 包装 struct** `ReplOut { value: T; }`:host 侧 `output()` → StructValue → `fields.get("value')` 取内层 Value → `print_value`。任意 T(Int/Bool/String/Struct/Enum/泛型 Enum/Option)实证通过。
+3. **无 module 声明**:module 会给全部 nominal 类型加 `repl::` 前缀污染输出(实证 v5:`Color::Green` vs `repl::Color::Green`)。
+4. **非 pub**:prologue 类型是 package-internal,pub ReplOut 会报 "public struct exposes package-internal type"(实证 v1)。
+5. **名称全部 IDENT 合法**(字母开头):ReplIn/ReplOut/ReplAgent/repl_val/repl_probe。
+6. **Unit 表达式短路,不走 wasm**:`value: Unit` struct 字段被 codegen 拒绝("computed final value is not a single-word P6 value on the frame lane");推断类型为 UnitT 时直接 `print_value` Unit → `{}`(`value.cpp:547-549`)。
+7. **碰撞语义**:stage-1 无合成声明,用户表达式无法引用合成名;stage-2 若用户 prologue 同名 → 重定义 parse 错误,REPL 诚实返回。危害极低(单次求值,prologue 用户自控)。
+
+### 12.8.10.4 D3 — 实证探针矩阵(真实 wasm3 端到端,observed bytes)
+
+| 用户表达式 | 推断类型 | 输出 |
+|---|---|---|
+| `1 + 2` / `1 + 2 * 3` / `(1+2)*(3+4)` / `-42` | Int | `3` / `7` / `21` / `-42` |
+| `true` / `1 < 2` / `true && false` | Bool | `true` / `true` / `false` |
+| `"hello"` | String | `"hello"`(**带引号**,print_value String 拼写) |
+| `{}` | Unit | `{}`(短路) |
+| `Color::Green` | Color | `Color::Green` |
+| `Shape::Circle(42)` / `Shape::Circle { r: 42 }` | Shape | `Shape::Circle(42)` / `Shape::Circle { r: 42 }` |
+| `Point { x: 1, y: 2 }` | Point | `Point { x: 1, y: 2 }` |
+| `Outer { inner: Inner { v: 7 } }` | Outer | `Outer { inner: Inner { v: 7 } }` |
+| `match Color::Green { Red => 1, Green => 2, Blue => 3 }` | Int | `2` |
+| `MyOpt::MySome(7)` | MyOpt<Int> | `MyOpt::MySome(7)` |
+
+Codegen 拒绝(B1,预期,均为 actionable 字符串非 trap):
+
+| 表达式 | observed |
+|---|---|
+| `1.5 + 2.5` | `float literals need the f64 opcode ladder, a later P6 slice` |
+| `"a" + "b"` | `binary arithmetic/comparison is defined for Int/Bool only on the P6 frame lane` |
+| `\(x: Int) -> x + 1` | `constructor slot is not a single-word P6 value` |
+
+Stage-1 拒绝(预期):能力调用(EFFECT_UNDERDECLARED 全文)、`?`(TRY_REQUIRES_OPTION_OR_RESULT)、`if ... {} else {}` 表达式(if 是 statement;parse error)、`[1,2,3]`(listLiteral 是 dead grammar rule,`AHFL.g4:656`,从未被 primaryExpr 引用)。
+
+声明 fallback 存活:`const x: Int = 5;` / `struct Foo { x: Int; }` / `fn bar() -> Int { return 42; }` 均走 `print_program_ir`。
+
+`:type` 经 fn 包装实证工作:`1+2`→`Int`、`"hello"`→`String`、`true`→`Bool`、`{}`→`Unit`、`1.5+2.5`→`Float`。
+
+### 12.8.10.5 D4 — 输出/错误契约
+
+成功:stage-1 typecheck → 提取 let_type → UnitT 短路 `{}` → EnumVariantT 转 parent 拼写 → describe + 合成源码 → stage-2 pipeline/lower/`run_wasm_agent(program, "ReplAgent", empty StructValue, config)` → Completed + output() 非空 → StructValue.fields 取 `value` → print_value。
+
+失败:非 Completed → `Error: agent did not complete (status: <status>)`;null output → `Error: agent produced no output`;stage-2 pipeline 失败 → `Error: <诊断字符串>`;`unexpected(string)` → `Error: <codegen 诊断>`(B1,不暴露 wasm3 trap 文本)。
+
+`:type` handler 本片一并修复为同一 fn 包装(共享 helper),不再用失效 const 包装。
+
+### 12.8.10.6 对 §12.8.1 其余事实性纠正
+
+1. "第一轮成功则第二轮必成功" 的语境失效(第一轮不再是 const 包装),机制以本节为准。
+2. Unit 输出必须短路(§12.8.1 未区分)。
+3. §12.8.6 测试 3 字符串期望是**带引号** `"hello"`,不是裸 `hello`。
+4. §12.8.6 测试 5 声明语法是 `const x: Int = 5;`(必须带 `: type`)。
+5. EnumVariantT 需 parent-enum 转换(§12.8.1 未提及)。
+
+### 12.8.10.7 被取代的 §12.8.1 条目
+
+- 包装器形状(Unit I/O、`output: <describe(T)>`、agent 名 `__repl__`)→ 由 12.8.10.3 模板取代。
+- 求值流程第 1 步(const 包装、`expressions.back()`)→ 由 12.8.10.2 取代。
+- 第 4 步(`run_wasm_agent(..., "__repl__", Value{UnitValue{}}, ...)`)→ 由 ReplAgent + 空 StructValue 取代。
+- 第 5 步(whole-output print_value)→ field-unwrap 后 print_value 取代。
+
+### 12.8.10.8 §12.8.2–12.8.9 重申
+
+- **12.8.2(B1;无预分类门;无 evaluator fallback):重申。** 探针矩阵实证 codegen fail-closed;B2/B3 拒绝理由不变。
+- **12.8.3(车道 codegen 决定;零能力 invoker 防御性):重申。**
+- **12.8.4(print_value 存活):重申,附修正**——渲染的是 unwrap 后的内层 Value。
+- **12.8.5(单 #ifdef 组合边缘;CMake link-edge;WASM=OFF 字节固定拒绝):重申。**
+- **12.8.7 有序清单:重申**,第 2 步引用改为 §12.8.10。
+- **12.8.9 拒绝的替代方案:重申**(A2/A3/B2/B3/D value_to_json/单态零过渡 agent)。
+
+### 12.8.10.9 §12.8.6 测试列表 delta(替换)
+
+1. P6 算术:`1+2`→`3`;`1+2*3`→`7`。
+2. struct/enum/option:`Point { x: 1, y: 2 }`、`Color::Green`、`MyOpt::MySome(7)` 的 print_value 拼写。
+3. 字符串:`"hello"` → `"hello"`(带引号)。
+4. 不支持 UX:`1.5+2.5`、`"a"+"b"` → `Error:` 前缀 + codegen 消息片段,success==false,无 trap 文本。
+5. 声明 fallback:`const x: Int = 5;`(真实语法)→ IR dump。
+6. `:type` 回归(fn 包装):`1+2`→`Int`、`"hello"`→`String`、`{}`→`Unit`、`1.5+2.5`→`Float`。
+7. 新增 Unit 短路:`{}` → `{}`。
+8. 新增泛型 enum 变体:`MyOpt::MySome(7)`(EnumVariantT→parent 路径)。
+9. 新增嵌套 struct:`Outer { inner: Inner { v: 7 } }`。
+
+`ahfl.repl.process_smoke`:WASM=ON 加 `1+2`→`3` eval 用例;WASM=OFF eval → 字节固定拒绝。
+
+### 12.8.10.10 §12.8.8 验收 delta(替换为)
+
+1. WASM=ON:`1+2`→`3`;struct/enum/option/string 经 wasm + print_value 正确;`{}`→`{}` 短路。
+2. 不支持表达式 → `Error: <codegen 诊断>`,非 trap,非 fallback。
+3. `const x: Int = 5;` → print_program_ir。
+4. `:type/:verify/:simulate/:help` 不变;`:type` 内部改 fn 包装。
+5. WASM=OFF:eval → 12.8.5 拒绝消息;非 eval 命令可用;configure+build 干净。
+6. `ahfl_tooling_repl` 无直接 evaluator 链接边(grep-zero;经 wasm_runner→engine 的传递边保留到 WH-9)。
+7. ASan + `-Werror` 绿。
+8. 零业务 #ifdef(gate 仅 default_eval_handler)。
+9. 合成源码无 module 声明(输出无 `repl::` 前缀)。
+10. 合成声明非 pub(无 package-internal visibility 违规)。
+
+### 12.8.10.11 拒绝的替代方案
+
+带显式类型的 const 包装(循环依赖:推断前不可能标注类型)、顶层 let(grammar 无)、零过渡 agent(无 golden 先例)、合成 module 声明(prefix 污染)、pub 合成声明(visibility 违规)、output struct 的 Unit 字段(codegen 拒绝)、input 占位字段(零字段已证,多余)。
+
+### 12.8.10.12 WH-7 REPL enum/struct/option 求值面收窄决策(2026-10-03,dedicated decision agent,no human gate)
+
+WH-7 builder 的未提交实现(HEAD `b9c75736` + 工作树改动)把 eval 切到 wasm3 车道后,一个开放范围问题浮出:§12.8.10.4 探针矩阵的 nominal 行(`Color::Green`、`Point { x: 1, y: 2 }`、`MyOpt::MySome(7)` 等)在真实 REPL 二进制中**不可达**。专用决策代理对 builder 未提交树逐条复核源码,并用 build/dev 的 `ahfl-repl`(WASM=ON)端到端实证后给出本节;coordinator 对全部关键事实独立复核,并更正了代理初稿 1.2 的一处事实错误(见下)。**决策:A — WH-7 只交付 scalar/P6 诚实面;enum/struct/option 求值延后到 post-WH-9 后援切片。**
+
+#### 1. 实证发现(file:line + observed bytes)
+
+**1.1 REPL 管线是 detached 单源单元,永不经过 Project 模型层。** `src/tooling/repl/repl.cpp` `run_pipeline` = `Frontend::parse_text("repl", source)` + `Resolver::resolve` + `TypeChecker::check`,单个 `ast::Program`,无 ProjectInput / SourceGraph / package graph。prelude 注入**只**存在于 Project 模型层:`src/compiler/syntax/frontend/project.cpp:23` `kStdPreludeModule = "std::prelude"`、`:255-256` `should_inject_prelude`、`:771-782` 隐式 `import std::prelude` 注入(被 `#![no_prelude]` 抑制)。detached 管线没有任何通道把声明送进 stage-2。
+
+**1.2 std 只在磁盘上,无嵌入;编译期默认 sysroot 是 dev-build-only 的源码树路径,不是可分发契约。** `std/option.ahfl:3` `pub enum Option<T>` 等全部 std 源是仓库根 `std/` 下的磁盘文件;无嵌入机制(无 incbin / 无 std 源码字符串表;`strings build/dev/.../ahfl-repl | grep -c "module std::prelude"` = 0)。sysroot 发现三级:`--sysroot` flag、`AHFL_SYSROOT` 环境变量(`src/tooling/cli/cli_driver.cpp:441-475`)、编译期默认 `AHFL_DEFAULT_SYSROOT`(`src/compiler/project_discovery/discovery.cpp:519-529`)。**coordinator 更正决策代理初稿的事实错误(已复核)**:`AHFL_DEFAULT_SYSROOT` 并非"全仓库 CMake 从未定义"——它在 `src/compiler/project_discovery/CMakeLists.txt:14-18` 以 **PRIVATE** compile definition **无条件**定义为 `${PROJECT_SOURCE_DIR}`,dev build tree 内默认 toolchain profile 可解析到仓库根 `std/`。但它不能解救 Option B:(a) 指向**构建机源码绝对路径**,安装/分发包不携带该目录,不是 install-robust 契约,REPL 依赖它即静默依赖构建树;(b) REPL 的 detached `run_pipeline` **根本不经过 project discovery / Project 模型**(1.1),默认 sysroot 对 REPL 代码路径不可达;(c) 即便经 `ahflc`,detached 文件无 manifest 时既有契约仍是 `note [N::detached_source_unit]` + `create ahfl.toml or pass --manifest to enable std imports and workspace navigation`(`cli_driver.cpp:207-217`)。
+
+**1.3 Project 加载器强制每源恰好一个 module 声明。** `project.cpp:693-698`:零 module 声明即报 "project-aware source file must declare exactly one module"。REPL 合成源按 §12.8.10.3 第 3 条**无 module 声明**(实证:module 会给全部 nominal 类型加 `repl::` 前缀污染输出)——合成源在当前 Project 路径下**不可编译**,Option B 必须重开 §12.8.10.3 已实证 settle 的决策。
+
+**1.4 observed error bytes(builder 未提交树,build/dev ahfl-repl,WASM=ON):**
+
+| 输入 | 通道 | observed(稳定前缀) |
+|---|---|---|
+| `Option::Some(3)` | eval | `Error: mismatched input 'Option' expecting {<EOF>, '#', 'module', ...}` |
+| `Color::Green` | eval | 同形(`mismatched input 'Color' expecting {...}`) |
+| `Point { x: 1, y: 2 }` | eval | 同形(`mismatched input 'Point' expecting {...}`) |
+| `Some(3)` | eval | 同形(`mismatched input 'Some' expecting {...}`) |
+| `Option::Some(3)` | `:type` | `Error: unknown callable 'Option::Some'` |
+| `Color::Green` | `:type` | `Error: unknown type 'Color'` |
+| `Some(3)` | `:type` | `Error: unknown callable 'Some'` |
+
+eval 路径机制:stage-1 `infer_repl_type` 先失败(resolve 报 UNKNOWN_CALLABLE / unknown type),随后声明 fallback `run_pipeline(input)` 对**原始输入**做顶层 parse 并失败——用户看到的是 fallback 的**顶层 parse 错误**,不是 stage-1 的 resolve 错误。`:type` 只走 stage-1,暴露 resolve 错误。两条都是诚实 Error 字符串,无 trap、无 evaluator fallback。
+
+**1.5 零跨行状态(实证)。** `enum Color { Green, Red }` 一行 → 声明 fallback IR dump(存活);下一行 `Color::Green` → 同 1.4 顶层 parse 错误。`execute_command` 无状态,仅 `history_` 持久。单行内塞 prologue+表达式(`struct Point {...} Point {...}`)同样失败(grammar 顶层不接受 decl 后接 expr)。
+
+**1.6 §12.8.10.4 矩阵 nominal 行的可达性纠正。** 这些行由 §12.8.10.3 harness 证明——prologue 声明与合成 agent 在**同一源码字符串**内。builder shipped 实现的 prologue 是**空的**(合成源码构造处注释:"The prologue is empty: the REPL takes one expression per line")。矩阵行是 harness-proven 的管线能力,不是 REPL-reachable 行为;可达性以 1.4 为准。
+
+**1.7 Option B 的管线成本已量化。** SourceGraph 重载确实存在(resolver/typecheck/lowering 均有 graph 重载),preluded 编译技术上可达——但:(a) std 定位只能靠 `AHFL_SYSROOT` env / 新 REPL flag(CWD/install-tree/构建树静默依赖被禁止,见 1.2);(b) 合成源必须加 module 声明(重开 §12.8.10.3 第 3 条);(c) `:verify` 与 `:simulate` 同样用 `run_pipeline`,B 必须一并改造或留下不一致;(d) REPL 今天把诊断拍平成字符串,project 路径引入全新错误呈现面(package graph / sysroot mismatch / module 声明诊断);(e) `print_value` 对 enum 渲染 `enum_name::variant`(`src/runtime/value/value.cpp:477`),std 类型在 `module repl;` 下的 enum_name 拼写未证。
+
+#### 2. 决策:A — WH-7 交付 scalar/P6 诚实面,nominal 构造子求值延后
+
+**WH-7 的 eval 面 = Int / Bool / String / Unit(经 wasm3 车道 + `print_value`),加声明 fallback IR dump。** enum/struct/option 表达式继续产出 1.4 的既有 Error 字符串;这些字符串诚实(声明不可见 → resolve/parse 失败),不是 trap、不是 fallback。
+
+**为何 A 击败 B:**
+1. **B 是半吊子,且没有 C 的 B 不值得做。** B 只修复 std 的 Option/Result 等构造子(且仅限 sysroot 恰好可达时);用户自声明 enum/struct 仍因零跨行状态(1.5)不可用。B 交付的 UX 是"std 构造子仅在 sysroot 恰好配置时工作;你自己的 enum 永远不工作"——比 A 的清晰诚实面更差。明确裁决:**无 C 的 B 不值得做。**
+2. **B 的真实成本(1.7)远超半吊子收益:** REPL 管线不经 Project/discovery(1.1/1.2),module 声明要求(1.3)重开已 settle 的 §12.8.10.3 第 3 条;`:verify`/`:simulate` 连带改造;新错误呈现面;std enum 输出拼写未证。
+3. **B 不解除任何 WH-8/WH-9 阻塞。** WH-8(DAP 切 wasm facade)与 WH-9(原子删 evaluator)都不依赖 REPL 能求值 `Option::Some`。
+
+**为何 A 击败 C(对 WH-7 而言):** C(会话累积)是真正的主流对齐修复(evcxr/GHCi 式),但它是会话语义项目:重声明/遮蔽规则、`:clear`、错误恢复(坏行不得污染会话)、whole-program typechecker 下逐行重跑 vs 新建增量架构,且 C 与 B 组合才完整(C 单独修用户 enum,不修 std Option)。C 与引擎切换正交,不属于 WH-7,也不开 WH-7b;**C 裁定为 post-WH-9 后援切片。**
+
+**与主流参考(Rust/evcxr)分叉的 AHFL-specific 理由:** Rust 把 std 嵌入 sysroot,rustc 经安装期默认找到;AHFL 无嵌入 std,唯一编译期默认指向构建树(1.2),安装后不可用。今天在 AHFL 做 REPL prelude 模式只能静默依赖 env/CWD/构建树——不诚实的双模 REPL。诚实的主流对齐路径需要(std 嵌入或显式 REPL sysroot 契约)+ 会话累积,两者都大于 WH-7 的引擎切换范围。
+
+**A 的成本:** enum/struct/option 表达式产出 Error 字符串(1.4 稳定前缀)而非值;§12.8.10.4 nominal 矩阵行降级为 harness-proven-only(1.6 已纠正)。**连带代码处置(Principle 1):** `infer_repl_type` 的 EnumVariantT→parent 转换分支在 detached 管线中**不可达**(无任何通道把 enum 声明送入 stage-1 源),WH-7 一并删除;后援切片在通道建成时重新引入。
+
+#### 3. 对 §12.8.10.9 / §12.8.10.10 的收窄
+
+**§12.8.10.9 测试列表 delta — 第 2 条收窄为:** scalar print_value 拼写(经 wasm 车道):`1+2`→`3`、`true`→`true`、`"hello"`→`"hello"`(带引号)、`{}`→`{}`(短路)。enum/struct/option 求值延后(见本节)。
+
+**§12.8.10.9 第 8、9 条(泛型 enum 变体、嵌套 struct)整体延后**,移入后援切片;不在 WH-7 测试列表。
+
+**§12.8.10.9 新增第 10 条(nominal 失败面 pin):** 无 prologue 的 nominal 构造子表达式产出诚实 Error 字符串,success==false,无 trap 文本:`Option::Some(3)`/`Color::Green` eval → `Error: mismatched input '<IDENT>' expecting {...}`(fallback 顶层 parse 错误,1.4);`:type Option::Some(3)` → `Error: unknown callable 'Option::Some'`;`:type Color::Green` → `Error: unknown type 'Color'`。
+
+**§12.8.10.10 验收 delta — 第 1 条收窄为:** WASM=ON:`1+2`→`3`;string 字面量经 wasm + print_value 正确(带引号);`{}`→`{}` 短路。enum/struct/option 求值不在 WH-7 验收面(本节)。
+
+**§12.8.10.10 新增第 11 条:** enum/struct/option 表达式在无 prologue 时产出 1.4 的固定错误前缀(eval 走 fallback 顶层 parse 错误;`:type` 走 resolve 错误),success==false,无 trap、无 evaluator fallback。
+
+**§12.8.10.4 探针矩阵加注:** nominal 行(`Color::Green`、`Shape::Circle(42)`、`Point {...}`、`Outer {...}`、`match Color::Green {...}`、`MyOpt::MySome(7)`)是 §12.8.10.3 harness(prologue + 合成 agent 同一源码字符串)证明的**管线能力**,不是 shipped REPL 的可达行为;可达性以本节 1.4 为准。
+
+#### 4. 后援切片
+
+**切片名:REPL session accumulation + prelude mode(post-WH-9)。** 进入条件:(a) std 嵌入二进制,或显式 REPL sysroot 契约(不静默依赖 env/CWD/构建树);(b) 会话累积(逐行重跑累积源码,或增量 typechecker 架构)——用户自声明 enum/struct 跨行可见;(c) 合成 agent 的 module 声明 / 前缀污染决议(§12.8.10.3 第 3 条重开);(d) `:clear`/`:reset` + 坏行不污染会话的错误恢复语义;(e) `:verify`/`:simulate` 与 eval 的 prelude 模式一致性。主流参考:evcxr(会话累积 + 重声明)、GHCi(`it` 绑定 + `:load`)。
+
 ## 12.9 WH-8 decisions (2026-09-30, dedicated decision agent, no human gate)
 
 本节是 WH-8(DAP 从 evaluator `WorkflowRuntime` 切换到 `WasmWorkflowRuntime` facade)的书面决策。决策代理只读地对照 HEAD `9bca5507` 复核了源码,未运行构建/测试。**继承不重议**:WASM=OFF 策略(launch/execute 拒绝、非执行功能可用、gate 只在 composition edge)、facade config hooks/cancellation/monotonic_clock 在 WH-8 引入、facade ctor 编译失败语义 = `run()` 时以 DiagnosticBag 浮现(§12.7.8)、link-edge flip(§12.7.3 表 WH-8 行:`ahfl_tooling_dap` 翻到 `WasmWorkflowRuntime`;`ahfl_runtime_engine` 的 evaluator edge 在 DAP 成为最后一个外部生产 includer 后 PUBLIC→PRIVATE)。
@@ -4255,3 +4500,39 @@ WH-6 提交(91ddd558)后的完整无标签 ctest(594 项)暴露一个定向评�
 - 根因:`emit_core_wasm` workflow 分支在安装 `ActiveSourceModuleScope` 时直接索引 `program.workflows[target.value].source_module`,该索引发生在**越界入口检查之前**。测试以 `CoreWorkflowId{9}`(程序仅 1 个 workflow)断言 fail-closed `kEntryNotFound`,越界读到的 `source_module` 是垃圾字节,由 string_view 构造 std::string 时按 7.5e18 字节容量抛 bad_alloc。
 - 修复(one-big-bang,无 shim):在作用域安装前先做 `workflow->value >= program.workflows.size()` 越界检查,越界即发 whole-program `kEntryNotFound` 并返回(与 §12.16/§12.16.12 "entry-resolution 诊断故意 module 为空" 一致;`build_workflow_plan` 内部原有同名检查保留,供其其他调用者)。审计另两个作用域站点均安全:build_workflow_plan :13582 在自身检查之后;build_agent_plan :11178 有 agent 越界检查 + flow null 检查。
 - 验证:复现(gdb 栈定位到 :19490/:1218)→ 修复后 #371 单独通过(3.31s)→ wasm 标签 88/88(4 个 wasmtime skip 为预期)。教训记入流程:codegen 改动的定向集必须包含 ahfl_core_wasm_codegen_tests(#371),不能只跑 CLI/runner 侧。
+
+## 12.18 WH-7 落地记录(2026-10-03):REPL 求值全切到 wasm3 agent runner
+
+### 12.18.1 实际落地形状
+
+单 commit 落在 WH-6 HEAD b9c75736 之上。`src/tooling/repl/repl.cpp` 删除 `runtime/evaluator/evaluator.hpp`;默认 eval 处理器按 §12.8.10 重写为两阶段:
+
+1. **stage-1 类型推断(共享 helper)**:`infer_repl_type` 把表达式包进 `fn repl_probe() -> Unit { let repl_val = <expr>\n; return {}; }`(表达式后换行分隔,防尾随行/doc 注释吞掉包装尾部;字符串内 `//` 不被触碰),经真实 parse/resolve/typecheck 后从 `FnTypeInfo.body_block_index` -> `blocks[].statement_indexes[0]` -> TypedStmt(Let / FromInitializerType)取 `let_type`;任何内部不变量破坏 fail-closed 为 "(internal) repl type extraction failed"。同时修复自 62b38665 起事实坏掉的 `:type`(旧 const 包装违反 constDecl 显式类型 + IDENT 首字符规则)。
+2. **声明 fallback 存活**:stage-1 失败且原始输入本身是声明(const/struct/fn/...)时,直接 run_pipeline + print_program_ir。
+3. **失败相位优先级(fix-forward P2-2)**:`PipelineFailurePhase`/`InferFailurePhase` 区分 Parse/Resolve/Typecheck/Internal;stage-1 与 fallback 同时失败时,Typecheck/Internal 浮出真实类型错误(如 `1 + true` -> `operator '+' is not defined for Int and Bool`,不再被 fallback token dump 遮蔽),Parse/Resolve 保持 fallback 的顶层 parse 错误(§12.8.10.12 1.4 nominal 失败面:`Option::Some(3)` -> `mismatched input 'Option'`)。
+4. **Unit 短路**:`{}` -> `{}`,不经 wasm(codegen 拒绝 Unit 输出字段);WASM=ON/OFF 均可用。
+5. **stage-2 合成 agent**(无 module、非 pub、零能力、Init->Done 两态):`struct ReplIn {}` + `struct ReplOut { value: <describe(T)> }`,Done 行在表达式后换行分隔;lower 后 `run_wasm_agent`,要求 Completed + 非空 StructValue 输出,取 `value` 字段 print_value。非 Completed 渲染 `WorkflowStatus` 枚举名 + 诊断袋首条(如 `4 / 0` -> `Error: agent did not complete (status: NodeFailed): [wasm.trap]: run_wasm_agent: runv trapped`,不再泄露裸整数 `(status: 1)`)。
+6. **单一 #ifdef 组合边缘**:eval wasm 体一个 `#ifdef AHFL_ENABLE_BACKEND_WASM` triplet;WASM=OFF 字节固定拒绝 `Error: evaluation requires the embedded wasm engine; this build was configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default (ON) to evaluate expressions.`(stage-1 推断 / `:type` / Unit 短路 / 声明 fallback 仍工作)。
+7. **EnumVariantT->parent 转换分支按 §12.8.10.12 §2 在本 slice 删除**(detached REPL 管线不可达;post-WH-9 "REPL session accumulation + prelude mode" 后援切片在声明可见通道建成时重新引入)。
+
+CMake:`ahfl_tooling_repl` 删除直接 `ahfl_runtime_evaluator` 边,显式 `ahfl_compiler`/`ahfl_verification_formal`/`ahfl_runtime_value`,gated `ahfl_runtime_wasm_runner` + `AHFL_ENABLE_BACKEND_WASM=1` generator expression。evaluator 仅经 wasm_runner->engine 传递依赖存活(engine->evaluator 边在 WH-8 翻 PRIVATE,WH-9 原子删除)。
+
+测试:unit Tests 10-21(类型矩阵/Unit 短路/声明 fallback/注释分隔/字符串内 `//`/nominal 失败面/类型错误优先级/wasm 算术/字符串/codegen 拒绝/除零状态名,WASM=OFF 分支同 TU 编译;64/64 ON、47/47 OFF);`tests/scripts/repl_smoke.py` baseline/wasm/wasm-off 三模式 + `tests/cmake/ProjectTests.cmake` 互斥注册。
+
+### 12.18.2 验证证据(coordinator 独立复跑)
+
+- 对抗评审 verdict FIX-FORWARD(2 P1 + 2 P2,coordinator 全部独立复现),fix-forward 后四项逐字复核:P1-1 `1 + 2 // c` eval -> `3`、`:type` -> `Int`(`"http://x"`/`"a // b"` 字符串不被变换,doc 注释同样修复);P1-2 EnumVariantT field/branch/doc grep-zero;P2-1 `4 / 0` -> `(status: NodeFailed): [wasm.trap]: run_wasm_agent: runv trapped`;P2-2 `1 + true` eval -> 真实类型错误、不含 `expecting {<EOF>`,nominal 三面(`mismatched input 'Option'`/`unknown callable 'Option::Some'`/`unknown type 'Color'`)钉住。
+- dev 强制重编译 REPL TU 零 warning(`-Wall -Wextra -Wpedantic -Werror`);ASan preset 全量重建零 warning。
+- `ctest --preset test-dev -R repl` 3/3;unit binary 64/64 ON。
+- WASM=OFF scratch(<job tmp>/build-wasm-off-wh7 冷重建,exit 0、零 warning):repl ctests 3/3 + unit 47/47,拒绝字节逐字一致,`:type`/Unit/声明 fallback 正常。
+- grep-zero:`runtime/evaluator` 于 src/tooling/repl/;#ifdef triplet 1。
+- 受保护文件(src/tooling/cli/CMakeLists.txt、tests/conformance/、tests/observability/、goldens)零改动;HEAD 全程 b9c75736 未被 agent 移动。
+- 完整无标签 dev ctest(595 项,1722.69s):99% 通过,4 failed——#81/#84/#85(ahfl-beta-gate,pnpm 未安装的既有环境噪声,历次全量一致;#85 是 #84 缺 install-smoke.json 的下游);#64 `native_grpc_gate` 为并发 scratch configure 污染:仓库根 `compile_commands.json` 符号链接由 `cmake/modules/AhflCompileCommands.cmake` 在每次 configure 重指向 `${CMAKE_BINARY_DIR}`,scratch WASM=OFF configure 期间瞬态指向 job-tmp 构建树,scanner `root.rglob()` 经符号链接 resolve 出树根触发 `relative_to` ValueError;scratch 空闲后 coordinator 两次独立复跑 #64 均通过。4 skip = #5/#7/#57/#60 wasmtime(缺第三方二进制,既有)。
+- ASan(单独 configure + -j2 全量重建 + 单独全量跑,3767.06s):595 项 99%,**全日志零 AddressSanitizer/LeakSanitizer/UBSan 报告**;4 skip 同上 wasmtime;4 failed 全部为非本 slice 的既有噪声——#81/#84/#85 与 dev 同因(pnpm);#78 `long_soak_smoke` 为 RSS 统计门在 ASan 插桩下的假阳性,证据链:① soak worker 二进制时间戳 15:27、本次 ASan 构建 ninja 只重链 6 个 REPL 目标([6/6]),worker 未重建,其链接闭包(package_graph/compiler_ir/provider_llm)零 WH-7 代码;② 默认 ASAN_OPTIONS 下隔离复跑稳定失败(peak_rss first-quartile 均值 ~345MB、增长 ~36MB > 5% 容差 ~17MB),但 worker 自报的 allocator_in_use 趋势门通过(应用层存活分配平稳,仅 OS RSS 爬升);③ `ASAN_OPTIONS="quarantine_size_mb=0:thread_local_quarantine_size_kb=0"` 隔离复跑立即通过——quarantine 保留已释放块不还 OS 即全部增长来源;④ dev(无插桩)全量 #78 通过。列入 backlog(soak RSS 门与 ASan quarantine 不兼容,需独立 slice 决议测试 ENVIRONMENT/门豁免,不在 WH-7 范围)。
+
+### 12.18.3 已知边界(不在本 slice)
+
+- enum/struct/option 求值面收窄(§12.8.10.12 verdict A):detached REPL 不经 Project/discovery,无 prelude、零跨行状态;后援切片 "REPL session accumulation + prelude mode" 排在 post-WH-9,进入条件(std 嵌入或显式 sysroot 契约 + 会话累积 + module 前缀决议 + 错误恢复语义)见 §12.8.10.12 §4。
+- Float 算术、String 拼接等仍由 P6 codegen fail-closed 拒绝(后续 P6 opcode ladder slice,与 WH-7 无关)。
+- `long_soak_smoke` 的 peak_rss 趋势门在 ASan quarantine 下假阳性(12.18.2),backlog 独立处理。
+- evaluator 本体保留;WH-8(DAP cutover,§12.9 已决策)、WH-9(原子退役,§12.10)随后。
