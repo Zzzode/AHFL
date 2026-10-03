@@ -30,7 +30,7 @@ void add_error(std::vector<CoreLowerDiagnostic> &diagnostics, std::string messag
     diagnostics.push_back(CoreLowerDiagnostic{ahfl::ir::core::CoreDiagnosticSeverity::Error,
                                               "core.frame-module",
                                               std::move(message),
-                                              std::nullopt});
+                                              std::nullopt, {}});
 }
 
 // Canonical-LEB section cursor. No byte is ever echoed in a diagnostic.

@@ -21,6 +21,7 @@
 #include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 
+#include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/ir/expr.hpp"
 #include "ahfl/compiler/ir/program.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
@@ -36,6 +37,18 @@
 
 namespace ahfl::runtime::wasm_runner {
 
+// kr68 §12.16: the host-supplied resolution of a compile diagnostic's owning
+// module to a displayable source location. The locator maps a module_name +
+// SourceRange to a source file's display name and a line:col position. A
+// single-file program resolves against its one SourceFile; a SourceGraph
+// resolves module_name -> SourceUnit. A nullopt return means the module is
+// unknown or the range is out of bounds (fail-closed: the renderer falls back
+// to the module label with no line:col).
+struct LocatedDiagnosticSource {
+    std::string source_name;
+    std::optional<ahfl::SourcePosition> position;
+};
+
 // Configuration for the wasm3-backed workflow runtime.
 struct WasmWorkflowRuntimeConfig {
     // The shared hook set (identical signatures to WorkflowRuntimeConfig).
@@ -44,6 +57,12 @@ struct WasmWorkflowRuntimeConfig {
     ContextualCapabilityInvoker invoker;
     // Resolves a capability's source_symbol to its canonical name.
     std::function<std::optional<std::string>(std::uint64_t)> name_resolver;
+    // kr68 §12.16: resolves a compile diagnostic's owning module + source range
+    // to a displayable source location. When unset, compile diagnostics render
+    // with the module label only (no line:col).
+    std::function<std::optional<LocatedDiagnosticSource>(std::string_view module_name,
+                                                         ahfl::SourceRange range)>
+        diagnostic_source_locator;
 
     // WH-4b: recovery snapshot for a resume run. When set, the session loads
     // the snapshot's memo + pending frontier and replays (memo-supply /
@@ -103,6 +122,26 @@ class WasmWorkflowRuntime {
         std::vector<std::uint8_t> module_bytes;
         ahfl::backends::CoreWasmExecutionDescriptor descriptor;
     };
+
+    // WH-6 (kr68 §12.16): record a compile-pipeline failure into a
+    // DiagnosticBag. A stage-level wasm.compile-failed diagnostic names the
+    // failing stage (and the workflow, for emission), then every pipeline
+    // diagnostic is recorded as a first-class entry carrying its own code +
+    // message + SourceRange + source_module (Principle 5). The umbrella entry
+    // is deliberately unstamped (it names the stage, not a declaration).
+    void record_compile_failure(DiagnosticBag &bag, std::string stage,
+                                const std::vector<ahfl::ir::core::CoreLowerDiagnostic> &diags);
+    void record_compile_failure(DiagnosticBag &bag, std::string stage,
+                                const std::vector<ahfl::backends::CoreWasmDiagnostic> &diags);
+
+    // kr68 §12.16: stamp a compile diagnostic's source location through the
+    // host locator. A diagnostic with an owning module resolves (module +
+    // range -> display name + line:col); a locator miss or an unset locator
+    // falls back to the module label with no position. A whole-program
+    // diagnostic (empty source_module) is left unstamped.
+    void stamp_compile_diag_source(ahfl::DiagnosticBuilder &builder,
+                                   std::string_view source_module,
+                                   ahfl::ir::SourceRangeOpt range) const;
 
     // Populated by the constructor. Empty when compilation failed.
     std::unordered_map<std::string, CompiledWorkflow> workflows_;

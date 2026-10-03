@@ -77,7 +77,7 @@ constexpr std::uint8_t kEntryKindAgent = 1;
 [[nodiscard]] CoreLowerDiagnostic error(std::string message) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(ir::core::wire_schema::kInvalid), std::move(message),
-                               std::nullopt};
+                               std::nullopt, {}};
 }
 
 // A bounds-checked forward cursor with a canonical u32 LEB reader (same discipline

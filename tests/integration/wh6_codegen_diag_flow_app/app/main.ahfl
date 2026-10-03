@@ -1,0 +1,26 @@
+module app::main;
+import lib::agents as agents;
+import lib::types as types;
+
+flow for agents::CrossAgent {
+    state Start {
+        let w: types::Wrap = types::Wrap { inner: input.s };
+        ctx.carried = w.inner;
+        goto Done;
+    }
+
+    state Done {
+        return types::Frame {
+            s: ctx.carried,
+        };
+    }
+}
+
+pub workflow CrossWorkflow {
+    input: types::Frame;
+    output: types::Frame;
+
+    node only: agents::CrossAgent(input);
+
+    return: only;
+}

@@ -1779,6 +1779,20 @@ std::size_t input_source_bytes(const ahfl::SourceGraph &input, MaybeSourceFile) 
     return bytes;
 }
 
+// kr68 §12.16: fail-closed source location lookup. SourceFile::locate silently
+// clamps out-of-bounds offsets, which would render a misleading line:col for a
+// stale or corrupt range. This helper rejects any range that does not fit
+// within the file's content, returning nullopt so the renderer falls back to
+// the module label with no position.
+[[nodiscard]] std::optional<ahfl::SourcePosition>
+locate_in_file_bounds_checked(const ahfl::SourceFile &src, const ahfl::SourceRange &range) {
+    if (range.begin_offset > src.content.size() || range.end_offset < range.begin_offset ||
+        range.end_offset > src.content.size()) {
+        return std::nullopt;
+    }
+    return src.locate(range.begin_offset);
+}
+
 void record_proxy_allocation(ahfl::profiling::MemoryTracker &tracker,
                              std::string tag,
                              std::size_t count,
@@ -3983,7 +3997,43 @@ ExitCode CliDriver::run_analysis(const InputT &input,
         if (options_.optimize_requested) {
             run_requested_semantic_optimization_pipeline(ir_program, run_options, std::cerr);
         }
-        const auto status = run_workflow_with_llm(ir_program, run_options, std::cout, std::cerr);
+        // kr68 §12.16: build the source context for compile-diagnostic
+        // rendering. Single-file: the one SourceFile supplies display_name +
+        // line:col + caret. SourceGraph: the locator resolves module_name ->
+        // SourceUnit (file:line:col, no caret); primary_source is nullopt.
+        // The locator's captured references are valid for the duration of the
+        // run_workflow_with_llm call (the runtime is a local inside it).
+        WorkflowRunSourceContext source_context;
+        if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
+            const ahfl::SourceFile &src = source_file->get();
+            source_context.locate_compile_diagnostic =
+                [&src](std::string_view,
+                       const ahfl::SourceRange &range)
+                -> std::optional<ahfl::runtime::wasm_runner::LocatedDiagnosticSource> {
+                return ahfl::runtime::wasm_runner::LocatedDiagnosticSource{
+                    src.display_name, locate_in_file_bounds_checked(src, range)};
+            };
+            source_context.primary_source = std::cref(src);
+        } else {
+            const ahfl::SourceGraph *graph = analysis_input;
+            source_context.locate_compile_diagnostic =
+                [graph](std::string_view module_name, const ahfl::SourceRange &range)
+                -> std::optional<ahfl::runtime::wasm_runner::LocatedDiagnosticSource> {
+                const auto it = graph->module_to_source.find(std::string(module_name));
+                if (it == graph->module_to_source.end() ||
+                    it->second.value >= graph->sources.size()) {
+                    return std::nullopt; // unknown module or corrupt graph: fail closed
+                }
+                const ahfl::SourceUnit &unit = graph->sources[it->second.value];
+                return ahfl::runtime::wasm_runner::LocatedDiagnosticSource{
+                    unit.source.display_name,
+                    locate_in_file_bounds_checked(unit.source, range)};
+            };
+            // primary_source stays nullopt: a SourceGraph renders
+            // (file:line:col) without a caret.
+        }
+        const auto status = run_workflow_with_llm(ir_program, run_options, std::cout, std::cerr,
+                                                  source_context);
         return status == 0 ? ExitCode::Success : ExitCode::CompileError;
     }
 

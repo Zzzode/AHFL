@@ -1,0 +1,13 @@
+module lib::types;
+
+pub struct Frame {
+    s: String;
+}
+
+pub struct Ctx {
+    carried: String = "pending";
+}
+
+pub struct Wrap {
+    inner: String;
+}

@@ -1,0 +1,27 @@
+module lib::agents;
+import lib::types as types;
+
+pub agent CrossAgent {
+    input: types::Frame;
+    context: types::Ctx;
+    output: types::Frame;
+    states: [Start, Done];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for CrossAgent {
+    state Start {
+        let w: types::Wrap = types::Wrap { inner: input.s };
+        ctx.carried = w.inner;
+        goto Done;
+    }
+
+    state Done {
+        return types::Frame {
+            s: ctx.carried,
+        };
+    }
+}

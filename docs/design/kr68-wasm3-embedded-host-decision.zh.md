@@ -4007,3 +4007,243 @@ i32.store align=2 offset=4
 - **§12.15.9(page capacity):** 保留,扩展。stash region 纳入同一 capacity check 家族(§12.15.19.4)。
 - **§12.6/§12.14(memo/replay):** 保留。stash 在 fresh-instance replay 中确定性重建(§12.15.19.5),与 memo arg-hash identity 正交。
 - **§12.7(WH-6 cutover,无 fallback):** 保留。WH-5c.5 仍按 §12.15.18.3 sequencing 排在 5c.4 后;gate set 不变(5c.1-5c.9)。
+
+## 12.16 WH-6 fix-forward decision: post-lowering compile-diagnostic source rendering (2026-10-03, dedicated decision agent, no human gate)
+
+### 12.16.1 背景与 P1
+
+WH-6 把 `ahflc run` 从 tree-walking evaluator big-bang 切换到 vendored-wasm3 `WasmWorkflowRuntime` facade。独立对抗评审(582 pass / 3 environmental pnpm red #81/#84/#85 / 4 wasmtime skip #5/#7/#57/#60;census 73-0 + 69-4;byte-exact WASM=OFF refusal;ASan clean)返回 FIX-FORWARD + 单个 P1(review dimension 10):
+
+facade ctor 编译 IR->Core->wasm,失败时把结构化诊断存入 `DiagnosticBag`(`src/runtime/wasm_runner/wasm_workflow_runtime.cpp:29-56` `record_compile_failure`;`compile_errors_` 是 `DiagnosticBag`,`wasm_workflow_runtime.hpp:129`)。每条 first-class 诊断携带 code + message + 有效 `SourceRange`(`.range(d.source_range)`,`:54`;codegen `add_diag` 设 code+message+source_range,`core_wasm_codegen.cpp:1209-1215`)。umbrella `wasm.compile-failed` 伴随 >=1 first-class ranged 诊断;`ahflc run` exit 1。数据模型 Principle-5 完整。
+
+但 CLI 在 `src/tooling/cli/workflow_run.cpp:1903` 以 `result.diagnostics.render(err, std::nullopt, true)` 渲染——不传 SourceFile,诊断未预 stamp source_name/position。`DiagnosticBag::render`(`include/ahfl/base/support/diagnostics.hpp:1112-1114`)仅在 `diagnostic.source_name` 已设(未设)或传入单个 SourceFile(未传)时输出 `(file:line:col)`(`:1122-1133`);source snippet + caret(`:1138-1172`)仅在传入 SourceFile 时渲染。结果:只有 code+message,无 `(file:line:column)`、无 caret。§12.7.10 AC#5 要求 "lowering/codegen 错误以 SourceRange 诊断渲染 ... (非拼接字符串)"。
+
+### 12.16.2 决策摘要
+
+**选择 Option A:host-supplied diagnostic source locator seam(`WasmWorkflowRuntimeConfig::diagnostic_source_locator`)+ source identity 在生产点 stamp。**
+
+facade 是可嵌入运行时(RFC 0020),不触碰 filesystem/frontend,无 source content。故 offset->line:col 的解析权交给 host:facade 把每条编译失败诊断绑定到 owning declaration 的 module_name,调 host locator 取 `{source_name, position}`,stamp 到 DiagnosticBuilder。render 保持 source-less;`(file:line:col)` 经已 stamp 字段渲染。single-file 传 primary SourceFile 出 caret;SourceGraph 不出 caret(line:col 仍渲染)。
+
+### 12.16.3 已验证的代码事实(file:line 已对 HEAD 952f0c4d 复核)
+
+1. **render API:** `DiagnosticBag::render(out, MaybeCRef<SourceFile> source = nullopt, include_code = false)`(`diagnostics.hpp:1112`)。`source_name`(+`position`)已设时输出 `(source_name:line:col)`(`:1122-1127`);否则若传入单个 SourceFile 且诊断有 range,输出 `(display_name:line:col)`(`:1128-1133`)。caret 仅在传入 SourceFile 时渲染(`:1138-1172`)。Builder 有 `.source_name(name, pos)` / `.position(pos)`(`:981-992`)。
+
+2. **pipeline 诊断结构只携带 bare offset,无 source-unit id:** `CoreWasmDiagnostic { code, message, ir::SourceRangeOpt source_range }`(`core_wasm_codegen.hpp:58-62`);`CoreLowerDiagnostic { severity, code, message, SourceRangeOpt source_range }`(`core_ir.hpp:2017-2022`)。`SourceRange { begin_offset, end_offset }`(`source.hpp:36`)仅 offset;`SourceId` 存在(`source.hpp:13`)但不被这些结构携带。
+
+3. **source identity 在上一层可用:** `DeclarationProvenance { module_name, source_path, source_range, id }`(`decl.hpp:64-69`)。每个 `*Decl`(含 `WorkflowDecl :354`)有 `.provenance`。`WorkflowNode`(`:344`)有 bare `source_range`,其 owning file 是 enclosing `WorkflowDecl` 的 provenance 标识的文件(workflow 声明在一个文件里)。
+
+4. **Core lowering 保留 surface range:** `CoreWorkflowDecl::source_range = decl.provenance.source_range`(`core_lower.cpp:5038`);node input region 用 `decl.nodes[i].source_range`(`:5100-5101`);return region 用 `decl.provenance.source_range`(`:5104`)。codegen 诊断的 `statement.source_range`(`core_wasm_codegen.cpp:6429` 等)trace 到这些 surface range——**是 enclosing workflow 声明文件的 surface range,两种 invocation 形状均成立**。
+
+5. **source content 只在 CLI/frontend 层:** `SourceUnit { ... SourceFile source; ... }`(`frontend.hpp:33-46`);`SourceGraph { entry_sources, sources, module_to_source, ... }`(`:54-59`)。run dispatch 在 `cli_driver.cpp:3986` 的 template `run_analysis<InputT>`(`:3827`)内。single-file(`InputT=ast::Program`)有 `source_file`(MaybeSourceFile,`:1760`);package/manifest(`InputT=SourceGraph`)`source_file` 是 nullopt,但 `input`(SourceGraph&)持有每个文件的 SourceFile。**主产品门 #213/#214/#425 走 manifest = SourceGraph 形状。**
+
+6. **module_name 是 IR->frontend 的 sound join key:** HIR lowerer 的 `current_module_name_ = source.module_name`(`typed_hir_lower.cpp:513`),`provenance.module_name = current_module_name_`(`:1441`)。SourceGraph 的 `module_to_source` 以 module_name 为 key(`project.cpp:745`),且 frontend 强制 module_name 唯一(duplicate module owner 报错,`:725-731`)。故 `provenance.module_name` 唯一标识 SourceGraph 中的 owning SourceUnit。
+
+7. **既有 multi-file 诊断先例(stamp at production):** typecheck(`typecheck.cpp:1195-1198`)与 resolver(`resolver.cpp:3852-3855`)在生产点 stamp `source_name = src_unit.source.display_name` + `position = src_unit.source.locate(range.begin_offset)`,CLI 以 source-less render 得到 `(file:line:col)`。这是 AHFL 既有模式。
+
+8. **run seam:** `run_workflow_with_llm(const ir::Program&, const CommandLineOptions&, ostream&, ostream&)`(`workflow_run.hpp:10-13`),WASM=ON 定义于 `workflow_run.cpp:1590`,WASM=OFF refusal stub 于 `:1919-1927`。§12.7.1 明文冻结 "函数签名 ... 不变"(`kr68 doc:1147`)。本决策修订该条款。
+
+9. **WH-5c.6 runtime 诊断同病:** session config 的 `node_range_resolver` / `capability_range_resolver`(`workflow_session.hpp:77-88`)产出 bare SourceRange,经同一 `render(err, nullopt, true)` 渲染——同样无 line:col。
+
+10. **emit-wasm 更差:** `ahflc emit wasm` 把诊断 flatten 成 `diag.code + ": " + diag.message`,丢弃 range(`driver.cpp:210-244`)。
+
+### 12.16.4 数据流(谁 stamp、谁 resolve、caret)
+
+**source identity 在生产点 stamp(知道文件的一方):**
+
+- **codegen 阶段(per-workflow):** facade ctor 已建 `ProgramIndex` 并遍历 `prog_index.workflows()`(`wasm_workflow_runtime.cpp:79-88`)。新增 `workflow_module_by_name_`(workflow name -> provenance.module_name)。codegen 失败点(`:117-130`)有 `wf.name`,查 map 得 module_name。**无需 Core 层改动。**
+- **lowering/layout 阶段(whole-program):** `CoreLowerDiagnostic` 新增 `std::string source_module`(空 = unknown)。core_lower / core_layout / core_frame_layout 在生产点 stamp enclosing decl 的 `provenance.module_name`。facade 的 lowering/layout `record_compile_failure` 逐条读 `d.source_module`。
+
+**offset->line:col 由 host resolve(facade 无 source content):**
+
+- `WasmWorkflowRuntimeConfig` 新增 `diagnostic_source_locator`(见 §12.16.5)。facade 在 `record_compile_failure` 时对每条诊断调 `locator(module_name, range)`,把返回的 `{source_name, position}` stamp 到 DiagnosticBuilder(`.source_name(label.source_name, label.position)`)。
+- locator 未设(embedder 无 source content):stamp `source_name = module_name`(best-effort 标签,无 line:col)。module_name 为空则不 stamp。诚实降级。
+
+**render 保持 source-less:**
+
+- `workflow_run.cpp:1903` 改为 `result.diagnostics.render(err, source_context.primary_source, true)`。
+- single-file:`primary_source` 是该 SourceFile -> `(file:line:col)` 经 stamp 字段 + caret 经 primary_source。
+- SourceGraph:`primary_source` 是 nullopt -> `(file:line:col)` 经 stamp 字段,无 caret(与 frontend multi-file 诊断行为一致)。
+
+### 12.16.5 seam 形状 + §12.7.1 签名修订
+
+**(a) `src/runtime/wasm_runner/wasm_workflow_runtime.hpp`:**
+
+```cpp
+// Host-resolved source location for a compile diagnostic. The embeddable
+// facade has no source content (RFC 0020); the host resolves the bare offset
+// to line:col and supplies the display label.
+struct LocatedDiagnosticSource {
+    std::string source_name;                  // host display label
+    std::optional<SourcePosition> position;   // line:col; nullopt if unresolvable
+};
+
+// In WasmWorkflowRuntimeConfig:
+// WH-6 fix-forward (kr68 §12.16): host-supplied locator for compile-failure
+// diagnostics. Given the owning declaration's module name + the diagnostic's
+// bare SourceRange, resolves the display label + line:col. The facade stamps
+// the result onto each compile diagnostic. When unset, the facade stamps
+// source_name = module_name (best-effort, no line:col).
+std::function<std::optional<LocatedDiagnosticSource>(
+    std::string_view module_name, SourceRange range)>
+    diagnostic_source_locator;
+```
+
+**(b) `include/ahfl/compiler/ir/core_ir.hpp`:** `CoreLowerDiagnostic` 新增 `std::string source_module;`(空 = unknown)。
+
+**(c) `src/tooling/cli/workflow_run.hpp`:** 新增 `WorkflowRunSourceContext` + 修订签名:
+
+```cpp
+#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"  // LocatedDiagnosticSource
+
+struct WorkflowRunSourceContext {
+    // Installed on WasmWorkflowRuntimeConfig::diagnostic_source_locator.
+    std::function<std::optional<ahfl::runtime::wasm_runner::LocatedDiagnosticSource>(
+        std::string_view module_name, ahfl::SourceRange range)>
+        locate_compile_diagnostic;
+    // Single-file runs: the one SourceFile for caret rendering.
+    // SourceGraph runs: nullopt (line:col still renders; no caret).
+    std::optional<std::reference_wrapper<const ahfl::SourceFile>> primary_source;
+};
+
+[[nodiscard]] int run_workflow_with_llm(const ahfl::ir::Program &program,
+                                        const CommandLineOptions &options,
+                                        std::ostream &out,
+                                        std::ostream &err,
+                                        const WorkflowRunSourceContext &source_context = {});
+```
+
+**(d) `src/tooling/cli/workflow_run.cpp`:** 把 `source_context.locate_compile_diagnostic` 装到 `runtime_config.diagnostic_source_locator`;`:1903` render 改传 `source_context.primary_source`。
+
+**(e) `src/tooling/cli/cli_driver.cpp:3986`:** 在 template 内构造 `WorkflowRunSourceContext` 并传入:
+- `InputT=ast::Program`(single-file):locator 捕获 `source_file->get()`,返回 `{src.display_name, src.locate(range.begin_offset)}`;`primary_source = source_file`。
+- `InputT=SourceGraph`(manifest):locator 捕获 `input`(SourceGraph&),按 module_name 查 `module_to_source` -> `SourceUnit.source`(linear scan by id 或直接按 module_name 匹配),返回 `{unit.source.display_name, unit.source.locate(...)}`;`primary_source = nullopt`。
+
+**(f) WASM=OFF stub(`workflow_run.cpp:1919-1927`):** 签名加 `const WorkflowRunSourceContext&` 参数(unnamed),stub 忽略它(在编译前拒绝)。stub 仍编译干净(AHFL_ENABLE_BACKEND_WASM=OFF)。
+
+**§12.7.1 签名修订(2026-10-03,本决策):** §12.7.1(`kr68 doc:1147`)原冻结 "函数签名、`cli_driver.cpp:3986` 的 dispatch、usage 校验(在 gate 内)不变。" 现修订为:`run_workflow_with_llm` 签名新增 `const WorkflowRunSourceContext& source_context` 参数(默认 `{}`);`cli_driver.cpp:3986` dispatch 改为传入构造的 context;usage 校验仍不变。gate 边界、WASM=OFF 拒绝策略、零业务逻辑 #ifdef 等其余 §12.7.1 条款**不变**。修订理由:AC#5 要求 line:col 渲染,而 source content 只在 CLI 层;不经签名传入 source context,facade 无法 resolve offset->line:col(可嵌入约束,RFC 0020)。
+
+### 12.16.6 范围边界(不并入)
+
+**WH-5c.6 runtime 诊断(node/capability 执行失败):不并入本 slice。** 理由:① AC#5 针对 "lowering/codegen 错误"(编译期),非运行时失败;② runtime 诊断由 session(`wasm_host`)生产,经 `node_range_resolver`/`capability_range_resolver` 得 bare range,其 owning file 是 workflow 文件(node)或 **capability 文件**(capability,可能与 workflow 文件不同)——facade 无法正确 stamp capability 诊断的文件;③ evaluator 车道有同样的 runtime 渲染(无 line:col),非 WH-6 回归。locator seam 形状可复用:未来 slice 可给 `WorkflowSessionConfig` 加同类 locator(或让 resolver 返回 module 身份),无需重开本决策。
+
+**`ahflc emit wasm` flattening:不并入。** emit 路径是独立 CLI 动词,其 flatten(`driver.cpp:210-244`)是既有行为,非 WH-6 回归。facade 的 structured bag 已是更优模式;emit-wasm 采用它是独立 slice。
+
+### 12.16.7 拒绝的替代方案
+
+- **Option B(thread a source registry into the run seam + multi-file render):** 改共享 `DiagnosticBag::render` API(每个 stage 都用)接受 registry——blast radius 大;stamp-at-production(Option A)匹配 typecheck/resolver 既有先例;A 已给两种形状 line:col,B 额外给的 multi-file caret 是既有 graph 路径也没有的能力。over-engineered,REJECT。
+- **Option C(facade owns source content):** 违反 RFC 0020(可嵌入运行时不触碰 filesystem/frontend);其他 embedder 无 CLI/source file 也驱动 `WasmWorkflowRuntime`;把 content 传进 facade 会 (a) 撑大 config,(b) 让 facade 重复 `SourceFile::locate`,(c) 耦合运行时层与 source content 所有权。REJECT。
+- **Option D(keep current + rescope AC#5):** 把 "SourceRange 诊断" 重定义为 "数据模型有 range",把 line:col 推到未来 slice。这是为实现 downgrade AC:wasm ctor 可能失败而 evaluator ctor 从不失败(新用户可见失败模式);用户看到 `error [wasm.UNSUPPORTED_CAPABILITY_FRAME]: <message>` 却不知源码位置,违反 Principle 5(诊断带 SourceRange 且用户可见)与 DSL 编译器的核心诊断契约。frontend 各 stage 都渲染 line:col,post-lowering stage 不渲染是不一致,非设计。REJECT。
+
+### 12.16.8 AHFL-specific divergence
+
+1. **join key 是 module_name(string),非 FileID(index)。** Clang 的 backend 诊断携带 FileID + offset,host SourceManager 解析。AHFL 的 IR 层刻意丢弃 frontend 的 SourceId(`DeclarationProvenance` 携带 module_name,不携带 SourceId;`typed_hir_lower.cpp:1431-1445` 有 `current_source_id_` 但不存进 provenance),且 frontend 的 `module_to_source` 已以 module_name 为 key。故 join key 是 module_name——source-level 名(Principle 2 允许 string 用于 source-level 名/诊断标签),facade 不建 string-keyed 内部 store,只把 module_name 传给 host callback;host 经其既有 index(SourceId)resolve。内部身份在 host 侧仍是 index-based。把 SourceId 加进 `DeclarationProvenance` 是更大的 IR 变更,本 slice 无消费者 beyond 此诊断路径,不做。
+
+2. **stamp-at-production + host-resolves-position 混合。** AHFL 既有模式(typecheck/resolver)是生产点 stamp source_name+position(有 SourceUnit);Clang 是 render 时经 SourceManager resolve。wasm facade 是可嵌入运行时(RFC 0020),无 source content,不能在生产点 stamp position——故委托 host locator resolve position。这是对 "stamp at production" 模式的 AHFL-specific 适配:source identity 在生产点 stamp,position 经 host callback resolve。
+
+### 12.16.9 成本 / LOC
+
+| Component | LOC delta | Notes |
+|-----------|-----------|-------|
+| `wasm_workflow_runtime.hpp` | ~25 | `LocatedDiagnosticSource` + `diagnostic_source_locator` config 字段 |
+| `wasm_workflow_runtime.cpp` | ~50 | `workflow_module_by_name_` 构建 + `record_compile_failure` locator stamping(codegen per-workflow;lowering/layout per-diag source_module) |
+| `core_ir.hpp` | ~3 | `CoreLowerDiagnostic::source_module` 字段 |
+| `core_lower.cpp` + `core_layout.cpp` + `core_frame_layout.cpp` | ~40 | stamp `source_module`(ExprLowerer 加 module_name_ 成员 + 3 构造点 + error() helper;直接 push_back 站点 stamp enclosing decl module_name) |
+| `workflow_run.hpp` | ~20 | `WorkflowRunSourceContext` + 签名修订 |
+| `workflow_run.cpp` | ~10 | 装 locator + render 传 primary_source + stub 参数 |
+| `cli_driver.cpp` | ~30 | template 内构造 `WorkflowRunSourceContext`(两分支) |
+| Tests | ~120 | single-file + manifest 两个 CLI codegen-failure line:col 测试(见 §12.16.10) |
+| Docs | ~150 | 本节 |
+| **Total** | **~450** | |
+
+### 12.16.10 验收 / 验证标准
+
+1. **single-file codegen-failure line:col:** 用 `tests/golden/wasm/wh5c9_string_construct_fail_closed.ahfl`(`kUnsupportedCapabilityFrame`,codegen 阶段)跑 `ahflc run <file> --input <valid Frame JSON> [--llm-config ...]`,断言 stderr 含 `wasm.compile-failed` umbrella **且** >=1 first-class `wasm.UNSUPPORTED_CAPABILITY_FRAME` 诊断带 `(<display_name>:<line>:<col>)`(regex `\([^)]+:[0-9]+:[0-9]+\)`),exit 1。
+2. **manifest/package codegen-failure line:col:** 新建 package fixture(ahfl.toml + 含 codegen-failing workflow 的 .ahfl,module_name 与 manifest 一致)跑 `ahflc run --manifest <toml> --sysroot ... --input ...`,断言 stderr 同样含 umbrella + first-class 诊断带 `(<package file display_name>:<line>:<col>)`,exit 1。**这是主产品门形状(SourceGraph),必须覆盖。**
+3. **umbrella 不孤立:** 两个测试都断言 `wasm.compile-failed` 不单独出现(伴随 >=1 first-class ranged 诊断)。
+4. **caret(single-file):** single-file 测试断言 stderr 含 source snippet + caret 行(`  N | ...` / `  ~~~`)。
+5. **WASM=OFF:** `ahflc run` 仍打印 §12.7.1 byte-exact 拒绝诊断 + exit 1;stub 编译干净(AHFL_ENABLE_BACKEND_WASM=OFF,零 warning)。
+6. **embedder 无 locator:** 单元测试:不设 `diagnostic_source_locator` 构造 facade,编译失败诊断仍带 code+message+range,`source_name` 退化为 module_name(或空),无 position——诚实降级,不崩溃。
+7. **全量 ctest:** 仅 #81/#84/#85(pnpm environmental)red + #5/#7/#57/#60(wasmtime)skip;无新增 red/skip。
+8. **ASan + `-Werror`:** build & test clean;fresh dev build 零 warning(CLAUDE.md memory:develop 可积累 -Werror breakage,commit 前 fresh build)。
+
+### 12.16.11 prior-decision preservation
+
+- **§12.7.1(WASM=OFF 产品策略):** 保留,仅修订 "函数签名不变" 条款(见 §12.16.5)。WASM=OFF 拒绝策略、gate 边界、零业务逻辑 #ifdef 不变。
+- **§12.7.2(facade config 诚实子集):** 保留,扩展。`diagnostic_source_locator` 是 host-supplied seam(与 hooks/invoker/name_resolver 同类),非 evaluator-only 概念。
+- **§12.7.4(退出码/报告/编译错误):** 保留。ctor 编译失败仍存 DiagnosticBag + run() 返回失败 WorkflowResult + exit 1;本决策只补 source rendering。
+- **§12.7.8(facade ctor 编译失败语义):** 保留,扩展。DiagnosticBag 升级不变;本决策补 source_name+position stamping。
+- **§12.7.10 AC#5:** 满足(非 rescope)——line:col 对 single-file + SourceGraph 均渲染。
+- **§12.15.17.1(WH-5c.6 range resolvers):** 保留。runtime 诊断的 line:col 是独立 slice(§12.16.6)。
+- **无 parallel path / 无 flag:** locator 是 config 字段(embedder 可选),非 engine-select flag;无新旧渲染路径共存。
+
+### 12.16.12 Coordinator 修订(2026-10-03):codegen 阶段按 owning decl(agent/workflow)精确归属 module,弃用 workflow-name 启发式
+
+§12.16.4/§12.16.5 原定 codegen 阶段由 facade 建 `workflow_module_by_name_`(workflow name -> workflow provenance.module_name)给整条模块的诊断 stamp module,并声称 "无需 Core 层改动"。Coordinator 在 builder 前独立复核发现该归属对 **跨 module 编排** 不正确,且 owning decl 必须按 reject 的真实词法宿主区分:
+
+- codegen reject(如 `kUnsupportedCapabilityFrame` 的语句 reject)发生在 **handler body 语句**上,而 body 的词法宿主是 **`flow for X { ... }` 块 = `ir::FlowDecl`**,不是 agent 声明本身。仓库内实证跨文件形状:`tests/integration/workflow_value_flow` 中 `pub agent AliasAgent` 声明在 `lib/agents.ahfl`(module `lib::agents`),而 `flow for agents::AliasAgent { ... }` 写在 `app/main.ahfl`(module `app::main`),workflow 也在 app 侧。即 agent 声明文件、flow body 文件、workflow 文件三者可两两不同。用 entry workflow 的 module(原启发式)去 locate flow 体内语句的 offset,会渲染出**错误文件的错误行号**;用 agent decl 的 module(本修订初稿)同样错误。违反 Principle 5;`SourceFile::locate` 对越界 offset 静默 clamp(source.hpp:60),属静默误诊。
+- 正确归属在 codegen 层可拿到:`build_agent_plan` 在 `core_wasm_codegen.cpp:1140` 已解析 `const CoreFlowDecl *flow = unique_target_flow(program, target)`,所有 handler/body 规划都在该 flow 之下;scheduler 侧 reject 属 `CoreWorkflowDecl`。但 **`CoreFlowDecl` 当前不携带任何 provenance**(core_ir.hpp:1292-1298 只有 target/agent_name/target_ref/storage/states),其 IR 源 `ir::FlowDecl` 有完整 `DeclarationProvenance`(decl.hpp:321),lowering 构造点在 core_lower.cpp:5888/5912/5939。
+- codegen 持有 owning decl 的其他位点:planner 全程可及 `const CoreAgentDecl &agent`(agent 骨架级 reject 属 agent 文件,如 entry/flow 解析失败);frame-bridge 规划遍历的 `const CoreCapabilityDecl &capability`(`:10467`,capability ABI/schema 级 reject 属 capability 文件);`build_workflow_plan`(`:13534`)持有 `const CoreWorkflowDecl &workflow`。
+
+**修订(同属 Option A,仅改 source-identity 的生产粒度;seam/签名/数据流其余不变):**
+
+1. `source_module` 加在四类 Core 声明 + 两类诊断载体上,均为末位字段:
+   - `CoreFlowDecl`(新增;handler-body reject 的真实宿主)——`std::string source_module`;
+   - `CoreAgentDecl`(agent 骨架级 reject)、`CoreWorkflowDecl`(scheduler/workflow region reject)、`CoreCapabilityDecl`(capability ABI/import 级 reject);
+   - 诊断载体 `CoreLowerDiagnostic`(§12.16.5(b),verifier 复用它,见 core_verify.hpp:251)与 `CoreWasmDiagnostic`。
+2. `core_lower.cpp` 在各生产点 stamp `decl.provenance.module_name`:`CoreFlowDecl` 构造点 :5888/:5912/:5939(`ir::FlowDecl::provenance` 在作用域);agent `lower_agent` :1896 旁;workflow :5038/:5100-5104 旁;capability `:1974` 同构。**`CoreLowerDiagnostic` 的全部生产站点(core_lower/core_layout/core_frame_layout/core_wire_migration/core_wire_schema/core_verify 共 6 文件)必须逐站点 stamp enclosing decl 的 module_name。** 警告:`source_module` 给默认空值后,`CoreLowerDiagnostic{sev, code, msg, range}` 旧聚合初始化仍可编译(末位缺省 = 空),会**静默丢归属**——builder 必须 grep 每个构造点逐一填值,无 enclosing decl 的 whole-program 级诊断才允许留空。
+3. codegen 侧采用 **scoped owning-module** 机制(不逐站点加参数):`CoreWasmCodegenResult` 增 `std::string active_source_module`;`add_diag`(`:1209`)push 时把它拷入 `CoreWasmDiagnostic::source_module`。RAII scope 在 `build_workflow_plan` 取 workflow.module、在 `build_agent_plan` 于 :1140 解析 flow 后取 **flow.source_module**(workflow 内嵌套规划打包 agent 时 RAII 自然恢复外层 workflow module);emit 入口 verifier/layout 拒绝在任何 scope 外,module 取 `first.source_module`(此时 `CoreLowerDiagnostic` 已带 module);确无归属才空。capability 内在 reject(如 :10467-10483)允许经 `add_diag` 的可选末位 override 参数传 `capability.source_module`,但不强制——它们多无 range,留空 fail-closed 可接受。
+4. facade 对 lower/layout/codegen **统一**逐条读 `d.source_module` 调 host locator——**删除** §12.16.4/§12.16.9 中 `workflow_module_by_name_` 的 workflow-name 启发式(无该成员、无该 ~LOC)。
+5. **host locator 必须 fail-closed 校验 offset:** CLI locator 按 module_name 解析到 SourceUnit 后,仅当 `range.begin_offset <= unit.source.content.size()`(建议同时校验 end)才返回 position;越界返回 `nullopt`(退化为只显示 source_name/module 标签,不编造行号)。locator 缺省或返回 nullopt 但 module_name 非空时,facade 仍 stamp `source_name = module_name`(无 position)。这同时兜底任何残余归属缺口。
+6. **序列化/相等性 big-bang 同步:** 四个声明新字段须同步 `src/compiler/ir/core_json.cpp` writer+reader+key-set(flow: print_flows :1247/read_flows :2321;agent :1223/:3232 区;capability :1169/:3206 区;workflow :1409/:3641 区;key 集合如 :2555/:3168/:3228/:3499),否则 #124 core_json_round_trip(golden 全带非空 module)相等性崩;out-of-line `operator==`(CoreFlowDecl core_lower.cpp:214、CoreWorkflowDecl :236)加字段比较;`CoreAgentDecl`/`CoreCapabilityDecl` 为 defaulted == 自动覆盖。
+7. **验收增补第 9 条(跨文件 flow 归属):** package fixture——module B(`lib`)声明 agent 且 **`flow for` body 写在 module B 文件**并在 body 内触发 codegen reject;module A(`app`)声明 workflow 经 `import B` 以 `B::Agent(input)` 引用(仿 workflow_value_flow 的 lib/app + ahfl.toml 形状)。断言诊断 `(file:line:col)` 锚在 **module B 的 flow 文件**正确行(不是 module A 的 workflow 文件)。同时 builder 以单元测试或第二 fixture 覆盖 "agent 在 B、flow 在 A、workflow 在 A" 形状,锚在 A(flow 文件),锁死三类文件区分。
+
+理由:本修订不改变所选 option、locator seam、§12.7.1 签名修订或 render 路径,仅把 module 键的来源从 "入口 workflow" 精确到 "被拒绝语句的真实词法宿主 decl(flow/agent/workflow/capability)",以杜绝跨文件静默误诊;RAII scope 比 80+ 个 add_diag 站点逐参数改动更简单且不可遗漏。属对已记录数据流的事实性修正(coordinator 对 HEAD 952f0c4d 独立核实,workflow_value_flow 为仓库内实证),非新设计分叉。
+
+### 12.16.13 Coordinator 复核记录(2026-10-03):对抗 re-review 裁决 + 两项接受的连带修正与一项已知边界
+
+独立对抗 re-review(builder 后,HEAD 952f0c4d 未提交工作树)裁决 **FIX-FORWARD**,0 P0 / 1 P1 / 3 P2。Coordinator 裁决:
+
+**P1(必修,fix-forward):** §12.16.12 第 7 条要求的两种跨文件形状只落地了形状 (i)(agent + flow 同在 lib 文件),形状 (ii)("agent 在 B、flow 在 A、workflow 在 A",仓库内 workflow_value_flow 的真实布局)缺失。形状 (i) 的锚点无法区分正确的 flow 归属与回归成 agent 归属(文件相同,regex 行号为 `[0-9]+`)。codegen 实现本身正确(RAII 以 `flow->source_module` 为键),但无测试锁死。处置:新增第二 package fixture(agent 在 lib、`flow for` body 在 app/main、workflow 在 app),断言 codegen reject 锚在 **app 的 flow 文件**,以测试区分三类文件。
+
+**接受的连带修正 1(P2,记录在案):single-file/裸文件路径的 provenance.module_name 补全。** builder 在 `src/compiler/ir/typed_hir_lower.cpp` `current_provenance()` 解除了 "必须同时有 current_source_id_ 才产出 module_name" 的耦合:detached bare-file(query engine 单文件 `ahflc run`)路径下 typed decl 无 SourceId,旧逻辑使全部 `provenance.module_name` 为空,进而 CoreFlowDecl.source_module 为空,§12.16.10 AC#6 的 module-label 降级与本 slice 全部单文件归属都不成立。修正后:module_name 只要 current_module_name_ 非空即产出;source_path 仍仅在有 SourceId 时产出(保持空)。blast radius 经实测中性:仅影响 source_id 缺失的裸文件 decl;20/20 emit golden(ir/ir_json/summary/native_json)零漂移;SMV 只消费 source_path(仍空);裸文件 `emit ir` 现打印 `source=` 空的 provenance 标签,纯外观。此修正在此记录为 §12.16 的必要组成部分(非新分叉):source module 是 source-level 诊断标签,在单文件路径同样必须存在。
+
+**接受的连带修正 2(P2,记录在案):单文件车道 WH-5c.6 运行时诊断被动获得 line:col+caret。** compile/runtime 共用 run 尾部 `render(err, primary_source, true)`;单文件车道 primary_source 非空,render 的 SourceFile fallback 分支使 node/capability 运行时诊断也渲染 `(file:line:col)` + caret。经核实正确且安全:单文件下 node range 与 capability range 均偏移进同一主文件(裸文件不能 import 其他用户文件;stdlib capability 无用户文件 range);SourceGraph 车道 primary_source 为 nullopt,行为完全不变——§12.16.6 担心的跨文件 capability 误诊在 manifest 车道不发生。这是朝 Principle 5 的被动改善,予以接受;**manifest 车道运行时诊断的 line:col(需经 session locator 解析 node=workflow 文件 / capability=各自文件)仍是独立未来 slice,§12.16.6 边界继续有效。**
+
+**已知边界(P2,后续):CoreFnDecl 无 source_module。** core_verify 的 SourceModuleScope 覆盖 agent/capability/flow/workflow;`verify_fns()` 的 fn 级诊断有 enclosing decl 但 CoreFnDecl 不在本 slice 四类声明内,故其 module 为空(whole-program 标签降级)。fn 级 verifier 诊断的跨文件归属留待未来需要时按同一模式给 CoreFnDecl 加 source_module。
+
+### 12.16.14 Coordinator P1 关闭记录(2026-10-03):形状 (ii) fixture 落地与独立验证
+
+§12.16.13 的唯一 P1 已修复并经 coordinator 独立验证(HEAD 952f0c4d 未提交工作树):
+
+- 新增第二 package fixture `tests/integration/wh6_codegen_diag_flow_app/`(package `wh6-diag2-lib` / `wh6-diag2-app`):lib 只声明 `pub agent CrossAgent`(无 `flow for`);app/main.ahfl(module `app::main`)内含 `flow for agents::CrossAgent` body(第 8 行第 9 列 `ctx.carried = w.inner;` 触发 wh5c9 fail-closed codegen reject)与 `pub workflow CrossWorkflow`。这是 workflow_value_flow 三方布局(agent 在 B、flow 在 A、workflow 在 A)叠加 fail-closed 触发。
+- ctest `ahflc.run.manifest.wh6_codegen_diag.flow_app_source`(ProjectTests.cmake)EXPECTED_REGEX = `wasm\.UNSUPPORTED_CAPABILITY_FRAME.*app/main\.ahfl:[0-9]+:[0-9]+`。若归属回归为 agent 键,锚点会变成 lib/agents.ahfl,regex 失败——三类文件区分被测试锁死。
+- Coordinator 独立复跑:`ahflc check --target workflow` 退出 0(失败确实发生在 codegen 而非前端);`ahflc run` 退出 1,诊断实测锚 `app/main.ahfl:8:9`(逐字符核对:第 8 行 8 空格缩进,`ctx.carried` 起于第 9 列),无 caret(SourceGraph 车道,primary_source=nullopt,正确);形状 (i) `flow_lib_source` 与三个单文件 ctest、`ahfl.runtime.wasm_runner` 共 6/6 通过。
+- 新 fixture 不进 pinned_core_corpus(包级 codegen-failure 用例,非 core-IR golden 语料);无任何测试/脚本 GLOB 枚举 tests/integration 包(仅 AhflTesting 的 *with_package* golden glob 与 release-evidence 硬编码路径,均不触及新目录)。
+
+至此 §12.16.12 第 7 条两种形状齐备,P1 关闭;0 P0 / 0 P1,P2-1/P2-2 已在 §12.16.13 接受,P2-3(CoreFnDecl)记入 backlog。WH-6 fix-forward 具备落地条件。
+
+## 12.17 WH-6 落地记录(2026-10-03):`ahflc run` 全切到 wasm3 facade + 编译诊断 source-render seam
+
+KR6.8 WH-6 在 HEAD 952f0c4d 之上 LANDED(builder -> 独立对抗 review -> fix-forward -> 独立对抗 re-review -> coordinator 独立验证;无人类 owner 门;§12.7 cutover + §12.16 诊断 seam 同一次提交 big-bang)。
+
+### 12.17.1 实际落地形状
+
+1. **单边界 cutover(§12.7.1/§12.7.3):** `src/tooling/cli/workflow_run.cpp` 的 `run_workflow_with_llm` 整个函数体由单一 `#ifdef AHFL_ENABLE_BACKEND_WASM` 门控;WASM=ON 走 `WasmWorkflowRuntime` facade(诚实子集 config,无逐字段镜像),WASM=OFF 为 byte-exact 拒绝 stub:`error: ahflc run requires the embedded wasm engine; this build was configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default (ON) to run workflows.`(exit 1),其余 ahflc 动词(check/emit/...)在 WASM=OFF 完全可用。`src/tooling/cli/CMakeLists.txt` 仅在 WASM=ON PRIVATE 链接 `ahfl_runtime_wasm_runner` 并传播同名 compile definition;无 engine-select flag、无 evaluator fallback、无并行路径。`run_workflow_with_llm` 全仓唯一调用点 cli_driver.cpp 显式传 SourceContext,无默认参数降级。
+2. **编译诊断 source-render seam(§12.16/§12.16.12):** 后 lowering 阶段(lower/layout/codegen)诊断在**生产点**按词法宿主 decl 打 `source_module`:CoreAgentDecl/CoreCapabilityDecl/CoreFlowDecl/CoreWorkflowDecl 及 CoreLowerDiagnostic/CoreWasmDiagnostic 新尾字段(IR JSON writer/reader/required-key/out-of-line operator== big-bang 同步,3 个 core golden 重新生成);codegen 用 RAII `ActiveSourceModuleScope`(flow 作用域装在 build_agent_plan 找到唯一 target flow 之后,workflow 作用域覆盖 build_workflow_plan 与 emit 编码,嵌套正确恢复),capability intrinsic 站点以 capability.source_module override,whole-program/byte-level wire 站点故意空 `{}` 并注释。host 经 `WasmWorkflowRuntimeConfig::diagnostic_source_locator(module, range) -> {source_name, position?}` 解析 offset->line:col,**fail-closed 边界校验**(越界返回 nullopt,退化为 module 标签,不编造行号)。CLI 单文件车道传 primary SourceFile(render 出 `(file:line:col)` + caret),SourceGraph 车道按 provenance.module_name 经 module_to_source 解析(出 line:col,无 caret)。
+3. **flow for 归属(§12.16.12 核心):** handler-body codegen reject 归属**词法宿主 `flow for X {}` 声明**而非 agent 声明——二者可在不同文件(实证 `tests/integration/workflow_value_flow`:agent 在 lib,flow 在 app)。两类跨文件形状均有 ctest 锁死:形状 (i) `wh6_codegen_diag_flow_lib`(agent+flow 同在 lib,锚 lib/agents.ahfl),形状 (ii) `wh6_codegen_diag_flow_app`(agent 在 lib、flow+workflow 在 app,锚 app/main.ahfl,agent 键回归必挂)。
+4. **连带修正(§12.16.13 已接受):** detached bare-file query 路径解除 source_id 与 module_name 的耦合(单文件诊断归属的前提,emit golden 零漂移);单文件车道 WH-5c.6 运行时诊断被动获得正确 line:col+caret(manifest 车道 primary_source=nullopt,行为不变)。
+5. **删除/零冗余:** facade 侧 record 辅助函数从自由函数改为成员函数(需读 config_);原 `auto &&builder = bag.error()...` 悬垂临时引用(double-free)在本 slice 修复为具名局部变量;无新增死代码。
+
+### 12.17.2 验证证据(coordinator 独立复跑)
+
+- 强制全量重编译(touch 4 个变更 public 头)零 warning(`-Wall -Wextra -Werror`)。
+- 定向 ctest 全绿:两个 manifest wh6_codegen_diag(#218/#219)、三个单文件 wh6_codegen_diag(#432-434)、`ahfl.runtime.wasm_runner`(273 checks)、core_json_round_trip、emit golden 20/20。
+- 实测锚点:单文件 `wh5c9_string_construct_fail_closed.ahfl:37:9` 带 caret;manifest 形状 (i) `lib/agents.ahfl:18:9` 无 caret;形状 (ii) `app/main.ahfl:8:9` 无 caret(逐字符核对行:列)。
+- WASM=OFF:184 target 干净构建,refusal byte-exact,exit 1。
+- 完整无标签 `ctest --preset test-dev` 与 ASan preset 的结果记录于本提交后运行(见提交报告);#283/#284 证据文件于 post-commit 树重跑刷新(gitignored,compute_source_revision 含 untracked 内容,故必须在提交后同一棵树运行)。
+
+### 12.17.3 已知边界(不在本 slice)
+
+- manifest 车道**运行时**(WH-5c.6 node/capability)诊断的 line:col 仍需 session locator 按 node=workflow 文件 / capability=各自文件解析,§12.16.6 边界继续有效,留独立未来 slice。
+- CoreFnDecl 无 source_module,verify_fns 的 fn 级诊断不归属模块(§12.16.13 P2-3,backlog)。
+- 评估器 WorkflowRuntime 保留至 WH-9 原子删除;WH-7(REPL)/WH-8(DAP)按 §12.7.3 顺序各自 cutover,§12.7.1 WASM=OFF 产品策略两 slice 继承。

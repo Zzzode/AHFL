@@ -1206,12 +1206,40 @@ constexpr std::uint32_t kWorkflowGlobalCompletedCount = 4;
 // index is stable regardless of import_count.
 constexpr std::uint32_t kWorkflowGlobalPendingLatched = 5;
 
+// kr68 §12.16: RAII scope that sets the result's ambient owning module for
+// every diagnostic emitted through add_diag while the scope is live.
+// Nested-safe: restores the previous module on destruction. The emit driver
+// sets the entry declaration's module; the planner scopes override it for
+// handler-body rejects (§12.16.12: the lexical host FlowDecl's module).
+class ActiveSourceModuleScope {
+  public:
+    ActiveSourceModuleScope(CoreWasmCodegenResult &result, std::string_view module)
+        : result_(result), previous_(std::move(result.active_source_module)) {
+        result_.active_source_module = std::string(module);
+    }
+    ~ActiveSourceModuleScope() { result_.active_source_module = std::move(previous_); }
+    ActiveSourceModuleScope(const ActiveSourceModuleScope &) = delete;
+    ActiveSourceModuleScope &operator=(const ActiveSourceModuleScope &) = delete;
+
+  private:
+    CoreWasmCodegenResult &result_;
+    std::string previous_;
+};
+
 void add_diag(CoreWasmCodegenResult &result,
               std::string_view code,
               std::string message,
-              ir::SourceRangeOpt range = std::nullopt) {
+              ir::SourceRangeOpt range = std::nullopt,
+              std::string_view module_override = {}) {
+    // kr68 §12.16: stamp the ambient owning module (set by the emit driver /
+    // planner scopes) unless the caller overrides it. Empty = whole-program
+    // diagnostic with no owning module.
+    const std::string module = module_override.empty()
+                                   ? result.active_source_module
+                                   : std::string(module_override);
     result.diagnostics.push_back(
-        CoreWasmDiagnostic{std::string(code), std::move(message), std::move(range)});
+        CoreWasmDiagnostic{std::string(code), std::move(message), std::move(range),
+                           std::move(module)});
 }
 
 [[nodiscard]] bool is_final_action(const StateAction &action) {
@@ -11144,6 +11172,10 @@ build_frame_section_plan(const CoreProgram &program,
                  "explicit Core agent entry does not have one unique target flow");
         return std::nullopt;
     }
+    // kr68 §12.16.12: every handler-body reject below attributes to the flow
+    // declaration's module — the lexical host of the rejected statement — not
+    // the entry agent's or the workflow's module.
+    const ActiveSourceModuleScope flow_module_scope{result, flow->source_module};
     // RFC 0026 P6 (KR6.6): the coercion proof arena is executable from P6-6
     // onward (a normalized coercion lowers to a real physical effect per
     // CoreCoercionPlanNode op, or fails closed per-handler in the scalar
@@ -11975,10 +12007,12 @@ build_frame_section_plan(const CoreProgram &program,
         const auto &capability = program.capabilities[id.value];
         if (!capability.symbol_ref.id.has_value() ||
             *capability.symbol_ref.id > std::numeric_limits<std::uint32_t>::max()) {
+            // kr68 §12.16: capability-scoped reject — override the ambient
+            // flow module with the capability declaration's own module.
             add_diag(result,
                      core_wasm_diag::kInvalidCapabilityAbi,
                      "capability SymbolId is absent or exceeds the uint32 host ABI domain",
-                     capability.source_range);
+                     capability.source_range, capability.source_module);
             return std::nullopt;
         }
     }
@@ -12027,10 +12061,12 @@ build_frame_section_plan(const CoreProgram &program,
             const auto &capability = program.capabilities[id.value];
             if (!capability.symbol_ref.id.has_value() ||
                 *capability.symbol_ref.id > std::numeric_limits<std::uint32_t>::max()) {
+                // kr68 §12.16: capability-scoped reject — override the ambient
+                // flow module with the capability declaration's own module.
                 add_diag(result,
                          core_wasm_diag::kInvalidCapabilityAbi,
                          "capability SymbolId is absent or exceeds the uint32 host ABI domain",
-                         capability.source_range);
+                         capability.source_range, capability.source_module);
                 return std::nullopt;
             }
         }
@@ -13541,6 +13577,9 @@ build_workflow_plan(const CoreProgram &program,
         return std::nullopt;
     }
     const auto &workflow = program.workflows[target.value];
+    // kr68 §12.16: every workflow-level reject below attributes to the
+    // workflow declaration's owning module.
+    const ActiveSourceModuleScope workflow_module_scope{result, workflow.source_module};
     if (!workflow.storage.patterns.empty() || !workflow.storage.coercion_plans.empty()) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
@@ -18930,8 +18969,10 @@ std::expected<CoreWasmEntry, CoreWasmDiagnostic>
 resolve_core_wasm_entry(const CoreProgram &program,
                         const handoff::PackageMetadata *package_metadata) {
     const auto fail = [](std::string_view code, std::string message) {
+        // kr68 §12.16: entry-resolution diagnostic — whole-program, no owning
+        // module; source_module deliberately left empty.
         return std::unexpected<CoreWasmDiagnostic>(
-            CoreWasmDiagnostic{std::string(code), std::move(message), std::nullopt});
+            CoreWasmDiagnostic{std::string(code), std::move(message), std::nullopt, {}});
     };
     if (package_metadata == nullptr) {
         if (program.agents.size() == 1 && program.workflows.empty()) {
@@ -19405,6 +19446,9 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     const auto core_verification = ir::core::verify_core_program(program);
     if (!core_verification.ok()) {
         const auto &first = core_verification.diagnostics.front();
+        // kr68 §12.16: the verifier already attributed this reject to its
+        // owning declaration's module; forward that attribution.
+        result.active_source_module = first.source_module;
         add_diag(result,
                  core_wasm_diag::kInvalidCore,
                  "Core verifier rejected the program (" + first.code + "): " + first.message,
@@ -19414,6 +19458,9 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     const auto layout_diagnostics = ir::core::verify_core_layout_table(program, layouts);
     if (!layout_diagnostics.empty()) {
         const auto &first = layout_diagnostics.front();
+        // kr68 §12.16: layout-table rejects are whole-program (no owning
+        // module); the empty source_module is forwarded as-is.
+        result.active_source_module = first.source_module;
         add_diag(result,
                  core_wasm_diag::kInvalidLayout,
                  "P4-D verifier rejected the layout table (" + first.code + "): " + first.message,
@@ -19436,6 +19483,11 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     }
 
     if (const auto *workflow = std::get_if<CoreWorkflowId>(&target.entry)) {
+        // kr68 §12.16: every reject in the workflow branch (planning, wire-
+        // schema projection, encoding) attributes to the workflow
+        // declaration's owning module.
+        const ActiveSourceModuleScope workflow_scope{
+            result, program.workflows[workflow->value].source_module};
         auto plan = build_workflow_plan(program, layouts, *workflow, result);
         if (!plan.has_value()) {
             return result;
@@ -19456,24 +19508,33 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
             if (!projection.ok()) {
                 std::string message = "reachable capability import ABI is not wire-transportable";
                 ir::SourceRangeOpt range;
+                std::string_view module;
                 if (!projection.diagnostics.empty()) {
                     const auto &first = projection.diagnostics.front();
                     message += " (" + first.code + ")";
                     range = first.source_range;
+                    module = first.source_module;
                 }
-                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range);
+                // kr68 §12.16: forward the projection's own attribution (the
+                // capability's module for a capability-scoped reject); empty
+                // falls back to the ambient workflow module.
+                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range,
+                         module);
                 return result;
             }
             auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
             if (!encoded.ok()) {
                 std::string message = "wire-schema section payload exceeds the encoding domain";
                 ir::SourceRangeOpt range;
+                std::string_view module;
                 if (!encoded.diagnostics.empty()) {
                     const auto &first = encoded.diagnostics.front();
                     message += " (" + first.code + ")";
                     range = first.source_range;
+                    module = first.source_module;
                 }
-                add_diag(result, core_wasm_diag::kBinaryOverflow, std::move(message), range);
+                add_diag(result, core_wasm_diag::kBinaryOverflow, std::move(message), range,
+                         module);
                 return result;
             }
             wire_schema_payload = std::move(*encoded.bytes);
@@ -19519,9 +19580,14 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     }
     const auto *agent = std::get_if<CoreAgentId>(&target.entry);
     if (agent == nullptr) {
+        // kr68 §12.16: unknown entry variant is a whole-program diagnostic —
+        // no owning module; source_module deliberately left empty.
         add_diag(result, core_wasm_diag::kEntryNotFound, "unknown Core WASM entry variant");
         return result;
     }
+    // kr68 §12.16: entry-resolution rejects (out-of-range, ambiguous flow) are
+    // whole-program and stay empty; build_agent_plan enters a nested scope with
+    // the flow's module for handler-body rejects (§12.16.12).
     auto plan = build_agent_plan(program, layouts, *agent, result);
     if (!plan.has_value()) {
         return result;

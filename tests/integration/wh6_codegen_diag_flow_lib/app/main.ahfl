@@ -1,0 +1,12 @@
+module app::main;
+import lib::agents as agents;
+import lib::types as types;
+
+pub workflow CrossWorkflow {
+    input: types::Frame;
+    output: types::Frame;
+
+    node only: agents::CrossAgent(input);
+
+    return: only;
+}

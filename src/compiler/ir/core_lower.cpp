@@ -214,7 +214,7 @@ namespace {
 bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
     return a.target == b.target && a.agent_name == b.agent_name &&
            symbol_ref_equal(a.target_ref, b.target_ref) && a.storage == b.storage &&
-           a.states == b.states;
+           a.states == b.states && a.source_module == b.source_module;
 }
 
 namespace {
@@ -237,7 +237,8 @@ bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
     return a.id == b.id && a.name == b.name && symbol_ref_equal(a.symbol_ref, b.symbol_ref) &&
            a.input_type == b.input_type && a.output_type == b.output_type &&
            a.storage == b.storage && a.nodes == b.nodes &&
-           region_ptr_eq(a.return_region, b.return_region);
+           region_ptr_eq(a.return_region, b.return_region) &&
+           a.source_module == b.source_module;
 }
 
 bool operator==(const CoreFnDecl &a, const CoreFnDecl &b) noexcept {
@@ -682,12 +683,14 @@ class TypeEnv {
                 // Real std decl whose metadata disagrees with the SSOT: fail-closed
                 // (a stable core lowering diagnostic; the program is not executable).
                 // Principle 5: carry the decl's own source range when it has one.
+                // kr68 §12.16: whole-program type-system diagnostic — no owning
+                // module; source_module deliberately left empty.
                 diags_.push_back(CoreLowerDiagnostic{
                     CoreDiagnosticSeverity::Error, std::string(diag::kBuiltinMetadataDrift),
                     "builtin nominal '" + t.name +
                         "' declaration metadata (arity/variance) disagrees with the builtin "
                         "descriptor SSOT",
-                    source_range});
+                    source_range, {}});
                 // Keep the authoritative descriptor values so downstream arity /
                 // variance checks reflect the SSOT, not the corrupt decl.
                 t.type_param_count = d.type_param_count;
@@ -1432,6 +1435,8 @@ void TypeEnv::finalize_member_templates(ValueTypeArena &arena) {
         if (!reason.empty()) {
             builtin_template_drift =
                 builtin_template_drift || builtin_descriptor(target.name) != nullptr;
+            // kr68 §12.16: whole-program value-type materialization diagnostic
+            // — no owning module; source_module deliberately left empty.
             diags_.push_back(CoreLowerDiagnostic{
                 CoreDiagnosticSeverity::Error,
                 std::string(builtin_template_drift ? diag::kBuiltinMetadataDrift
@@ -1441,7 +1446,7 @@ void TypeEnv::finalize_member_templates(ValueTypeArena &arena) {
                          ? "' member templates disagree with the builtin descriptor SSOT: "
                          : "' has an invalid member type template: ") +
                     reason,
-                pending.source_range});
+                pending.source_range, {}});
             continue;
         }
 
@@ -1894,6 +1899,9 @@ intern_state(std::vector<std::string> &names,
     out.name = agent.name;
     out.symbol_ref = agent.symbol_ref;
     out.source_range = agent.provenance.source_range;
+    // kr68 §12.16: every agent-level reject attributes to the agent
+    // declaration's owning module.
+    out.source_module = agent.provenance.module_name;
     // Typed shell (Principle 2): `input`/`ctx`/`output` resolve to these
     // CoreTypeIds, so a member projection through `input.`/`ctx.` walks a real
     // struct type. Sema's schema boundary requires input/output to be Struct;
@@ -1947,7 +1955,7 @@ intern_state(std::vector<std::string> &names,
                 std::string(diag::kUnresolvedAgentCapability),
                 "agent '" + agent.name + "' capability '" + display +
                     "' could not be resolved to the Core capability table",
-                agent.provenance.source_range});
+                agent.provenance.source_range, agent.provenance.module_name});
             continue;
         }
         if (!seen_capabilities.insert(resolved->id.value).second) {
@@ -1956,7 +1964,7 @@ intern_state(std::vector<std::string> &names,
                 std::string(diag::kDuplicateAgentCapability),
                 "agent '" + agent.name + "' lists Core capability id " +
                     std::to_string(resolved->id.value) + " more than once",
-                agent.provenance.source_range});
+                agent.provenance.source_range, agent.provenance.module_name});
             continue;
         }
         out.capabilities.push_back(resolved->id);
@@ -1972,6 +1980,9 @@ lower_capability(const CapabilityDecl &cap, ValueTypeArena &value_types,
     out.symbol_ref = cap.symbol_ref;
     out.effect_kind = cap.effect.kind;
     out.source_range = cap.provenance.source_range;
+    // kr68 §12.16: capability signature rejects attribute to the capability
+    // declaration's owning module.
+    out.source_module = cap.provenance.module_name;
 
     const auto materialize = [&](const TypeRef &type, std::string position) -> CoreValueTypeId {
         std::string reason;
@@ -1984,7 +1995,7 @@ lower_capability(const CapabilityDecl &cap, ValueTypeArena &value_types,
             std::string(diag::kUnresolvedCapabilitySignature),
             "capability '" + cap.name + "' " + position +
                 " type could not be materialized as a Core value type: " + reason,
-            cap.provenance.source_range});
+            cap.provenance.source_range, cap.provenance.module_name});
         return CoreValueTypeId{};
     };
 
@@ -2306,10 +2317,12 @@ template <class RootPolicy> class ExprLowerer {
                 std::vector<CoreLowerDiagnostic> &diags,
                 const FnCallResolver *fn_calls = nullptr,
                 LambdaLiftBridge *lifter = nullptr,
-                const StructuralInternerFn *structural_interner = nullptr)
+                const StructuralInternerFn *structural_interner = nullptr,
+                std::string_view source_module = {})
         : storage_(storage), caps_(caps), types_(types), policy_(std::move(policy)),
           interner_(interner), value_type_pool_(value_type_pool), diags_(diags),
-          fn_calls_(fn_calls), lifter_(lifter), structural_interner_(structural_interner) {}
+          fn_calls_(fn_calls), lifter_(lifter), structural_interner_(structural_interner),
+          source_module_(source_module) {}
 
     [[nodiscard]] std::unordered_map<std::string, LocalBinding> &scope() {
         return scope_;
@@ -2401,8 +2414,12 @@ template <class RootPolicy> class ExprLowerer {
         return CoreExprId{idx};
     }
     void error(std::string_view code, std::string message, SourceRangeOpt range) {
+        // kr68 §12.16: every body-statement diagnostic is stamped with the
+        // owning decl's module (the flow / workflow / fn being lowered) so a
+        // host locator can attribute the bare range across files.
         diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::string(code),
-                                             std::move(message), std::move(range)});
+                                             std::move(message), std::move(range),
+                                             std::string(source_module_)});
     }
 
     // --- value (ANF) lowering ---
@@ -4733,6 +4750,11 @@ template <class RootPolicy> class ExprLowerer {
     // Structural node interner (mints the lifted fn's CoreVtFn / CoreVtClosure
     // types without a source TypeRef). Paired with `lifter_`.
     const StructuralInternerFn *structural_interner_{nullptr};
+    // kr68 §12.16: owning decl's module name, stamped onto every diagnostic
+    // error() emits (the flow / workflow / fn being lowered). A borrowed
+    // string_view: the owning CoreFlowDecl/CoreWorkflowDecl/FnDecl outlives
+    // the lowerer. Empty = no owning decl (whole-program lowering).
+    std::string_view source_module_;
     std::unordered_map<std::string, LocalBinding> scope_;
 };
 
@@ -4946,7 +4968,7 @@ class FlowLowerer {
                 const StructuralInternerFn *structural_interner = nullptr)
         : ex_(CoreBodyStorageRef{flow.storage},
               caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
-              diags, fn_calls, lifter, structural_interner),
+              diags, fn_calls, lifter, structural_interner, flow.source_module),
           body_(ex_,
                 [this](const GotoStatement &s, SourceRangeOpt range, CoreRegion &region) {
                     lower_goto(s, range, region);
@@ -5036,6 +5058,10 @@ class WorkflowLowerer {
         wf_.name = decl.name;
         wf_.symbol_ref = decl.symbol_ref;
         wf_.source_range = decl.provenance.source_range;
+        // kr68 §12.16: stamp the workflow's owning module before any
+        // diagnostic can fire (node resolution below), so every reject
+        // attributes to the workflow declaration's file.
+        wf_.source_module = decl.provenance.module_name;
         wf_.input_type = types_.type_id_of(decl.input_type_ref).value_or(CoreTypeId{});
         wf_.output_type = types_.type_id_of(decl.output_type_ref).value_or(CoreTypeId{});
 
@@ -5106,8 +5132,11 @@ class WorkflowLowerer {
 
   private:
     void error(std::string_view code, std::string message, SourceRangeOpt range) {
+        // kr68 §12.16: workflow-node / region rejects attribute to the
+        // workflow declaration's module (stamped at the top of lower()).
         diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::string(code),
-                                             std::move(message), std::move(range)});
+                                             std::move(message), std::move(range),
+                                             wf_.source_module});
     }
 
     /// Lower a single workflow value expression (node input / return) into `region`
@@ -5117,7 +5146,7 @@ class WorkflowLowerer {
         ExprLowerer<WorkflowRootPolicy> ex(
             CoreBodyStorageRef{wf_.storage}, caps_,
             types_, WorkflowRootPolicy{wf_.input_type, &node_index_}, interner_, value_type_pool_,
-            diags_, fn_calls_, lifter_, structural_interner_);
+            diags_, fn_calls_, lifter_, structural_interner_, wf_.source_module);
         const CoreValueId value = ex.lower_value(expr, region);
         region.statements.push_back(CoreStmt{CoreYieldStmt{true, value}, range});
     }
@@ -5174,7 +5203,8 @@ class FnBodyLowerer {
                   const StructuralInternerFn *structural_interner = nullptr,
                   FrameCaptureTable *frame_captures = nullptr)
         : ex_(CoreBodyStorageRef{fn.storage}, caps, types, FnRootPolicy{frame_captures}, interner,
-              value_type_pool, diags, &fn_calls, lifter, structural_interner),
+              value_type_pool, diags, &fn_calls, lifter, structural_interner,
+              source.provenance.module_name),
           body_(ex_,
                 [this](const GotoStatement &, SourceRangeOpt range, CoreRegion &) {
                     ex_.error(diag::kFnBodyUnlowered,
@@ -5650,7 +5680,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                         CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedType),
                         "fn instance '" + inst->name +
                             "' has a non-materializable dispatch type: " + reason,
-                        inst->provenance.source_range});
+                        inst->provenance.source_range, inst->provenance.module_name});
                     g.dispatch_types.push_back(CoreValueTypeId{});
                     continue;
                 }
@@ -5861,7 +5891,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                 result.diagnostics.push_back(CoreLowerDiagnostic{
                     CoreDiagnosticSeverity::Error, std::string(diag::kFnBodyUnlowered),
                     "fn instance '" + g.key + "' lost its body table link during lowering",
-                    g.source->provenance.source_range});
+                    g.source->provenance.source_range, g.source->provenance.module_name});
                 continue;
             }
             FnBodyLowerer lowerer(core.fns[fn_it->second], *g.source, cap_index, types,
@@ -5890,6 +5920,10 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         core_flow.agent_name = flow->target_ref.local_name.empty()
                                    ? flow->target_ref.canonical_name
                                    : flow->target_ref.local_name;
+        // kr68 §12.16.12: the flow declaration's module is the lexical host of
+        // every handler-body statement, so every flow-pass reject (target
+        // resolution, unknown handler state, body lowering) attributes here.
+        core_flow.source_module = flow->provenance.module_name;
 
         std::optional<CoreAgentId> target;
         if (flow->target_ref.id.has_value()) {
@@ -5908,7 +5942,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                 CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedFlowTarget),
                 "flow target agent '" + core_flow.agent_name +
                     "' could not be resolved to a declared agent",
-                flow->provenance.source_range});
+                flow->provenance.source_range, flow->provenance.module_name});
             core.flows.push_back(std::move(core_flow));
             continue;
         }
@@ -5931,7 +5965,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                     CoreDiagnosticSeverity::Error, std::string(diag::kUnknownHandlerState),
                     "flow handler names state '" + handler.state_name +
                         "' which is not declared by agent '" + core_flow.agent_name + "'",
-                    handler.source_range});
+                    handler.source_range, flow->provenance.module_name});
                 continue; // do NOT lower a handler onto a bogus state 0
             }
             lowerer.lower_handler(handler, *state_id);
@@ -6013,7 +6047,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                     CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedType),
                     "instance '" + inst->name + "' has a non-materializable dispatch type: " +
                         reason,
-                    inst->provenance.source_range});
+                    inst->provenance.source_range, inst->provenance.module_name});
                 continue;
             }
             out.dispatch_types.push_back(*vt);
@@ -6022,12 +6056,13 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             result.diagnostics.push_back(CoreLowerDiagnostic{
                 CoreDiagnosticSeverity::Error, std::string(diag::kDuplicateInstanceKey),
                 "instance key '" + inst->name + "' is defined by more than one instance",
-                inst->provenance.source_range});
+                inst->provenance.source_range, inst->provenance.module_name});
         }
         const auto unresolved_base = [&](const std::string &what) {
             result.diagnostics.push_back(CoreLowerDiagnostic{
                 CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedInstanceBase),
-                "instance '" + inst->name + "' " + what, inst->provenance.source_range});
+                "instance '" + inst->name + "' " + what, inst->provenance.source_range,
+                inst->provenance.module_name});
         };
         switch (inst->kind) {
         case InstanceKind::Capability: {
@@ -6108,7 +6143,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         default:
             result.diagnostics.push_back(CoreLowerDiagnostic{
                 CoreDiagnosticSeverity::Error, std::string(diag::kUnknownInstanceKind),
-                "instance '" + inst->name + "' has an unknown kind", inst->provenance.source_range});
+                "instance '" + inst->name + "' has an unknown kind", inst->provenance.source_range,
+                inst->provenance.module_name});
             out.payload = CoreFnInstance{}; // placeholder; program already non-executable
             break;
         }
@@ -6185,7 +6221,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                         std::string(diag::kUnresolvedWorkflowInvocation),
                         "workflow '" + wf.name + "' node '" + node.node_name + "' resolves to " +
                             std::to_string(n) + " agent instances (expected exactly 1)",
-                        std::nullopt});
+                        std::nullopt, wf.source_module});
                     continue;
                 }
                 node.target_instance = it->second.front();

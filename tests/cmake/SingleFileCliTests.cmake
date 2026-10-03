@@ -470,6 +470,40 @@ add_test(NAME ahflc.run.input_schema.fail_missing_field
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+# WH-6 fix-forward: post-lowering compile-diagnostic source rendering.
+# The wh5c9 fixture triggers a codegen rejection (kUnsupportedCapabilityFrame)
+# in a single-file workflow.  Three entries verify: (1) the umbrella
+# wasm.compile-failed code, (2) the first-class diagnostic with source
+# location (file:line:col), (3) the caret rendering with source code line.
+set(AHFL_WH6_DIAG_INPUT [[{"_type":"wasm::wh5c9_string_construct_fail_closed::Frame","s":"x"}]])
+
+add_test(NAME ahflc.run.wasm.wh6_codegen_diag.umbrella
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;wasm::wh5c9_string_construct_fail_closed::ConstructFailClosed;--input;${AHFL_WH6_DIAG_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json;${AHFL_TESTS_DIR}/golden/wasm/wh5c9_string_construct_fail_closed.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/wasm/wh5c9_string_construct_fail_closed.ahfl"
+            "-DEXPECTED_REGEX=wasm\\.compile-failed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.wasm.wh6_codegen_diag.first_class_source
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;wasm::wh5c9_string_construct_fail_closed::ConstructFailClosed;--input;${AHFL_WH6_DIAG_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json;${AHFL_TESTS_DIR}/golden/wasm/wh5c9_string_construct_fail_closed.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/wasm/wh5c9_string_construct_fail_closed.ahfl"
+            "-DEXPECTED_REGEX=wasm\\.UNSUPPORTED_CAPABILITY_FRAME.*wh5c9_string_construct_fail_closed\\.ahfl:[0-9]+:[0-9]+"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.wasm.wh6_codegen_diag.caret
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;wasm::wh5c9_string_construct_fail_closed::ConstructFailClosed;--input;${AHFL_WH6_DIAG_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json;${AHFL_TESTS_DIR}/golden/wasm/wh5c9_string_construct_fail_closed.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/wasm/wh5c9_string_construct_fail_closed.ahfl"
+            "-DEXPECTED_REGEX=\\| *~+"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_missing_effect
     validate

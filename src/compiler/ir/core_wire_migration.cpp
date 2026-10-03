@@ -131,9 +131,11 @@ struct WireSchemaBindingFactory {
 
   private:
     static void fail(std::vector<CoreLowerDiagnostic> &diagnostics, std::string message) {
+        // kr68 §12.16: whole-program wire-schema binding diagnostic — no
+        // owning module; source_module deliberately left empty.
         diagnostics.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                                   std::string(wire_schema::kInvalid),
-                                                  std::move(message), std::nullopt});
+                                                  std::move(message), std::nullopt, {}});
     }
 
     // Derive the binding root from a typed selector, enforcing every trust
@@ -192,9 +194,11 @@ struct WireSchemaBindingFactory {
 namespace {
 
 [[nodiscard]] CoreLowerDiagnostic migration_error(std::string message) {
+    // kr68 §12.16: whole-program wire-migration diagnostic — no owning
+    // module; source_module deliberately left empty.
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(wire_schema::kInvalidCore), std::move(message),
-                               std::nullopt};
+                               std::nullopt, {}};
 }
 
 } // namespace

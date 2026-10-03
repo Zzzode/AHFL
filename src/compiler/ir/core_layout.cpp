@@ -102,9 +102,11 @@ class LayoutBuilder {
         if (!diagnostics_.empty()) {
             return;
         }
+        // kr68 §12.16: whole-program layout diagnostic — no owning module;
+        // source_module deliberately left empty.
         diagnostics_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                                    std::string(code), std::move(message),
-                                                   std::move(range)});
+                                                   std::move(range), {}});
     }
 
     [[nodiscard]] SourceRangeOpt type_range(CoreValueTypeId id) const {
@@ -623,9 +625,11 @@ class LayoutVerifier {
 
   private:
     void error(std::string message, std::string_view code = layout::kInvalid) {
+        // kr68 §12.16: whole-program layout-verification diagnostic — no
+        // owning module; source_module deliberately left empty.
         diagnostics_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                                    std::string(code),
-                                                   std::move(message), std::nullopt});
+                                                   std::move(message), std::nullopt, {}});
     }
 
     [[nodiscard]] bool in_range(CoreLayoutId id) const noexcept {
@@ -888,10 +892,12 @@ verify_core_layout_table(const CoreProgram &program, const CoreLayoutTable &tabl
         return diagnostics;
     }
     if (*expected != table) {
+        // kr68 §12.16: whole-program layout-table drift diagnostic — no
+        // owning module; source_module deliberately left empty.
         diagnostics.push_back(CoreLowerDiagnostic{
             CoreDiagnosticSeverity::Error, std::string(layout::kInvalid),
             "layout table does not equal the deterministic projection of its CoreProgram",
-            std::nullopt});
+            std::nullopt, {}});
     }
     return diagnostics;
 }

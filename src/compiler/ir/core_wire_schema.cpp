@@ -19,13 +19,18 @@
 namespace ahfl::ir::core {
 namespace {
 
+// kr68 §12.16: `module` stamps the diagnostic's owning module (a capability
+// declaration's module for capability-scoped rejects). Defaults to empty for
+// whole-program wire-schema diagnostics, which have no owning module.
 [[nodiscard]] CoreLowerDiagnostic diagnostic(std::string_view code,
                                              std::string message,
-                                             SourceRangeOpt range = std::nullopt) {
+                                             SourceRangeOpt range = std::nullopt,
+                                             std::string_view module = {}) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(code),
                                std::move(message),
-                               std::move(range)};
+                               std::move(range),
+                               std::string(module)};
 }
 
 [[nodiscard]] std::optional<CoreWirePayloadKind>
@@ -73,9 +78,11 @@ class SchemaBuilder {
         for (const CoreCapabilityId capability_id : selected_) {
             const CoreCapabilityDecl &capability = program_.capabilities[capability_id.value];
             if (!capability.symbol_ref.id.has_value()) {
+                // kr68 §12.16: capability-scoped reject — attribute to the
+                // capability declaration's owning module.
                 fail(wire_schema::kInvalidCore,
                      "selected capability has no resolved SymbolId",
-                     capability.source_range);
+                     capability.source_range, capability.source_module);
                 return std::nullopt;
             }
             CoreWireCapabilitySchema projected;
@@ -176,9 +183,10 @@ class SchemaBuilder {
         return true;
     }
 
-    void fail(std::string_view code, std::string message, SourceRangeOpt range = std::nullopt) {
+    void fail(std::string_view code, std::string message, SourceRangeOpt range = std::nullopt,
+              std::string_view module = {}) {
         if (diagnostics_.empty()) {
-            diagnostics_.push_back(diagnostic(code, std::move(message), std::move(range)));
+            diagnostics_.push_back(diagnostic(code, std::move(message), std::move(range), module));
         }
     }
 

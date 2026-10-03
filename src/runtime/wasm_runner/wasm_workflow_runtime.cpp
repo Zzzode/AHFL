@@ -19,15 +19,26 @@ namespace ahfl::runtime::wasm_runner {
 namespace irc = ahfl::ir::core;
 namespace bd = ahfl::backends;
 
-namespace {
+void WasmWorkflowRuntime::stamp_compile_diag_source(
+    ahfl::DiagnosticBuilder &builder, std::string_view source_module,
+    ahfl::ir::SourceRangeOpt range) const {
+    if (source_module.empty()) {
+        return; // whole-program diagnostic: no owning module to stamp
+    }
+    if (config_.diagnostic_source_locator && range.has_value()) {
+        auto located = config_.diagnostic_source_locator(source_module, *range);
+        if (located.has_value()) {
+            std::move(builder).source_name(std::move(located->source_name), located->position);
+            return;
+        }
+    }
+    // Fallback: module label only (locator unset, miss, or no range).
+    std::move(builder).source_name(std::string(source_module), std::nullopt);
+}
 
-// WH-6 (kr68 §12.7.8): record a compile-pipeline failure into a DiagnosticBag.
-// A stage-level wasm.compile-failed diagnostic names the failing stage (and
-// the workflow, for emission), then every pipeline diagnostic is recorded as
-// a first-class entry carrying its own code + message + SourceRange (Principle
-// 5) — replacing the old flattened string, which dropped SourceRanges.
-void record_compile_failure(DiagnosticBag &bag, std::string stage,
-                            const std::vector<irc::CoreLowerDiagnostic> &diags) {
+void WasmWorkflowRuntime::record_compile_failure(
+    DiagnosticBag &bag, std::string stage,
+    const std::vector<irc::CoreLowerDiagnostic> &diags) {
     bag.error()
         .code(std::string{wasm_host::wasm_diag::kCompileFailed})
         .message(std::move(stage))
@@ -36,26 +47,26 @@ void record_compile_failure(DiagnosticBag &bag, std::string stage,
         auto builder = d.severity == irc::CoreDiagnosticSeverity::Error
                            ? bag.error()
                            : bag.warning();
-        std::move(builder)
-            .code(d.code)
-            .message(d.message)
-            .range(d.source_range)
-            .emit();
+        std::move(builder).code(d.code).message(d.message).range(d.source_range);
+        stamp_compile_diag_source(builder, d.source_module, d.source_range);
+        std::move(builder).emit();
     }
 }
 
-void record_compile_failure(DiagnosticBag &bag, std::string stage,
-                            const std::vector<bd::CoreWasmDiagnostic> &diags) {
+void WasmWorkflowRuntime::record_compile_failure(
+    DiagnosticBag &bag, std::string stage,
+    const std::vector<bd::CoreWasmDiagnostic> &diags) {
     bag.error()
         .code(std::string{wasm_host::wasm_diag::kCompileFailed})
         .message(std::move(stage))
         .emit();
     for (const auto &d : diags) {
-        bag.error().code(d.code).message(d.message).range(d.source_range).emit();
+        auto builder = bag.error();
+        std::move(builder).code(d.code).message(d.message).range(d.source_range);
+        stamp_compile_diag_source(builder, d.source_module, d.source_range);
+        std::move(builder).emit();
     }
 }
-
-} // namespace
 
 WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
                                          WasmWorkflowRuntimeConfig config)

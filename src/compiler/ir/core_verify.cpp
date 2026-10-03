@@ -79,9 +79,31 @@ class Verifier {
 
   private:
     // --- diagnostics ---
+    // kr68 §12.16: every diagnostic fired while a declaration is being
+    // verified is stamped with that declaration's owning module. The scope is
+    // ambient (nested-safe, restores the previous module on destruction) so
+    // the ~284 error() call sites below need no per-site threading. Whole-
+    // program passes (verify_types, verify_value_types, verify_instances, ...)
+    // never enter a scope, so their diagnostics keep an empty source_module.
+    class SourceModuleScope {
+      public:
+        SourceModuleScope(Verifier &verifier, std::string_view module)
+            : verifier_(verifier), previous_(std::move(verifier.active_source_module_)) {
+            verifier_.active_source_module_ = std::string(module);
+        }
+        ~SourceModuleScope() { verifier_.active_source_module_ = std::move(previous_); }
+        SourceModuleScope(const SourceModuleScope &) = delete;
+        SourceModuleScope &operator=(const SourceModuleScope &) = delete;
+
+      private:
+        Verifier &verifier_;
+        std::string previous_;
+    };
+
     void error(std::string_view code, std::string message, SourceRangeOpt range) {
         diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::string(code),
-                                             std::move(message), std::move(range)});
+                                             std::move(message), std::move(range),
+                                             active_source_module_});
     }
 
     // --- typed-ID bounds predicates ---
@@ -426,6 +448,7 @@ class Verifier {
 
     // --- agent state machine + typed shell ---
     void verify_agent(const CoreAgentDecl &agent) {
+        const SourceModuleScope module_scope{*this, agent.source_module};
         const auto state_count = static_cast<std::uint32_t>(agent.states.size());
         // A runnable agent has at least one state; an empty state table cannot
         // host an initial/final state and is structurally invalid.
@@ -495,6 +518,7 @@ class Verifier {
     void verify_capabilities() {
         std::unordered_set<std::size_t> seen_symbol_ids;
         for (const CoreCapabilityDecl &cap : program_.capabilities) {
+            const SourceModuleScope module_scope{*this, cap.source_module};
             if (cap.symbol_ref.kind != ir::SymbolRefKind::Capability ||
                 !cap.symbol_ref.id.has_value()) {
                 error(verify::kCapabilitySymbolInvalid,
@@ -2042,6 +2066,10 @@ class Verifier {
 
     // --- flow wiring + per-state statement discipline ---
     void verify_flow(const CoreFlowDecl &flow) {
+        // kr68 §12.16.12: the flow declaration's module is the lexical host of
+        // every handler-body statement, so every flow-body reject (arena,
+        // coercion, pattern, ...) attributes to the flow's module.
+        const SourceModuleScope module_scope{*this, flow.source_module};
         ArenaView av{flow.storage.exprs, flow.storage.value_count, flow.storage.patterns, flow.agent_name};
         av.value_types = &flow.storage.value_types;
         av.coercion_plans = &flow.storage.coercion_plans;
@@ -2852,6 +2880,7 @@ class Verifier {
     // physical representation remains the separate verified P4-D layout side
     // artifact and is deliberately not recomputed here.
     void verify_workflow(const CoreWorkflowDecl &wf, std::uint32_t index) {
+        const SourceModuleScope module_scope{*this, wf.source_module};
         const std::string label = "workflow '" + wf.name + "'";
         // Identity: id == index into CoreProgram::workflows (Principle 2).
         if (wf.id.value != index) {
@@ -4765,6 +4794,8 @@ class Verifier {
 
     const CoreProgram &program_;
     std::vector<CoreLowerDiagnostic> diags_;
+    // Ambient owning module stamped on every diagnostic (see SourceModuleScope).
+    std::string active_source_module_;
 };
 
 // RFC 0027 P6/P7/P8 (KR6.13-F): the three handler sets above are exhaustive

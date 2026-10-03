@@ -59,6 +59,12 @@ struct CoreWasmDiagnostic {
     std::string code;
     std::string message;
     ir::SourceRangeOpt source_range;
+    // kr68 §12.16: owning module of the declaration whose rejection produced
+    // this diagnostic (the lexical host of the rejected statement — §12.16.12).
+    // Diagnostic label only, never an internal identity (Principle 2 exception,
+    // documented in §12.16.8). Empty = whole-program diagnostic with no owning
+    // module.
+    std::string source_module;
 };
 
 // KR6.7 (RFC 0026 P7): the machine-readable EXECUTION DESCRIPTOR for one emitted
@@ -269,6 +275,11 @@ struct CoreWasmCodegenResult {
     /// Populated iff `artifact` is present: the machine-readable execution
     /// descriptor derived from the plan that produced the artifact.
     std::optional<CoreWasmExecutionDescriptor> descriptor;
+    /// kr68 §12.16: ambient owning module stamped on every diagnostic emitted
+    /// through `add_diag`. Set by the emit driver from the entry declaration's
+    /// `source_module` (and by the planner scopes for handler-body rejects);
+    /// empty for whole-program diagnostics.
+    std::string active_source_module;
 
     [[nodiscard]] bool ok() const noexcept {
         return artifact.has_value() && diagnostics.empty();

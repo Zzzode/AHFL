@@ -1430,7 +1430,7 @@ class TypedIrLowerer final {
 
     [[nodiscard]] ir::DeclarationProvenance
     current_provenance(std::optional<SourceRange> source_range = std::nullopt) const {
-        if (!current_source_id_.has_value() || current_module_name_.empty()) {
+        if (current_module_name_.empty()) {
             return ir::DeclarationProvenance{
                 .module_name = {},
                 .source_path = {},
@@ -1439,7 +1439,9 @@ class TypedIrLowerer final {
         }
         return ir::DeclarationProvenance{
             .module_name = current_module_name_,
-            .source_path = logical_source_path(current_module_name_),
+            .source_path = current_source_id_.has_value()
+                               ? logical_source_path(current_module_name_)
+                               : std::string{},
             .source_range = source_range,
         };
     }

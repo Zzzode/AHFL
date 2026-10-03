@@ -315,7 +315,8 @@
       "source_range": {
         "begin_offset": 181,
         "end_offset": 220
-      }
+      },
+      "source_module": "app::main"
     }
   ],
   "agents": [
@@ -352,7 +353,8 @@
       "source_range": {
         "begin_offset": 222,
         "end_offset": 412
-      }
+      },
+      "source_module": "app::main"
     }
   ],
   "flows": [
@@ -713,7 +715,8 @@
             ]
           }
         }
-      ]
+      ],
+      "source_module": "app::main"
     }
   ],
   "workflows": [],

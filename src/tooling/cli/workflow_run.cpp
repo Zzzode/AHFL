@@ -10,7 +10,7 @@
 #include "runtime/engine/standard_capabilities.hpp"
 #include "runtime/engine/wire_capability_admission.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
@@ -48,6 +48,14 @@
 #endif
 
 namespace ahfl::cli {
+
+// RFC 0026 KR6.8 WH-6 (kr68 §12.7.1): the entire `ahflc run` implementation
+// (helpers + run_workflow_with_llm body) is gated on AHFL_ENABLE_BACKEND_WASM.
+// Under WASM=OFF the run verb refuses with an actionable diagnostic (exit 1);
+// the compiler/verifier verbs in the same binary stay fully functional. There
+// is no evaluator fallback and no engine-select flag (Principle 1). The gate
+// lives at this single boundary — zero #ifdef inside the business logic.
+#ifdef AHFL_ENABLE_BACKEND_WASM
 namespace {
 
 using ahfl::runtime::value_from_json;
@@ -69,8 +77,8 @@ using ahfl::runtime::make_grpc_json_transcoding_capability;
 using ahfl::runtime::make_http_capability;
 using ahfl::runtime::RetryConfig;
 using ahfl::runtime::TimeoutConfig;
-using ahfl::runtime::WorkflowRuntime;
-using ahfl::runtime::WorkflowRuntimeConfig;
+using ahfl::runtime::wasm_runner::WasmWorkflowRuntime;
+using ahfl::runtime::wasm_runner::WasmWorkflowRuntimeConfig;
 using ahfl::secret::AuthConfig;
 using ahfl::secret::AuthScheme;
 using ahfl::secret::CloudSecretManagerConfig;
@@ -1582,7 +1590,8 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
 int run_workflow_with_llm(const ahfl::ir::Program &program,
                           const CommandLineOptions &options,
                           std::ostream &out,
-                          std::ostream &err) {
+                          std::ostream &err,
+                          const WorkflowRunSourceContext &source_context) {
     if (!options.workflow_name.has_value()) {
         err << "error: run requires --workflow or package workflow entry\n";
         return 2;
@@ -1751,11 +1760,14 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         return 1;
     }
 
-    WorkflowRuntimeConfig runtime_config;
+    WasmWorkflowRuntimeConfig runtime_config;
+    // kr68 §12.16: install the host locator so compile-pipeline diagnostics
+    // render with their owning module's source location.
+    runtime_config.diagnostic_source_locator = source_context.locate_compile_diagnostic;
     auto llm_invoker = llm_provider.as_contextual_invoker();
     if (runtime_capability_bindings != nullptr) {
         auto binding_invoker = runtime_capability_bindings->as_contextual_invoker();
-        runtime_config.contextual_capability_invoker =
+        runtime_config.invoker =
             [runtime_capability_bindings,
              binding_invoker = std::move(binding_invoker),
              llm_invoker =
@@ -1769,14 +1781,14 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
             return llm_invoker(context, name, args);
         };
     } else {
-        runtime_config.contextual_capability_invoker = std::move(llm_invoker);
+        runtime_config.invoker = std::move(llm_invoker);
     }
     // RFC 0022 slice 1c: the native/dev runtime provides default implementations
     // of the standard capabilities (Clock, UuidV4) so a workflow using
     // std::time::now() / std::uuid::new_v4() runs with zero host configuration.
     // A host-provided binding of the same name still wins (checked first above).
-    runtime_config.contextual_capability_invoker = ahfl::runtime::with_standard_capabilities(
-        std::move(*runtime_config.contextual_capability_invoker));
+    runtime_config.invoker = ahfl::runtime::with_standard_capabilities(
+        std::move(runtime_config.invoker));
 
     // RFC 0022 durable resume: --recovery-store persists a resume record on
     // suspend and reloads it to resume; --resume-pending-result supplies the
@@ -1789,6 +1801,12 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
             runtime_config.recovery_snapshot = std::move(*loaded);
         }
     }
+    // WH-4b facade field (§12.7.2 honest subset): the session persists the
+    // resume record on suspend through this store (a save failure downgrades
+    // Suspended to NodeFailed). The CLI save path below stays as the
+    // no-store error + operational note.
+    runtime_config.recovery_store =
+        recovery_store.has_value() ? &*recovery_store : nullptr;
     if (resume_pending_result_wire_json.has_value()) {
         // Forward the owned raw wire bytes verbatim (admitted for syntax in Phase
         // A.3); the runtime decodes them exactly under the pending capability's
@@ -1830,8 +1848,8 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     if (options.suspend_capability.has_value() &&
         !runtime_config.recovery_snapshot.has_value()) {
         std::string suspend_name{*options.suspend_capability};
-        auto inner = std::move(*runtime_config.contextual_capability_invoker);
-        runtime_config.contextual_capability_invoker =
+        auto inner = std::move(runtime_config.invoker);
+        runtime_config.invoker =
             [suspend_name = std::move(suspend_name), inner = std::move(inner)](
                 const ahfl::runtime::CapabilityInvocationContext &context,
                 const std::string &name,
@@ -1846,7 +1864,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         };
     }
 
-    WorkflowRuntime runtime(program, std::move(runtime_config));
+    WasmWorkflowRuntime runtime(program, std::move(runtime_config));
     auto result = runtime.run(workflow_name, std::move(*input_value));
 
     // RFC 0022: a suspended run persists its resume record so a later invocation
@@ -1886,7 +1904,10 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         return 1;
     }
     if (result.diagnostics.has_error() || result.diagnostics.has_warning()) {
-        result.diagnostics.render(err, std::nullopt, true);
+        // kr68 §12.16: pass the primary SourceFile for caret rendering on the
+        // single-file lane; a SourceGraph passes nullopt (renders
+        // (file:line:col) without caret).
+        result.diagnostics.render(err, source_context.primary_source, true);
     }
     // A cleanly suspended + persisted run is a successful outcome (the workflow
     // is durably parked awaiting a capability result), distinct from failure.
@@ -1898,5 +1919,20 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
                ? 0
                : 1;
 }
+#else
+// WASM=OFF (kr68 §12.7.1): the run verb refuses with an actionable diagnostic.
+// The build contains no execution engine; this is a build-configuration
+// refusal, not a compiler diagnostic (no diagnostic code).
+int run_workflow_with_llm(const ahfl::ir::Program & /*program*/,
+                          const CommandLineOptions & /*options*/,
+                          std::ostream & /*out*/,
+                          std::ostream &err,
+                          const WorkflowRunSourceContext & /*source_context*/) {
+    err << "error: ahflc run requires the embedded wasm engine; this build was "
+           "configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the "
+           "default (ON) to run workflows.\n";
+    return 1;
+}
+#endif
 
 } // namespace ahfl::cli

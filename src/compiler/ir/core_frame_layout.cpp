@@ -22,10 +22,12 @@ namespace {
 namespace layout_diag = ahfl::ir::core::layout;
 
 [[nodiscard]] CoreLowerDiagnostic fail(std::string message) {
+    // kr68 §12.16: whole-program frame-layout diagnostic — no owning module;
+    // source_module deliberately left empty.
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(layout_diag::kInvalid),
                                std::move(message),
-                               std::nullopt};
+                               std::nullopt, {}};
 }
 
 constexpr std::array<std::uint8_t, 6> kMagic{'A', 'H', 'F', 'L', 'C', 'L'};

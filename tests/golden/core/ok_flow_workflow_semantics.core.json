@@ -341,7 +341,8 @@
       "source_range": {
         "begin_offset": 179,
         "end_offset": 528
-      }
+      },
+      "source_module": "formal::flow_workflow"
     }
   ],
   "flows": [
@@ -554,7 +555,8 @@
             ]
           }
         }
-      ]
+      ],
+      "source_module": "formal::flow_workflow"
     }
   ],
   "workflows": [
@@ -722,7 +724,8 @@
       "source_range": {
         "begin_offset": 879,
         "end_offset": 1237
-      }
+      },
+      "source_module": "formal::flow_workflow"
     }
   ],
   "instances": [

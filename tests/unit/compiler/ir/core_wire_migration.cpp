@@ -1050,7 +1050,7 @@ TEST_CASE("the verified-table mint enforces the selector SSOT and clears pre-see
         std::vector<CoreLowerDiagnostic> diagnostics;
         // Pre-seed the bag: the mint MUST clear it on entry (success AND failure).
         diagnostics.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
-                                                  "pre.seeded", "stale", std::nullopt});
+                                                  "pre.seeded", "stale", std::nullopt, {}});
         auto b = make_wire_binding_from_verified_table(authority, selector, diagnostics);
         return std::make_pair(std::move(b), std::move(diagnostics));
     };

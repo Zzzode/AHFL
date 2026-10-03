@@ -1684,6 +1684,114 @@ void test_gap4_identity_slot0_safety(
 
 } // namespace
 
+// ==== WH-6 fix-forward: compile-diagnostic source rendering ====
+
+namespace {
+
+void test_compile_diag_no_locator(const std::filesystem::path &repo_root) {
+    // Without a diagnostic_source_locator the runtime falls back to stamping
+    // the module name as source_name with no position (section 12.16.8:
+    // module_name is a diagnostic label only, not a file path).
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c9_string_construct_fail_closed.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "wh6_diag_no_loc.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    wr::WasmWorkflowRuntimeConfig config;
+    // diagnostic_source_locator intentionally left unset.
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5c9_string_construct_fail_closed::Frame","s":"x"})");
+    check(input.has_value(), "wh6_diag_no_loc.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "wasm::wh5c9_string_construct_fail_closed::ConstructFailClosed",
+        std::move(*input));
+    check(result.status() != ahfl::runtime::WorkflowStatus::Completed,
+          "wh6_diag_no_loc.rejected");
+
+    bool found = false;
+    for (const auto &diag : result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.UNSUPPORTED_CAPABILITY_FRAME") {
+            check(diag.source_name.has_value(),
+                  "wh6_diag_no_loc.source_name_stamped");
+            check(*diag.source_name ==
+                      "wasm::wh5c9_string_construct_fail_closed",
+                  "wh6_diag_no_loc.source_name_value");
+            check(!diag.position.has_value(),
+                  "wh6_diag_no_loc.position_absent");
+            found = true;
+            break;
+        }
+    }
+    check(found, "wh6_diag_no_loc.found_first_class");
+}
+
+void test_compile_diag_locator_bounds_guard(
+    const std::filesystem::path &repo_root) {
+    // When the locator returns nullopt (e.g. out-of-bounds offset) the runtime
+    // falls back to the module-name-only stamp, never a fabricated position.
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c9_string_construct_fail_closed.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "wh6_diag_bounds.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.diagnostic_source_locator =
+        [](std::string_view,
+           ahfl::SourceRange) -> std::optional<wr::LocatedDiagnosticSource> {
+        return std::nullopt; // simulate out-of-bounds / miss
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5c9_string_construct_fail_closed::Frame","s":"x"})");
+    check(input.has_value(), "wh6_diag_bounds.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "wasm::wh5c9_string_construct_fail_closed::ConstructFailClosed",
+        std::move(*input));
+    check(result.status() != ahfl::runtime::WorkflowStatus::Completed,
+          "wh6_diag_bounds.rejected");
+
+    bool found = false;
+    for (const auto &diag : result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.UNSUPPORTED_CAPABILITY_FRAME") {
+            check(diag.source_name.has_value(),
+                  "wh6_diag_bounds.source_name_stamped");
+            check(*diag.source_name ==
+                      "wasm::wh5c9_string_construct_fail_closed",
+                  "wh6_diag_bounds.source_name_value");
+            check(!diag.position.has_value(),
+                  "wh6_diag_bounds.position_absent");
+            found = true;
+            break;
+        }
+    }
+    check(found, "wh6_diag_bounds.found_first_class");
+}
+
+} // namespace
+
 int main() {
     const auto repo_root =
         ahfl::test_support::repo_root_from_source_file(__FILE__);
@@ -1708,6 +1816,8 @@ int main() {
     test_gap4_zero_stash_slot(repo_root);
     test_gap4_corrupted_json(repo_root);
     test_gap4_identity_slot0_safety(repo_root);
+    test_compile_diag_no_locator(repo_root);
+    test_compile_diag_locator_bounds_guard(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;

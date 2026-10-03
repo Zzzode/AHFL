@@ -1167,6 +1167,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                 write_required_value_type_id(cap.return_type, "capability.return_type");
             });
             write_source_range_field(field, cap.source_range, indent_level + 1);
+            field("source_module", [&]() { write_string(cap.source_module); });
         });
     }
 
@@ -1221,6 +1222,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                 });
             });
             write_source_range_field(field, agent.source_range, indent_level + 1);
+            field("source_module", [&]() { write_string(agent.source_module); });
         });
     }
 
@@ -1277,6 +1279,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
+            field("source_module", [&]() { write_string(flow.source_module); });
         });
     }
 
@@ -1407,6 +1410,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                       [&]() { print_region(*workflow.return_region, indent_level + 1); });
             }
             write_source_range_field(field, workflow.source_range, indent_level + 1);
+            field("source_module", [&]() { write_string(workflow.source_module); });
         });
     }
 
@@ -3165,7 +3169,7 @@ bool CoreJsonReader::read_capabilities(const JsonValue &array, CoreProgram &prog
         }
         if (!check_fields(*item,
                           {"name", "symbol_ref", "effect_kind", "param_types", "return_type",
-                           "source_range"},
+                           "source_range", "source_module"},
                           "capability declaration")) {
             return false;
         }
@@ -3208,6 +3212,11 @@ bool CoreJsonReader::read_capabilities(const JsonValue &array, CoreProgram &prog
             return false;
         }
         decl.source_range = *range;
+        const auto module = opt_string(*item, "source_module");
+        if (!module) {
+            return false;
+        }
+        decl.source_module = *module;
         program.capabilities.push_back(std::move(decl));
     }
     return ok();
@@ -3225,7 +3234,7 @@ bool CoreJsonReader::read_agents(const JsonValue &array, CoreProgram &program) {
         if (!check_fields(*item,
                           {"name", "symbol_ref", "states", "initial", "finals", "transitions",
                            "input_type", "context_type", "output_type", "context_kind",
-                           "capabilities", "source_range"},
+                           "capabilities", "source_range", "source_module"},
                           "agent declaration")) {
             return false;
         }
@@ -3334,6 +3343,11 @@ bool CoreJsonReader::read_agents(const JsonValue &array, CoreProgram &program) {
             return false;
         }
         decl.source_range = *range;
+        const auto module = opt_string(*item, "source_module");
+        if (!module) {
+            return false;
+        }
+        decl.source_module = *module;
         program.agents.push_back(std::move(decl));
     }
     return ok();
@@ -3349,7 +3363,7 @@ bool CoreJsonReader::read_flows(const JsonValue &array, CoreProgram &program) {
         }
         if (!check_fields(*item,
                           {"agent", "agent_name", "target_ref", "value_count", "exprs",
-                           "value_types", "coercion_plans", "patterns", "states"},
+                           "value_types", "coercion_plans", "patterns", "states", "source_module"},
                           "flow declaration")) {
             return false;
         }
@@ -3480,6 +3494,11 @@ bool CoreJsonReader::read_flows(const JsonValue &array, CoreProgram &program) {
             }
             decl.states.push_back(std::move(out));
         }
+        const auto flow_module = opt_string(*item, "source_module");
+        if (!flow_module) {
+            return false;
+        }
+        decl.source_module = *flow_module;
         program.flows.push_back(std::move(decl));
     }
     return ok();
@@ -3496,7 +3515,7 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
         if (!check_fields(*item,
                           {"id", "name", "symbol_ref", "input_type", "output_type", "value_count",
                            "exprs", "value_types", "coercion_plans", "patterns", "nodes",
-                           "return_region", "source_range"},
+                           "return_region", "source_range", "source_module"},
                           "workflow declaration")) {
             return false;
         }
@@ -3643,6 +3662,11 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
             return false;
         }
         decl.source_range = *wf_range;
+        const auto wf_module = opt_string(*item, "source_module");
+        if (!wf_module) {
+            return false;
+        }
+        decl.source_module = *wf_module;
         program.workflows.push_back(std::move(decl));
     }
     return ok();

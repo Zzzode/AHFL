@@ -320,7 +320,8 @@
       "source_range": {
         "begin_offset": 176,
         "end_offset": 374
-      }
+      },
+      "source_module": "ir::workflow_value_flow"
     }
   ],
   "flows": [
@@ -440,7 +441,8 @@
             ]
           }
         }
-      ]
+      ],
+      "source_module": "ir::workflow_value_flow"
     }
   ],
   "workflows": [
@@ -685,7 +687,8 @@
       "source_range": {
         "begin_offset": 539,
         "end_offset": 767
-      }
+      },
+      "source_module": "ir::workflow_value_flow"
     }
   ],
   "instances": [

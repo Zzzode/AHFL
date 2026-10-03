@@ -49,7 +49,7 @@ constexpr std::size_t kMinBodyBytes = 6 + 1 + 1 + (3 * 64) + 1 + 1 + 1 + 1 + 1 +
 [[nodiscard]] CoreLowerDiagnostic error(std::string message) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(ir::core::wire_schema::kInvalid), std::move(message),
-                               std::nullopt};
+                               std::nullopt, {}};
 }
 
 // A DigestHex is well-formed iff every byte is lowercase-hex ASCII ([0-9a-f]).

@@ -1006,6 +1006,33 @@ add_test(NAME ahflc.emit_execution_plan.manifest.workflow_value_flow.fail_agent_
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+# WH-6 fix-forward: SourceGraph (package) codegen diagnostic source rendering.
+# The lib flow's handler body triggers a codegen rejection; the diagnostic's
+# source location must point at the LIB flow file (lib/agents.ahfl), never at
+# the app's main.ahfl (section 12.16.12: lexical host of the rejected statement).
+add_test(NAME ahflc.run.manifest.wh6_codegen_diag.flow_lib_source
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/wh6_codegen_diag_flow_lib/app/ahfl.toml"
+            "-DAHFLC_ARGS=run\;--manifest\;${AHFL_TESTS_DIR}/integration/wh6_codegen_diag_flow_lib/app/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}\;--input\;{\"_type\":\"lib::types::Frame\",\"s\":\"x\"}\;--llm-config\;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json"
+            "-DEXPECTED_REGEX=wasm\\.UNSUPPORTED_CAPABILITY_FRAME.*lib/agents\\.ahfl:[0-9]+:[0-9]+"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+# WH-6 fix-forward shape (ii): the agent lives in lib/agents.ahfl but the
+# flow (handler body) lives in app/main.ahfl. The codegen rejection must be
+# attributed to the FLOW's lexical host module (app/main.ahfl), never to the
+# agent's module (lib/agents.ahfl). This test LOCKS the distinction: an
+# agent-keyed attribution would anchor lib/agents.ahfl and fail the regex.
+add_test(NAME ahflc.run.manifest.wh6_codegen_diag.flow_app_source
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/wh6_codegen_diag_flow_app/app/ahfl.toml"
+            "-DAHFLC_ARGS=run\;--manifest\;${AHFL_TESTS_DIR}/integration/wh6_codegen_diag_flow_app/app/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}\;--input\;{\"_type\":\"lib::types::Frame\",\"s\":\"x\"}\;--llm-config\;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json"
+            "-DEXPECTED_REGEX=wasm\\.UNSUPPORTED_CAPABILITY_FRAME.*app/main\\.ahfl:[0-9]+:[0-9]+"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 
 add_test(NAME ahfl.evaluator.eval_all
     COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_tests>

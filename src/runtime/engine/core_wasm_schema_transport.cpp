@@ -51,7 +51,7 @@ constexpr std::uint8_t kSectionImport = 2;
 [[nodiscard]] CoreLowerDiagnostic framing_error(std::string message) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(ir::core::wire_schema::kInvalid),
-                               std::move(message), std::nullopt};
+                               std::move(message), std::nullopt, {}};
 }
 
 // A bounds-checked forward cursor over the module bytes. Every read validates

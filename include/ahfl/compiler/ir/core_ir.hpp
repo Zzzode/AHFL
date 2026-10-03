@@ -283,6 +283,11 @@ struct CoreAgentDecl {
     std::vector<CoreCapabilityId> capabilities;
     /// Source declaration provenance for standalone verifier/backend errors.
     SourceRangeOpt source_range;
+    /// Owning module name of the declaration (kr68 §12.16): the join key a
+    /// host uses to attribute a cross-file diagnostic to its source unit
+    /// (Principle 5). Diagnostic label only — never an internal identity
+    /// (Principle 2 exception, documented in §12.16.8). Empty = unknown.
+    std::string source_module;
     [[nodiscard]] friend bool operator==(const CoreAgentDecl &,
                                          const CoreAgentDecl &) noexcept = default;
 };
@@ -335,6 +340,11 @@ struct CoreCapabilityDecl {
     CoreValueTypeId return_type{};
     /// Source declaration provenance for signature/ABI diagnostics.
     SourceRangeOpt source_range;
+    /// Owning module name of the declaration (kr68 §12.16): the join key a
+    /// host uses to attribute a cross-file diagnostic to its source unit
+    /// (Principle 5). Diagnostic label only — never an internal identity
+    /// (Principle 2 exception, documented in §12.16.8). Empty = unknown.
+    std::string source_module;
     [[nodiscard]] friend bool operator==(const CoreCapabilityDecl &,
                                          const CoreCapabilityDecl &) noexcept = default;
 };
@@ -1295,6 +1305,12 @@ struct CoreFlowDecl {
     ir::SymbolRef target_ref;           // provenance / display only
     CoreBodyStorage storage;            // the handler bodies' shared ANF arenas
     std::vector<CoreFlowState> states;
+    /// Owning module name of the `flow for` declaration (kr68 §12.16.12): the
+    /// lexical host of every handler-body statement, so a codegen reject on a
+    /// body statement attributes to the FLOW file (which may differ from both
+    /// the agent decl file and the workflow file). Diagnostic label only
+    /// (Principle 2 exception, §12.16.8). Empty = unknown.
+    std::string source_module;
     friend bool operator==(const CoreFlowDecl &, const CoreFlowDecl &) noexcept;
 };
 
@@ -1346,6 +1362,10 @@ struct CoreWorkflowDecl {
     std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
     std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)
     SourceRangeOpt source_range;              // workflow declaration provenance
+    /// Owning module name of the workflow declaration (kr68 §12.16): the
+    /// lexical host of scheduler/workflow-region rejects. Diagnostic label
+    /// only (Principle 2 exception, §12.16.8). Empty = unknown.
+    std::string source_module;
     friend bool operator==(const CoreWorkflowDecl &, const CoreWorkflowDecl &) noexcept;
 };
 
@@ -2019,6 +2039,12 @@ struct CoreLowerDiagnostic {
     std::string code;          // one of the `diag::` codes above
     std::string message;       // human-readable, actionable (Principle 5)
     SourceRangeOpt source_range;
+    /// Owning module name of the declaration this diagnostic rejects (kr68
+    /// §12.16): stamped at the production point from the enclosing decl's
+    /// provenance, so a host locator can resolve the bare range to a source
+    /// unit across files. Diagnostic label only (Principle 2 exception,
+    /// §12.16.8). Empty = whole-program diagnostic with no owning module.
+    std::string source_module;
 };
 
 /// Result of lowering: the program plus any structured diagnostics. Only ERROR
