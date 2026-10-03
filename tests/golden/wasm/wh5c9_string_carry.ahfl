@@ -1,0 +1,55 @@
+// WH-5c.9 (GAP 9) fixture: a non-final goto handler copies a String PtrLen
+// from the input frame into a context slot (I_k -> C_k), and a later
+// computed-final handler reads it back. The 8-byte PtrLen header is copied
+// (two i32 stores); the payload bytes borrow immutably from the entry payload
+// arena [1024,4096). This pins that the read gate and the store gate both
+// admit the carry, and that the payload survives the C_k slot (zero-filled
+// once per node, not per handler). The empty-string and long-string cases
+// exercise the arena's low and high spans.
+module wasm::wh5c9_string_carry;
+
+pub struct Frame {
+    s: String;
+}
+
+pub struct Ctx {
+    carried: String = "pending";
+}
+
+agent StringCarryAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Start, Carry, Done];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Carry;
+    transition Carry -> Done;
+}
+
+flow for StringCarryAgent {
+    state Start {
+        goto Carry;
+    }
+
+    state Carry {
+        ctx.carried = input.s;
+        goto Done;
+    }
+
+    state Done {
+        return Frame {
+            s: ctx.carried,
+        };
+    }
+}
+
+workflow StringCarry {
+    input: Frame;
+    output: Frame;
+
+    node only: StringCarryAgent(input);
+
+    return: only;
+}

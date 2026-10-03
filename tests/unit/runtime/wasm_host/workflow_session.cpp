@@ -4493,6 +4493,145 @@ void test_wh5c6_reordered_schedule_range(
     }
 }
 
+// ==== WH-5c.9 (GAP 9): non-final String PtrLen carry ====
+//
+// A non-final goto handler copies a String PtrLen from the input frame into a
+// context slot (I_k -> C_k); a later computed-final handler reads it back.
+// The 8-byte PtrLen header is copied (two i32 stores); the payload bytes
+// borrow immutably from the entry payload arena. This pins the read-gate and
+// store-gate lifts and the C_k persistence (zero-fill is once-per-node, not
+// per-handler), for both an empty string and a long string spanning the
+// payload arena.
+
+namespace {
+
+[[nodiscard]] Value make_string_frame(const std::string &type_name,
+                                      const std::string &s) {
+    Value input{ahfl::runtime::StructValue{}};
+    auto &sv = std::get<ahfl::runtime::StructValue>(input.node);
+    sv.type_name = type_name;
+    sv.fields.set("s",
+                  std::make_unique<Value>(Value{ahfl::runtime::StringValue{s}}));
+    return input;
+}
+
+} // namespace
+
+void test_wh5c9_string_carry(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c9_string_carry.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c9_carry.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+    check(wf->descriptor.frame_contract ==
+              ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "wh5c9_carry.p6_lane");
+
+    const std::string long_string(2048, 'x'); // spans the entry payload arena
+    for (const auto &s : {std::string{""}, long_string}) {
+        auto input =
+            make_string_frame("wasm::wh5c9_string_carry::Frame", s);
+        wh::WorkflowSessionConfig config;
+        auto result = wh::run_workflow_session(wf->module_bytes,
+                                               wf->descriptor, input,
+                                               std::move(config));
+        check(result.has_value(),
+              std::string("wh5c9_carry.session.") +
+                  (s.empty() ? "empty" : "long"));
+        if (!result.has_value()) {
+            std::cerr << "  error: " << result.error() << "\n";
+            continue;
+        }
+        check(result->result.status() ==
+                  ahfl::runtime::WorkflowStatus::Completed,
+              std::string("wh5c9_carry.completed.") +
+                  (s.empty() ? "empty" : "long"));
+        const auto *output = result->result.output();
+        check(output != nullptr,
+              std::string("wh5c9_carry.has_output.") +
+                  (s.empty() ? "empty" : "long"));
+        if (output != nullptr) {
+            const auto json = value_to_json(*output);
+            const std::string expected =
+                R"({"_type":"wasm::wh5c9_string_carry::Frame","s":")" + s +
+                R"("})";
+            check(json == expected,
+                  std::string("wh5c9_carry.output_byte_parity.") +
+                      (s.empty() ? "empty" : "long"));
+        }
+    }
+}
+
+// WH-5c.9 two-node edge pin: node `first` outputs a String, node `second`
+// receives it as I_k (scheduler-materialized from the upstream O_k block),
+// copies I_k -> C_k in a non-final handler, and returns it. The payload
+// borrows immutably from the upstream O_k block, which is never zero-filled.
+
+void test_wh5c9_string_edge(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c9_string_edge.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "wh5c9_edge.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+    check(wf->descriptor.is_workflow, "wh5c9_edge.is_workflow");
+
+    auto input = make_string_frame("wasm::wh5c9_string_edge::Frame",
+                                   "edge-carried-string");
+    wh::WorkflowSessionConfig config;
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           input, std::move(config));
+    check(result.has_value(), "wh5c9_edge.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "wh5c9_edge.completed");
+    const auto *output = result->result.output();
+    check(output != nullptr, "wh5c9_edge.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"wasm::wh5c9_string_edge::Frame","s":"edge-carried-string"})",
+              "wh5c9_edge.output_byte_parity");
+    }
+}
+
+// WH-5c.9 fail-closed pin: a String projected out of a scratch-CONSTRUCTED
+// aggregate loses its input-frame provenance (the construct is not a
+// path/alias edge the provenance walk follows), so the context store stays
+// rejected with the updated diagnostic naming all three authorized
+// provenances and carrying a SourceRange.
+
+void test_wh5c9_string_construct_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c9_string_construct_fail_closed.ahfl";
+    auto outcome = emit_workflow_or_diag(source);
+    check(!outcome.wf.has_value(), "wh5c9_fc.rejected");
+    bool found = false;
+    for (const auto &d : outcome.diagnostics) {
+        if (d.code !=
+            ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame) {
+            continue;
+        }
+        found = true;
+        check(d.message.find("rodata") != std::string::npos,
+              "wh5c9_fc.names_rodata");
+        check(d.message.find("capability bridge result") !=
+                  std::string::npos,
+              "wh5c9_fc.names_bridge");
+        check(d.message.find("input frame") != std::string::npos,
+              "wh5c9_fc.names_input_frame");
+        check(d.source_range.has_value(), "wh5c9_fc.has_source_range");
+    }
+    check(found, "wh5c9_fc.diagnostic_present");
+}
+
 } // namespace
 
 int main() {
@@ -4560,6 +4699,10 @@ int main() {
     test_wh5c6_decode_node_range(repo_root);
     test_wh5c6_capability_precedence(repo_root);
     test_wh5c6_reordered_schedule_range(repo_root);
+
+    test_wh5c9_string_carry(repo_root);
+    test_wh5c9_string_edge(repo_root);
+    test_wh5c9_string_construct_fail_closed(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

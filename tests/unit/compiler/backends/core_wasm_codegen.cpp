@@ -2936,8 +2936,9 @@ int main() {
         // frame would store a per-handler SCRATCH address that a later handler's
         // first constructor reuses, so the context slot silently points at
         // clobbered bytes. P6 has no lifetime rule for a value that outlives its
-        // handler, so this fails closed like the PtrLen / String leaf instead of
-        // emitting a dangling pointer.
+        // handler, so this fails closed instead of emitting a dangling pointer.
+        // (A String PtrLen leaf is different: WH-5c.9 admits it because the
+        // payload borrows immutably from an authorized region.)
         {
             auto program = make_e1_core_program();
             program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
@@ -3087,14 +3088,17 @@ int main() {
                   "P6-4 fails closed when an input frame exceeds its fixed region");
         }
 
-        // P6-4 fail-closed: a project-only fixture with a STRING leaf is not a
-        // value the P6 memory model carries (a 2-word PtrLen), so reading it
-        // fails closed rather than truncating to one word.
+        // WH-5c.9 (GAP 9): a project-only fixture with a STRING leaf reads the
+        // 2-word PtrLen pair from the input frame in a non-final goto handler.
+        // The read gate is lifted: the two inline words are loaded and the
+        // payload borrows immutably from the entry payload arena, so the
+        // codegen emits an artifact (no fail-closed rejection).
         {
             auto program = make_e1_core_program();
             // Give the input struct one String field, then read it through the
-            // input frame. A String layout is a 2-word PtrLen pair, which the P6
-            // value model does not carry as one load.
+            // input frame. A String layout is a 2-word PtrLen pair; WH-5c.9
+            // lifts the read gate so the pair is loadable in a non-final
+            // handler.
             program.types[0].fields = {"value"};
             program.types[0].field_nominal_types = {CoreTypeId{}};
             program.types[0].field_has_default = {false};
@@ -3133,10 +3137,8 @@ int main() {
             const auto emitted = layout.table.has_value()
                                      ? emit_agent(program, *layout.table)
                                      : backends::CoreWasmCodegenResult{};
-            check(!emitted.artifact.has_value() &&
-                      has_codegen_code(emitted,
-                                       backends::core_wasm_diag::kUnsupportedOrchestration),
-                  "P6-4 fails closed on a String field read (no single-word load)");
+            check(emitted.artifact.has_value(),
+                  "WH-5c.9 lifts the P6-4 String read gate in a non-final handler");
         }
 
         // P6-3 fail-closed: a tuple pattern is a later slice; it rejects with a

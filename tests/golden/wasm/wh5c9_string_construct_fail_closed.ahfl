@@ -1,0 +1,55 @@
+// WH-5c.9 (GAP 9) fail-closed pin: a String projected out of a
+// scratch-CONSTRUCTED aggregate loses its input-frame provenance (the
+// construct is not a path/alias edge the provenance walk follows), so the
+// context store stays rejected with the updated diagnostic that names all
+// three authorized provenances (rodata literal / capability bridge result /
+// input-frame projection). The fixture lowers to verifier-clean Core; the
+// rejection is at wasm codegen (kUnsupportedCapabilityFrame), not Core
+// lowering.
+module wasm::wh5c9_string_construct_fail_closed;
+
+pub struct Frame {
+    s: String;
+}
+
+pub struct Ctx {
+    carried: String = "pending";
+}
+
+pub struct Wrap {
+    inner: String;
+}
+
+agent ConstructFailClosedAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Start, Done];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ConstructFailClosedAgent {
+    state Start {
+        let w: Wrap = Wrap { inner: input.s };
+        ctx.carried = w.inner;
+        goto Done;
+    }
+
+    state Done {
+        return Frame {
+            s: ctx.carried,
+        };
+    }
+}
+
+workflow ConstructFailClosed {
+    input: Frame;
+    output: Frame;
+
+    node only: ConstructFailClosedAgent(input);
+
+    return: only;
+}

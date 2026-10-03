@@ -3457,6 +3457,60 @@ class P6ComputationHandlerBuilder {
         return value_derives_from_bridge_result(root, seen);
     }
 
+    // WH-5c.9 provenance: true when `root` is a path projection whose root is
+    // the INPUT frame (directly, or through a let-alias / local DAG walk). A
+    // String PtrLen read out of the input frame names a payload that lives in
+    // the entry payload arena [1024,4096) or an upstream O_k block
+    // [12288,16384) — both whole-run-stable, immutable-after-init regions — so
+    // persisting its 8-byte PtrLen header into a context slot never aliases a
+    // region that a later handler reuses. ANF locals form a DAG, so the walk
+    // terminates; `seen` guards defensively.
+    [[nodiscard]] bool value_derives_from_input_frame(
+        CoreValueId root, std::vector<std::uint32_t> &seen) const {
+        if (std::find(seen.begin(), seen.end(), root.value) != seen.end()) {
+            return false;
+        }
+        seen.push_back(root.value);
+        if (root.value >= storage_.value_types.size()) {
+            return false;
+        }
+        // A statement-produced value (capability call result) cannot name the
+        // input frame; only a let-bound value has a defining path expr. A
+        // value with neither is not derived from the input frame.
+        const auto def = let_value_exprs_.find(root.value);
+        if (def == let_value_exprs_.end()) {
+            return false;
+        }
+        if (def->second >= storage_.exprs.size()) {
+            return false;
+        }
+        const CoreExpr &expr = storage_.exprs[def->second];
+        // ANF `let alias = %input_projection` introduces a value-ref alias;
+        // follow it so the provenance reaches the input-rooted path.
+        if (const auto *ref = std::get_if<CoreValueRefExpr>(&expr.node)) {
+            return value_derives_from_input_frame(ref->value, seen);
+        }
+        const auto *path = std::get_if<CorePathExpr>(&expr.node);
+        if (path == nullptr) {
+            return false;
+        }
+        // A direct input-frame projection names the entry payload arena / an
+        // upstream O_k block (both whole-run-stable, immutable-after-init).
+        if (!path->has_local && path->root == ir::core::CorePathRoot::Input) {
+            return true;
+        }
+        // A local-alias path follows the DAG to its root.
+        if (path->has_local && path->root == ir::core::CorePathRoot::Local) {
+            return value_derives_from_input_frame(path->local, seen);
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool value_derives_from_input_frame(CoreValueId root) const {
+        std::vector<std::uint32_t> seen;
+        return value_derives_from_input_frame(root, seen);
+    }
+
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
         add_diag(result_,
@@ -4872,18 +4926,14 @@ class P6ComputationHandlerBuilder {
         // final materializer (the output-frame lane that carries rodata) or,
         // from V2-C, inside a non-final HANDLER that serves a capability
         // bridge (the pair is spilled into the call site's control-block slot
-        // and walked by the host). A pure goto handler without either lane
-        // still fails closed here rather than emitting an orphaned two-word
-        // load.
+        // and walked by the host). WH-5c.9 lifts the last restriction: a
+        // non-final goto handler without either lane may now read the pair
+        // too — the two inline words are loaded from the slot and, for a ctx
+        // store, copied into the destination C_k slot, while the payload
+        // bytes borrow immutably from an authorized region (rodata / entry
+        // arena / upstream O_k / bridge placement). The payload is never
+        // copied, so the read is safe on every lane.
         if (edge_is_ptr_len(leaf->edge)) {
-            if (!final_return_mode_ && bridge_registry_ == nullptr) {
-                return reject(
-                    "a String (PtrLen) field is readable only inside a P6-7 frame-bridge v2 "
-                    "computed final or a capability bridge handler; a non-final goto handler "
-                    "without either lane cannot carry the two-word String pair (it constructs "
-                    "no rodata, crosses no String boundary, and materializes no output frame)",
-                    range);
-            }
             ptrlen_read_needed_ = true;
         }
         // V2-A fix-forward: the projection address walk DEREFERENCES every
@@ -7625,11 +7675,14 @@ class P6ComputationHandlerBuilder {
         }
         // RFC 0026 P6-7 frame-bridge v2 §2.3 (rung V2-B): a PtrLen-valued ctx
         // store IS admitted, but only when the payload pointer names an
-        // all-run-stable region (rodata / input frame arena / a bridge result).
-        // Of those, V2-B can prove only rodata — a String LITERAL — so a String
-        // value produced any other way stays fail-closed here until later rungs
-        // carry its provenance. An aggregate slot keeps its dangling-address
-        // rejection below.
+        // all-run-stable region. Three provenances are provable here: a rodata
+        // String LITERAL (V2-B), a String projected from a CAPABILITY BRIDGE
+        // result (V2-C), and — from WH-5c.9 — a String projected from the
+        // INPUT frame (its payload lives in the entry payload arena
+        // [1024,4096) or an upstream O_k block [12288,16384), both
+        // whole-run-stable, immutable-after-init regions). A String value
+        // produced any other way stays fail-closed here. An aggregate slot
+        // keeps its dangling-address rejection below.
         if (edge_is_ptr_len(slot->edge)) {
             if (readable_kind(store.value) != P6ScalarKind::String) {
                 return reject("a context String slot requires a String PtrLen value", range);
@@ -7654,13 +7707,19 @@ class P6ComputationHandlerBuilder {
             // goto graph. Prove provenance by following the store value's path
             // chain to the bound result of a planned bridge call in THIS
             // builder.
-            if (!is_rodata_literal && !value_derives_from_bridge_result(store.value)) {
+            //
+            // WH-5c.9: a String projected from the INPUT frame is likewise
+            // all-run-stable: its payload borrows immutably from the entry
+            // payload arena or an upstream O_k block, so copying the 8-byte
+            // PtrLen header into the C_k slot never aliases a reused region.
+            if (!is_rodata_literal && !value_derives_from_bridge_result(store.value) &&
+                !value_derives_from_input_frame(store.value)) {
                 return reject_with_code(
                     core_wasm_diag::kUnsupportedCapabilityFrame,
                     "a context String store requires an all-run-stable payload: a rodata "
-                    "String literal or a String projected from a capability bridge result "
-                    "(a computed or input-borrowed String ctx store without that provenance "
-                    "arrives with a later frame-bridge rung)",
+                    "String literal, a String projected from a capability bridge result, or "
+                    "a String projected from the input frame (a computed String ctx store "
+                    "without that provenance arrives with a later frame-bridge rung)",
                     range);
             }
             used_values_[store.value.value] = true;
@@ -7702,13 +7761,16 @@ class P6ComputationHandlerBuilder {
         }
         if (slot_ptr_len) {
             // The projection walk left exactly ONE destination address on the
-            // stack; tee it into the reserved temp so the two PtrLen stores can
-            // each address the slot (the second i32 word sits at offset + 4).
+            // stack; SET it into the reserved temp (popping it) so the two
+            // PtrLen stores can each address the slot via local.get (the second
+            // i32 word sits at offset + 4). A tee would leave the address on
+            // the stack and unbalance a void enclosing block (e.g. an if/else
+            // arm), which wasm3 rejects as "incorrect value count on stack".
             if (readable_kind(store.value) != P6ScalarKind::String) {
                 return reject("store value kind does not match its String destination slot",
                               std::move(range));
             }
-            body_.byte(kOpLocalTee);
+            body_.byte(kOpLocalSet);
             body_.u32(ctx_store_addr_local_);
             const auto store_word = [&](std::uint32_t word_offset, std::uint32_t src) {
                 emit_local_get(ctx_store_addr_local_);

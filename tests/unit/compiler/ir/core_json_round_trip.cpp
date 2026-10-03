@@ -751,6 +751,13 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/wh5c7_set_bridge_fail_closed.ahfl",
         // WH-5c.7 P1-1: Duration round-trip golden.
         "wasm/wh5c7_duration_round_trip.ahfl",
+        // WH-5c.9 (GAP 9): non-final I_k -> C_k String PtrLen carry, two-node
+        // cross-node edge pin, and the construct-projection fail-closed pin.
+        // All three lower to verifier-clean Core; the fail-closed rejection is
+        // at wasm codegen (kUnsupportedCapabilityFrame), not Core lowering.
+        "wasm/wh5c9_string_carry.ahfl",
+        "wasm/wh5c9_string_edge.ahfl",
+        "wasm/wh5c9_string_construct_fail_closed.ahfl",
         // WH-5c.7: P6 builtin/map fixtures that use the repo-std marker and
         // lower to verifier-clean Core.
         "wasm/p6_builtins.ahfl",

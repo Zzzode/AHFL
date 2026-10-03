@@ -1,0 +1,54 @@
+// WH-5c.9 (GAP 9) two-node edge pin: node `first` outputs a String, node
+// `second` receives it as I_k (scheduler-materialized from the upstream O_k
+// block [12288,16384)), copies I_k -> C_k in a non-final goto handler, and a
+// later computed-final handler returns it. The payload borrows immutably from
+// the upstream O_k block, which is never zero-filled (only C_k is, once per
+// node), so the carry survives the cross-node edge.
+module wasm::wh5c9_string_edge;
+
+pub struct Frame {
+    s: String;
+}
+
+pub struct Ctx {
+    carried: String = "pending";
+}
+
+agent CarryAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Init, Carry, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Carry;
+    transition Carry -> Done;
+}
+
+flow for CarryAgent {
+    state Init {
+        goto Carry;
+    }
+
+    state Carry {
+        ctx.carried = input.s;
+        goto Done;
+    }
+
+    state Done {
+        return Frame {
+            s: ctx.carried,
+        };
+    }
+}
+
+workflow StringEdge {
+    input: Frame;
+    output: Frame;
+
+    node first: CarryAgent(input);
+    node second: CarryAgent(first) after [first];
+
+    return: second;
+}
