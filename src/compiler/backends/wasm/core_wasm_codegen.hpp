@@ -91,6 +91,15 @@ struct CoreWasmStateWalk {
     // (the runtime state-trace ring records an id, not a walk position; a
     // computed-goto runner may omit an untaken branch state from walk).
     std::vector<std::string> all_states;
+    // WH-8 (kr68 section 12.9.14): the walk index of the LAST state entered
+    // before a capability dispatch on the P6 lane. A state handler at
+    // walk-index <= last_cap_walk_index is LIVE (entered before the
+    // capability import boundary, so the live debug channel fires); a
+    // state handler at walk-index > last_cap_walk_index is POST-MORTEM
+    // (entered after the last capability, observable only via the
+    // post-run schedule-ordered channel). 0 when the runner has no
+    // capability calls (every state is POST-MORTEM on the P6 lane).
+    std::uint32_t last_cap_walk_index{0};
 };
 
 struct CoreWasmNodeDescriptor {

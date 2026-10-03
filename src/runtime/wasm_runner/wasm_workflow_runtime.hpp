@@ -98,6 +98,18 @@ struct WasmWorkflowRuntimeConfig {
     // host decodes the corruption as kOutputDecodeFailed. Production code
     // never sets this.
     std::function<void(std::span<std::uint8_t>)> post_run2_memory_mutator;
+
+    // WH-8 (kr68 section 12.9.2): cancellation / interruption checks. The
+    // wasm lane checks these at capability import boundaries
+    // (wrapped_callback top, before memo classification) and at
+    // run_workflow_session entry (pre-run, before admission). A workflow
+    // with no capability imports has no mid-run cancellation point (its
+    // guest computation is bounded by the grammar); the pre-run check is
+    // the only observation. Mirrors WorkflowRuntimeConfig (evaluator checks
+    // at the node loop top). NOT in WasmRuntimeHooks: hooks are value-
+    // observation channels, not control channels.
+    std::function<bool()> cancellation_requested;
+    std::function<bool()> interruption_requested;
 };
 
 // The wasm3-backed workflow runtime. Compiles every workflow in the program
@@ -116,6 +128,21 @@ class WasmWorkflowRuntime {
     // Execute the named workflow.
     [[nodiscard]] WorkflowResult run(const std::string &workflow_name,
                                      Value input);
+
+    // WH-8 (kr68 section 12.9.14): look up the compiled descriptor for a
+    // workflow. The DAP uses this to classify breakpoint liveness (the
+    // eight-row liveness table, including the F6 shared-line row, needs the
+    // descriptor's state walks, capability flags, and last_cap_walk_index).
+    // Returns nullptr when the workflow is not in the compiled set (e.g.
+    // compilation failed or the name is unknown).
+    [[nodiscard]] const ahfl::backends::CoreWasmExecutionDescriptor *
+    descriptor_for(const std::string &workflow_name) const {
+        auto it = workflows_.find(workflow_name);
+        if (it == workflows_.end()) {
+            return nullptr;
+        }
+        return &it->second.descriptor;
+    }
 
   private:
     struct CompiledWorkflow {

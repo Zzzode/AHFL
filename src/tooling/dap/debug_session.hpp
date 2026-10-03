@@ -13,9 +13,13 @@
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "ahfl/runtime/execution_event.hpp"
 #include "runtime/value/value.hpp"
 #include "tooling/dap/breakpoints.hpp"
+
+#ifdef AHFL_ENABLE_BACKEND_WASM
+#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
+#endif
 
 namespace ahfl::dap {
 
@@ -47,16 +51,18 @@ struct DebugStepper {
 
 /// A single entry in the DAP call stack (RFC 0015 Slice 5).
 ///
-/// Frames are pushed by the debug hooks installed on the WorkflowRuntime:
-/// a workflow frame at launch, a node frame when a node's agent input is
-/// observed, a state frame on every state entry, and a capability frame on
-/// every capability invocation. The runtime exposes no exit events, so frames
-/// use replacement semantics rather than push/pop pairs: a state entry for
-/// the same agent replaces the top state frame (a transition), a state entry
-/// for a different agent (or a new node input) pops the previous node's
-/// frames, and a capability invocation replaces the top capability frame.
-/// This models the sequential node-by-node execution of the workflow runtime
-/// honestly; true call/return frame nesting arrives with sub-workflow support.
+/// Frames are synthesized by the debug hooks installed on the wasm-backed
+/// workflow runtime: a workflow frame at launch, a node frame synthesized on
+/// state entry (the wasm lane has no agent_input hook, so the node frame is
+/// pushed when the first state of a node is entered), a state frame on every
+/// state entry, and a capability frame on every capability invocation. The
+/// runtime exposes no exit events, so frames use replacement semantics rather
+/// than push/pop pairs: a state entry for the same agent replaces the top
+/// state frame (a transition), a state entry for a different agent (or a new
+/// node) pops the previous node's frames, and a capability invocation
+/// replaces the top capability frame. This models the sequential node-by-node
+/// execution of the workflow runtime honestly; true call/return frame
+/// nesting arrives with sub-workflow support.
 struct DebugFrame {
     enum class Kind { Workflow, Node, State, Capability };
 
@@ -156,17 +162,41 @@ class DebugSession {
     /// documented in the RFC Decision History.
     [[nodiscard]] std::string evaluate_json(const std::string &expression, int frame_id);
 
+    /// WH-8 F5: classify newly-added line breakpoints through the descriptor
+    /// and send unsolicited "breakpoint" events (deferred binding for late
+    /// setBreakpoints requests). Called from the DAP server thread after
+    /// updating the BreakpointManager. Reads the immutable descriptor; no
+    /// session state is mutated beyond the event send. Caller must not hold
+    /// mutex_.
+    void report_breakpoint_liveness(
+        const std::string &source_file,
+        const std::vector<std::pair<int, int>> &id_lines);
+
   private:
     void execute(std::string workflow_name, ahfl::runtime::Value workflow_input);
-    void on_agent_input(ahfl::runtime::AgentId agent,
-                        std::string_view agent_name,
-                        std::string_view node_name,
-                        const ahfl::runtime::Value &input);
     void on_state_entered(ahfl::runtime::AgentId agent,
                           std::string_view agent_name,
                           std::string_view node_name,
                           std::string_view state_name);
+    // WH-8 (kr68 section 12.9.14): the LIVE debug channel. Fired at P6
+    // import boundaries with the trace-ring prefix, before the capability
+    // is dispatched. A blocking pause here pauses the run genuinely
+    // inside the ImportCallback. Deduplicates against the post-run
+    // state_entered_hook via live_count_ / post_count_.
+    void on_state_entered_live(ahfl::runtime::AgentId agent,
+                               std::string_view agent_name,
+                               std::string_view node_name,
+                               std::string_view state_name);
     void on_capability_invoked(ahfl::runtime::AgentId agent, std::string_view capability_name);
+    /// Block the worker thread at a debug stop and emit a DAP `stopped`
+    /// event. Sets paused_ under mutex_, sends the event, then waits on
+    /// resume_cv_ until resume() clears paused_ or disconnect() sets
+    /// stopping_. If stopping_ is already set, returns immediately without
+    /// emitting an event (a disconnect in flight wins). Called only from the
+    /// worker thread inside a debug hook. The caller must not hold mutex_.
+    /// WH-8: a residual stopped-vs-disconnect ordering race (the stopped
+    /// event may race with a concurrent disconnect's terminated event) is
+    /// explicitly deferred by the coordinator; do not add behavior here.
     void pause(std::string reason, std::string description);
     /// Arm a step of `kind` from the last reported (agent, state) and resume
     /// the worker. Caller must not hold mutex_.
@@ -184,6 +214,43 @@ class DebugSession {
                                const std::string &source_path,
                                const std::string &workflow_name);
 
+    /// WH-8 F4.3: one (agent_name, state_name) -> (file, line) record. Two
+    /// agents in one file legitimately share state names (Init/Done); a
+    /// single-key map would drop the second agent's line. A vector of
+    /// records preserves all entries; lookups match on (agent, state) for
+    /// frame synthesis and on (file, line) for classifier reverse lookup.
+    /// F6.1: a single (file, line) may hold MULTIPLE records (the grammar
+    /// separates stateHandlers by whitespace only), so the classifier
+    /// gathers every record on a line before reaching a verdict.
+    struct StateLineRecord {
+        std::string agent_name;
+        std::string state_name;
+        std::string file;
+        int line{0};
+    };
+
+    /// WH-8 (kr68 section 12.9.14.4): classify ONE state-handler record's
+    /// liveness using the facade's CoreWasmExecutionDescriptor. Returns
+    /// (verified, message) per the 7-row liveness table. F6.1: factored out
+    /// of classify_line_liveness_locked so a shared physical line can
+    /// classify every handler on it. Caller must hold mutex_.
+    [[nodiscard]] std::pair<bool, std::string>
+    classify_record_liveness_locked(const StateLineRecord &record) const;
+
+    /// WH-8 (kr68 section 12.9.14.4): classify a line breakpoint's liveness
+    /// using the facade's CoreWasmExecutionDescriptor. Returns (verified,
+    /// message) per the liveness table; F6.1 adds an 8th row for a line
+    /// shared by handlers whose per-record verdicts differ. Caller must
+    /// hold mutex_.
+    [[nodiscard]] std::pair<bool, std::string>
+    classify_line_liveness_locked(const std::string &source_path, int line) const;
+
+    /// WH-8 (kr68 section 12.9.14.4): deferred breakpoint binding. After the
+    /// facade is constructed, iterate over all registered line breakpoints,
+    /// classify each one via the descriptor, and send unsolicited "breakpoint"
+    /// events with the refined verified/message. Caller must not hold mutex_.
+    void classify_and_report_breakpoints();
+
     /// Push the root workflow frame. Called once at launch after the source
     /// locations are known. Caller must not hold mutex_.
     void push_workflow_frame(std::string workflow_name);
@@ -198,19 +265,30 @@ class DebugSession {
     /// variablesReference for chained expansion. Caller must hold mutex_.
     [[nodiscard]] std::string expand_value_locked(const ahfl::runtime::Value &value);
 
+    /// WH-8: resolve a workflow node's input value from the IR node argument
+    /// expression. The wasm lane has no agent_input_hook; the DAP infers the
+    /// input from the workflow declaration: a `node n: Agent(input)` passes the
+    /// workflow input, a `node n: Agent(pred)` passes the predecessor's output.
+    /// Returns nullptr when the expression is not a simple path read.
+    /// Caller must hold mutex_.
+    [[nodiscard]] const ahfl::runtime::Value *
+    resolve_node_input_locked(std::string_view node_name) const;
+
     DapServer &server_;
     BreakpointManager &breakpoints_;
 
     std::optional<ahfl::ir::Program> program_;
-    std::unique_ptr<ahfl::runtime::WorkflowRuntime> runtime_;
+#ifdef AHFL_ENABLE_BACKEND_WASM
+    std::unique_ptr<ahfl::runtime::wasm_runner::WasmWorkflowRuntime> runtime_;
+#endif
     std::thread worker_;
 
     /// Source locations that carry an IR declaration (state handlers, agent
     /// declarations, workflow nodes). Line breakpoints verify against this set.
     BreakableLineSet breakable_lines_;
-    /// Reverse map from state name to the source location of its handler, so
-    /// line breakpoints can be checked and state frames located.
-    std::unordered_map<std::string, std::pair<std::string, int>> state_line_map_;
+    /// WH-8 F4.3: every (agent_name, state_name) -> (file, line) record.
+    /// The record type is declared above with the classifier helpers.
+    std::vector<StateLineRecord> state_line_records_;
     /// Reverse map from workflow node name to its source location, so node
     /// frames can be located (RFC 0015 Slice 5).
     std::unordered_map<std::string, std::pair<std::string, int>> node_line_map_;
@@ -234,12 +312,20 @@ class DebugSession {
     /// Frame stack, bottom to top: [workflow, node?, state?, capability?].
     /// Guarded by mutex_.
     std::vector<DebugFrame> frames_;
-    /// Live agent inputs observed via agent_input_hook, keyed by agent debug
-    /// id. Guarded by mutex_.
-    std::unordered_map<std::string, ahfl::runtime::Value> agent_inputs_;
+    /// WH-8 (kr68 section 12.9.14): per-(node, state) live-firing counts for
+    /// dedup. The live hook fires at import boundaries; the post-run hook
+    /// fires the full schedule-ordered sequence. The post-run hook skips
+    /// occurrences already fired live (post_count <= live_count). Guarded
+    /// by mutex_.
+    std::unordered_map<std::string, std::size_t> live_count_;
+    std::unordered_map<std::string, std::size_t> post_count_;
     /// Live agent outputs observed via node_completed_hook, keyed by agent
     /// debug id. Guarded by mutex_.
     std::unordered_map<std::string, ahfl::runtime::Value> agent_outputs_;
+    /// WH-8: the current workflow node for each agent debug id, updated on
+    /// every state_entered hook. Used to resolve the agent's input value from
+    /// the workflow's node argument expression. Guarded by mutex_.
+    std::unordered_map<std::string, std::string> agent_node_;
     /// Live node results observed via node_completed_hook, keyed by node
     /// name, for the Workflow scope. Guarded by mutex_.
     std::unordered_map<std::string, ahfl::runtime::Value> node_results_;
@@ -247,6 +333,9 @@ class DebugSession {
     /// returns). Guarded by mutex_.
     ahfl::runtime::Value workflow_input_;
     std::optional<ahfl::runtime::Value> workflow_output_;
+    /// WH-8: the launched workflow's name, used to resolve node inputs from
+    /// the IR workflow declaration. Guarded by mutex_.
+    std::string workflow_name_;
     /// Registry for chained variable expansion: variablesReference -> cloned
     /// Value. Scope references (100-499) are computed, not stored. Guarded by
     /// mutex_.

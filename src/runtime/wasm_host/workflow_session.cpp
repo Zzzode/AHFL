@@ -154,10 +154,13 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 // unknown node (D-B: mirrors the JS oracle's recordStates, which fails rather
 // than skips). P2-3: cross-checks event capability/source_symbol against the
 // descriptor node. Also populates states_per_node for lifecycle events.
+// WH-8 (kr68 section 12.9.4 item 2): reconstruct WireJson state_sequence
+// from node-event records joined to agent walks. Does NOT fire
+// state_entered_hook -- the hook fires post-run AFTER node_completed_hook
+// (per-node schedule order: node_completed THEN state_entered).
 [[nodiscard]] std::optional<std::string> reconstruct_wirejson_states(
     std::span<const std::uint8_t> linear_memory,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-    const StateEnteredHook &state_entered_hook,
     std::vector<StateEntry> &collected_states,
     std::vector<std::vector<WasmNodeStateEntry>> &states_per_node) {
     const auto &nodes = descriptor.nodes;
@@ -173,11 +176,6 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
             }
             const auto &agent = agents[node.runner];
             for (const auto &state_name : agent.walk) {
-                if (state_entered_hook) {
-                    state_entered_hook(
-                        AgentId{node.runner}, agent.agent, node.name,
-                        state_name);
-                }
                 collected_states.push_back({agent.agent, state_name});
                 states_per_node[i].push_back({node.runner, state_name});
             }
@@ -228,11 +226,6 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 
         const auto &agent = agents[node_desc->runner];
         for (const auto &state_name : agent.walk) {
-            if (state_entered_hook) {
-                state_entered_hook(
-                    AgentId{node_desc->runner}, agent.agent, node_desc->name,
-                    state_name);
-            }
             collected_states.push_back({agent.agent, state_name});
             states_per_node[node_schedule].push_back(
                 {node_desc->runner, state_name});
@@ -247,8 +240,8 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 // trace ring, so their walks are only recoverable from the node-event
 // records the scheduler writes per completed node. Populates
 // states_per_node ONLY (no hook, no collected_states -- the caller rebuilds
-// collected_states and fires the hook in schedule order via
-// rebuild_and_fire_states).
+// collected_states via rebuild_states and fires the hook in schedule order
+// in section 10's per-node loop).
 [[nodiscard]] std::optional<std::string> collect_opaque_node_states(
     std::span<const std::uint8_t> linear_memory,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
@@ -313,26 +306,22 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 // the trace ring fires P6 states live at import boundaries (out of schedule
 // order relative to opaque nodes); this post-run pass produces a single
 // schedule-ordered sequence that matches the evaluator's observation.
-void rebuild_and_fire_states(
+// WH-8 (kr68 section 12.9.4 item 2): rebuild collected_states from
+// states_per_node in schedule order. Does NOT fire state_entered_hook --
+// the hook fires post-run AFTER node_completed_hook (per-node schedule
+// order: node_completed THEN state_entered).
+void rebuild_states(
     std::vector<StateEntry> &collected_states,
     const std::vector<std::vector<WasmNodeStateEntry>> &states_per_node,
-    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-    const StateEnteredHook &state_entered_hook) {
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
     collected_states.clear();
     for (std::size_t i = 0; i < states_per_node.size(); ++i) {
-        const std::string_view node_name =
-            i < descriptor.nodes.size() ? descriptor.nodes[i].name
-                                        : std::string_view{};
         for (const auto &entry : states_per_node[i]) {
             if (entry.runner >= descriptor.agents.size()) {
                 continue;
             }
             const auto &agent = descriptor.agents[entry.runner];
             collected_states.push_back({agent.agent, entry.state_name});
-            if (state_entered_hook) {
-                state_entered_hook(AgentId{entry.runner}, agent.agent,
-                                   node_name, entry.state_name);
-            }
         }
     }
 }
@@ -490,6 +479,49 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         return std::unexpected("run_workflow_session: descriptor is not a workflow");
     }
 
+    // WH-8 (kr68 section 12.9.2): pre-run cancellation / interruption
+    // check. If the host has already requested cancellation or interruption
+    // before the wasm instance is created, short-circuit: build a
+    // Cancelled / Interrupted result without starting the engine. A
+    // workflow with no capability imports has no mid-run cancellation
+    // point (its guest computation is bounded by the grammar); this
+    // pre-run check is the only observation for such workflows.
+    if ((config.cancellation_requested && config.cancellation_requested()) ||
+        (config.interruption_requested && config.interruption_requested())) {
+        const bool cancelled =
+            config.cancellation_requested && config.cancellation_requested();
+        WasmWorkflowRunFacts facts;
+        facts.status = cancelled ? RunTerminalStatus::Cancelled
+                                 : RunTerminalStatus::Interrupted;
+        facts.failure_kind = cancelled ? WorkflowFailureKind::Cancelled
+                                       : WorkflowFailureKind::Interrupted;
+        facts.failure_code = std::string{wasm_diag::kRunFailed};
+        facts.failure_message =
+            cancelled ? "workflow execution cancelled"
+                      : "workflow execution interrupted";
+        facts.nodes.reserve(descriptor.nodes.size());
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            WasmNodeRunFacts node_facts;
+            node_facts.terminal = WasmNodeRunFacts::Terminal::Skipped;
+            facts.nodes.push_back(std::move(node_facts));
+        }
+        WorkflowResult result;
+        const bool report_ok =
+            finalize_wasm_workflow_run(result, descriptor, std::move(facts));
+        if (!report_ok) {
+            result.report.status = RunTerminalStatus::Failed;
+        }
+        return WorkflowSessionResult{
+            .result = std::move(result),
+            .states = {},
+            .capabilities = {},
+            .capability_arguments = {},
+            .transition_count = 0,
+            .workflow_completed_count = 0,
+            .capability_failures = {},
+        };
+    }
+
     const bool is_p6 =
         descriptor.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame;
     const bool has_trace =
@@ -594,6 +626,19 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
+    // WH-8 (kr68 section 12.9.2) + fix-forward F1: boundary cancellation.
+    // Set by the wrapped_invoker (after a blocking capability_invoked_hook,
+    // before the side effect) or the wrapped_callback (at the top and again
+    // after a blocking state_entered_live_hook) when the host requests
+    // cancellation / interruption at an import boundary. The invoker returns
+    // a Cancelled/Interrupted Error result (the import executor replies
+    // AHFL_CAP_ERROR, trapping the guest); the callback returns ImportAbort
+    // to terminate run2. The session then overrides the outcome
+    // classification to Cancelled / Interrupted. The latch is sticky: once
+    // latched, interruption never overrides cancel.
+    enum class BoundaryCancellation { None, Cancelled, Interrupted };
+    BoundaryCancellation boundary_cancel{BoundaryCancellation::None};
+
     // --- 3. Build the wrapped invoker (fires hooks, collects data) ---
     // WH-4b: WorkflowSessionConfig is move-only (it carries
     // std::optional<Value> + std::optional<WorkflowRecoverySnapshot>), so the
@@ -602,12 +647,18 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // The lambda is move-only (move capture of `invoker`); std::function
     // holds move-only callables on this toolchain (the same pattern the
     // WH-3 inner callback uses with `inner = std::move(...)`).
+    // F1: the cancellation predicates are copied and boundary_cancel is
+    // captured by reference so the post-hook re-check can latch a
+    // disconnect that landed while the capability_invoked_hook blocked.
     ContextualCapabilityInvoker wrapped_invoker =
         [invoker = std::move(config.invoker),
          capability_invoked_hook = config.capability_invoked_hook,
          capability_result_observer = config.capability_result_observer,
+         cancellation_requested = config.cancellation_requested,
+         interruption_requested = config.interruption_requested,
          &recorder, &collected_capabilities, &collected_cap_args,
          &collected_failures, &symbol_to_runner, &collected_cap_calls,
+         &boundary_cancel,
          workflow_index = descriptor.workflow_index](
             const CapabilityInvocationContext &ctx,
             const std::string &name,
@@ -647,9 +698,36 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     current->ordinal, current->cap_id, *arg_hash);
             }
         }
+        // F6.2: on a pre-dispatch F1(b) cancel this entry stays name-only (no matching collected_cap_calls/args/result); every current post-run consumer tolerates it (the capabilities vector is dead at its sole call site; emit_workflow_events projects collected_cap_calls only).
         collected_capabilities.push_back(name);
         if (capability_invoked_hook) {
             capability_invoked_hook(real_ctx.agent_id, name);
+        }
+        // F1(b): the capability_invoked_hook above BLOCKS in the DAP pause().
+        // A disconnect can land while it blocks, AFTER the wrapped_callback's
+        // top-of-import check and BEFORE the side effect below. Re-check the
+        // predicates here: if tripped, latch boundary_cancel and return a
+        // Cancelled/Interrupted Error result WITHOUT calling invoker, the
+        // result observer, or collecting args/calls. The import executor
+        // replies AHFL_CAP_ERROR (capability_import.cpp map_status_to_raw),
+        // which traps the guest; the post-run boundary_cancel override then
+        // classifies the run Cancelled/Interrupted rather than NodeFailed.
+        if (boundary_cancel == BoundaryCancellation::None) {
+            if (cancellation_requested && cancellation_requested()) {
+                boundary_cancel = BoundaryCancellation::Cancelled;
+            } else if (interruption_requested &&
+                       interruption_requested()) {
+                boundary_cancel = BoundaryCancellation::Interrupted;
+            }
+        }
+        if (boundary_cancel != BoundaryCancellation::None) {
+            CapabilityCallResult cancelled_result;
+            cancelled_result.status = CapabilityCallStatus::Error;
+            cancelled_result.failure_kind =
+                boundary_cancel == BoundaryCancellation::Cancelled
+                    ? CapabilityFailureKind::Cancelled
+                    : CapabilityFailureKind::Interrupted;
+            return cancelled_result;
         }
         if (auto envelope = serialize_args_for_wire_json(args)) {
             collected_cap_args.push_back(std::move(*envelope));
@@ -874,22 +952,30 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         auto inner_callback =
             make_capability_import_callback(std::move(cap_config));
 
-        // --- 5. Wrap the import callback to fire state_entered_hook at
-        //        import boundaries (P6-frame trace ring only) and to drive
-        //        the WH-4b suspended-snapshot recorder ---
+        // --- 5. Wrap the import callback to fire state_entered_live_hook at
+        //        import boundaries (P6-frame trace ring only, kr68
+        //        section 12.9.14) and to drive the WH-4b suspended-snapshot
+        //        recorder ---
         // WH-4b: captures the specific fields it needs (the config is
         // move-only; the invoker was already moved into wrapped_invoker).
         // `resume_pending_result` is captured by reference: it is a member
         // of the `config` parameter, which outlives every callback
         // invocation (callbacks fire only during invoke_run2).
-        // WH-5c.4 P0-3: state_entered_hook is NOT captured here -- P6
-        // trace states are collected without firing the hook; the hook
-        // fires post-run in schedule order via rebuild_and_fire_states.
+        // kr68 section 12.9.14: the LIVE debug channel
+        // (state_entered_live_hook) fires here at the import boundary with
+        // the trace prefix; the ordered observation channel
+        // (state_entered_hook) is NOT captured -- P6 trace states are
+        // collected without firing it; it fires post-run in schedule order
+        // in section 10's per-node loop (WH-5c.4 251ebdb7).
         wrapped_callback =
             [&resume_pending_result = config.resume_pending_result,
              resume_pending_result_wire_json =
                  config.resume_pending_result_wire_json,
+             state_entered_live_hook = config.state_entered_live_hook,
+             cancellation_requested = config.cancellation_requested,
+             interruption_requested = config.interruption_requested,
              &engine, &recorder, &replay_divergence, &origination_failure,
+             &boundary_cancel,
              &descriptor, &last_trace_count, &collected_states,
              &states_per_node, &runner_to_schedule, &trace_error, &admitted,
              &transcode_by_ordinal, &verified_wire, &transcode_arena_cursor,
@@ -897,20 +983,36 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
              has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
+                // WH-8 (kr68 section 12.9.2): cancellation / interruption
+                // check at the import boundary, BEFORE trace decode and
+                // memo classification. A cancellation request aborts the
+                // run immediately (the capability is never dispatched);
+                // the session overrides the outcome post-run.
+                if (boundary_cancel == BoundaryCancellation::None) {
+                    if (cancellation_requested && cancellation_requested()) {
+                        boundary_cancel = BoundaryCancellation::Cancelled;
+                    } else if (interruption_requested &&
+                               interruption_requested()) {
+                        boundary_cancel = BoundaryCancellation::Interrupted;
+                    }
+                }
+                if (boundary_cancel != BoundaryCancellation::None) {
+                    return eng::ImportAbort{};
+                }
                 if (has_trace) {
                     const auto &section = *descriptor.frame_section;
                     auto decoded = decode_state_trace(
                         obs.whole_memory, section.state_trace_base,
                         section.state_trace_capacity);
                     if (decoded.has_value()) {
-                        // WH-5c.4 P0-3: collect P6 trace states into
-                        // states_per_node WITHOUT firing the hook; the hook
-                        // fires post-run in schedule order (matching the
-                        // evaluator) via rebuild_and_fire_states after opaque
-                        // node states are also collected.
+                        // kr68 section 12.9.14: fire the LIVE debug channel
+                        // at the import boundary (trace prefix, before the
+                        // capability is dispatched). The ordered observation
+                        // channel fires post-run in section 10's per-node
+                        // loop.
                         auto err = fire_state_entries(
                             *decoded, last_trace_count, descriptor,
-                            StateEnteredHook{}, collected_states,
+                            state_entered_live_hook, collected_states,
                             states_per_node, runner_to_schedule);
                         if (err.has_value()) {
                             trace_error = std::move(*err);
@@ -918,6 +1020,24 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                             last_trace_count = decoded->size();
                         }
                     }
+                }
+
+                // F1(a): the state_entered_live_hook fired above BLOCKS in the
+                // DAP pause(). A disconnect can land while it blocks, AFTER
+                // the top-of-import check and BEFORE the capability side
+                // effect. Re-check the predicates here with the same sticky
+                // latch semantics (once latched, interruption never overrides
+                // cancel).
+                if (boundary_cancel == BoundaryCancellation::None) {
+                    if (cancellation_requested && cancellation_requested()) {
+                        boundary_cancel = BoundaryCancellation::Cancelled;
+                    } else if (interruption_requested &&
+                               interruption_requested()) {
+                        boundary_cancel = BoundaryCancellation::Interrupted;
+                    }
+                }
+                if (boundary_cancel != BoundaryCancellation::None) {
+                    return eng::ImportAbort{};
                 }
 
                 // WH-5b.2: lane detection. Bridge imports (empty param_frame)
@@ -1713,12 +1833,22 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     bool run_suspended = false;
     const eng::Run2ResultTuple *tuple = nullptr;
 
-    // WH-4b: a replay divergence (memo cap_id/arg_hash mismatch, frontier
-    // identity mismatch, pre-frontier miss, missing injection result) set by
-    // the import callback takes precedence over the generic outcome handling.
-    // The callback returned ImportAbort, so the outcome is Run2HostAborted,
-    // but the divergence message is the actionable diagnostic.
-    if (replay_divergence.has_value()) {
+    // WH-8 (kr68 section 12.9.2): boundary cancellation override. The
+    // wrapped_callback set boundary_cancel at an import boundary; run2
+    // host-aborted as a result. Override the outcome classification to
+    // Cancelled / Interrupted (the host-abort is the mechanism, not the
+    // semantic).
+    if (boundary_cancel == BoundaryCancellation::Cancelled) {
+        run_status = RunTerminalStatus::Cancelled;
+        run_failure_kind = WorkflowFailureKind::Cancelled;
+        run_failure_code = std::string{wasm_diag::kRunFailed};
+        run_failure_message = "workflow execution cancelled";
+    } else if (boundary_cancel == BoundaryCancellation::Interrupted) {
+        run_status = RunTerminalStatus::Interrupted;
+        run_failure_kind = WorkflowFailureKind::Interrupted;
+        run_failure_code = std::string{wasm_diag::kRunFailed};
+        run_failure_message = "workflow execution interrupted";
+    } else if (replay_divergence.has_value()) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kHostAbort;
@@ -1842,8 +1972,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     section.state_trace_capacity);
                 if (decoded.has_value() && decoded->size() > last_trace_count) {
                     // WH-5c.4 P0-3: collect without firing the hook; the
-                    // hook fires post-run in schedule order via
-                    // rebuild_and_fire_states below.
+                    // hook fires post-run in schedule order in section 10's
+                    // per-node loop.
                     auto err = fire_state_entries(
                         *decoded, last_trace_count, descriptor,
                         StateEnteredHook{},
@@ -1867,7 +1997,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         auto mem = engine.read_whole_memory();
         if (mem.has_value()) {
             auto err = reconstruct_wirejson_states(
-                *mem, descriptor, config.state_entered_hook,
+                *mem, descriptor,
                 collected_states, states_per_node);
             if (err.has_value() && run_ok) {
                 return std::unexpected(
@@ -1908,8 +2038,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 }
             }
         }
-        rebuild_and_fire_states(collected_states, states_per_node, descriptor,
-                                config.state_entered_hook);
+        rebuild_states(collected_states, states_per_node, descriptor);
     }
 
     // --- 10. Post-run: per-node output join (design 12.15.19.7) ---
@@ -1992,11 +2121,31 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
+    // --- 10. WH-8 (kr68 section 12.9.4 item 2): per-node interleaving of
+    //          node_completed then state_entered hooks, in schedule order ---
     // Decode each completed node's output in schedule order and fire
-    // node_completed_hook with the real output (this also closes the old
-    // identity-workflow hook gap). On the failure path a decode error is
-    // secondary (the run already failed for a primary reason); the node
-    // keeps a nullopt output and no hook fires for it.
+    // node_completed_hook with the real output, then fire state_entered_hook
+    // for that node's collected states. Non-completed nodes get only the
+    // state hooks. The decode-failure break path leaves a suffix unvisited;
+    // the post-loop pass fires state hooks for every not-yet-visited index
+    // (the old section 10a fired unconditionally for all nodes even on the
+    // failure path; node_completed stays absent for the suffix).
+    std::vector<bool> state_hooks_visited(descriptor.nodes.size(), false);
+    auto fire_state_hooks_for_node = [&](std::size_t idx) {
+        if (!config.state_entered_hook) {
+            return;
+        }
+        const std::string_view node_name = descriptor.nodes[idx].name;
+        for (const auto &entry : states_per_node[idx]) {
+            if (entry.runner >= descriptor.agents.size()) {
+                continue;
+            }
+            const auto &agent = descriptor.agents[entry.runner];
+            config.state_entered_hook(
+                AgentId{entry.runner}, agent.agent,
+                node_name, entry.state_name);
+        }
+    };
     if (auto mem = engine.read_whole_memory(); mem.has_value()) {
         const auto string_regions =
             is_p6 && descriptor.frame_section.has_value()
@@ -2004,7 +2153,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 : std::vector<StringRegion>{};
         for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
             if (i >= workflow_completed_count) {
-                continue; // not completed; node_outputs[i] stays nullopt
+                // Not completed: no node_completed, but state hooks fire.
+                fire_state_hooks_for_node(i);
+                state_hooks_visited[i] = true;
+                continue; // node_outputs[i] stays nullopt
             }
             const auto &node_desc = descriptor.nodes[i];
             std::optional<Value> decoded;
@@ -2079,7 +2231,11 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     }
                     break;
                 }
-                continue; // failure path: secondary, no hook
+                // Secondary failure: no node_completed, but state hooks
+                // still fire below.
+                fire_state_hooks_for_node(i);
+                state_hooks_visited[i] = true;
+                continue;
             }
             node_outputs[i] = std::move(decoded);
             if (config.node_completed_hook) {
@@ -2087,7 +2243,17 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     AgentId{node_desc.runner}, node_desc.name,
                     *node_outputs[i]);
             }
+            fire_state_hooks_for_node(i);
+            state_hooks_visited[i] = true;
         }
+    }
+    // Decode-failure break suffix: fire state hooks for every not-yet-visited
+    // index (node_completed stays absent for the suffix).
+    for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+        if (state_hooks_visited[i]) {
+            continue;
+        }
+        fire_state_hooks_for_node(i);
     }
 
     // --- 10b. WH-4b: on suspend, build the recovery snapshot and persist it
@@ -2278,8 +2444,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // On a failed run, the first non-completed node (in schedule order) is
     // the Failed node; subsequent nodes are Skipped. A Suspended run uses
     // suspended_node_index instead (the suspended node is not a failure).
+    // WH-8 (kr68 section 12.9.2): a Cancelled / Interrupted run has NO
+    // Failed node -- every non-completed node is Skipped with empty
+    // blocking_dependencies, matching the evaluator at
+    // workflow_runtime.cpp:1120-1125 (the current and remaining nodes are
+    // skipped, not failed).
     std::optional<std::size_t> failed_node_index;
-    if (!run_ok && !run_suspended) {
+    if (!run_ok && !run_suspended &&
+        run_status != RunTerminalStatus::Cancelled &&
+        run_status != RunTerminalStatus::Interrupted) {
         for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
             if (!node_completed[i]) {
                 failed_node_index = i;

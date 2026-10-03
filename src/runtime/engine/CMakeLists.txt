@@ -46,10 +46,14 @@ add_library(ahfl_runtime_engine STATIC
 
 target_link_libraries(ahfl_runtime_engine
     PUBLIC
-        ahfl_runtime_evaluator
         ahfl_runtime_provider_secret
         ahfl_compiler_ir
     PRIVATE
+        # WH-8 (kr68 section 12.9.8): the evaluator-backed WorkflowRuntime is
+        # now PRIVATE. The DAP (the only external production consumer) cut
+        # over to the wasm3-backed WasmWorkflowRuntime big-bang. Test targets
+        # that still exercise the evaluator link it explicitly.
+        ahfl_runtime_evaluator
         ahfl_base_support
         ahfl_base_json
 )

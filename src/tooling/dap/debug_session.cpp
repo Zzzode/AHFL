@@ -23,6 +23,7 @@ namespace ahfl::dap {
 
 namespace {
 
+#ifdef AHFL_ENABLE_BACKEND_WASM
 struct CompileResult {
     std::optional<ir::Program> program;
     // The parsed source file, retained so IR SourceRange offsets can be mapped
@@ -30,12 +31,14 @@ struct CompileResult {
     std::optional<SourceFile> source;
     std::string error;
 };
+#endif
 
 [[nodiscard]] std::string json_escape(std::string_view value) {
     return ahfl::json::serialize_json(
         *ahfl::json::JsonValue::make_string(std::string(value)));
 }
 
+#ifdef AHFL_ENABLE_BACKEND_WASM
 [[nodiscard]] std::string json_string_field(const json::JsonValue &object, std::string_view key) {
     const auto *field = object.get(key);
     if (field == nullptr) {
@@ -92,6 +95,7 @@ struct CompileResult {
     result.program = lower_program_ir(*parse_result.program, resolve_result, type_check_result);
     return result;
 }
+#endif // AHFL_ENABLE_BACKEND_WASM
 
 [[nodiscard]] std::string agent_debug_id(const runtime::AgentId agent) {
     return std::to_string(agent.index() + 1);
@@ -149,6 +153,17 @@ DebugSession::~DebugSession() {
 }
 
 std::string DebugSession::launch(const std::string &config_json) {
+#ifndef AHFL_ENABLE_BACKEND_WASM
+    // WH-8 (kr68 section 12.9.9): the DAP requires the wasm backend. When
+    // the backend is compiled out, refuse to launch with a byte-pinned
+    // error message.
+    (void)config_json;
+    emit_output("stderr", "debug adapter requires WASM backend support");
+    if (mark_terminated()) {
+        emit_terminated();
+    }
+    return "{}";
+#else
     std::string program_path;
     std::string workflow_name;
     std::optional<runtime::Value> workflow_input;
@@ -211,29 +226,32 @@ std::string DebugSession::launch(const std::string &config_json) {
         } else {
             workflow_input_ = runtime::make_none();
         }
+        workflow_name_ = workflow_name;
     }
     push_workflow_frame(workflow_name);
 
-    runtime::WorkflowRuntimeConfig config;
-    config.state_entered_hook = [this](const runtime::AgentId agent,
-                                       const std::string_view agent_name,
-                                       const std::string_view node_name,
-                                       const std::string_view state_name) {
+    runtime::wasm_runner::WasmWorkflowRuntimeConfig config;
+    config.hooks.state_entered_hook = [this](const runtime::AgentId agent,
+                                              const std::string_view agent_name,
+                                              const std::string_view node_name,
+                                              const std::string_view state_name) {
         on_state_entered(agent, agent_name, node_name, state_name);
     };
-    config.capability_invoked_hook = [this](const runtime::AgentId agent,
-                                            const std::string_view capability_name) {
+    // WH-8 (kr68 section 12.9.14): the LIVE debug channel. Fires at P6
+    // import boundaries before the capability is dispatched.
+    config.hooks.state_entered_live_hook = [this](const runtime::AgentId agent,
+                                                   const std::string_view agent_name,
+                                                   const std::string_view node_name,
+                                                   const std::string_view state_name) {
+        on_state_entered_live(agent, agent_name, node_name, state_name);
+    };
+    config.hooks.capability_invoked_hook = [this](const runtime::AgentId agent,
+                                                   const std::string_view capability_name) {
         on_capability_invoked(agent, capability_name);
     };
-    config.agent_input_hook = [this](const runtime::AgentId agent,
-                                     const std::string_view agent_name,
-                                     const std::string_view node_name,
-                                     const runtime::Value &input) {
-        on_agent_input(agent, agent_name, node_name, input);
-    };
-    config.node_completed_hook = [this](const runtime::AgentId agent,
-                                        const std::string_view node_name,
-                                        const runtime::Value &output) {
+    config.hooks.node_completed_hook = [this](const runtime::AgentId agent,
+                                               const std::string_view node_name,
+                                               const runtime::Value &output) {
         const auto agent_id = agent_debug_id(agent);
         std::lock_guard lock(mutex_);
         if (stopping_) {
@@ -248,7 +266,7 @@ std::string DebugSession::launch(const std::string &config_json) {
     // via value_to_json) on the "stdout" category; a failed call reports its
     // error message on "stderr" so the runtime's own failure surfaces in the
     // debug console instead of being swallowed.
-    config.capability_result_observer =
+    config.hooks.capability_result_observer =
         [this](const runtime::CapabilityInvocationContext &,
                const runtime::CapabilityCallResult &result) {
             {
@@ -273,22 +291,32 @@ std::string DebugSession::launch(const std::string &config_json) {
     // The debug session owns no capability providers, but the runtime only
     // creates its capability dispatch path (and thus only fires
     // capability_invoked_hook) when an invoker is configured. Install a stub
-    // that succeeds with a None value so workflows with capability calls can
-    // be debugged end-to-end; the hook still pauses before the stub runs.
-    config.contextual_capability_invoker =
+    // that succeeds by echoing the first argument (the same pattern as the
+    // wasm runner tests); the hook still pauses before the stub runs.
+    config.invoker =
         [](const runtime::CapabilityInvocationContext &,
            const std::string &,
-           const std::vector<runtime::Value> &) -> runtime::CapabilityCallResult {
+           const std::vector<runtime::Value> &args) -> runtime::CapabilityCallResult {
         runtime::CapabilityCallResult result;
         result.status = runtime::CapabilityCallStatus::Success;
-        result.value = runtime::make_none();
+        if (!args.empty()) {
+            result.value = runtime::clone_value(args[0]);
+        } else {
+            result.value = runtime::make_none();
+        }
         return result;
     };
     config.cancellation_requested = [this] {
         std::lock_guard lock(mutex_);
         return stopping_;
     };
-    runtime_ = std::make_unique<runtime::WorkflowRuntime>(*program_, std::move(config));
+    runtime_ = std::make_unique<runtime::wasm_runner::WasmWorkflowRuntime>(*program_, std::move(config));
+
+    // WH-8 (kr68 section 12.9.14.4): deferred breakpoint binding. Now that
+    // the facade (and its descriptor) exist, classify every registered line
+    // breakpoint and send unsolicited "breakpoint" events with the refined
+    // verified/message.
+    classify_and_report_breakpoints();
 
     // Emit `initialized` before the worker starts so the client never sees a
     // `stopped` or `terminated` event before it (RFC 0015 event table).
@@ -300,6 +328,7 @@ std::string DebugSession::launch(const std::string &config_json) {
         execute(std::move(workflow_name), std::move(input));
     });
     return "{}";
+#endif // AHFL_ENABLE_BACKEND_WASM
 }
 
 void DebugSession::disconnect() {
@@ -314,7 +343,9 @@ void DebugSession::disconnect() {
         worker_.join();
     }
 
+#ifdef AHFL_ENABLE_BACKEND_WASM
     runtime_.reset();
+#endif
     program_.reset();
 
     if (mark_terminated()) {
@@ -368,6 +399,7 @@ bool DebugSession::is_running() const noexcept {
 }
 
 void DebugSession::execute(std::string workflow_name, runtime::Value workflow_input) {
+#ifdef AHFL_ENABLE_BACKEND_WASM
     auto result = runtime_->run(workflow_name, std::move(workflow_input));
 
     {
@@ -401,13 +433,17 @@ void DebugSession::execute(std::string workflow_name, runtime::Value workflow_in
     if (mark_terminated()) {
         emit_terminated();
     }
+#else
+    (void)workflow_name;
+    (void)workflow_input;
+#endif
 }
 
 void DebugSession::build_breakable_lines(const SourceFile &source,
                                          const std::string &source_path,
                                          const std::string &workflow_name) {
     breakable_lines_.clear();
-    state_line_map_.clear();
+    state_line_records_.clear();
     node_line_map_.clear();
     workflow_location_ = {};
 
@@ -415,6 +451,12 @@ void DebugSession::build_breakable_lines(const SourceFile &source,
         return static_cast<int>(source.locate(range.begin_offset).line);
     };
 
+    // WH-8 (kr68 section 12.9.14.4): breakable lines are STATE HANDLER
+    // lines only. The 7-row liveness table classifies non-state-handler
+    // lines (agent declarations, workflow declarations, node declarations)
+    // as NOT BREAKABLE. The node_line_map_ and workflow_location_ are
+    // still built for frame location, but their lines are not registered
+    // as breakable.
     for (const auto &decl : program_->declarations) {
         std::visit(
             Overloaded{
@@ -425,20 +467,17 @@ void DebugSession::build_breakable_lines(const SourceFile &source,
                         }
                         const int line = line_of(*handler.source_range);
                         breakable_lines_.emplace(source_path, line);
-                        state_line_map_.emplace(handler.state_name,
-                                                std::make_pair(source_path, line));
-                    }
-                },
-                [&](const ir::AgentDecl &agent) {
-                    if (agent.provenance.source_range.has_value()) {
-                        breakable_lines_.emplace(source_path,
-                                                 line_of(*agent.provenance.source_range));
+                        // F4.3: thread the enclosing agent's canonical name
+                        // so two agents sharing a state name keep distinct
+                        // (agent, state) -> (file, line) records.
+                        state_line_records_.push_back(
+                            {flow.target_ref.canonical_name,
+                             handler.state_name, source_path, line});
                     }
                 },
                 [&](const ir::WorkflowDecl &workflow) {
                     if (workflow.provenance.source_range.has_value()) {
                         const int line = line_of(*workflow.provenance.source_range);
-                        breakable_lines_.emplace(source_path, line);
                         // Only the launched workflow anchors the root stack frame.
                         if (workflow_name ==
                             std::string(ir::symbol_canonical_name(workflow.symbol_ref,
@@ -449,7 +488,6 @@ void DebugSession::build_breakable_lines(const SourceFile &source,
                     for (const auto &node : workflow.nodes) {
                         if (node.source_range.has_value()) {
                             const int line = line_of(*node.source_range);
-                            breakable_lines_.emplace(source_path, line);
                             node_line_map_.emplace(node.name, std::make_pair(source_path, line));
                         }
                     }
@@ -462,6 +500,200 @@ void DebugSession::build_breakable_lines(const SourceFile &source,
     breakpoints_.set_breakable_lines(breakable_lines_);
 }
 
+std::pair<bool, std::string>
+DebugSession::classify_record_liveness_locked(const StateLineRecord &record) const {
+    // The descriptor is WASM-only; on the OFF lane `record` is unconsulted
+    // and the function falls through to the "not found" verdict below.
+    (void)record;
+#ifdef AHFL_ENABLE_BACKEND_WASM
+    const std::string &state_name = record.state_name;
+    const std::string &agent_name = record.agent_name;
+    if (!runtime_) {
+        return {false, "breakpoint set before launch; deferred binding pending"};
+    }
+    const auto *descriptor = runtime_->descriptor_for(workflow_name_);
+    if (descriptor == nullptr) {
+        return {false, "workflow descriptor unavailable"};
+    }
+
+    // WireJson lane: all state hooks are post-run.
+    if (descriptor->frame_contract !=
+        ahfl::backends::CoreWasmFrameContract::P6Frame) {
+        return {false,
+                "state hooks are post-run on the WireJson lane (no trace "
+                "ring); pauses after run completes (post-mortem)"};
+    }
+
+    // P6 lane: find the agent whose walk contains this state. F4.3: filter
+    // by the record's agent_name so two agents sharing a state name don't
+    // cross-match (the old code matched the first agent with the state).
+    for (const auto &agent_walk : descriptor->agents) {
+        if (agent_walk.agent != agent_name) {
+            continue;
+        }
+        // Check if the state is on this agent's walk.
+        std::optional<std::uint32_t> walk_index;
+        for (std::uint32_t i = 0; i < agent_walk.walk.size(); ++i) {
+            if (agent_walk.walk[i] == state_name) {
+                walk_index = i;
+                break;
+            }
+        }
+        if (!walk_index.has_value()) {
+            // State not on this agent's walk — check all_states for the
+            // NEVER classification (untaken branch).
+            bool in_all_states = false;
+            for (const auto &s : agent_walk.all_states) {
+                if (s == state_name) {
+                    in_all_states = true;
+                    break;
+                }
+            }
+            if (in_all_states) {
+                return {false,
+                        "state is not on the runner's walk (untaken branch); "
+                        "never paused"};
+            }
+            break; // agent found but state not on walk or all_states
+        }
+
+        // State is on this agent's walk. Check if any node with this runner
+        // has capability.
+        bool agent_has_cap = false;
+        for (const auto &node : descriptor->nodes) {
+            if (node.runner < descriptor->agents.size() &&
+                &descriptor->agents[node.runner] == &agent_walk &&
+                node.has_capability) {
+                agent_has_cap = true;
+                break;
+            }
+        }
+
+        if (!agent_has_cap) {
+            return {false,
+                    "state has no capability boundary in its runner; pauses "
+                    "after run completes (post-mortem)"};
+        }
+
+        if (*walk_index <= agent_walk.last_cap_walk_index) {
+            return {true,
+                    "state entered before capability boundary (live pause)"};
+        }
+        return {false,
+                "state is entered after the last capability boundary; pauses "
+                "after run completes (post-mortem)"};
+    }
+#endif // AHFL_ENABLE_BACKEND_WASM
+
+    return {false, "state handler not found in workflow descriptor"};
+}
+
+std::pair<bool, std::string>
+DebugSession::classify_line_liveness_locked(const std::string &source_path,
+                                            int line) const {
+    // F6.1: gather ALL (agent, state) records on this (file, line). The
+    // grammar separates stateHandlers by whitespace only, so two handlers
+    // (same or different agents) can legally share ONE physical line; a
+    // single DAP breakpoint on that line must report an honest verdict
+    // instead of attributing one arbitrary handler's liveness.
+    std::vector<const StateLineRecord *> matched_records;
+    for (const auto &rec : state_line_records_) {
+        if (rec.file == source_path && rec.line == line) {
+            matched_records.push_back(&rec);
+        }
+    }
+    if (matched_records.empty()) {
+        return {false,
+                "line is not a state handler; only state handlers and "
+                "capability calls are breakable"};
+    }
+
+    // Classify every handler on the line. Unanimous verdicts collapse to
+    // the single (verified, message); differing verdicts get the shared-
+    // line message so the user splits the handlers onto separate lines to
+    // bind a specific one.
+    auto verdict = classify_record_liveness_locked(*matched_records.front());
+    for (std::size_t i = 1; i < matched_records.size(); ++i) {
+        const auto other = classify_record_liveness_locked(*matched_records[i]);
+        if (other != verdict) {
+            return {false,
+                    "line is shared by multiple state handlers with differing "
+                    "pause behavior; put each handler on its own line to bind "
+                    "a specific one"};
+        }
+    }
+    return verdict;
+}
+
+void DebugSession::classify_and_report_breakpoints() {
+    // Snapshot the breakpoints to classify (avoid holding the manager's
+    // lock while sending events).
+    struct PendingBp {
+        int id;
+        std::string source_file;
+        int line;
+    };
+    std::vector<PendingBp> pending;
+    {
+        // The BreakpointManager is not internally synchronized; the DAP
+        // server is single-threaded for request handling, and the worker
+        // thread only reads breakpoints via check_* calls. Snapshot without
+        // the session mutex to avoid deadlock with the worker.
+        for (const auto &bp : breakpoints_.all_breakpoints()) {
+            if (bp.kind == BreakpointKind::Line && bp.enabled) {
+                pending.push_back({bp.id, bp.source_file, bp.line});
+            }
+        }
+    }
+
+    for (const auto &pbp : pending) {
+        bool verified = false;
+        std::string message;
+        {
+            std::lock_guard lock(mutex_);
+            auto result = classify_line_liveness_locked(pbp.source_file, pbp.line);
+            verified = result.first;
+            message = std::move(result.second);
+        }
+        // Send an unsolicited "breakpoint" event with the refined
+        // verified/message (DAP deferred binding pattern).
+        auto body = ahfl::json::JsonValue::make_object();
+        body->set("id", ahfl::json::JsonValue::make_int(pbp.id));
+        body->set("verified",
+                  ahfl::json::JsonValue::make_bool(verified));
+        body->set("line", ahfl::json::JsonValue::make_int(pbp.line));
+        body->set("message",
+                  ahfl::json::JsonValue::make_string(std::move(message)));
+        server_.send_event("breakpoint", std::move(body));
+    }
+}
+
+void DebugSession::report_breakpoint_liveness(
+    const std::string &source_file,
+    const std::vector<std::pair<int, int>> &id_lines) {
+    for (const auto &[id, line] : id_lines) {
+        bool verified = false;
+        std::string message;
+        {
+            std::lock_guard lock(mutex_);
+            auto result = classify_line_liveness_locked(source_file, line);
+            verified = result.first;
+            message = std::move(result.second);
+        }
+        // Send an unsolicited "breakpoint" event with the refined
+        // verified/message (DAP deferred binding pattern, same as the
+        // launch-time classify_and_report_breakpoints).
+        auto body = ahfl::json::JsonValue::make_object();
+        body->set("id", ahfl::json::JsonValue::make_int(id));
+        body->set("verified",
+                  ahfl::json::JsonValue::make_bool(verified));
+        body->set("line", ahfl::json::JsonValue::make_int(line));
+        body->set("message",
+                  ahfl::json::JsonValue::make_string(std::move(message)));
+        server_.send_event("breakpoint", std::move(body));
+    }
+}
+
 void DebugSession::push_workflow_frame(std::string workflow_name) {
     std::lock_guard lock(mutex_);
     DebugFrame frame;
@@ -472,50 +704,70 @@ void DebugSession::push_workflow_frame(std::string workflow_name) {
     frames_.push_back(std::move(frame));
 }
 
-void DebugSession::on_agent_input(const runtime::AgentId agent,
-                                  const std::string_view agent_name,
-                                  const std::string_view node_name,
-                                  const runtime::Value &input) {
-    {
-        std::lock_guard lock(mutex_);
-        if (stopping_) {
-            return;
-        }
-        // A new node starts: the previous node (and its state / capability
-        // frames) completed. Pop everything above the workflow frame.
-        while (!frames_.empty() && frames_.back().kind != DebugFrame::Kind::Workflow) {
-            frames_.pop_back();
-        }
-        DebugFrame frame;
-        frame.kind = DebugFrame::Kind::Node;
-        frame.name = std::string(node_name);
-        frame.agent_id = agent_debug_id(agent);
-        frame.agent_name = std::string(agent_name);
-        frame.node_name = std::string(node_name);
-        if (const auto it = node_line_map_.find(frame.node_name); it != node_line_map_.end()) {
-            frame.source_file = it->second.first;
-            frame.line = it->second.second;
-        }
-        // Capture the agent id before the move: frame.agent_id is moved-from
-        // after push_back, and the input map is keyed by that id.
-        const std::string agent_id = frame.agent_id;
-        frames_.push_back(std::move(frame));
-        agent_inputs_[agent_id] = runtime::clone_value(input);
-    }
-}
-
 void DebugSession::on_state_entered(const runtime::AgentId agent,
                                     const std::string_view agent_name,
                                     const std::string_view node_name,
                                     const std::string_view state_name) {
+    // WH-8 (kr68 section 12.9.14): dedup against the live channel. The
+    // live hook fires at import boundaries; the post-run hook fires the
+    // full schedule-ordered sequence. Skip the breakpoint check for
+    // occurrences already fired live (post_count <= live_count). The
+    // frame stack is still updated so the DAP shows the correct state.
+    const std::string dedup_key =
+        std::string(node_name) + '\x1f' + std::string(state_name);
+    bool already_live = false;
     {
         std::lock_guard lock(mutex_);
         if (stopping_) {
             return;
         }
+        auto &post = post_count_[dedup_key];
+        ++post;
+        if (const auto live_it = live_count_.find(dedup_key);
+            live_it != live_count_.end() && post <= live_it->second) {
+            already_live = true;
+        }
+    }
+
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        // WH-8: synthesize a Node frame on node change (the wasm lane
+        // does not fire agent_input_hook for workflow nodes).
+        bool need_node_frame = true;
+        for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            if (it->kind == DebugFrame::Kind::Workflow) {
+                break;
+            }
+            if (it->kind == DebugFrame::Kind::Node) {
+                need_node_frame = (it->node_name != node_name);
+                break;
+            }
+        }
+        if (need_node_frame) {
+            while (!frames_.empty() &&
+                   frames_.back().kind != DebugFrame::Kind::Workflow) {
+                frames_.pop_back();
+            }
+            DebugFrame node_frame;
+            node_frame.kind = DebugFrame::Kind::Node;
+            node_frame.name = std::string(node_name);
+            node_frame.agent_id = agent_debug_id(agent);
+            node_frame.agent_name = std::string(agent_name);
+            node_frame.node_name = std::string(node_name);
+            if (const auto it = node_line_map_.find(node_frame.node_name);
+                it != node_line_map_.end()) {
+                node_frame.source_file = it->second.first;
+                node_frame.line = it->second.second;
+            }
+            frames_.push_back(std::move(node_frame));
+        }
         // Pop capability frames: the previous capability completed before the
         // state was entered.
-        while (!frames_.empty() && frames_.back().kind == DebugFrame::Kind::Capability) {
+        while (!frames_.empty() &&
+               frames_.back().kind == DebugFrame::Kind::Capability) {
             frames_.pop_back();
         }
         // A state entry replaces the top state frame. Same agent: a transition.
@@ -531,16 +783,32 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
         frame.agent_name = std::string(agent_name);
         frame.node_name = std::string(node_name);
         frame.state_name = std::string(state_name);
-        if (const auto it = state_line_map_.find(frame.state_name);
-            it != state_line_map_.end()) {
-            frame.source_file = it->second.first;
-            frame.line = it->second.second;
+        // F4.3: resolve the state line with BOTH agent_name and state_name
+        // (two agents can share state names; the agent disambiguates).
+        if (const auto rec_it = std::find_if(
+                state_line_records_.begin(), state_line_records_.end(),
+                [&](const StateLineRecord &rec) {
+                    return rec.agent_name == agent_name &&
+                           rec.state_name == state_name;
+                });
+            rec_it != state_line_records_.end()) {
+            frame.source_file = rec_it->file;
+            frame.line = rec_it->line;
         }
         frames_.push_back(std::move(frame));
         // Record the current position before any pause so step requests armed
         // while paused at a breakpoint use it as their origin.
         last_agent_id_ = frames_.back().agent_id;
         last_state_name_ = frames_.back().state_name;
+        // WH-8: track the current node per agent so the Input/Output scope
+        // and evaluate can resolve the agent's input value.
+        agent_node_[frames_.back().agent_id] = std::string(node_name);
+    }
+
+    // Already fired live: the live channel already paused (or will pause)
+    // for this occurrence. Skip the breakpoint check.
+    if (already_live) {
+        return;
     }
 
     const auto agent_id = agent_debug_id(agent);
@@ -552,22 +820,31 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
         if (!state_hits.front().description.empty()) {
             description = state_hits.front().description;
         }
-        pause("breakpoint", std::move(description));
+        // WH-8 (kr68 section 12.9.14.4): the post-run hook fires after the
+        // run completes; pauses here are POST-MORTEM (reason "pause").
+        pause("pause", std::move(description));
         return;
     }
 
     // Line breakpoints: map the entered state back to its handler's source
     // location and pause when a line breakpoint is set there (RFC 0015 Slice 3).
-    const auto line_it = state_line_map_.find(std::string(state_name));
-    if (line_it != state_line_map_.end()) {
-        const auto &[file, line] = line_it->second;
+    // F4.3: resolve with BOTH agent_name and state_name.
+    if (const auto rec_it = std::find_if(
+            state_line_records_.begin(), state_line_records_.end(),
+            [&](const StateLineRecord &rec) {
+                return rec.agent_name == agent_name &&
+                       rec.state_name == state_name;
+            });
+        rec_it != state_line_records_.end()) {
+        const auto &file = rec_it->file;
+        const auto line = rec_it->line;
         const auto line_hits = breakpoints_.check_line_breakpoints(file, line);
         if (!line_hits.empty()) {
             std::string description = "line breakpoint: " + file + ":" + std::to_string(line);
             if (!line_hits.front().description.empty()) {
                 description = line_hits.front().description;
             }
-            pause("breakpoint", std::move(description));
+            pause("pause", std::move(description));
             return;
         }
     }
@@ -591,6 +868,148 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
             // Workflow nesting depth tracking arrives with sub-workflow
             // support; for now step out completes at the next state
             // transition in a different agent.
+            if (agent_id != stepper_.step_over_agent) {
+                step_pause = true;
+            }
+        }
+        if (step_pause) {
+            stepper_.pending = StepKind::None;
+            step_description = "step: " + std::string(state_name);
+        }
+    }
+    if (step_pause) {
+        pause("step", std::move(step_description));
+    }
+}
+
+void DebugSession::on_state_entered_live(const runtime::AgentId agent,
+                                          const std::string_view agent_name,
+                                          const std::string_view node_name,
+                                          const std::string_view state_name) {
+    // WH-8 (kr68 section 12.9.14): the LIVE debug channel. Fires at P6
+    // import boundaries before the capability is dispatched. A blocking
+    // pause here pauses the run genuinely inside the ImportCallback.
+    const std::string dedup_key =
+        std::string(node_name) + '\x1f' + std::string(state_name);
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        ++live_count_[dedup_key];
+    }
+
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        // Synthesize a Node frame on node change (the wasm lane does not
+        // fire agent_input_hook for workflow nodes).
+        bool need_node_frame = true;
+        for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            if (it->kind == DebugFrame::Kind::Workflow) {
+                break;
+            }
+            if (it->kind == DebugFrame::Kind::Node) {
+                need_node_frame = (it->node_name != node_name);
+                break;
+            }
+        }
+        if (need_node_frame) {
+            while (!frames_.empty() &&
+                   frames_.back().kind != DebugFrame::Kind::Workflow) {
+                frames_.pop_back();
+            }
+            DebugFrame node_frame;
+            node_frame.kind = DebugFrame::Kind::Node;
+            node_frame.name = std::string(node_name);
+            node_frame.agent_id = agent_debug_id(agent);
+            node_frame.agent_name = std::string(agent_name);
+            node_frame.node_name = std::string(node_name);
+            if (const auto it = node_line_map_.find(node_frame.node_name);
+                it != node_line_map_.end()) {
+                node_frame.source_file = it->second.first;
+                node_frame.line = it->second.second;
+            }
+            frames_.push_back(std::move(node_frame));
+        }
+        while (!frames_.empty() &&
+               frames_.back().kind == DebugFrame::Kind::Capability) {
+            frames_.pop_back();
+        }
+        if (!frames_.empty() && frames_.back().kind == DebugFrame::Kind::State) {
+            frames_.pop_back();
+        }
+        DebugFrame frame;
+        frame.kind = DebugFrame::Kind::State;
+        frame.name = std::string(agent_name) + "::" + std::string(state_name);
+        frame.agent_id = agent_debug_id(agent);
+        frame.agent_name = std::string(agent_name);
+        frame.node_name = std::string(node_name);
+        frame.state_name = std::string(state_name);
+        // F4.3: resolve the state line with BOTH agent_name and state_name.
+        if (const auto rec_it = std::find_if(
+                state_line_records_.begin(), state_line_records_.end(),
+                [&](const StateLineRecord &rec) {
+                    return rec.agent_name == agent_name &&
+                           rec.state_name == state_name;
+                });
+            rec_it != state_line_records_.end()) {
+            frame.source_file = rec_it->file;
+            frame.line = rec_it->line;
+        }
+        frames_.push_back(std::move(frame));
+        last_agent_id_ = frames_.back().agent_id;
+        last_state_name_ = frames_.back().state_name;
+        agent_node_[frames_.back().agent_id] = std::string(node_name);
+    }
+
+    const auto agent_id = agent_debug_id(agent);
+
+    const auto state_hits =
+        breakpoints_.check_state_breakpoints(agent_id, std::string(state_name));
+    if (!state_hits.empty()) {
+        std::string description = "state breakpoint: " + std::string(state_name);
+        if (!state_hits.front().description.empty()) {
+            description = state_hits.front().description;
+        }
+        pause("breakpoint", std::move(description));
+        return;
+    }
+
+    // F4.3: resolve the state line with BOTH agent_name and state_name.
+    if (const auto rec_it = std::find_if(
+            state_line_records_.begin(), state_line_records_.end(),
+            [&](const StateLineRecord &rec) {
+                return rec.agent_name == agent_name &&
+                       rec.state_name == state_name;
+            });
+        rec_it != state_line_records_.end()) {
+        const auto &file = rec_it->file;
+        const auto line = rec_it->line;
+        const auto line_hits = breakpoints_.check_line_breakpoints(file, line);
+        if (!line_hits.empty()) {
+            std::string description = "line breakpoint: " + file + ":" + std::to_string(line);
+            if (!line_hits.front().description.empty()) {
+                description = line_hits.front().description;
+            }
+            pause("breakpoint", std::move(description));
+            return;
+        }
+    }
+
+    // Stepping: same logic as on_state_entered.
+    bool step_pause = false;
+    std::string step_description;
+    {
+        std::lock_guard lock(mutex_);
+        if (stepper_.pending == StepKind::Over || stepper_.pending == StepKind::Into) {
+            if (agent_id != stepper_.step_over_agent ||
+                state_name != stepper_.step_over_state) {
+                step_pause = true;
+            }
+        } else if (stepper_.pending == StepKind::Out) {
             if (agent_id != stepper_.step_over_agent) {
                 step_pause = true;
             }
@@ -821,11 +1240,16 @@ std::string DebugSession::variables_json(const int variables_reference) {
         // handlers (evaluator ctx scope) and not exposed by any runtime hook,
         // so this scope is honestly empty.
     } else if (variables_reference >= 300 && variables_reference < 400) {
-        // Input/Output scope: the agent's live input (observed via
-        // agent_input_hook) and output (observed via node_completed_hook).
+        // Input/Output scope: the agent's live input (resolved from the
+        // workflow's node argument expression) and output (observed via
+        // node_completed_hook). WH-8: the wasm lane has no agent_input_hook;
+        // the DAP infers the input from the IR node argument.
         const std::string agent_id = std::to_string(variables_reference - 300);
-        if (const auto it = agent_inputs_.find(agent_id); it != agent_inputs_.end()) {
-            append_var("input", &it->second);
+        if (const auto node_it = agent_node_.find(agent_id);
+            node_it != agent_node_.end()) {
+            if (const auto *input = resolve_node_input_locked(node_it->second)) {
+                append_var("input", input);
+            }
         }
         if (const auto it = agent_outputs_.find(agent_id); it != agent_outputs_.end()) {
             append_var("output", &it->second);
@@ -962,10 +1386,15 @@ std::string DebugSession::evaluate_json(const std::string &expression, const int
     const std::string &root = path->front();
 
     // Resolve the root binding using the runtime's own scope semantics.
+    // WH-8: the wasm lane has no agent_input_hook; the DAP infers the agent's
+    // input from the IR node argument expression. "input" names the frame
+    // agent's input; an unqualified identifier names a workflow node result
+    // or (fallback) an agent-input field flattened into the input scope.
     const runtime::Value *current = nullptr;
     if (root == "input") {
-        if (const auto it = agent_inputs_.find(agent_id); it != agent_inputs_.end()) {
-            current = &it->second;
+        if (const auto node_it = agent_node_.find(agent_id);
+            node_it != agent_node_.end()) {
+            current = resolve_node_input_locked(node_it->second);
         }
     } else if (root == "output") {
         if (const auto it = agent_outputs_.find(agent_id); it != agent_outputs_.end()) {
@@ -974,12 +1403,18 @@ std::string DebugSession::evaluate_json(const std::string &expression, const int
     } else if (const auto node_it = node_results_.find(root); node_it != node_results_.end()) {
         // Workflow node result (mirrors EvalContext node-output scope).
         current = &node_it->second;
-    } else if (const auto input_it = agent_inputs_.find(agent_id);
-               input_it != agent_inputs_.end()) {
-        // Unqualified identifier: an agent-input struct field. The runtime
-        // flattens the input struct's fields into its input scope, so
-        // `field` and `input.field` name the same value.
-        current = resolve_member(input_it->second, root);
+    } else {
+        // Unqualified identifier: try resolving as a field of the agent's
+        // input (the evaluator flattens input struct fields into the input
+        // scope).
+        const runtime::Value *agent_input = nullptr;
+        if (const auto node_it = agent_node_.find(agent_id);
+            node_it != agent_node_.end()) {
+            agent_input = resolve_node_input_locked(node_it->second);
+        }
+        if (agent_input != nullptr) {
+            current = resolve_member(*agent_input, root);
+        }
     }
 
     if (current == nullptr) {
@@ -1082,6 +1517,50 @@ std::string DebugSession::expand_value_locked(const runtime::Value &value) {
 
     oss << "]}";
     return oss.str();
+}
+
+const runtime::Value *
+DebugSession::resolve_node_input_locked(std::string_view node_name) const {
+    if (!program_.has_value()) {
+        return nullptr;
+    }
+    for (const auto &decl : program_->declarations) {
+        const auto *wf = std::get_if<ir::WorkflowDecl>(&decl);
+        if (wf == nullptr || wf->name != workflow_name_) {
+            continue;
+        }
+        for (const auto &node : wf->nodes) {
+            if (node.name != node_name || !node.input.has_value()) {
+                continue;
+            }
+            const auto *path_expr =
+                std::get_if<ir::PathExpr>(&node.input->node);
+            if (path_expr == nullptr) {
+                return nullptr;
+            }
+            const auto &root = path_expr->path.root_name;
+            const runtime::Value *current = nullptr;
+            if (root == "input") {
+                current = &workflow_input_;
+            } else if (const auto it = node_results_.find(root);
+                       it != node_results_.end()) {
+                current = &it->second;
+            }
+            if (current == nullptr) {
+                return nullptr;
+            }
+            // F4.4: follow the .member chain via resolve_member (struct
+            // fields and named enum payloads). Any miss returns nullptr.
+            for (const auto &member : path_expr->path.members) {
+                current = resolve_member(*current, member);
+                if (current == nullptr) {
+                    return nullptr;
+                }
+            }
+            return current;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace ahfl::dap

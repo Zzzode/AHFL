@@ -176,6 +176,7 @@ add_executable(ahfl_workflow_runtime_tests
 target_link_libraries(ahfl_workflow_runtime_tests
     PRIVATE
         ahfl_runtime_engine
+        ahfl_runtime_evaluator
 )
 ahfl_apply_project_warnings(ahfl_workflow_runtime_tests)
 
@@ -569,6 +570,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
         PRIVATE
             ahfl_runtime_wasm_runner
             ahfl_runtime_engine
+            ahfl_runtime_evaluator
             ahfl_runtime_value
             ahfl_base_json
             ahfl_base_support
@@ -607,6 +609,7 @@ target_link_libraries(ahfl_reference_workflow_recovery_worker
         ahfl_compiler_package_graph
         ahfl_compiler_ir
         ahfl_runtime_provider_llm
+        ahfl_runtime_evaluator
 )
 target_include_directories(ahfl_reference_workflow_recovery_worker
     PRIVATE
@@ -637,6 +640,7 @@ target_link_libraries(ahfl_durable_resume_capstone
         ahfl_compiler_package_graph
         ahfl_compiler_ir
         ahfl_runtime_provider_llm
+        ahfl_runtime_evaluator
 )
 target_include_directories(ahfl_durable_resume_capstone
     PRIVATE
@@ -1877,6 +1881,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
         PRIVATE
             ahfl_compiler_backend_wasm
             ahfl_runtime_engine
+            ahfl_runtime_evaluator
     )
     target_include_directories(ahfl_core_wasm_e3_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(ahfl_core_wasm_e3_probe)
@@ -1952,6 +1957,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
         PRIVATE
             ahfl_runtime_wasm_runner
             ahfl_runtime_engine
+            ahfl_runtime_evaluator
             ahfl_runtime_value
             ahfl_base_json
             ahfl_base_support

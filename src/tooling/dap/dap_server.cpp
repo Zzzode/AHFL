@@ -7,6 +7,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace ahfl::dap {
 
@@ -235,6 +236,7 @@ std::string DapServer::handle_set_breakpoints(const std::string &body) {
     std::ostringstream oss;
     oss << R"({"breakpoints":[)";
     bool first = true;
+    std::vector<std::pair<int, int>> added_id_lines;
     for (int line : lines) {
         Breakpoint bp;
         bp.kind = BreakpointKind::Line;
@@ -243,6 +245,7 @@ std::string DapServer::handle_set_breakpoints(const std::string &body) {
         bp.enabled = true;
         bp.verified = breakpoint_manager_.is_line_breakable(source_path, line);
         int id = breakpoint_manager_.add_breakpoint(bp);
+        added_id_lines.emplace_back(id, line);
 
         if (!first)
             oss << ",";
@@ -251,6 +254,13 @@ std::string DapServer::handle_set_breakpoints(const std::string &body) {
         first = false;
     }
     oss << "]}";
+    // WH-8 F5: when a session exists, classify the newly-added breakpoints
+    // through the descriptor and send unsolicited "breakpoint" events (the
+    // launch-time classify_and_report_breakpoints only covers breakpoints
+    // registered before launch).
+    if (session_ && !added_id_lines.empty()) {
+        session_->report_breakpoint_liveness(source_path, added_id_lines);
+    }
     return oss.str();
 }
 

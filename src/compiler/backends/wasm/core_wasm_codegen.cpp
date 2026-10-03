@@ -19087,6 +19087,50 @@ build_import_descriptors(const CoreProgram &program,
     return walk;
 }
 
+// WH-8 (kr68 section 12.9.14): the walk index of the LAST state entered
+// before a capability dispatch. Replays the same walk as runner_walk_names
+// and tracks the last walk index whose state has at least one bridge call
+// or construct capability terminal. A state in an untaken branch (computed
+// goto) is not on the walk and does not contribute. Returns 0 when the
+// runner has no capability calls.
+[[nodiscard]] std::uint32_t
+runner_last_cap_walk_index(const CoreProgram &program,
+                           const AgentPlan &agent_plan) {
+    std::unordered_set<std::uint32_t> cap_states;
+    for (const auto &bc : agent_plan.bridge_calls) {
+        cap_states.insert(bc.state.value);
+    }
+    for (const auto &terminal : agent_plan.construct_capability_terminals) {
+        cap_states.insert(terminal.state.value);
+    }
+    if (cap_states.empty()) {
+        return 0;
+    }
+    const auto &states = program.agents[agent_plan.agent.value].states;
+    auto state = agent_plan.initial;
+    std::vector<bool> visited(agent_plan.actions.size(), false);
+    std::uint32_t walk_index = 0;
+    std::uint32_t last_cap = 0;
+    while (true) {
+        if (state.value >= agent_plan.actions.size() || visited[state.value]) {
+            break;
+        }
+        visited[state.value] = true;
+        if (state.value < states.size()) {
+            if (cap_states.contains(state.value)) {
+                last_cap = walk_index;
+            }
+            ++walk_index;
+        }
+        const auto *go = std::get_if<GotoAction>(&agent_plan.actions[state.value]);
+        if (go == nullptr) {
+            break;
+        }
+        state = go->target;
+    }
+    return last_cap;
+}
+
 [[nodiscard]] CoreWasmExecutionDescriptor build_agent_descriptor(const CoreProgram &program,
                                                                  const AgentPlan &plan,
                                                                  const FrameSectionPlan *frame_plan,
@@ -19373,6 +19417,8 @@ build_import_descriptors(const CoreProgram &program,
         walk.agent = program.agents[agent_plan.agent.value].symbol_ref.canonical_name;
         walk.walk = runner_walk_names(program, agent_plan);
         walk.all_states = program.agents[agent_plan.agent.value].states;
+        walk.last_cap_walk_index =
+            runner_last_cap_walk_index(program, agent_plan);
         descriptor.agents.push_back(std::move(walk));
     }
     for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
@@ -19387,6 +19433,8 @@ build_import_descriptors(const CoreProgram &program,
         walk.agent = program.agents[agent_plan.agent.value].symbol_ref.canonical_name;
         walk.walk = runner_walk_names(program, agent_plan);
         walk.all_states = program.agents[agent_plan.agent.value].states;
+        walk.last_cap_walk_index =
+            runner_last_cap_walk_index(program, agent_plan);
         descriptor.agents.push_back(std::move(walk));
     }
 

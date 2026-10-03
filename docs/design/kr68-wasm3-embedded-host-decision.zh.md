@@ -430,6 +430,8 @@ WH-4 builds the session/event/trace/observation layer + the hook-compatible runt
 | `capability_result_observer` | (none) | LIVE at import, post-invoker | LIVE at import, post-invoker |
 | `node_completed_hook` | LIVE after canonical run | LIVE after canonical run | POST-run (schedule order, `O_k` output) |
 
+**2026-10-03 dated 修订:** 上表 workflow `state_entered_hook` 的 "IMPORT-BOUNDARY-LIVE + POST-run" 单格保证已被 §12.9.14 修订(WH-5c.4 `251ebdb7` 证明单 hook 无法在 hybrid 模块同时服务 live 调试与 schedule 序观察):拆为 `state_entered_hook`(POST-run schedule 序全序列,observation 通道)+ 新增 `state_entered_live_hook`(IMPORT-BOUNDARY-LIVE,P6 only,debug 通道);原行保留作历史档案。
+
 **Rejected:**
 
 - **Option B (post-run replay only for ALL hooks):** rejected — it makes DAP over workflows post-mortem, contradicting WH-8's promise (decision doc §6: "DAP drives through the SAME hooks with state-level stepping mapped to WH-4 step-walk") and discarding the genuinely-live capability pre-call hook the `ImportCallback` makes possible. The capability hook CAN be truly live at the import for both lanes; throwing that away is dishonest.
@@ -1929,6 +1931,104 @@ std::function<bool()> interruption_requested;
 - **monotonic_clock**:(a) 为"DAP 时序"加入 facade(前提过时,DAP 从不使用)——否;(b) 为 event offset 加入(DAP 不消费 event 流,独立 slice)——否。**选**:不引入。
 - **agent_input_hook**:(a) 保留 `on_agent_input`(workflow lane 死代码,Principle 1)——否;(b) 从 workflow input 合成 node 输入(node 输入是投影,合成即说谎)——否;(c) 删除 + 诚实"input 不可得"契约——**选**。
 - **WASM=OFF**:(a) evaluator 回退(禁止并行路径,Principle 1)——否;(b) 构建失败(破坏非执行功能)——否;(c) launch 拒绝——**选**(继承)。
+
+### 12.9.14 WH-8 前置决策修订(2026-10-03):state 断点活性与 WH-5c.4 post-run-only hook 冲突裁决
+
+> 专用决策代理,无人类 owner 门;coordinator 独立复核全部承重事实。HEAD `1b8f9cfb`。WH-8 builder 零编辑 STOP 后立项。本节裁决 §12.9.1(2026-09-30,pin `9bca5507`)与 WH-5c.4(commit `251ebdb7`,2026-10-02)之间的冲突:§12.9.1 要求 P6 workflow 的 state 断点在 capability import boundary LIVE 暂停,但 WH-5c.4 把 `state_entered_hook` 在 import boundary 的触发抑制为 post-run-only(为 hybrid P6+opaque 模块的 schedule-order 观察奇偶性),使 §12.9.1 的 LIVE 行、`last_cap_walk_index`、step 语义、§12.9.5 LIVE-state 行、新测试 1-2 按原文不可实现。
+
+### 12.9.14.1 经验事实(file:line at HEAD `1b8f9cfb`)
+
+1. **WH-5c.4 抑制 live 触发的机制与理由**:`workflow_session.cpp:885-887` 注释 "state_entered_hook is NOT captured here";`:911-914`(wrapped_callback import boundary trace decode)与 `:1847-1849`(post-run full decode)传 `StateEnteredHook{}`;`:1911-1912` `rebuild_and_fire_states`(`:316-338` 定义)post-run 按 schedule 序触发一次。理由:hybrid P6+opaque 模块中 opaque node 不写 trace ring,live 触发会 (a) 漏掉 opaque node 状态,(b) 使 P6 状态在 import 时刻相对 schedule 序在前的 opaque node 乱序。conformance census 从 hook 触发收集状态向量并渲染(coordinator 复核:`tests/conformance/native_engine.cpp:61-70` 仅装 `config.hooks.state_entered_hook` 收集 `states`;evaluator 侧 `evaluator_engine.cpp:94-100` 同形),hook 触发序是字节奇偶输入。抑制是 census 73/0 奇偶性的正确修复。
+2. **设计意图明确且早于 WH-5c.4**:§12.1 保证表(本文件 :428 附近)选 workflow `state_entered_hook` = "IMPORT-BOUNDARY-LIVE (trace prefix at each cap import) + POST-run (remainder)",并明确**否决** Option B(post-run-only)因为 "it makes DAP over workflows post-mortem, contradicting WH-8's promise"。§12.9.1 在 WH-5c.4 之前写成,假设 P6 live 触发。
+3. **evaluator LIVE 触发**:`src/runtime/engine/workflow_runtime.cpp:1268-1278` 在 node loop 内逐 state 同步触发 `state_entered_hook`(Kahn schedule 序);resume 时 node loop 重跑、hook 重触发。
+4. **observation 文档与 census 是两个通道**:observation 文档从 `collected_states` 构建(`workflow_session.cpp:2409` 附近 `.states = std::move(collected_states)`,schedule 序),但 census 不消费文档的 state_sequence,而消费 hook 收集的向量——故 hook 通道必须保持 schedule 序。
+5. **capability hooks 今日仍 LIVE**:`wrapped_invoker` 内 capability_invoked_hook(pre-call)/capability_result_observer(post-invoker)。cap 行 LIVE 暂停不受本决策影响。
+6. **agent lane LIVE per step**:`src/runtime/wasm_host/wasm_agent_runner.cpp:339-343`。不受影响。
+7. **suspend 路径**:suspend 时 post-run 段仍执行;P6 rebuild post-suspend 触发 ordered hook;import boundary 的 trace prefix decode 在 capability 调用前运行,live hook 会在 suspend 点触发。
+8. **resume/memo**:D1b resume 是 fresh instance whole-module replay;memo 命中的 capability 调用在 import 处从 memo 供给,import callback 仍触发,trace prefix decode(及 live hook)对各 node prefix 状态重触发。与 evaluator 一致(事实 3)。
+9. **DAP execute/terminated 流程**:`debug_session.cpp:370-402`,`run()` 在 worker 上,hook 在 `run()` 内触发,`terminated` 在 `run()` 返回后发。故 post-mortem hook 触发也发 `stopped` 且先于 `terminated`——事件序保持,但 run 的工作已完成。
+10. **Kahn 序严格顺序**:node 按稠密 Kahn schedule 序执行(node-event buffer 是稠密前缀),无交错。故 P6 node 的 live 触发按 schedule 序;schedule 序问题只关于合并流中的 opaque node。
+11. **lane 选择**:`CoreWasmExecutionDescriptor.frame_contract`(`core_wasm_codegen.hpp:223-226`,默认 WireJson,P6Frame 时填充 frame/frame_section)。codegen 端 workflow 为 P6Frame iff 任一 gathered agent 为 p6(p6 含 has_computed_final)。coordinator 复核 dap_basic 两个 fixture:`kSimpleWorkflowSource`(computed literal final、无 cap)与 `kCapabilityWorkflowSource`(computed literal final;`Init` 仅 `goto Done`,`DoWork(arg)` 在 **Done** 中调用——故 `last_cap_walk_index=1`,Init walk-index 0 ≤ 1 判 LIVE)**均为 P6**。WireJson 无 trace ring,live hook 永不触发。
+12. **dap_basic.cpp 27 个测试**:Test 7/8/12/13/14 用无 cap 的 kSimpleWorkflowSource(按 §12.9.1 即 POST-MORTEM,last_cap_walk_index=0);Test 9 用 kCapabilityWorkflowSource;Test 18/19/21/22 断言 agent-input/node-output。Test 7 的 LIVE 钉是暂停时 frames 中无 terminated 事件。
+13. **业界参考(DAP/LLDB)**:DAP `setBreakpoints` 支持 `verified:false` + `message`(标准 deferred 模式)。debuggee 终止后发 `stopped` 语义不诚实:主流调试器(LLDB/GDB/VS Code)在 run 结束时发 `terminated`;post-mortem/time-travel 调试(LLDB core file;rr/Pernosco)显式标注是录像。DAP 无一等的 "this is a recording" 指示。
+
+### 12.9.14.2 选项与裁决
+
+**(a) 双 hook 解耦** — 新增 `state_entered_live_hook`(P6 import boundary trace prefix,debug 通道)+ `state_entered_hook` 保持(post-run schedule 序全序列,observation 通道,WH-5c.4 行为不变)。DAP 装两个,dedup。
+**(b) 全 POST-MORTEM** — 删 `last_cap_walk_index`,分类器 4 条消息,step = post-run 遍历。
+**(c) 混合(仅可证明 schedule 序处 live)** — 塌缩为 (a):node 总按 schedule 序执行(事实 10),"可证明 schedule 序" 对 P6 node 恒真;覆盖缺口(opaque/WireJson/no-cap)由 ordered hook post-mortem 补。
+
+**裁决:选 (a)。**
+
+理由:
+1. (b) 使所有 workflow state 断点 post-mortem,DAP 退化为录像导航器;§12.1 Decision 1 已明确否决("it makes DAP over workflows post-mortem, contradicting WH-8's promise")。capability hooks 已 LIVE(事实 5),紧邻的 cap LIVE 断点与全 post-mortem state 断点不一致,用户无法理解。
+2. (b) 的"终止后 stopped"是语义不诚实的 DAP 构造(事实 13)。
+3. (b) 永久丢失:mid-run state 变量(后续 node 失败前)、mid-run disconnect 交互、在 cap 执行前读 state(agent workflow 最有用的断点——"在副作用前暂停")。
+4. 双 hook 保留 §12.1 的 P6 live 承诺,同时保留 WH-5c.4 的 census schedule 序奇偶性;WH-5c.4 恰好证明单 hook 无法同时服务两者。
+5. (c) 塌缩为 (a)。
+
+**AHFL-specific 分歧理由**:主流调试器调试原生代码,每条指令可观察,断点绑地址同步 trap。wasm lane 的 host 是 **wasm3 host**,不是 ptrace 控制器:guest 是密封 wasm3 实例,host 只在 capability import 与 run2 返回后获得控制。live state 观察天然 import-boundary 粒度、trace-prefix-only,这是嵌入契约而非调试器限制。双 hook 是该契约的诚实表达:要 live 观察(调试器/progress monitor/tracer)用 `state_entered_live_hook`;要 schedule 序观察(conformance/reporting)用 `state_entered_hook`。把两者混进一个 hook 正是 WH-5c.4 乱序/双发问题的根因。参考层级:LLDB 有 live process event 与 structured-data plugin;DAP 有 stopped(live)与 terminated/output(post-run)——两个时刻两个通道是业界标准。**这不是 debug-only flag 或并行路径(Principle 1)**:是 facade 的新事件通道,语义契约独立,任何 host 可消费,无环境开关、无新旧共存。
+
+### 12.9.14.3 机制(具体)
+
+1. `WasmRuntimeHooks`(`src/runtime/wasm_host/wasm_runtime_hooks.hpp`)加 `state_entered_live_hook`,签名与 `state_entered_hook` 逐字节相同。头注释:仅 workflow session 在 P6 import boundary(trace prefix)触发;WireJson 永不触发(无 trace ring);post-run 永不触发;agent runner 不触发(其 `state_entered_hook` 本就 live per step)。
+2. `WorkflowSessionConfig` 加 `StateEnteredHook state_entered_live_hook;`。
+3. facade 映射 `config.hooks.state_entered_live_hook` → `session_config.state_entered_live_hook`。
+4. `workflow_session.cpp` 的 wrapped_callback import boundary 段把 `StateEnteredHook{}` 改为传 `config.state_entered_live_hook`(landing 形态经 fix-forward 后位于 trace prefix decode 处,且在 live hook 阻塞返回后、lane 分派前**二次**检查 cancellation);post-run full decode **保持** `StateEnteredHook{}`(只收集不触发——remainder 定义上 POST-MORTEM)。原 `rebuild_and_fire_states` 在 landing 时更名 `rebuild_states`(只收集不触发);`state_entered_hook` 的触发移入 post-run section 10 的 per-node 交错循环(每个 schedule index i:先 `node_completed(i)`,再触发该 node 的 state hooks;decode 失败 break 后的后缀 index 仅补触发 state hooks),即 §12.9.4 item 2 的落地形态;`reconstruct_wirejson_states` 同样只收集。
+5. DAP 装两个 hook:
+   - `state_entered_live_hook` → `on_state_entered_live`:帧合成(同 `on_state_entered` 的 Node/State 帧规则)+ 仅对 LIVE 分类(P6 + has_capability + walk-index ≤ `last_cap_walk_index`)的断点检查 + `pause("breakpoint", …)`,并递增 `live_count_[(node_name, state_name)]`(实现形态:计数 map,非集合——见下条)。
+   - `state_entered_hook`(ordered,post-run)→ `on_state_entered`:递增 `post_count_[key]`,当 `post_count ≤ live_count_[key]` 时跳过该 occurrence(已 live 暂停);其余帧合成 + POST-MORTEM 断点检查 + `pause("pause", …)`。dedup 身份 `(node_name, state_name, occurrence-within-node)`(key 以 `\x1f` 分隔 node/state)。trace ring 为线性 append-only,live 流是 post-run 全序列的严格前缀,两序列 occurrence 对齐。
+   - **dedup 身份**:`(node_name, state_name, occurrence-index-within-node)`。live hook 经 `last_trace_count` 差分按 walk 序触发 prefix,ordered hook 按 walk 序触发全序列,两序列 occurrence 对齐。
+
+### 12.9.14.4 §12.9 delta 枚举
+
+- **§12.9.1 分类表**:LIVE 行加 `frame_contract == P6Frame` 条件;新增 WireJson POST-MORTEM 行。初版 7 行(英文 pinned 消息,逐字);2026-10-04 WH-8 fix-forward F6 追加第 8 行(共线歧义,见下)。
+
+| 断点位置 | 分类 | verified | message(pinned) |
+|---|---|---|---|
+| capability 调用行 | LIVE(总是) | true | (无 message) |
+| state handler 行,P6 + has_cap + walk-index ≤ last_cap_walk_index | LIVE | true | `state entered before capability boundary (live pause)` |
+| state handler 行,WireJson lane(任意 state) | POST-MORTEM | false | `state hooks are post-run on the WireJson lane (no trace ring); pauses after run completes (post-mortem)` |
+| state handler 行,P6 + 无 node has_capability | POST-MORTEM | false | `state has no capability boundary in its runner; pauses after run completes (post-mortem)` |
+| state handler 行,P6 + has_cap + walk-index > last_cap_walk_index | POST-MORTEM | false | `state is entered after the last capability boundary; pauses after run completes (post-mortem)` |
+| state handler 行,state 不在 walk 中(untaken branch) | NEVER | false | `state is not on the runner's walk (untaken branch); never paused` |
+| 非 state-handler 行 | NOT BREAKABLE | false | `line is not a state handler; only state handlers and capability calls are breakable` |
+| 同一物理行被 ≥2 个 state handler 共享且 per-record 裁决不一致(2026-10-04 fix-forward F6 追加) | AMBIGUOUS SHARED LINE | false | `line is shared by multiple state handlers with differing pause behavior; put each handler on its own line to bind a specific one` |
+
+行 8 注:`program`/`flowDecl`/`stateHandler` 之间语法上仅以空白分隔,两个 handler(同/异 agent)可合法共线。分类器收集该行全部 `(agent,state)` 记录逐条裁决:裁决(verified+message)全同则归并为该单一裁决(消息逐字不变);任一不同则走行 8。命中/暂停解析以 `(agent_name,state_name)` 为准,共线断点仍对每个 handler 各自暂停(DAP 正确语义)。回归:T6a 混合(LIVE vs 无 cap)、T6b 一致(双 caps[] WireJson)。
+
+- `last_cap_walk_index` 工单 3 **保留**(option a 下仍是 P6 LIVE/POST-MORTEM 分类权威)。
+- step 语义保留并加 lane 注:LIVE 区间(P6、最后 cap boundary 之前)逐 import boundary 推进;其后 / WireJson / 无 cap 走 post-run 重建遍历;DAP dedup live-paused occurrence。
+- **§12.9.4 item 2**(node_completed per-node 重排):**不变**(独立)。live hook 在 import 触发(先于任何 node_completed),LIVE 暂停点 node_results_ 为空,与 §12.9.5 LIVE 行一致。
+- **§12.9.5**:LIVE-state 行保留(现由 `state_entered_live_hook` 支撑),加注 LIVE state 暂停仅 P6;WireJson 全 POST-MORTEM。
+- **§12.9.10**:新测试 2 加 WireJson case;**新增测试 8**(P6 live state 暂停:kCapabilityWorkflowSource 的 Init(walk-index 0,DoWork 前)→ verified:true + live message → stopped 先于 cap 调用(暂停时 capability_invoked 计数 == 0)→ continue → 完成)、**测试 9**(同一 fixture,Init 恰好一次 stopped,钉 dedup 无双发)。
+- **§12.9.12 验收**:加 P6 live state 暂停在 cap 调用前发 stopped;debug 通道每 state 恰好一次;census 73/0 不变。
+- **§12.1 保证表 dated 修订**:原 workflow `state_entered_hook` 单格保证("IMPORT-BOUNDARY-LIVE + POST-run (remainder)")拆为两行(表下加 dated pointer,原文保留作历史档案,同 §12.15.7 先例):`state_entered_hook` = POST-run schedule 序全序列(observation 通道,WH-5c.4 不变);`state_entered_live_hook`(新)= IMPORT-BOUNDARY-LIVE(trace prefix,P6 only,debug 通道)。
+
+### 12.9.14.5 dap_basic 分诊 delta
+
+§12.9.10 原分诊(6/9/10/11/15/17/20/23-27 不变;7/8/12/13/14/16 post-mortem 改写;16 含 Node-frame 形状;18/19/22 input-unavailable 改写;21 node output + lane pin)整体保留,补一条:Test 7/8/12/13/14 的无 cap fixture(POST-MORTEM)断言改写为 post-mortem 语义(stopped 在 run() 内 post-run、先于 terminated;栈显示 state;run 已完成——断言 workflow 输出已设或 node_completed 已触发);为**不丢失 LIVE 覆盖**,新增测试 8-9 用 P6 kCapabilityWorkflowSource 钉 Init 在 DoWork 前的 LIVE 暂停与 dedup(这是 option b 会永久删除的 LIVE 回归守卫)。6 个新测试最终形态:1 cap LIVE;2 state 分类(P6 + WireJson 两 case);3 cancellation;4 WASM=OFF 拒绝;5 post-mortem node output;6 sibling codegen failure;外加 8 live state 暂停;9 dedup。
+
+### 12.9.14.6 风险与缓解
+
+1. census 73/0:census 只装 ordered `state_entered_hook`,行为不变;验收门 `conformance_wasm_native_runner`(73 agreed/0 skipped)+ `conformance_wasm_node_runner`(69/2)。
+2. debug 通道双发:dedup 身份 `(node,state,occurrence)`,测试 9 钉恰好一次。
+3. hybrid 语义:live hook 仅对 P6 状态在 import 触发;opaque 状态永不 live;ordered hook 仍发全 schedule 序。wh5b hybrid Kahn-reordered census case 保持绿。
+4. suspend/resume:suspend 时 live hook 在 pending cap 前触发,ordered post-suspend,dedup 适用;resume whole-module replay 重触发(与 evaluator 一致)。DAP resume 专项测试属后援切片。
+5. step 粒度:LIVE 区间 import-boundary 粒度(粗于 evaluator 逐 state)——诚实的 host 可观察粒度,经 verified/message 文档化。
+6. WireJson vs P6:分类器 lane 条件防 false LIVE;测试 2 WireJson case 锁死。
+7. 过时头注释:`wasm_runtime_hooks.hpp` 的 state_entered_hook 注释在本 slice 重写为双 hook 准确文档。
+
+### 12.9.14.7 验收 / 验证
+
+- `src/tooling/dap/` 对 `runtime/engine/workflow_runtime.hpp` include grep-zero;`ahfl_tooling_dap` gated 链接 `ahfl_runtime_wasm_runner`。
+- conformance_wasm_native_runner 73/0;conformance_wasm_node_runner 69/2;`ctest -L dap`、`ctest -L wasm` 全绿。
+- 新测试 8/9 真实 transcript 钉死(暂停时 cap 计数 0;Init 恰好一次 stopped)。
+- 测试 2 WireJson case:verified:false + post-mortem WireJson 消息逐字。
+- WASM=OFF scratch:launch 拒绝字节 + setBreakpoints/threads/disconnect 仍响应。
+- 新鲜构建 -Wall -Wextra -Werror 干净;ASan 干净(dap + wasm 标签,coordinator 独立跑)。
+- `grep -n "StateEnteredHook{}" src/runtime/wasm_host/workflow_session.cpp`:仅 post-run full decode 一处,不在 import boundary。
+
 
 ## 12.10 WH-9 decisions (2026-09-30, dedicated decision agent, no human gate)
 
@@ -4536,3 +4636,44 @@ CMake:`ahfl_tooling_repl` 删除直接 `ahfl_runtime_evaluator` 边,显式 `ahfl
 - Float 算术、String 拼接等仍由 P6 codegen fail-closed 拒绝(后续 P6 opcode ladder slice,与 WH-7 无关)。
 - `long_soak_smoke` 的 peak_rss 趋势门在 ASan quarantine 下假阳性(12.18.2),backlog 独立处理。
 - evaluator 本体保留;WH-8(DAP cutover,§12.9 已决策)、WH-9(原子退役,§12.10)随后。
+
+### 12.19 WH-8 落地记录(2026-10-04,base `1b8f9cfb`)
+
+单 commit 落在 WH-7 HEAD `1b8f9cfb` 之上。`src/tooling/dap/` 删除 evaluator include,DebugSession 唯一执行后端改为 `WasmWorkflowRuntime` facade;evaluator 仅剩 wasm_runner->engine 传递边,WH-9 原子删除。
+
+#### 12.19.1 实际落地形状
+
+1. **双 hook 解耦(§12.9.14 verdict a)**:`WasmRuntimeHooks`/`WorkflowSessionConfig` 新增 `state_entered_live_hook`(签名与 state_entered_hook 逐字相同)。live hook 仅在 workflow P6 lane 的 capability import boundary、trace-ring prefix decode 处、capability 分派前触发;WireJson(无 trace ring)/post-run/agent runner 永不触发。post-run full decode 保持传单一 `StateEnteredHook{}`(只收集);`rebuild_and_fire_states` 更名 `rebuild_states`(只收集),`reconstruct_wirejson_states`/`collect_opaque_node_states` 同样去触发化。
+2. **per-node 交错(§12.9.4 item 2)**:post-run section 10 合并为单一 schedule 序循环,每个 index i 先 `node_completed(i)` 再触发该 node 的 state hooks(`state_hooks_visited` 精确一次);decode 失败 break 后后缀 index 由 FUNCTION 作用域后缀循环补触发 state hooks(后缀循环在 `if (mem)` 之外,no-memory 也触发)。修复多 node 共享一个 identity-final AgentShell 时 `agent_outputs_` last-wins 的错值(T3 钉 x==1/x==2)。
+3. **DAP dedup**:`live_count_`/`post_count_` 两张 map,key `node\x1fstate`;post-run hook 当 `post <= live` 跳过。trace ring 线性 append-only,live 流是全序列严格前缀,occurrence 对齐。
+4. **八行活性分类器**:`classify_record_liveness_locked`(单记录,7 行 pinned 消息逐字)+ `classify_line_liveness_locked`(收集该行全部记录;全同归并,分歧走第 8 行 AMBIGUOUS SHARED LINE,§12.9.14.4)。descriptor 经 facade `descriptor_for(name)` 只读获取;codegen 新增 `CoreWasmStateWalk.last_cap_walk_index`(`runner_last_cap_walk_index`,与 `runner_walk_names` 同一 initial/visited/GotoAction 回放,bridge_calls ∪ construct_capability_terminals 的并集;两个 descriptor.agents 填充点都填)。
+5. **late binding(F5)**:`handle_set_breakpoints` 在 session 存在时收集新增 (id,line),响应体合成后、handle_request 返回前经 `report_breakpoint_liveness` 发 unsolicited breakpoint 事件(classifier 在 mutex_ 下短暂取锁;worker pause 在 cv 等待期间不持锁,无死锁)。
+6. **cancellation/interruption 四点检查**:session 入口(pre-run,构造全 Skipped facts)、wrapped_callback TOP、live hook 阻塞返回后二次检查(F1(a),lane 分派前)、wrapped_invoker 在 capability_invoked_hook 阻塞返回后、invoker 副作用前二次检查(F1(b):返回 Error+Cancelled/Interrupted,不调 invoker/observer/args/calls;collected_capabilities 的 name-only 项加注释,消费者死代码/只投影 cap_calls)。两个 import executor 站点 map Error->AHFL_CAP_ERROR,bridge lane kOpUnreachable trap、opaque lane (ERROR,0,0),workflow 不可能成功完成;post-run 覆盖链最前段把结果分类为 Cancelled/Interrupted,无 Failed node。lifecycle 在终态前补 RunCancellationRequested/RunInterrupted,与 evaluator 字节对齐。
+7. **wasm lane 无 agent_input hook**:Node frame 在该 node 首个 state entry 合成;Input/Output 作用域与 evaluate 从 workflow IR node 参数 `PathExpr.path`(root input->workflow_input_,identifier->node_results_,members 经 resolve_member 链,miss->nullptr)推断。
+8. **facade run() 可重复**:5 个 hooks + post_run2_memory_mutator + predicates + invoker 全部 copy(非 move)。
+9. **WASM=OFF**:单 `#ifdef`;launch 字节固定拒绝 `debug adapter requires WASM backend support`(stderr + terminated + `{}`),非执行请求存活;CMake genex 传 `AHFL_ENABLE_BACKEND_WASM=1`。
+10. **CMake big-bang**:engine evaluator 边 PUBLIC->PRIVATE;DAP 去 engine 改显式 value + gated wasm_runner;6 个测试目标显式补 evaluator 链接。
+
+#### 12.19.2 对抗评审与 fix-forward
+
+- 首轮对抗评审:2 P1(P1-1 live hook 阻塞返回后无二次取消检查;P1-2 post-run 批量触发违反 per-node 交错)。coordinator 追加 P1-1 孪生(wrapped_invoker 同样窗口)与 gate blocker(WASM=OFF 测试二进制 77/144 失败,builder 只验证编译未跑二进制)。
+- fix-forward F1-F5 + T1-T5 全部修复;独立 fix-forward 复审 P0=0 P1=0,P2 两条:seq_counter_ 竞态**证伪**(dap_server.hpp:70 HEAD 即 `std::atomic<int>`,++ 为原子 RMW);同一物理行多 handler first-wins **证真**。
+- F6(第二轮 fix-forward):分类器全记录裁决 + 第 8 行 pinned 消息 + T6a 混合(pre-F6 必败:声明序首记录为 AgentA.Init LIVE,断言 !saw_live)/T6b 一致归并;cancel 路径 name-only 注释;F6 聚焦复审 P0=0 P1=0。
+- P3 advisory:unsolicited event(seq=N+1)可能先于 response(seq=N)上线,DAP 按 request_seq 匹配,不改。
+
+#### 12.19.3 验证证据(coordinator 独立复跑)
+
+- dev 强制 fresh build 零 warning(-Wall -Wextra -Werror);F6 后增量再建零 warning。
+- `ctest -L dap` 2/2;直跑 ahfl_tooling_dap_tests **194/194 ON**;WASM=OFF scratch 增量重建零产品 warning + **25/25** exit 0(同 TU constexpr kBackendWasm,OFF 额外 T5 钉拒绝字节)。
+- `ctest -L wasm` 88/88(4 wasmtime skip 为既有 #5/#7/#57/#60)。
+- conformance census:native **73 agreed/0 skipped**;node **69 agreed/4 skipped**(既有 Node-port 缺能力)。
+- grep 门:`StateEnteredHook{}` workflow_session.cpp 恰好 1 处(post-run);`runtime/engine` 于 src/tooling/dap/ 零;`rebuild_and_fire_states` 于 src/ 零。
+- 受保护文件(src/tooling/cli/**、src/tooling/repl/**、tests/conformance/**、tests/observability/**、goldens)零改动。
+- 完整无标签 dev ctest(595 项):99%,591 pass / 4 fail,全部既有非产品噪声——#81/#84/#85 pnpm/vsce 未安装(VSIX packaging exit 127)beta-gate 级联;#64 native_grpc_gate 为本 slice WASM=OFF scratch configure 经 AhflCompileBooks 把仓库根 compile_commands.json 符号链接重指向 job-tmp 树、scanner rglob 解引用出树根的 ValueError(与 §12.18.2 同因);coordinator 恢复链接指向 build/dev/compile_commands.json 后独立复跑 #64 通过。
+- ASan(单独 fresh configure + -j2 全量重建 + 单独全量跑):595 项 99%,**全日志零 AddressSanitizer/LeakSanitizer/UBSan 报告**,591 pass / 4 fail,全部既有噪声——#81/#84/#85 与 dev 同因(pnpm/vsce);#78 `long_soak_smoke` 为 §12.18.2 记录的 RSS 门 ASan quarantine 假阳性,`ASAN_OPTIONS="quarantine_size_mb=0:thread_local_quarantine_size_kb=0"` 隔离复跑通过(3.44s)。#64 在 ASan 全量中未复现。4 skip = 既有 wasmtime。
+
+#### 12.19.4 已知边界(不在本 slice)
+
+- DAP pause()/disconnect 的 stopped-vs-terminated 事件竞态(既有,任务 #125;WH-8 增大窗口但未改变语义,pause() 合约注释已标注)。
+- 共线 handler 第 8 行仅影响活性**消息**;断点命中仍按 (agent,state) 对每个 handler 各自暂停(正确 DAP 语义)。
+- evaluator 本体保留至 WH-9 单一原子 BREAKING CHANGE 删除(§12.10)。

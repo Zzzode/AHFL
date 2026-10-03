@@ -326,6 +326,14 @@ void emit_workflow_events(WorkflowResult &result,
             .pending_ordinal = pending_ordinal,
         });
     } else {
+        // WH-8 (kr68 section 12.9.2): emit the cancellation / interruption
+        // event before the workflow terminal, mirroring the evaluator at
+        // workflow_runtime.cpp:1130-1134.
+        if (facts.status == RunTerminalStatus::Cancelled) {
+            emit(RunCancellationRequested{.run = RunId{0}});
+        } else if (facts.status == RunTerminalStatus::Interrupted) {
+            emit(RunInterrupted{.run = RunId{0}});
+        }
         // WH-5c.6: when a node failed, reuse its diagnostic id (the bag
         // holds exactly one entry referenced by both NodeFailed and
         // WorkflowFailed). Only when no node produced one (all nodes

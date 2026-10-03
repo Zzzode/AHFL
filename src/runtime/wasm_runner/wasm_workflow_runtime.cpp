@@ -176,18 +176,26 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
 
     // WH-4b: build the session config directly (the run_wasm_workflow
     // convenience function does not carry the recovery/intent fields).
+    // F4.5: copy (not move) the std::function fields so run() is callable
+    // repeatedly with identical hooks/invoker (the cancellation predicates
+    // were already copied below).
     wasm_host::WorkflowSessionConfig session_config;
-    session_config.state_entered_hook =
-        std::move(config_.hooks.state_entered_hook);
+    session_config.state_entered_hook = config_.hooks.state_entered_hook;
+    session_config.state_entered_live_hook =
+        config_.hooks.state_entered_live_hook;
     session_config.capability_invoked_hook =
-        std::move(config_.hooks.capability_invoked_hook);
+        config_.hooks.capability_invoked_hook;
     session_config.capability_result_observer =
-        std::move(config_.hooks.capability_result_observer);
-    session_config.node_completed_hook =
-        std::move(config_.hooks.node_completed_hook);
+        config_.hooks.capability_result_observer;
+    session_config.node_completed_hook = config_.hooks.node_completed_hook;
     session_config.post_run2_memory_mutator =
-        std::move(config_.post_run2_memory_mutator);
+        config_.post_run2_memory_mutator;
     session_config.name_resolver = config_.name_resolver;
+    // WH-8: thread the cancellation / interruption checks to the session
+    // (kr68 section 12.9.2). Copied (not moved) so a second run() still
+    // sees them -- the same pattern as name_resolver.
+    session_config.cancellation_requested = config_.cancellation_requested;
+    session_config.interruption_requested = config_.interruption_requested;
 
     // WH-5c.6: install the failure-diagnostic range resolvers (design
     // 12.15.17.1). Build the SCHEDULE-ORDER range vector for this run: the

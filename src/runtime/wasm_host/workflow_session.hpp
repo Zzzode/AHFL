@@ -52,6 +52,10 @@ using StateEnteredHook =
 struct WorkflowSessionConfig {
     // Debug/test hooks (same signatures as WorkflowRuntimeConfig).
     StateEnteredHook state_entered_hook;
+    // kr68 section 12.9.14: the LIVE debug channel. Fired at P6 import
+    // boundaries with the trace-ring prefix (before the capability is
+    // dispatched); never on the WireJson lane, never post-run.
+    StateEnteredHook state_entered_live_hook;
     std::function<void(AgentId, std::string_view)> capability_invoked_hook;
     std::function<void(const CapabilityInvocationContext &,
                        const CapabilityCallResult &)>
@@ -110,6 +114,14 @@ struct WorkflowSessionConfig {
     // schema-decodes it under the pending capability's result binding (type
     // gate) and then supplies the ORIGINAL bytes verbatim.
     std::optional<std::string> resume_pending_result_wire_json;
+
+    // WH-8 (kr68 section 12.9.2): cancellation / interruption checks.
+    // Checked at wrapped_callback top (import boundary, before memo
+    // classification) and at run_workflow_session entry (pre-run, before
+    // admission). A workflow with no capability imports has no mid-run
+    // cancellation point; the pre-run check is the only observation.
+    std::function<bool()> cancellation_requested;
+    std::function<bool()> interruption_requested;
 };
 
 // The result of a successful workflow session run.
