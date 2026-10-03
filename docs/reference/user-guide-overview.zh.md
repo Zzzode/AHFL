@@ -138,9 +138,9 @@ AHFLC=./build/dev/src/tooling/cli/ahflc
   --target workflow --sysroot .
 ```
 
-真实 run 需要按照[执行与包指南](./user-guide-execution.zh.md)配置
-`AHFL_GLM_API_KEY` 或替换 `llm_config.example.json` 中的 endpoint/model/secret handle；
-不要把密钥写入 manifest、源码或提交到仓库。
+真实 run 前按[执行与包指南](./user-guide-execution.zh.md)一次性配置用户级全局文件
+`~/.ahfl/llm_config.json`（endpoint/model/凭据），之后在 example 目录裸跑
+`ahflc run` 即可；不要把密钥写入 manifest、源码或提交到仓库。
 
 ## Guide Map
 

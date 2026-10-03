@@ -2,7 +2,7 @@
 
 This example is the AHFL beta reference workflow. It is an incident-triage
 workflow that executes one real LLM-backed capability through an
-OpenAI-compatible GLM endpoint.
+OpenAI-compatible endpoint.
 
 The workflow spans multiple AHFL modules:
 
@@ -13,38 +13,59 @@ The workflow spans multiple AHFL modules:
   through the configured LLM provider and then composes the final response.
 - `main.ahfl` wires the three agents into `IncidentWorkflow`.
 
-The committed `llm_config.example.json` contains only an explicit secret handle:
+## Run it
+
+Configure the LLM provider **once**, in the user-global config file
+`~/.ahfl/llm_config.json`, then run with a bare command:
+
+```bash
+mkdir -p ~/.ahfl
+cp llm_config.example.json ~/.ahfl/llm_config.json
+# edit ~/.ahfl/llm_config.json: set endpoint, model, and credentials
+```
+
+```bash
+cd examples/execution-demo
+../../build/dev/src/tooling/cli/ahflc run
+../../build/dev/src/tooling/cli/ahflc run --profile low-risk
+```
+
+The manifest supplies the workflow entry, the default input, and the
+`low-risk` profile. It deliberately does **not** pin `llm_config`, so `run`
+falls through to `~/.ahfl/llm_config.json` (config precedence:
+`--llm-config` > profile `llm_config` > `[run].llm_config` >
+`~/.ahfl/llm_config.json`).
+
+The `endpoint` value must be the base URL to which `/chat/completions` is
+appended. OpenAI-compatible relays that serve `/v1/chat/completions`
+therefore need the `/v1` suffix in `endpoint`
+(e.g. `https://your-relay.example.com/v1`).
+
+### Credentials in the global config
+
+The global file lives outside the repository and is never committed. It can
+name an explicit secret handle (`api_key_secret`, see below) or carry the
+provider key directly in the `api_key` field. The committed
+`llm_config.example.json` is only a template: it uses the env-handle form
 
 ```json
 "api_key_secret": "env:AHFL_GLM_API_KEY"
 ```
 
-Export the key in the process environment. Never write the key into a JSON
-configuration file:
+To use the template unchanged, export the named variable instead of editing
+the file:
 
 ```bash
 export AHFL_GLM_API_KEY='...'
+../../build/dev/src/tooling/cli/ahflc run --llm-config llm_config.example.json
 ```
 
-Run the high-severity path:
+`--llm-config` also lets a one-off run point at any other config file. A
+repository gate verifies the committed template never carries a literal key;
+real credentials belong in `~/.ahfl/llm_config.json` or the named
+environment variable, never in a committed file.
 
-```bash
-cd examples/execution-demo
-../../build/dev/src/tooling/cli/ahflc run \
-  --input "$(tr -d '\n' < inputs/high-severity.json)" \
-  --llm-config llm_config.example.json
-```
-
-Run the low-risk path:
-
-```bash
-cd examples/execution-demo
-../../build/dev/src/tooling/cli/ahflc run \
-  --input "$(tr -d '\n' < inputs/low-risk.json)" \
-  --llm-config llm_config.example.json
-```
-
-Useful inspection commands:
+## Useful inspection commands
 
 ```bash
 cd examples/execution-demo

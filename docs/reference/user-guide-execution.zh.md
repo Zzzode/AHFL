@@ -81,13 +81,12 @@ std = { source = "sysroot" }
 ```
 
 `[run]` 是运行配置，不是 handoff target 的替代品。它指定默认 target、输入、
-LLM config、展示格式和 verbosity，使配置完整的 package 可以直接运行 `ahflc run`：
+展示格式和 verbosity，使配置完整的 package 可以直接运行 `ahflc run`：
 
 ```toml
 [run]
 target = "workflow"
 input = "inputs/high-severity.json"
-llm_config = "llm_config.example.json"
 output_format = "human"
 verbosity = "normal"
 
@@ -96,6 +95,12 @@ input = "inputs/low-risk.json"
 output_format = "jsonl"
 verbosity = "trace"
 ```
+
+LLM 配置通常不写进 package，而是由用户一次性放在用户级全局文件
+`~/.ahfl/llm_config.json` 里。解析顺序为 `--llm-config` > profile
+`llm_config` > `[run].llm_config` > `~/.ahfl/llm_config.json`；因此全局配置
+一次写好，所有 package 裸跑 `ahflc run` 即可。仅当某个 package 需要独立
+provider 时才在 `[run]` 或 profile 里显式填 `llm_config`（包内相对路径）。
 
 `--profile low-risk` 只覆盖它明确声明的字段；未声明字段回退到 `[run]`。优先级为：
 **显式 CLI 参数 > profile 字段 > `[run]` 默认字段**。所有相对路径相对于

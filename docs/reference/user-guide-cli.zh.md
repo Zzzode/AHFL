@@ -169,7 +169,8 @@ dry run。
 [run]
 target = "workflow"
 input = "inputs/high-severity.json"
-llm_config = "llm_config.example.json"
+# llm_config 默认不 pin：留空时 run 落到用户级全局配置 ~/.ahfl/llm_config.json。
+# 需要包内独立配置时才显式填写，例如 llm_config = "llm_config.example.json"。
 output_format = "human"
 verbosity = "normal"
 
@@ -179,12 +180,13 @@ output_format = "jsonl"
 verbosity = "trace"
 ```
 
-命令行优先级是：**显式 CLI 参数 > 选中的 profile 字段 > `[run]` 默认字段**。例如：
+命令行优先级是：**显式 CLI 参数 > 选中的 profile 字段 > `[run]` 默认字段**；LLM 配置
+的解析顺序为 `--llm-config` > profile `llm_config` > `[run].llm_config` >
+`~/.ahfl/llm_config.json`。provider 只需在全局文件配置一次，之后裸跑即可。例如：
 ```bash
 cd examples/execution-demo
-export AHFL_GLM_API_KEY='set-this-in-your-shell-or-secret-store'
 
-# 使用 [run] 默认值。
+# 使用 [run] 默认值；LLM 配置来自 ~/.ahfl/llm_config.json（一次性配置）。
 ../../build/dev/src/tooling/cli/ahflc run
 
 # 用 low-risk profile 覆盖 input/output/verbosity。

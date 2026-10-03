@@ -126,8 +126,14 @@ def main() -> int:
         env = os.environ.copy()
         env["AHFL_GLM_API_KEY"] = "local-test-secret"
 
+        # The demo manifest deliberately does not pin llm_config so a bare
+        # `ahflc run` falls through to the user-global ~/.ahfl/llm_config.json.
+        # CI is hermetic, so every invocation points back at the in-package
+        # env-handle template explicitly.
+        config_args = ["--llm-config", "llm_config.example.json"]
+
         default_result = run(
-            ahflc, project, repo_root, ["--output-format", "json"], env
+            ahflc, project, repo_root, [*config_args, "--output-format", "json"], env
         )
         default_report = parse_json_output(default_result, "default profile")
         require(result_ticket(default_report) == "INC-1001", "default profile used wrong input")
@@ -136,7 +142,7 @@ def main() -> int:
             ahflc,
             project,
             repo_root,
-            ["--profile", "low-risk", "--output-format", "json"],
+            [*config_args, "--profile", "low-risk", "--output-format", "json"],
             env,
         )
         low_report = parse_json_output(low_result, "low-risk profile")
@@ -147,6 +153,7 @@ def main() -> int:
             project,
             repo_root,
             [
+                *config_args,
                 "--profile",
                 "low-risk",
                 "--input-file",
@@ -163,7 +170,7 @@ def main() -> int:
             ahflc,
             project,
             repo_root,
-            ["--profile", "low-risk", "--output-format", "jsonl"],
+            [*config_args, "--profile", "low-risk", "--output-format", "jsonl"],
             env,
         )
         require(jsonl_result.returncode == 0, f"JSONL run failed: {jsonl_result.stderr}")
@@ -182,7 +189,7 @@ def main() -> int:
             ahflc,
             project,
             repo_root,
-            ["--profile", "low-risk", "--output-format", "quiet"],
+            [*config_args, "--profile", "low-risk", "--output-format", "quiet"],
             env,
         )
         require(quiet_result.returncode == 0, f"quiet run failed: {quiet_result.stderr}")

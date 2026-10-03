@@ -26,7 +26,6 @@ exports = [
 [run]
 target = "workflow"
 input = "inputs/high-severity.json"
-llm_config = "llm_config.example.json"
 output_format = "human"
 verbosity = "normal"
 
