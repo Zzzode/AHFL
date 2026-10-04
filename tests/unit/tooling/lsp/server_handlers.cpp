@@ -11432,6 +11432,333 @@ void test_hover_and_completion_mid_edit() {
     }
 }
 
+/// Test 8: Full open/change/save/close/reopen lifecycle in a single sequence.
+/// open clean -> change to broken -> save -> close -> reopen fixed.
+void test_full_lifecycle_open_change_save_close_reopen() {
+    const std::string uri = "file:///full-lifecycle.ahfl";
+    const std::string clean_source = "struct Msg {\n    value: String;\n}\n";
+    const std::string broken_source = "struct Broken {\n    value: ;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, clean_source),
+        diagnostic_pull_body(uri, 2),
+        did_change_body(uri, 2, broken_source),
+        diagnostic_pull_body(uri, 3),
+        did_save_body(uri),
+        diagnostic_pull_body(uri, 4),
+        did_close_body(uri),
+        did_open_body(uri, 3, clean_source),
+        diagnostic_pull_body(uri, 5),
+        R"({"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: clean.
+    const auto stage1 = response_body_for_id(output, 2);
+    check(!diagnostic_response_has_error(stage1), "fullLifecycle.stage1_clean");
+
+    // Stage 2: broken after change.
+    const auto stage2 = response_body_for_id(output, 3);
+    check(stage2.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
+          "fullLifecycle.stage2_broken_after_change");
+
+    // Stage 3: still broken after save (save does not fix content).
+    const auto stage3 = response_body_for_id(output, 4);
+    check(stage3.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
+          "fullLifecycle.stage3_still_broken_after_save");
+
+    // Stage 4: clean after reopen with fixed content.
+    const auto stage4 = response_body_for_id(output, 5);
+    check(!diagnostic_response_has_error(stage4), "fullLifecycle.stage4_clean_after_reopen");
+
+    // didOpen + didChange + didSave + didClose + didOpen = 5 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 5,
+          "fullLifecycle.refresh_count");
+}
+
+/// Test 9: didClose removes the overlay; a subsequent pull returns an empty
+/// full report rather than stale diagnostics.
+void test_close_clears_diagnostics() {
+    const std::string uri = "file:///close-clears.ahfl";
+    const std::string broken_source = "struct Broken {\n    value: ;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, broken_source),
+        diagnostic_pull_body(uri, 2),
+        did_close_body(uri),
+        diagnostic_pull_body(uri, 3),
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: broken overlay produces diagnostics.
+    const auto stage1 = response_body_for_id(output, 2);
+    check(diagnostic_response_has_error(stage1), "closeClears.stage1_broken");
+
+    // Stage 2: empty full report after close (overlay removed, no snapshot).
+    const auto stage2 = response_body_for_id(output, 3);
+    check(stage2.find("\"kind\":\"full\"") != std::string::npos,
+          "closeClears.stage2_full_report");
+    check(stage2.find("\"items\":[]") != std::string::npos,
+          "closeClears.stage2_empty_items");
+    check(!diagnostic_response_has_error(stage2), "closeClears.stage2_no_errors");
+
+    // didOpen + didClose = 2 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 2,
+          "closeClears.refresh_count");
+}
+
+/// Test 10: Oscillation — clean -> broken -> fixed -> re-broken -> re-fixed.
+/// Verifies the server correctly handles oscillating diagnostic states
+/// without stale cache or missed refresh.
+void test_rebreak_after_fix_oscillation() {
+    const std::string uri = "file:///rebreak-oscillation.ahfl";
+    const std::string clean_source = "struct Msg {\n    value: String;\n}\n";
+    const std::string broken_source = "struct Broken {\n    value: ;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, clean_source),
+        diagnostic_pull_body(uri, 2),
+        did_change_body(uri, 2, broken_source),
+        diagnostic_pull_body(uri, 3),
+        did_change_body(uri, 3, clean_source),
+        diagnostic_pull_body(uri, 4),
+        did_change_body(uri, 4, broken_source),
+        diagnostic_pull_body(uri, 5),
+        did_change_body(uri, 5, clean_source),
+        diagnostic_pull_body(uri, 6),
+        R"({"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: clean.
+    const auto stage1 = response_body_for_id(output, 2);
+    check(!diagnostic_response_has_error(stage1), "rebreak.stage1_clean");
+
+    // Stage 2: broken.
+    const auto stage2 = response_body_for_id(output, 3);
+    check(diagnostic_response_has_error(stage2), "rebreak.stage2_broken");
+
+    // Stage 3: fixed.
+    const auto stage3 = response_body_for_id(output, 4);
+    check(!diagnostic_response_has_error(stage3), "rebreak.stage3_fixed");
+
+    // Stage 4: re-broken.
+    const auto stage4 = response_body_for_id(output, 5);
+    check(diagnostic_response_has_error(stage4), "rebreak.stage4_rebroken");
+
+    // Stage 5: re-fixed.
+    const auto stage5 = response_body_for_id(output, 6);
+    check(!diagnostic_response_has_error(stage5), "rebreak.stage5_refixed");
+
+    // didOpen + 4 didChange = 5 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 5,
+          "rebreak.refresh_count");
+}
+
+/// Test 11: Multi-file cascade recovery.
+/// main.ahfl imports types.ahfl. Break types.ahfl -> main has dependency
+/// error. Also break main.ahfl -> main has its own error too. Fix
+/// types.ahfl -> main still has its own error. Fix main.ahfl -> clean.
+void test_multi_file_cascade_recovery() {
+    const auto root = make_temp_project("multi_file_cascade_recovery");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(
+        root, "lsp-cascade-recovery", "app", "\"main\", \"types\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    const std::string broken_types_source = "module app::types;\n"
+                                             "\n"
+                                             "struct Draft {\n"
+                                             "    value: String;\n"
+                                             "}\n";
+    const std::string broken_main_source = "module app::main;\n"
+                                           "import app::types as types;\n"
+                                           "\n"
+                                           "struct Use {\n"
+                                           "    payload: types::Msg;\n"
+                                           "    extra: Missing;\n"
+                                           "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        // Break types.ahfl
+        did_change_body(types_uri, 2, broken_types_source),
+        diagnostic_pull_body(main_uri, 2),
+        // Also break main.ahfl
+        did_change_body(main_uri, 2, broken_main_source),
+        diagnostic_pull_body(main_uri, 3),
+        // Fix types.ahfl
+        did_change_body(types_uri, 3, types_source),
+        diagnostic_pull_body(main_uri, 4),
+        // Fix main.ahfl
+        did_change_body(main_uri, 3, main_source),
+        diagnostic_pull_body(main_uri, 5),
+        R"({"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: breaking types.ahfl produces dependency error in main.ahfl.
+    const auto stage1 = response_body_for_id(output, 2);
+    check(stage1.find("unknown type 'types::Msg'") != std::string::npos,
+          "cascade.stage1_dependency_error");
+
+    // Stage 2: main.ahfl also broken — both dependency error and main's own
+    // error coexist.
+    const auto stage2 = response_body_for_id(output, 3);
+    check(stage2.find("unknown type 'types::Msg'") != std::string::npos,
+          "cascade.stage2_dependency_error_still_present");
+    check(stage2.find("unknown type 'Missing'") != std::string::npos,
+          "cascade.stage2_main_own_error_present");
+
+    // Stage 3: types.ahfl fixed, but main.ahfl still has its own error.
+    const auto stage3 = response_body_for_id(output, 4);
+    check(stage3.find("unknown type 'types::Msg'") == std::string::npos,
+          "cascade.stage3_dependency_error_cleared");
+    check(stage3.find("unknown type 'Missing'") != std::string::npos,
+          "cascade.stage3_main_own_error_remains");
+
+    // Stage 4: all fixed.
+    const auto stage4 = response_body_for_id(output, 5);
+    check(!diagnostic_response_has_error(stage4), "cascade.stage4_clean");
+
+    // 2 didOpen + 4 didChange = 6 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 6,
+          "cascade.refresh_count");
+}
+
+/// Test 12: Malformed manifest TOML surfaces manifest_syntax diagnostic
+/// through the LSP document diagnostics.
+void test_malformed_manifest_toml_reports_diagnostic() {
+    const auto root = make_temp_project("malformed_manifest_toml");
+    const auto main_path = root / "src" / "main.ahfl";
+    // Write malformed TOML (unclosed bracket in table header).
+    write_file(root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package\n"
+               "name = \"bad\"\n");
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        diagnostic_pull_body(main_uri, 2),
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("manifest_syntax") != std::string::npos,
+          "malformedManifest.surfaces_syntax_error");
+    check(diagnostic_response_has_error(response),
+          "malformedManifest.has_error_severity");
+}
+
+/// Test 13: Manifest referencing a non-existent export module surfaces
+/// INVALID_EXPORT_MODULE diagnostic through the LSP.
+void test_manifest_references_nonexistent_export_module() {
+    const auto root = make_temp_project("nonexistent_export_module");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(
+        root, "lsp-nonexistent-export", "app", "\"main\", \"nonexistent\"");
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        diagnostic_pull_body(main_uri, 2),
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("INVALID_EXPORT_MODULE") != std::string::npos,
+          "nonexistentExport.surfaces_invalid_export_module");
+    check(diagnostic_response_has_error(response),
+          "nonexistentExport.has_error_severity");
+}
+
+/// Test 14: Manifest deletion while running falls back to detached mode.
+/// The server must not crash; the document should re-analyze as a detached
+/// source unit with the informational detached_source_unit diagnostic.
+void test_manifest_deletion_falls_back_to_detached() {
+    const auto root = make_temp_project("manifest_deletion_detached");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto manifest_path = root / "ahfl.toml";
+    write_package_manifest(root, "lsp-manifest-deletion", "app", "\"main\"");
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto manifest_uri = AnalysisService::uri_from_path(manifest_path);
+
+    const std::string watched_delete =
+        R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":")" +
+        manifest_uri + R"(","type":3}]}})";
+
+    const auto output = run_lsp_message_steps({
+        LspMessageStep{.body = initialize_body(root)},
+        LspMessageStep{.body = did_open_body(main_uri, 1, source)},
+        LspMessageStep{.body = diagnostic_pull_body(main_uri, 2)},
+        LspMessageStep{
+            .body = watched_delete,
+            .before = [manifest_path]() { std::filesystem::remove(manifest_path); },
+        },
+        LspMessageStep{.body = diagnostic_pull_body(main_uri, 3)},
+        LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
+    });
+
+    // Stage 1: clean (project mode, manifest present).
+    const auto stage1 = response_body_for_id(output, 2);
+    check(!diagnostic_response_has_error(stage1), "manifestDeletion.stage1_clean");
+
+    // Stage 2: after deletion, server falls back to detached mode. The
+    // detached_source_unit informational diagnostic should appear.
+    const auto stage2 = response_body_for_id(output, 3);
+    check(stage2.find("\"kind\":\"full\"") != std::string::npos,
+          "manifestDeletion.stage2_still_responds");
+    check(stage2.find("detached_source_unit") != std::string::npos,
+          "manifestDeletion.stage2_detached_diagnostic");
+
+    // didOpen + workspace/didChangeWatchedFiles = 2 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 2,
+          "manifestDeletion.refresh_count");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -11594,6 +11921,16 @@ int main() {
     test_parse_broken_to_typecheck_broken_to_clean();
     test_cross_file_dependency_recovery();
     test_hover_and_completion_mid_edit();
+
+    // G5 work item C: deeper edit-sequence combinations, manifest/PackageGraph
+    // negative cases, and complex broken-source recovery.
+    test_full_lifecycle_open_change_save_close_reopen();
+    test_close_clears_diagnostics();
+    test_rebreak_after_fix_oscillation();
+    test_multi_file_cascade_recovery();
+    test_malformed_manifest_toml_reports_diagnostic();
+    test_manifest_references_nonexistent_export_module();
+    test_manifest_deletion_falls_back_to_detached();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
