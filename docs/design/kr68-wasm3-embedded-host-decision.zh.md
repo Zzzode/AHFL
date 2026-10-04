@@ -4898,3 +4898,73 @@ ASan 套件的 UAF 检测。
 7. ASan 全量:`long_soak_smoke` 从已知失败转为全强度 quarantine 下通过;无新增失败;
    零 ASan/LSan/UBSan 报告。
 8. 本决议记录落地,§12.18.3 挂账 bullet 与 §12.20.4 挂账清单同步勾销。
+
+## 12.22 决议记录(2026-10-04,task #134):并行 ASan 负载下三个 flaky smoke 的根因修复
+
+### 12.22.1 背景与问题
+
+`-j$(nproc)` 全量 ASan 套件下三个测试间歇性失败,单独跑均通过、CI 全绿:
+
+- **#400 `ahflc.run.llm_provider_runtime.smoke`**:`tests/scripts/llm_provider_runtime_smoke.py`
+  在本地起 HTTP 服务器跑 `ahflc run`,断言 `primary.request_count == 1`。失败时计数为 2,
+  但取证事件流(`fallback-stream.jsonl`)显示正常 fallback 路径(primary=1)。
+- **#70 `ahfl.product.runtime_evidence_smoke`**:`scripts/generate-beta-runtime-evidence.py:80-97`
+  内层 `ctest -R '...llm_provider_runtime.smoke$'` 串行重跑 #400;#400 flake 时 #70 连带失败。
+- **#563 `ahflc.quality.benchmark_trend`**:`tests/bench/compile_time.cpp` 的静态墙钟预算
+  (750ms/2500ms/6000ms)在 ASan 插桩(2.4-3.75x 开销)+ `-j56` 负载(再 2-3x)下被击穿,
+  bench 退出 1,trend gate 的 `run_bench` 抛 "failed (exit N)"。
+
+### 12.22.2 #400/#70 根因:共享工作目录竞态
+
+smoke 在 `tests/cmake/SingleFileCliTests.cmake:406-411` 注册时传入**固定**工作目录
+`${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-provider-runtime-smoke`。`-j56` 下 #400 与 #70 的
+内层 ctest **并发**跑同一脚本、同一目录。旧 `main()` 做 `shutil.rmtree(work)` + `mkdir`,
+一个 invocation 把另一个的文件 mid-run 抹掉。`primary.request_count == 2` 的确切机制:
+两个 `ahflc` 进程读到同一份 config(后写者覆盖先写者),都向同一组服务器发请求,
+服务器计数翻倍;事件流是 per-process 的,每个进程各自只发 1 次 primary,故事件流显示 1。
+
+### 12.22.3 决议
+
+**#400/#70:每次 invocation 用 `tempfile.mkdtemp(prefix="run-", dir=work_root)` 创建唯一
+run 目录,不再 rmtree 共享根。** 并发 invocation 各自隔离,config / 事件流 / 缓存快照 /
+源文件全部在唯一子目录下;HTTP 服务器本就绑 `127.0.0.1:0` 临时端口。比仓库既有 PID 目录
+惯例(`runtime_capability_bindings_smoke.py` 等)更优:mkdtemp 原子、无 PID 复用 rmtree 风险。
+fallback-stream 断言消息附带实际 `primary=`/`fallback=` 计数与 `ahflc stderr`,
+条件不变、诊断更丰富(零弱化)。
+
+**#563:ASan 构建下跳过 `compile_time.cpp` 的三条墙钟预算 `check()`,结构性检查
+(resolve/typecheck/validate/IR verify + `typed_exprs` 单调性)与 bench report 不变。**
+ASan 检测复用 §12.21.2 的编译期宏嵌套写法(`__SANITIZE_ADDRESS__` /
+`__has_feature(address_sanitizer)`),与 `reference_workflow_soak_worker.cpp:43-54` 逐字一致。
+dev/release 构建走 `else` 分支,三条预算照常强制执行(实测 dev 17/17,ASan 14/14)。
+
+### 12.22.4 对备选方案的否定
+
+- **#400 用 PID 子目录 + rmtree**:仍有 PID 复用 + rmtree 竞态窗口;mkdtemp 是原子标准做法。
+- **#400 给 #70 内层 ctest 换工作目录**:治标不治本,任何未来并发调用方(新 generator /
+  手动复跑)都会重蹈;唯一 run 目录从根上消除共享态。
+- **#563 按比例放大 ASan 预算**:ASan 开销 2.4-3.75x、负载再 2-3x,合计 5-11x,任何固定
+  倍数都是魔法常数,负载波动仍会 flake。与 §12.21.3 否定"ASan 专属容差"同理。
+- **#563 在 trend gate 脚本层跳过**:trend gate 的设计契约是"绝不在负载 CI 上 flake"
+  (`benchmark_trend_gate.py` docstring),墙钟预算是 bench 二进制自身的硬失败,
+  应在二进制内按构建类型豁免,而非让消费方猜测。
+
+### 12.22.5 接受的边界与代价
+
+- `run-*` 目录在 build 树下累积(每次 ~10 个小文件);build 树本就是可弃的,
+  留存有助于 post-mortem(与 §12.21 取证意图一致)。
+- `run_ahflc` 的 `timeout=30`(`llm_provider_runtime_smoke.py:197`)在极端 `-j56` ASan
+  负载下仍可能偏紧——属既有向量,非本次回归;若 #400 落地后再 flake 则单独跟进。
+- ASan 下编译时长不设墙钟门;编译期性能回归由 dev/release 构建的预算 + trend gate 的
+  `proxy_bytes` 结构 diff 兜底(与 §12.21.4 "ASan 找 bug、性能交给非 ASan 构建"同一边界)。
+
+### 12.22.6 验收标准
+
+1. 同一固定 work root 下 8 个并发 smoke 副本全部通过,各自独立 `run-*` 目录。
+2. #400 与 #70 在 `-j$(nproc)` 下并发启动(复现原碰撞场景)均通过。
+3. dev 构建 `ahfl_bench_compile_time` 17/17(含三条墙钟预算);ASan 构建 14/14
+   (打印 "skipping duration ceilings under AddressSanitizer")。
+4. dev 全量 ctest 无新增失败(仅本地 pnpm 缺失的 #72/#75/#76,CI 不存在)。
+5. ASan 全量(单独运行,`-j$(nproc)`):#70/#400/#563 从已知 flake 转为稳定通过;
+   零 ASan/LSan/UBSan 报告。
+

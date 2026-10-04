@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -273,8 +273,17 @@ def run_fallback_stream_case(ahflc: Path, source: Path, work: Path) -> None:
         [event["payload"]["cache_hit"] for event in completed] == [False, True],
         "fallback stream cache hit sequence mismatch",
     )
-    require(primary.request_count == 1, "fallback stream repeated the primary request")
-    require(fallback.request_count == 1, "fallback stream repeated the fallback request")
+    require(
+        primary.request_count == 1,
+        f"fallback stream repeated the primary request "
+        f"(primary={primary.request_count}, fallback={fallback.request_count})\n"
+        f"ahflc stderr:\n{result.stderr}",
+    )
+    require(
+        fallback.request_count == 1,
+        f"fallback stream repeated the fallback request "
+        f"(primary={primary.request_count}, fallback={fallback.request_count})",
+    )
 
 
 def run_persistent_cache_case(ahflc: Path, source: Path, work: Path) -> None:
@@ -439,10 +448,14 @@ def main() -> int:
         "usage: llm_provider_runtime_smoke.py <ahflc> <work-dir>",
     )
     ahflc = Path(sys.argv[1]).resolve()
-    work = Path(sys.argv[2]).resolve()
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
+    work_root = Path(sys.argv[2]).resolve()
+    work_root.mkdir(parents=True, exist_ok=True)
+    # Each invocation gets a unique run directory. The standalone ctest and the
+    # beta-evidence generator's inner ctest both run this script against the
+    # same work root; under -j they can overlap, and a shared directory let one
+    # invocation's rmtree/config-write race the other's ahflc startup so both
+    # processes read one config and doubled the server request count.
+    work = Path(tempfile.mkdtemp(prefix="run-", dir=work_root))
     source = work / "smoke.ahfl"
     write_source(source)
 
