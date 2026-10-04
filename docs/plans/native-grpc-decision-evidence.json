@@ -1,19 +1,21 @@
 {
   "schema": "ahfl.native_grpc_decision_evidence.v1",
   "rfc": "0004-native-grpc-transport",
-  "updated_at": "2026-07-09T00:00:00Z",
+  "updated_at": "2026-10-04T17:16:03Z",
   "decision": {
-    "state": "pending",
-    "owner": "",
-    "signed_off_at": "",
-    "record": ""
+    "state": "no-go",
+    "owner": "decision-agent (autonomous, per CLAUDE.md autonomous decision-making)",
+    "signed_off_at": "2026-10-04T17:16:03Z",
+    "record": "docs/plans/issue-backlog-global-gaps.zh.md"
   },
   "gates": {
     "runtime_owner_decision": {
-      "status": "missing",
-      "owner": "runtime owner",
-      "evidence": [],
-      "notes": "Required before RFC0004 can move from draft to accepted."
+      "status": "complete",
+      "owner": "decision-agent (autonomous, per CLAUDE.md autonomous decision-making)",
+      "evidence": [
+        "docs/plans/grpc-owner-decision.json"
+      ],
+      "notes": "No-Go decision recorded 2026-10-04: native gRPC/Protobuf transport does not enter near-term goals; RFC 0004 status draft to postponed."
     },
     "benchmark": {
       "status": "missing",

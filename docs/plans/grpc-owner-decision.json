@@ -1,0 +1,11 @@
+{
+  "schema": "ahfl.native_grpc_owner_decision.v1",
+  "rfc": "0004-native-grpc-transport",
+  "decision": "no-go",
+  "owner": "decision-agent (autonomous, per CLAUDE.md autonomous decision-making)",
+  "signed_off_at": "2026-10-04T17:16:03Z",
+  "decision_record": "docs/plans/issue-backlog-global-gaps.zh.md",
+  "scope": "Whether native gRPC/Protobuf transport enters AHFL near-term goals as an AHFL-native runtime transport, alongside the existing grpc_json_transcoding path.",
+  "rationale": "RFC 0020 north-star positioning (embeddable verifiable workflow DSL, capabilities via host, single-binary, vendored-only deps, no external runtime deps besides vendored ANTLR4) fundamentally conflicts with vendoring gRPC C++ (grpc + protobuf + abseil + re2 + cares + openssl, ~100-300MB vendored source, protoc codegen, three-platform build matrix). The capability embedding ABI (RFC 0021) is the designed escape hatch: hosts that need native gRPC implement it host-side in any language and expose it via the ABI. WASM as the sole execution engine (RFC 0020) further relegates transport to a host-side concern. The benchmark evidence required by RFC 0004's own gate (native must beat optimized HTTP/2 JSON baseline by P95 latency >= 15% and CPU >= 20%) does not exist, and the current JSON path has unexploited optimization headroom (subprocess curl to in-process HTTP/2). A lightweight hand-rolled protobuf wire-format encoder (Alternative C) is a half-measure that delivers neither gRPC semantics nor JSON simplicity, adding maintenance burden without the benefit.",
+  "continued_transport_scope": "The existing grpc_json_transcoding path (GrpcJsonTranscodingEndpoint, execute_grpc_json_transcoding, make_grpc_json_transcoding_capability) continues as the AHFL-native gRPC-shaped transport, covering gRPC status code mapping, metadata/trailer capture, auth (bearer/OAuth2/mTLS), timeout/deadline, retry, circuit breaker, and response schema validation. No native gRPC implementation markers (the native gRPC build flag, the native gRPC runtime config, grpcpp/protobuf C++ includes, CMake gRPC/Protobuf package wiring, native proto service contracts) are permitted while RFC 0004 is postponed. The machine gate (scripts/check-native-grpc-gate.py, ahfl.runtime.native_grpc_gate + ahfl.runtime.transport_gate_smoke) enforces this boundary."
+}

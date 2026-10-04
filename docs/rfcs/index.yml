@@ -21,7 +21,7 @@ rfcs:
     stability: "developer-facing"
   - rfc: "0004"
     title: "Native gRPC Transport"
-    status: "draft"
+    status: "postponed"
     file: "0004-native-grpc-transport.zh.md"
     area: ["runtime"]
     stability: "experimental"

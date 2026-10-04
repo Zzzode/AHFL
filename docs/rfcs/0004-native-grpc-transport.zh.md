@@ -1,11 +1,11 @@
 ---
 rfc: "0004"
 title: "Native gRPC Transport"
-status: "draft"
+status: "postponed"
 area: ["runtime"]
 stability: "experimental"
 created: "2026-06-28"
-updated: "2026-07-09"
+updated: "2026-10-04"
 authors: ["LLM-orchestrated"]
 shepherd: "TBD"
 owners:
@@ -21,7 +21,7 @@ decision_due: "2026-07-12"
 
 ## Summary
 
-Decide whether AHFL should add a native gRPC/Protobuf transport for runtime and LLM capability calls. The default decision posture is not to implement native gRPC until a runtime owner decision, optimized HTTP/2 JSON baseline, benchmark evidence, three-platform build evidence, dependency policy, feature flag plan, fallback semantics, and test strategy all exist.
+Decide whether AHFL should add a native gRPC/Protobuf transport for runtime and LLM capability calls. The default decision posture is not to implement native gRPC until a runtime owner decision, optimized HTTP/2 JSON baseline, benchmark evidence, three-platform build evidence, dependency policy, feature flag plan, fallback semantics, and test strategy all exist. **Decision (2026-10-04): No-Go (postponed)** — native gRPC/Protobuf does not enter near-term goals; see Decision History for the full rationale.
 
 ## Motivation
 
@@ -33,7 +33,7 @@ As of 2026-07-09, AHFL has runtime support and tests for `grpc_json_transcoding`
 
 The current `ProviderRegistry` is also not a transport scheme router. It selects providers by priority and availability status; it does not dispatch `grpc://` to a native facade. Any future native implementation must add a dedicated transport selection seam instead of overloading provider selection.
 
-This evidence does not satisfy this RFC's acceptance bar because it does not add a versioned Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 therefore remains `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) is completed. The repository now enforces this boundary with `scripts/check-native-grpc-gate.py` and [native-grpc-decision-evidence.json](../plans/native-grpc-decision-evidence.json): `accepted` requires a signed owner Go decision, `implementing` requires complete evidence for all native transport gates, and CI rejects native implementation markers until those status-specific evidence contracts are satisfied.
+This evidence does not satisfy this RFC's acceptance bar because it does not add a versioned Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 was `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) was completed. On 2026-10-04 the decision agent (autonomous, per CLAUDE.md) recorded a No-Go decision: native gRPC/Protobuf does not enter near-term goals, and the RFC status moved to `postponed`. The repository enforces this boundary with `scripts/check-native-grpc-gate.py` and [native-grpc-decision-evidence.json](../plans/native-grpc-decision-evidence.json): `accepted` requires a signed owner Go decision, `implementing` requires complete evidence for all native transport gates, and CI rejects native implementation markers until those status-specific evidence contracts are satisfied.
 
 ## Goals
 
@@ -91,6 +91,7 @@ Keep native gRPC off by default until benchmark, platform, and fallback evidence
 - 2026-07-08: Added a machine gate (`scripts/check-native-grpc-gate.py`) to prevent native gRPC implementation markers from entering the repository before the owner Go/No-Go decision, benchmark evidence, build matrix, dependency policy, feature flag, and fallback semantics are complete.
 - 2026-07-08: Added `ahfl.native_grpc_decision_evidence.v1` as the machine-readable evidence contract for RFC status transitions; `accepted` now requires owner Go evidence, while `implementing` and later statuses require all native transport gates to be complete.
 - 2026-07-09: Reconciled the RFC with live code and industry practice: current `grpc_json_transcoding` is explicitly not native gRPC, current `ProviderRegistry` is not a transport scheme router, optimized HTTP/2 JSON/SSE is now a required benchmark baseline, Protobuf schema guidance no longer requires field-level JSON mirroring, fallback defaults to fail-closed, and native implementation remains forbidden while the RFC is draft.
+- 2026-10-04: **No-Go decision (postponed)**. Decision agent (autonomous, per CLAUDE.md autonomous decision-making) concluded native gRPC/Protobuf transport does NOT enter near-term goals. Rationale: (1) RFC 0020 north-star positioning (embeddable verifiable workflow DSL, capabilities via host, single-binary, vendored-only deps) fundamentally conflicts with vendoring gRPC C++ (grpc + protobuf + abseil + re2 + cares + openssl, ~100-300MB, protoc codegen, three-platform build matrix); (2) the capability embedding ABI (RFC 0021) is the designed escape hatch — hosts that need native gRPC implement it host-side in any language; (3) WASM as the sole execution engine (RFC 0020) further relegates transport to a host-side concern; (4) the benchmark evidence required by this RFC's own gate (native must beat optimized HTTP/2 JSON baseline) does not exist, and the current JSON path has unexploited optimization headroom (subprocess curl to in-process HTTP/2). Status `draft` → `postponed`. The `grpc_json_transcoding` path continues as the AHFL-native gRPC-shaped transport. Machine gate (`scripts/check-native-grpc-gate.py`) continues to forbid native gRPC implementation markers. Revisit trigger: concrete evidenced user requirement (e.g., a major provider exposing only native gRPC endpoints with no HTTP/JSON transcoding, or benchmark evidence that the optimized HTTP/2 JSON path cannot meet a concrete latency requirement).
 
 ## Detailed Design Notes
 
@@ -474,10 +475,10 @@ class GrpcClientFacade {
 
 | 评审维度 | 选择 / 说明 |
 |---|---|
-| **当前状态** | DRAFT · Awaiting inputs |
+| **当前状态** | POSTPONED · No-Go decision recorded 2026-10-04（decision-agent，autonomous per CLAUDE.md）；native gRPC/Protobuf 不进入近期目标，`grpc_json_transcoding` 继续作为 AHFL-native gRPC-shaped transport |
 | **go-criteria 满足度** | (1) §3.1 三条场景至少 2 条同时通过 Go 阈值；(2) 三平台（Linux x86_64 / macOS arm64 / Win MSVC）原生 gRPC 构建连续 3 次 nightly 全绿；(3) mutation score ≥ 70% 且 proto fuzzer 14 天零 crash |
 | **no-go 否决条件** | 若 QE 组真实 benchmark 数据显示三场景 P95 降幅均 < 10%，则 No-Go；若三平台中任一平台 CI 构建增量时长 > 20% 且无法通过缓存缓解超过 1 个 wave，则 No-Go |
-| **仍需决策** | runtime owner 是否给出 Go / Conditional-Go / No-Go；若 Go，是否仅限企业内网 / 自托管 / 明确暴露 native gRPC endpoint 的 provider；公开 HTTP/JSON provider 默认继续走 `http_json` / `http2_json_optimized` / `grpc_json_transcoding` |
+| **决策结果** | **No-Go（postponed）**：RFC 0020 北极星定位（embeddable verifiable workflow DSL，capabilities via host，single-binary，vendored-only deps）与 native gRPC C++ 依赖根本冲突；capability embedding ABI（RFC 0021）是正解——需要 native gRPC 的 host 在宿主侧实现；benchmark evidence 不存在。Revisit trigger：具体、有证据的用户需求（如主流 provider 仅暴露 native gRPC endpoint 且无 HTTP/JSON transcoding） |
 | **依赖其他 RFC** | NONE |
 | **预计实现工作量** | L（>1 月）— proto 契约 + facade + opt-in dependency package/cache 策略 + 三平台构建证据 + benchmark + mock server + 文档/示例/tutorial；默认 CMake configure 不允许无条件 FetchContent gRPC |
 | **破坏性变更风险** | NONE — 默认 `AHFL_ENABLE_GRPC_NATIVE=OFF`，仅 `grpc://` scheme 新绑定受影响，现有 binding 字节级不变 |
