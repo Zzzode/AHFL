@@ -659,6 +659,213 @@ static ahfl::ir::core::CoreProgram make_p03_opaque_upstream_program() {
     return program;
 }
 
+// WH-5c.4 P2-A: a workflow-packaged agent that composes an in-handler bridge
+// call (non-final Start) with a construct-capability terminal (final Done).
+// The exec manifest cannot represent both: the P6 node branch emits EITHER
+// cap_call_count=1 (construct terminal, zero bridge sites) OR bridge sites
+// (cap_call_count=0), never both. The composition must be rejected at
+// plan-build time with a ranged diagnostic.
+static ahfl::ir::core::CoreProgram make_p2a_construct_plus_bridge_program() {
+    using namespace ahfl::ir;
+    using namespace ahfl::ir::core;
+    CoreProgram program;
+
+    // type 0: Request (one Int field "value"), type 1: Reply (one Int field
+    // "answer").
+    for (const char *tname : {"app::Request", "app::Reply"}) {
+        CoreTypeDecl decl;
+        decl.kind = CoreTypeDecl::Kind::Struct;
+        decl.name = tname;
+        decl.fields = {"value"};
+        decl.field_nominal_types = {CoreTypeId{}};
+        decl.field_has_default = {false};
+        decl.field_type_template_roots = {
+            CoreMemberTypeTemplateNodeId{0}};
+        decl.member_type_templates = {CoreMemberTypeTemplateNode{
+            CoreMemberTypeTemplateKind::Concrete,
+            CoreValueTypeId{1},
+            0,
+            CoreTypeId{},
+            std::nullopt,
+            {},
+            CoreMemberTypeTemplateNodeId{}}};
+        program.types.push_back(std::move(decl));
+    }
+    const CoreValueTypeId request_vt{0};
+    const CoreValueTypeId int_vt{1};
+    const CoreValueTypeId reply_vt{2};
+    program.value_types.push_back(CoreValueType{
+        CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}}); // vt0 Request
+    program.value_types.push_back(
+        CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+    program.value_types.push_back(CoreValueType{
+        CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Reply
+
+    // cap0: Echo(Request) -> Request (bridge, in-handler).
+    CoreCapabilityDecl echo;
+    echo.name = "Echo";
+    echo.symbol_ref = {SymbolRefKind::Capability, "app::Echo", "Echo", "app",
+                       350};
+    echo.param_types = {request_vt};
+    echo.return_type = request_vt;
+    program.capabilities.push_back(std::move(echo));
+
+    // cap1: DraftReply(Request) -> Reply (construct terminal).
+    CoreCapabilityDecl draft_reply;
+    draft_reply.name = "DraftReply";
+    draft_reply.symbol_ref = {SymbolRefKind::Capability, "app::DraftReply",
+                              "DraftReply", "app", 351};
+    draft_reply.param_types = {request_vt};
+    draft_reply.return_type = reply_vt;
+    program.capabilities.push_back(std::move(draft_reply));
+
+    const CoreValueTypeId unit_vt{3};
+    program.value_types.push_back(CoreValueType{CoreVtUnit{}}); // vt3 Unit
+
+    // --- Agent 0: ReplyAgent (bridge in Start + construct terminal in Done) ---
+    {
+        CoreAgentDecl agent;
+        agent.name = "ReplyAgent";
+        agent.symbol_ref = {SymbolRefKind::Agent, "app::ReplyAgent",
+                            "ReplyAgent", "app", 360};
+        agent.states = {"Done", "Start"};
+        agent.initial = CoreStateId{1};
+        agent.finals = {CoreStateId{0}};
+        agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+        agent.input_type = CoreTypeId{0};
+        agent.output_type = CoreTypeId{1};
+        agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+        agent.capabilities = {CoreCapabilityId{0}, CoreCapabilityId{1}};
+        program.agents.push_back(std::move(agent));
+
+        CoreFlowDecl flow;
+        flow.target = CoreAgentId{0};
+        flow.agent_name = "ReplyAgent";
+        // expr0: input path (Request) — for the bridge call argument.
+        CorePathExpr input_path;
+        input_path.root = CorePathRoot::Input;
+        input_path.root_name = "input";
+        input_path.root_type = CoreTypeId{0};
+        flow.storage.exprs.push_back(
+            CoreExpr{std::move(input_path), std::nullopt, request_vt});
+        // expr1: input.value (field projection, Int) — for the construct.
+        CorePathExpr field;
+        field.root = CorePathRoot::Input;
+        field.root_name = "input";
+        field.root_type = CoreTypeId{0};
+        field.members = {"value"};
+        field.projection = {CoreProjectionStep{
+            CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{}}};
+        field.projection_resolved = true;
+        flow.storage.exprs.push_back(
+            CoreExpr{std::move(field), std::nullopt, int_vt});
+        // expr2: construct Request{value: v1} (Request) — for the construct
+        // terminal.
+        flow.storage.exprs.push_back(CoreExpr{
+            CoreConstructExpr{"app::Request", "", false, CoreTypeId{0},
+                              CoreVariantId{}, true,
+                              {CoreConstructArg{CoreFieldId{0},
+                                                CoreValueId{1}}}},
+            std::nullopt, request_vt});
+        flow.storage.value_count = 5;
+        flow.storage.value_types = {request_vt, int_vt, request_vt,
+                                    request_vt, reply_vt};
+        // v0 = input (Request), v1 = input.value (Int), v2 = construct
+        // (Request), v3 = bridge result (Request), v4 = DraftReply result
+        // (Reply).
+
+        // Done (final): construct terminal.
+        CoreFlowState done;
+        done.state = CoreStateId{0};
+        done.state_name = "Done";
+        done.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{4},
+                                            CoreCapabilityId{1},
+                                            "DraftReply",
+                                            {CoreValueId{2}}},
+                     std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{4}}, std::nullopt});
+        flow.states.push_back(std::move(done));
+
+        // Start (non-final): bridge call + goto Done.
+        CoreFlowState start;
+        start.state = CoreStateId{1};
+        start.state_name = "Start";
+        start.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        start.body.statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{3},
+                                            CoreCapabilityId{0}, "Echo",
+                                            {CoreValueId{0}}},
+                     std::nullopt});
+        start.body.statements.push_back(
+            CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+        flow.states.push_back(std::move(start));
+        program.flows.push_back(std::move(flow));
+
+        CoreInstanceDecl instance;
+        instance.id = CoreInstanceId{0};
+        instance.instance_key = "_inst_ReplyAgent";
+        instance.origin = program.agents[0].symbol_ref;
+        instance.dispatch_types = {request_vt, unit_vt, reply_vt};
+        instance.payload = CoreAgentInstance{
+            CoreAgentId{0}, CoreTypeId{0},
+            CoreAgentDecl::ContextKind::Unit, CoreTypeId{}, CoreTypeId{1}};
+        program.instances.push_back(std::move(instance));
+    }
+
+    // --- Workflow: ReplyAgent(input) ---
+    CoreWorkflowDecl workflow;
+    workflow.id = CoreWorkflowId{0};
+    workflow.name = "ReplyWorkflow";
+    workflow.symbol_ref = {SymbolRefKind::Workflow, "app::ReplyWorkflow",
+                           "ReplyWorkflow", "app", 362};
+    workflow.input_type = CoreTypeId{0};
+    workflow.output_type = CoreTypeId{1};
+    workflow.storage.value_count = 2;
+    workflow.storage.value_types = {request_vt, reply_vt};
+    // expr0: WorkflowInput (Request).
+    CorePathExpr wf_input;
+    wf_input.root = CorePathRoot::WorkflowInput;
+    wf_input.root_name = "input";
+    wf_input.root_type = CoreTypeId{0};
+    workflow.storage.exprs.push_back(
+        CoreExpr{std::move(wf_input), std::nullopt, request_vt});
+    // expr1: WorkflowNodeOutput node 0 (Reply, the ReplyAgent's output).
+    CorePathExpr agent_out;
+    agent_out.root = CorePathRoot::WorkflowNodeOutput;
+    agent_out.root_name = "reply";
+    agent_out.root_type = CoreTypeId{1};
+    agent_out.workflow_node = CoreWorkflowNodeId{0};
+    workflow.storage.exprs.push_back(
+        CoreExpr{std::move(agent_out), std::nullopt, reply_vt});
+
+    const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
+        auto region = std::make_unique<CoreRegion>();
+        region->statements.push_back(
+            CoreStmt{CoreLetStmt{value, expr}, std::nullopt});
+        region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
+        return region;
+    };
+    CoreWorkflowNode reply_node;
+    reply_node.id = CoreWorkflowNodeId{0};
+    reply_node.node_name = "reply";
+    reply_node.target_instance = CoreInstanceId{0};
+    reply_node.input_region =
+        yielding_region(CoreExprId{0}, CoreValueId{0});
+    workflow.nodes.push_back(std::move(reply_node));
+    workflow.return_region =
+        yielding_region(CoreExprId{1}, CoreValueId{1});
+    program.workflows.push_back(std::move(workflow));
+    return program;
+}
+
 static bool has_codegen_code(const ahfl::backends::CoreWasmCodegenResult &result,
                              std::string_view code) {
     for (const auto &diagnostic : result.diagnostics) {
@@ -4788,6 +4995,35 @@ int main() {
                       "WH-5c.4 P0-3: the workflow descriptor carries a frame "
                       "section");
             }
+        }
+
+        // WH-5c.4 P2-A: a workflow-packaged agent that composes an in-handler
+        // bridge call (non-final Start) with a construct-capability terminal
+        // (final Done) is rejected at plan-build time. The exec manifest
+        // cannot represent both (the P6 node branch emits EITHER
+        // cap_call_count=1 OR bridge sites, never both), so the compiler
+        // rejects the composition with a ranged diagnostic instead of
+        // letting the host reject the module at load time.
+        {
+            using namespace ahfl::ir;
+            using namespace ahfl::ir::core;
+            auto program = make_p2a_construct_plus_bridge_program();
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "WH-5c.4 P2-A: construct+bridge fixture is verified Core "
+                  "with a layout");
+            const auto layouts = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layouts.table,
+                {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi});
+            check(!emitted.artifact.has_value(),
+                  "WH-5c.4 P2-A: construct+bridge composition emits no "
+                  "artifact");
+            check(has_codegen_code(
+                      emitted,
+                      backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+                  "WH-5c.4 P2-A: construct+bridge composition is rejected "
+                  "with kUnsupportedCapabilityFrame");
         }
 
         // P6-5 (RFC 0026 KR6.6): bounded collections. A `List<Int>(4)` value is

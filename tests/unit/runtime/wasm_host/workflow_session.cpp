@@ -928,9 +928,23 @@ void test_host_abort_workflow(const std::filesystem::path &repo_root) {
         }
     }
     check(found_host_abort, "host_abort_wf.found_diagnostic");
-}
 
-// ==== 7. P1-4: trap on workflow lane (divide by zero) ====
+    // WH-5c.4 P2-D: the failed node (FirstAgent) is an opaque capability-final
+    // node on the WireJson lane.  A failed node writes no node-event record
+    // (only successful completions write them), so reconstruct_wirejson_states
+    // cannot recover its walk.  The P2-D fix populates the states from the
+    // agent's static walk so the lifecycle hooks fire for the failed node.
+    // FirstAgent's walk is [Start, Done] (initial Start, goto Done, Done is
+    // final).  The second node is Skipped and contributes no states.
+    std::size_t state_entered_count = 0;
+    for (const auto &event : result->result.events.events()) {
+        if (event_type_name(event.payload) == "AgentStateEntered") {
+            ++state_entered_count;
+        }
+    }
+    check(state_entered_count == 2,
+          "host_abort_wf.p2d_failed_opaque_node_states_from_walk");
+}
 
 void test_trap_workflow(const std::filesystem::path &repo_root) {
     const auto source =

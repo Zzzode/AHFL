@@ -11293,6 +11293,10 @@ build_frame_section_plan(const CoreProgram &program,
     // capability (hard decoder failure). Multi-terminal construct-capable
     // support (a state-discriminated scheduler call) is a tracked follow-up.
     std::uint32_t construct_terminal_count = 0;
+    // WH-5c.4 P2-A: the construct terminal's return-statement range, saved for
+    // the post-reachability composition check (a workflow-packaged agent that
+    // also carries in-handler bridge sites is rejected with a ranged diag).
+    ir::SourceRangeOpt construct_terminal_range;
 
     // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String
     // literal pool every ENTRY-HANDLER builder interns into while planning.
@@ -11373,6 +11377,7 @@ build_frame_section_plan(const CoreProgram &program,
                         return std::nullopt;
                     }
                     ++construct_terminal_count;
+                    construct_terminal_range = statements.back().source_range;
                     // WH-5c.4 (GAP 2): the capability argument is an in-module
                     // construct. Plan the construct lets as a P6 computed-final
                     // that materializes the construct into O_k; the scheduler
@@ -11849,6 +11854,45 @@ build_frame_section_plan(const CoreProgram &program,
     for (const auto &terminal : plan.construct_capability_terminals) {
         if (reachable_state[terminal.state.value]) {
             plan.imports.push_back(terminal.capability);
+        }
+    }
+    // WH-5c.4 P2-A: a workflow-packaged agent that has BOTH a reachable
+    // construct-capability terminal AND reachable in-handler bridge sites
+    // cannot be represented in the exec manifest. The manifest's P6 node
+    // branch emits EITHER cap_call_count=1 (construct terminal, zero bridge
+    // sites) OR bridge sites (cap_call_count=0), never both: the
+    // encode_exec_manifest predicate `bridge_sites.empty() &&
+    // !node.capabilities.empty()` falls to the bridge branch and silently
+    // drops the construct terminal's scheduler-boundary capability call.
+    // Reject the composition at plan-build time with a ranged diagnostic
+    // instead of letting the host reject the module at load time.
+    if (policy.workflow_packaging_lane && construct_terminal_count > 0) {
+        const bool has_reachable_construct_terminal =
+            std::any_of(plan.construct_capability_terminals.begin(),
+                        plan.construct_capability_terminals.end(),
+                        [&](const auto &terminal) {
+                            return terminal.state.value < reachable_state.size() &&
+                                   reachable_state[terminal.state.value];
+                        });
+        if (has_reachable_construct_terminal) {
+            const bool has_reachable_bridge =
+                std::any_of(effective_bridge_registry.sites().begin(),
+                            effective_bridge_registry.sites().end(),
+                            [&](const BridgeCallPlan &site) {
+                                return site.runner == policy.wf_runner &&
+                                       site.state.value < reachable_state.size() &&
+                                       reachable_state[site.state.value];
+                            });
+            if (has_reachable_bridge) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedCapabilityFrame,
+                         "a workflow-packaged agent cannot compose a construct-capability "
+                         "final state with in-handler capability bridge calls (the exec "
+                         "manifest represents one or the other, not both); move the bridge "
+                         "call into a separate agent or drop the construct terminal",
+                         construct_terminal_range);
+                return std::nullopt;
+            }
         }
     }
     // V2-C fix-forward: now that reachability is exact (it sees the planned

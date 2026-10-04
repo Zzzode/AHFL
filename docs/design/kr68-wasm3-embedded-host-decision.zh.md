@@ -4968,3 +4968,124 @@ dev/release 构建走 `else` 分支,三条预算照常强制执行(实测 dev 17
 5. ASan 全量(单独运行,`-j$(nproc)`):#70/#400/#563 从已知 flake 转为稳定通过;
    零 ASan/LSan/UBSan 报告。
 
+## 12.23 落地记录(2026-10-04,task #109):WH-5c.4 收尾 P2-A/B、P2-F、P2-D/G
+
+### 12.23.1 背景与范围
+
+WH-5c.4(opaque capability-final 构造参数,task #95/#107)落地后,对抗评审与后续审计留下三个
+"今日 fail-closed、但诊断/校验可加固"的收尾项。本切片不改变任何生产行为(三者今日均已拒绝或
+已有兜底),只把拒绝点前移到更早、更可诊断的相位,并补齐一个状态可观测性缺口:
+
+- **P2-A/B(构造终态 + 桥接组合的 exec-manifest 不可表示)**:一个 workflow 打包的 agent 同时
+  携带 in-handler capability bridge 调用(非终态)与 construct-capability 终态时,exec manifest
+  的 P6 节点分支只能二选一(`cap_call_count=1` 构造终态零桥接位点,或 `cap_call_count=0` +
+  桥接位点),从不两者并存。`encode_exec_manifest` 的谓词 `bridge_sites.empty() &&
+  !node.capabilities.empty()` 在两者并存时落入桥接分支,静默丢弃构造终态的调度边界 capability
+  调用,host 在加载期才以不透明错误拒绝。
+- **P2-F(JsonToP4D + CapabilityParam 跨车道组合)**:transcode site 的 `Source::CapabilityParam`
+  是 P4DToJson 专属(构造终态的自 transcode)。一个 JsonToP4D site 携带它时,`mint_transcode_binding`
+  的 fall-through 会把它当作 NodeOutput 处理,为一个不可能的 transcode mint 节点帧绑定。
+- **P2-D/G(失败 opaque 节点的状态可观测性缺口)**:node-event 记录只在成功完成时写入;opaque 节点
+  从不写 trace ring。所以一个失败的 opaque 节点的 `states_per_node` 为空——没有任何源记录它失败前
+  访问过的状态,生命周期 hook(`AgentStateEntered`)对该节点不触发。
+
+### 12.23.2 P2-A:plan-build 期拒绝构造终态 + 桥接组合
+
+**根因**:`encode_exec_manifest`(`core_wasm_codegen.cpp` ~line 16115)的 P6 节点分支谓词
+`bridge_sites.empty() && !node.capabilities.empty()` 在桥接位点与构造终态并存时为 false,
+落入 else 分支发射 `cap_call_count=0` + 桥接位点,构造终态的调度边界 capability 调用被静默丢弃。
+host 在加载期以不透明错误拒绝,而非 codegen 期的可诊断错误。
+
+**决议**:在 `build_agent_plan` 的可达性计算之后(`reachable_state` worklist,~line 11828)、
+frame-section 门之前,新增组合检查:当 `policy.workflow_packaging_lane` 且存在可达的构造终态
+(`plan.construct_capability_terminals` 中任一 `reachable_state[terminal.state]`)且存在可达的
+桥接位点(`effective_bridge_registry.sites()` 中任一 `site.runner == policy.wf_runner &&
+reachable_state[site.state]`)时,以 `kUnsupportedCapabilityFrame` + 构造终态 return 语句的
+SourceRange 拒绝,消息点名两个冲突元素并给出修复建议("move the bridge call into a separate
+agent or drop the construct terminal")。
+
+**关键设计点**:
+- 检查在 `build_agent_plan` 内、`skip_frame_section` 门之前,所以 fact-gathering 与 relocation
+  两个 workflow 打包 pass 都会经过;但 fact-gathering pass 的 `shared_bridge_registry` 为 null、
+  site 标记 `runner=kInvalid` 而 `wf_runner` 默认 0,检查在该 pass 是正确的 no-op,只在打包 pass
+  (relocation,manifest 真正构建处)触发。
+- 可达性门避免误报:不可达的构造终态/桥接位点是死代码,manifest 本就正确(不可达构造终态在
+  ~line 11855 被排除出 `plan.imports`,从而不进入 `node.capabilities`)。
+- runner 作用域:`site.runner == policy.wf_runner` 把共享 registry 上的检查限定到当前打包 runner,
+  先前 runner 的已压缩位点携带不同 tag,被排除。
+
+**测试**:`make_p2a_construct_plus_bridge_program()` 手构最小 Core IR(agent 同时有 Init 的
+bridge 调用与 Done 的构造终态),断言 `emit_core_wasm` 返回无 artifact + `kUnsupportedCapabilityFrame`。
+变异测试验证:禁用 P2-A 检查后,打包 pass 发射 artifact(manifest 丢弃构造调用),测试失败;
+恢复后通过。
+
+### 12.23.3 P2-F:显式拒绝 JsonToP4D + CapabilityParam 组合
+
+**根因**:`mint_transcode_binding`(`transcode.cpp:71`)的 JsonToP4D 分支没有对
+`Source::CapabilityParam` 的显式拒绝。该组合是 corrupt module(CapabilityParam 是 P4DToJson 专属),
+但 fall-through 会把它当作 NodeOutput,为不可能的 transcode mint 节点帧绑定。
+
+**决议**:在 JsonToP4D 分支入口(`transcode.cpp:135`)新增显式
+`if (site.source == Source::CapabilityParam) return std::nullopt;`,fail-closed 而非 fall-through。
+`Source` 枚举只有三个值(Entry/NodeOutput/CapabilityParam),合法组合为 P4DToJson x {Entry,NodeOutput,
+CapabilityParam} 与 JsonToP4D x {Entry,NodeOutput},唯一 corrupt 组合即 JsonToP4D+CapabilityParam,
+本检查穷尽覆盖。
+
+**测试(变异测试,fix-forward 后非空泛)**:初版测试用默认 `ImportObservation`(空 `param_frame`),
+无论 P2-F 检查是否存在都返回 `AHFL_CAP_ERROR`(空 `param_frame` 使 `parse_json` 失败),是 vacuous
+测试——对抗评审判 P1。fix-forward 后:加载真实 engine(`wht::identity_module()`,64KiB 页),
+设置合法 8-aligned shadow/payload 跨度 + 一个 I64 layout,`obs.param_frame` 填入匹配 I64 节点输入
+绑定的合法 JSON `"42"`。无 P2-F 检查时 fall-through mint 绑定、解码 `"42"`、pack 进 shadow、返回
+`AHFL_CAP_OK`(测试失败);有 P2-F 检查时在 CapabilityParam 检查处拒绝、返回 `AHFL_CAP_ERROR`
+(测试通过)。两个方向均实证。
+
+### 12.23.4 P2-D/G:失败 opaque 节点的状态从静态 walk 填充
+
+**根因**:node-event 记录只在成功完成时写入(每节点一条),opaque 节点从不写 trace ring。所以失败的
+opaque 节点的 `states_per_node[i]` 为空,生命周期 hook(`AgentStateEntered`)对该节点不触发。
+
+**决议**:在 per-node 循环(`workflow_session.cpp` ~line 2490)中,当 `node_facts.states` 为空且该节点是
+失败节点(`failed_node_index`)时,从该 agent 的静态 walk(`descriptor.agents[runner].walk`,
+即 `runner_walk_names` 线性 goto 链)填充 `node_facts.states`,使生命周期 hook 对失败节点触发。
+P6 节点失败时 trace ring 状态非空(ring 在 host-abort unwind 后存活),该 arm 被跳过。
+
+**P2-G(已知边界,文档化)**:静态 walk 是线性 goto 链。分支 agent 的未取分支状态不在 walk 中
+(under-report);失败节点可能未到达 walk 中的每个状态(over-report)。这是 opaque 节点可用的最佳源。
+对测试 fixture(`e3_capability_workflow.ahfl`),walk `[Start, Done]` 是准确的:节点进入 Start、
+goto Done、在 Done 的 Echo 调用中失败——两个状态都进入了。
+
+**作用域说明**:本 arm 填充 `node_facts.states`(经 `finalize_wasm_workflow_run` -> 事件流,即
+`AgentStateEntered` 事件)。`WorkflowSessionResult.states`(`collected_states`,session 内部通道)
+在 `failed_node_index` 计算之前的 `rebuild_states`(~line 2033)已重建,不含失败节点状态;但 facade
+(`wasm_workflow_runtime.cpp:307`)只传播 `.result`(事件),丢弃 `.states`,所以用户面权威通道是事件,
+本 arm 完整覆盖。
+
+**测试**:`test_host_abort_workflow` 中断言 `AgentStateEntered` 事件数 == 2(FirstAgent 的
+[Start, Done];第二个节点 Skipped 不贡献)。变异测试验证:禁用 P2-D arm 后失败 opaque 节点贡献 0 个
+状态事件,测试失败;恢复后通过。
+
+### 12.23.5 对抗评审结论
+
+独立对抗评审(builder 之外的代理)全量读 diff(6 文件 +388/-2)、追踪每个 fix 的周边路径、验证
+P2-A 的 manifest 编码断言、可达性逻辑、三个测试的 vacuousness、构建并运行三个受影响测试二进制
+(全绿:216/216、112/112、641 checks)、确认无既有 golden 被新 P2-A 门误拒。
+
+- **P2-A:无缺陷**。manifest 断言、可达性、runner 作用域、无误报、测试 pin 住 fix,均确认。
+- **P2-D/G:无缺陷**。前提、节点识别、bounds 安全、字段序、P6 边界、P2-G 文档、测试 pin 住 fix,
+  均确认。
+- **P2-F:1 个 P1**——测试 vacuous(空 `param_frame` 使 `parse_json` 先失败,无论检查是否存在都
+  `AHFL_CAP_ERROR`)。fix-forward 为 §12.23.3 的非 vacuous 变异测试(真实 engine + 合法 JSON,
+  无检查时 fall-through 返回 `AHFL_CAP_OK`)。
+
+### 12.23.6 验收标准
+
+1. P2-A:构造终态 + 桥接组合在 plan-build 期被 `kUnsupportedCapabilityFrame` + ranged diag 拒绝,
+   无 artifact;禁用检查后测试失败(变异测试)。
+2. P2-F:JsonToP4D + CapabilityParam 在 `mint_transcode_binding` 入口被拒绝;禁用检查后 fall-through
+   返回 `AHFL_CAP_OK`(变异测试,非 vacuous)。
+3. P2-D:失败 opaque 节点的 `AgentStateEntered` 事件从静态 walk 填充;禁用 arm 后事件数为 0(变异测试)。
+4. dev fresh -Werror 构建零 warning;完整无标签 ctest 567/570(3 fail 全为本机 pnpm 缺失的
+   beta-gate 级联,CI 不存在)。
+5. ASan 全量(单独运行,`-j$(nproc)`):零 ASan/LSan/UBSan 报告。
+6. WASM=OFF 冷重建 + release 构建 + install/export consumer 工程全绿。
+

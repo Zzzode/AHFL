@@ -128,6 +128,13 @@ mint_transcode_binding(const TranscodeConfig &config,
     }
 
     // JSON_TO_P4D
+    // WH-5c.4 P2-F: a CapabilityParam source is P4DToJson-only (the construct
+    // terminal's self-transcode). A JsonToP4D site carrying it is a corrupt
+    // module; fail closed rather than falling through to the NodeOutput branch
+    // and minting a node-frame binding for an impossible transcode.
+    if (site.source == irc::CoreFrameTranscodeSite::Source::CapabilityParam) {
+        return std::nullopt;
+    }
     if (site.source == irc::CoreFrameTranscodeSite::Source::Entry) {
         // The wire-JSON entry decodes to the workflow INPUT boundary.
         return irc::make_frame_binding_from_verified_table(

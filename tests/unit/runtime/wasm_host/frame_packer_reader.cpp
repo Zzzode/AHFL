@@ -22,6 +22,7 @@
 #include "runtime/wasm_host/frame_packer.hpp"
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/p6_frame_driver.hpp"
+#include "runtime/wasm_host/transcode.hpp"
 #include "runtime/wasm_host/wasm3_engine.hpp"
 
 #include "runtime/engine/core_wasm_frame_module.hpp"
@@ -34,9 +35,11 @@
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
+#include "ahfl/runtime/ahfl_host.h"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "conformance/compile_source.hpp"
 #include "conformance/conformance_case.hpp"
+#include "unit/runtime/wasm_host/wasm_host_test_support.hpp"
 
 #include "common/project_input_support.hpp"
 
@@ -57,6 +60,7 @@ namespace wh = ahfl::runtime::wasm_host;
 namespace fr = ahfl::runtime::core_wasm_frame_module;
 namespace eng = ahfl::runtime::core_wasm_resume_engine;
 namespace conf = ahfl::conformance;
+namespace wht = ahfl::runtime::wasm_host_test_support;
 
 using ahfl::runtime::Value;
 using ahfl::runtime::value_from_json;
@@ -848,6 +852,99 @@ void test_duplicate_placement_rejected(const std::filesystem::path &repo_root) {
     check(!decoded.ok(), "dup-place.duplicate container_layout rejected at decode");
 }
 
+// WH-5c.4 P2-F: a JsonToP4D transcode site carrying Source::CapabilityParam is
+// a corrupt module (CapabilityParam is P4DToJson-only: the construct terminal's
+// self-transcode).  The host must fail closed rather than falling through to
+// the NodeOutput branch and minting a node-frame binding for an impossible
+// transcode.  Codegen never emits this combo, so the test crafts the corrupt
+// site directly and asserts handle_transcode returns AHFL_CAP_ERROR.
+//
+// The descriptor carries one node and the wire table a matching node-input
+// root, so WITHOUT the P2-F early-return the fall-through would reach the
+// node-frame binding mint (not the bounds check) -- the test pins that the
+// P2-F branch specifically is the rejection point.
+void test_transcode_capability_param_json_to_p4d_rejected(
+    const std::filesystem::path & /*repo_root*/) {
+    // A minimal verified wire table (one I64 node + one node-input root) so
+    // the fall-through NodeOutput branch mints a valid node-0-input binding.
+    irc::CoreWireSchemaTable wire;
+    wire.format_version = 1;
+    irc::CoreWireSchemaNode node;
+    node.shape = irc::CoreWireSchemaInt{};
+    wire.nodes.push_back(node);
+    wire.frame_roots = irc::CoreWireFrameRoots{
+        irc::CoreWireSchemaNodeId{0}, irc::CoreWireSchemaNodeId{0},
+        {irc::CoreWireSchemaNodeId{0}}, {irc::CoreWireSchemaNodeId{0}}};
+    auto wire_copy = wire;
+    auto verified = irc::make_verified_wire_schema_table(std::move(wire));
+    check(verified.table.has_value(), "p2f.verified");
+    if (!verified.table.has_value()) {
+        return;
+    }
+
+    // A real engine with a live 64 KiB memory page (the identity module's
+    // memory) so the fall-through pack_value_at has a page to write into.
+    wh::Wasm3ResumeEngine engine;
+    const auto bytes = wht::identity_module();
+    auto instantiated = engine.fresh_instance(
+        std::span<const std::uint8_t>(bytes),
+        [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportAbort{}; // never called: no imports on identity
+        });
+    check(instantiated.has_value(), "p2f.fresh_instance");
+    if (!instantiated.has_value()) {
+        return;
+    }
+
+    // A frame section with valid 8-aligned shadow/payload spans inside the
+    // page, and one I64 layout the corrupt site packs against.
+    irc::CoreFrameLayoutSection section;
+    section.transcode_shadow_base = 256;
+    section.transcode_shadow_extent = 64;
+    section.transcode_payload_base = 1024;
+    section.transcode_payload_capacity = 64;
+    irc::CoreLayout layout;
+    layout.size = 8;
+    layout.align = 8;
+    layout.is_zero_sized = false;
+    layout.shape = irc::CoreLayoutScalar{irc::CoreScalarRepr::I64};
+    section.table.layouts.push_back(layout);
+
+    ahfl::backends::CoreWasmExecutionDescriptor descriptor;
+    // One node so target_node_ordinal=0 passes the bounds check, forcing the
+    // fall-through to reach the node-frame binding mint.
+    descriptor.nodes.emplace_back();
+    descriptor.nodes.back().p6_block_ordinal = 0;
+    std::uint32_t arena_cursor = 0;
+    wh::TranscodeConfig config{
+        engine, section, wire_copy, descriptor, *verified.table, arena_cursor};
+
+    // The corrupt site: JsonToP4D + CapabilityParam, targeting node 0.
+    irc::CoreFrameTranscodeSite site;
+    site.direction = irc::CoreFrameTranscodeSite::Direction::JsonToP4D;
+    site.source = irc::CoreFrameTranscodeSite::Source::CapabilityParam;
+    site.target_node_ordinal = 0;
+    site.layout = irc::CoreLayoutId{0};
+
+    // Valid JSON matching the I64 node-input binding. Without the P2-F check
+    // the fall-through mints the binding, decodes "42", packs it into the
+    // shadow, and returns AHFL_CAP_OK -- so this test is a true mutation
+    // test: it FAILS without the P2-F early-return (the corrupt transcode
+    // succeeds) and PASSES with it (rejected at the CapabilityParam check).
+    std::string json = "42";
+    eng::ImportObservation obs;
+    obs.param_frame = std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t *>(json.data()), json.size());
+
+    auto result = wh::handle_transcode(config, site, obs);
+    const auto *reply = std::get_if<eng::ImportReply>(&result);
+    check(reply != nullptr, "p2f.result_is_reply");
+    if (reply != nullptr) {
+        check(reply->raw_status == AHFL_CAP_ERROR,
+              "p2f.capability_param_json_to_p4d_rejected");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -863,6 +960,7 @@ int main() {
     test_oracle_parity(repo);
     test_page_precondition(repo);
     test_duplicate_placement_rejected(repo);
+    test_transcode_capability_param_json_to_p4d_rejected(repo);
 
     std::cout << g_pass_count << "/" << g_test_count << " checks passed\n";
     return g_pass_count == g_test_count ? 0 : 1;

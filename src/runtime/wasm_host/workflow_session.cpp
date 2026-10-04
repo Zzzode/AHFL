@@ -2487,6 +2487,31 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         node_facts.states = std::move(states_per_node[i]);
         node_facts.output = std::move(node_outputs[i]);
 
+        // WH-5c.4 P2-D: a failed node writes no node-event record (only
+        // successful completions are written), and an opaque node never
+        // writes to the trace ring.  So a failed opaque node's states are
+        // empty: no source recorded the states it visited before failing.
+        // Populate them from the agent's static walk so the lifecycle hooks
+        // fire for the failed node.  P2-G: the static walk is the linear
+        // goto chain (runner_walk_names); a branching agent's untaken branch
+        // states are not in the walk (under-report), and a failed node may
+        // not have reached every walk state (over-report).  This is the best
+        // available source for opaque nodes.  A P6 node that failed mid-run
+        // keeps its trace-ring states (non-empty, so this arm is skipped).
+        if (node_facts.states.empty() &&
+            failed_node_index.has_value() && i == *failed_node_index) {
+            const auto &failed_node_desc = descriptor.nodes[i];
+            if (failed_node_desc.runner < descriptor.agents.size()) {
+                const auto &agent_walk =
+                    descriptor.agents[failed_node_desc.runner];
+                node_facts.states.reserve(agent_walk.walk.size());
+                for (const auto &state_name : agent_walk.walk) {
+                    node_facts.states.push_back(
+                        {failed_node_desc.runner, state_name});
+                }
+            }
+        }
+
         if (run_ok || node_completed[i]) {
             node_facts.terminal = WasmNodeRunFacts::Terminal::Completed;
         } else if (suspended_node_index.has_value() &&
