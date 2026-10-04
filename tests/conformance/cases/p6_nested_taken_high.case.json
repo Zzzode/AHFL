@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-1 companion to p6_nested_fallthrough: a true outer guard actually enters the nested diverging if to High; landed on the orchestration lane"

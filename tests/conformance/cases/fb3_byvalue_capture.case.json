@@ -17,10 +17,8 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": false,
     "wasm": {
       "eligible": "orchestration",
-      "node_observation_skip": "evaluator_surface_awaits_kr68",
       "reason": "RFC 0026 FB-3b ByValue: two capturing closures (\\x -> x + a / + b) hold construction-time snapshots in distinct bumped envs; the higher-order apply fn invokes each through call_indirect (11 / 21), driving the computed goto to Done. Emits on the orchestration lane; the in-process evaluator does not yet execute user-defined pure fn calls / first-class closures, so the Node embedded-engine observation is authoritative until KR6.8."
     }
   }

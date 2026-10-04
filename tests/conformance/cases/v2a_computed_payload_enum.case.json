@@ -27,7 +27,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-A fix-forward: a computed final materializing a payload-bearing enum whose active variant is copied behind a runtime discriminant ladder (struct payload vs flat scalar); p6-frame module on the orchestration lane"

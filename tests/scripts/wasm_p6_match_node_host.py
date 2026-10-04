@@ -23,19 +23,19 @@ completion `br` must reach S past B and C_i) and the `i32.eqz` inversion of the
 pattern test and guard. Getting either wrong is a wasm validation rejection or a
 misrouted state id, which is exactly what this script catches.
 
-For each real-frontend fixture the producer reports the native AgentRuntime
-state-id observation; this script compiles the emitted module with the Node v22
-WebAssembly engine (WebAssembly.compile REJECTS a malformed module) and drives
-the stable step() ABI, asserting the reached state ids and transition_count match
-native. One fixture (`p6_match_arm_trap.ahfl`) must instead TRAP inside a matched
-arm: its native run is `failed`, and step() must raise a real
-WebAssembly.RuntimeError with no state transition.
+For each real-frontend fixture the producer compiles the wasm; this script
+compiles the emitted module with the Node v22 WebAssembly engine
+(WebAssembly.compile REJECTS a malformed module) and drives the stable step()
+ABI, asserting the reached state ids and transition_count match the frozen
+oracles captured at HEAD 620fadd8 (WH-9 B0). One fixture
+(`p6_match_arm_trap.ahfl`) must instead TRAP inside a matched arm: its frozen
+oracle is `failed`, and step() must raise a real WebAssembly.RuntimeError with
+no state transition.
 
 SKIP (77) when the node interpreter is unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -45,7 +45,7 @@ from pathlib import Path
 SKIP = 77
 
 # Fixture file name (relative to the golden dir) -> human description. Every
-# fixture must COMPLETE natively; the trap fixture is listed separately.
+# fixture must COMPLETE; the trap fixture is listed separately.
 FIXTURES = [
     ("p6_match_enum.ahfl", "statement if-let: tag match + fall-through goto"),
     ("p6_match_fallthrough.ahfl", "statement if-let: no arm matches, fallback runs"),
@@ -66,29 +66,46 @@ TRAP_FIXTURES = [
     ("p6_match_arm_trap.ahfl", "matched arm divides by zero -> RuntimeError"),
 ]
 
+# Frozen oracles (WH-9 B0, HEAD 620fadd8), keyed by fixture stem.
+FROZEN_OBS: dict[str, dict[str, object]] = {
+    "p6_match_enum": {
+        "status": "completed", "entered_ids": [4, 2, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 4,
+    },
+    "p6_match_fallthrough": {
+        "status": "completed", "entered_ids": [3, 0],
+        "final_state_id": 0, "transition_count": 1, "initial_state_id": 3,
+    },
+    "p6_match_expr": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_match_guard": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_match_binding_payload": {
+        "status": "completed", "entered_ids": [3, 2, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_match_or": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_match_result_i64": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_match_arm_trap": {
+        "status": "failed", "entered_ids": [2],
+        "final_state_id": 2, "transition_count": 0, "initial_state_id": 2,
+    },
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -113,29 +130,27 @@ def main(argv: list[str]) -> int:
         trap_cases: list[tuple[str, Path, int]] = []
         for src, desc in sources:
             wasm = td_path / (src.stem + ".wasm")
-            native = subprocess.run(
+            compile_run = subprocess.run(
                 [str(producer), str(src), str(wasm)],
                 capture_output=True, text=True, timeout=60,
             )
-            if native.returncode != 0:
-                return fail(f"{src.name} producer exited {native.returncode}: "
-                            f"{native.stderr}")
-            obs = parse_observation(native.stdout.strip())
-            if obs["status"] != "completed" or not obs["entered_ids"]:
-                return fail(f"{src.name} native run did not complete: {obs}")
+            if compile_run.returncode != 0:
+                return fail(f"{src.name} producer exited {compile_run.returncode}: "
+                            f"{compile_run.stderr}")
+            obs = FROZEN_OBS[src.stem]
             cases.append((desc, wasm, obs))
         for src, desc in traps:
             wasm = td_path / (src.stem + ".wasm")
-            native = subprocess.run(
+            compile_run = subprocess.run(
                 [str(producer), str(src), str(wasm)],
                 capture_output=True, text=True, timeout=60,
             )
-            if native.returncode != 0:
-                return fail(f"{src.name} producer exited {native.returncode}: "
-                            f"{native.stderr}")
-            obs = parse_observation(native.stdout.strip())
+            if compile_run.returncode != 0:
+                return fail(f"{src.name} producer exited {compile_run.returncode}: "
+                            f"{compile_run.stderr}")
+            obs = FROZEN_OBS[src.stem]
             if obs["status"] != "failed" or int(obs["transition_count"]) != 0:
-                return fail(f"{src.name} native run was expected to fail without a "
+                return fail(f"{src.name} frozen oracle was expected to fail without a "
                             f"transition: {obs}")
             trap_cases.append((desc, wasm, int(obs["initial_state_id"])))
 
@@ -176,7 +191,7 @@ for (const c of cases) {
   // AFTER the first transition.
   const expected = c.entered.slice(1);
   if (c.entered[0] !== c.initial)
-    throw new Error(`${c.path}: native initial id mismatch`);
+    throw new Error(`${c.path}: frozen initial id mismatch`);
   if (exports.current_state() !== c.initial)
     throw new Error(`${c.path}: initial state ${exports.current_state()} != ${c.initial}`);
   const sequence = [];
@@ -200,7 +215,7 @@ for (const c of cases) {
   }
   const path = sequence.slice(0, expected.length);
   if (JSON.stringify(path) !== JSON.stringify(expected))
-    throw new Error(`${c.path}: state path ${path} != native ${expected}`);
+    throw new Error(`${c.path}: state path ${path} != oracle ${expected}`);
   if (exports.transition_count.value !== c.transitions)
     throw new Error(
       `${c.path}: transition_count ${exports.transition_count.value} != ${c.transitions}`);

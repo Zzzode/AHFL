@@ -132,7 +132,7 @@ reachable-state 数。
 
 ```mermaid
 flowchart TB
-    Runtime[WorkflowRuntime] --> Events[ExecutionEventStore]
+    Runtime[WasmWorkflowRuntime] --> Events[ExecutionEventStore]
     Events --> Report[ExecutionReport]
     Events --> Audit[Audit projection]
     Events --> Scheduler[Scheduler projection]
@@ -149,20 +149,18 @@ flowchart TB
 3. audit/replay/scheduler/checkpoint 只从 canonical events 计算，不解析 human 输出。
 4. checkpoint 只引用 completed node 的 numeric IDs 与 value IDs。
 5. recovery snapshot 使用 atomic replace；corruption、partial write、未知 ID fail closed。
-6. resume 产生 `RunResumed` / `NodeRestored`，不重复已完成 side effect。
+6. resume 在冷启动 fresh wasm instance 上整模块重放，frontier 之前逐字回喂 memo、零 live side effect，不重复已完成 capability 的副作用；坐标不一致 fail closed。
 7. 持久化或公开 event 不包含 API key、token 或 secret provider response。
 
-reference recovery evidence 覆盖本地 HTTP provider、`SIGKILL`、operator approval、
-partial write 与 side-effect dedupe。它证明 reference workflow 的 recovery contract，
-不自动替代你的业务系统 disaster-recovery 演练。
+reference 恢复证据由 `durable_resume_capstone`（同进程 Pending 挂起 → 落盘快照 → 冷启动整模块重放恢复，恢复 run 的 live capability 调用数为零）与小时级 `long_soak_smoke`（真实 provider retry 下的稳定性与事件计数）覆盖。WH-9 后旧的 `SIGKILL` 杀进程重启 / operator approval 节点 checkpoint 证据随树步评估器退役；它不自动替代你的业务系统 disaster-recovery 演练，生产级跨进程 exactly-once 仍是 RFC 0026 E4-B2 后续。
 
 ## Evidence Tiers
 
 ### 1. Verified Beta
 
-`config/beta-gate.json` 定义十项 beta evidence contract。它覆盖 manifest run profile、
+`config/beta-gate.json` 定义九项 beta evidence contract（编号 BETA-01..06、BETA-08..10；原 BETA-07 reference crash recovery 已随 WH-9 退役，编号永不复用）。它覆盖 manifest run profile、
 numeric runtime identity、canonical projections、terminal lifecycle、formatter、stdlib
-container migration、reference crash recovery、干净安装、README claim 与 scope freeze。
+container migration、干净安装、README claim 与 scope freeze。
 
 ```bash
 python3 scripts/generate-beta-evidence-bundle.py \
@@ -184,7 +182,7 @@ controlled-pilot 是有边界的运行证据，不是 production-ready 标签。
 |---|---|
 | Bounded soak | 至少 30 秒、至少 12 次 reference workflow |
 | 网络故障 | disconnect、HTTP 429、timeout、partial response 均 fail closed |
-| Recovery | process crash、schema rejection、checkpoint/resume |
+| Recovery | schema rejection、Pending 挂起 / 冷启动重放 resume（process crash 项已随 WH-9 退役） |
 | Provider governance | budget path 与 canonical usage |
 | Observability | canonical events 导出 OTLP-compatible spans |
 
@@ -229,8 +227,8 @@ production-ready 声明。
 | Runtime | `run --output-format jsonl` | terminal、usage、retry/fallback、diagnostic 是否可审计？ |
 | Assurance | `validate` | effect、idempotency、receipt、approval、compensation 是否完整？ |
 | Formal | `verify` | 当前有限控制模型的 specification 是否通过？ |
-| Recovery | reference / product recovery test | crash、approval、partial write、dedupe 是否闭合？ |
-| Beta | `check-beta-gate.py --require-ready` | 十项 evidence 是否同一当前 revision？ |
+| Recovery | durable_resume_capstone / long soak | Pending 挂起、快照落盘、冷启动重放零重复 side effect 是否闭合？ |
+| Beta | `check-beta-gate.py --require-ready` | 九项 evidence 是否同一当前 revision？ |
 | Pilot | `check-controlled-pilot-gate.py --require-ready` | bounded faults、recovery、OTel、budget 是否通过？ |
 | Long soak | CI `Production Confidence` evidence | CI-only provenance、duration、retry、RSS/allocator 是否通过？ |
 

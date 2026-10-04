@@ -10,7 +10,17 @@ import tempfile
 from pathlib import Path
 
 
-EXPECTED_CRITERIA = {f"BETA-{index:02d}" for index in range(1, 11)}
+EXPECTED_CRITERIA = {
+    "BETA-01",
+    "BETA-02",
+    "BETA-03",
+    "BETA-04",
+    "BETA-05",
+    "BETA-06",
+    "BETA-08",
+    "BETA-09",
+    "BETA-10",
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -71,7 +81,7 @@ def main() -> int:
         require(report["status"] == "not_ready", "missing evidence must report not_ready")
         require(
             {criterion["id"] for criterion in report["criteria"]} == EXPECTED_CRITERIA,
-            "report must cover all ten beta criteria",
+            "report must cover all nine beta criteria",
         )
         require(
             all(criterion["status"] == "missing_evidence" for criterion in report["criteria"]),

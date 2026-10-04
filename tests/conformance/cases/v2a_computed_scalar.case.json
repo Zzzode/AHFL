@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-A computed SCALAR final materializes input.v*2 into the output frame i64 word; p6-frame module on the orchestration lane"

@@ -4,7 +4,7 @@
 //
 // A conformance case is a JSON sidecar (schema `ahfl.conformance-case.v1`)
 // paired with an AHFL source file. It is the neutral contract consumed by
-// every execution engine (tree-walking evaluator, orchestration wasm, and the
+// every execution engine (orchestration wasm, and the
 // future KR6.6 computation wasm lane). This header deliberately depends on
 // neither: it only parses, validates, and canonicalizes manifest data.
 //
@@ -130,22 +130,16 @@ enum class WasmNodeObservationSkip {
     /// The emit path rejects the case at a KR6.6 computation-lane seam, so no
     /// Node module exists to observe.
     BlockedOnKr66,
-    /// The module emits and runs, but the in-process evaluator does not yet
-    /// execute the surfaced construct (user-defined pure direct fn calls /
-    /// first-class closures), so there is no evaluator reference to
-    /// differential against. The Node embedded-engine run is the
-    /// authoritative evidence; that evaluator surface retires with KR6.8.
-    EvaluatorSurfaceAwaitsKr68,
-    /// The module emits and the evaluator agrees (the native wasm3 lane
-    /// compares), but the Node embedded host lacks the ahfl_xcode transcode
+    /// The module emits and the native wasm3 lane has a checked-in blessing,
+    /// but the Node embedded host lacks the ahfl_xcode transcode
     /// adapter: the C++ WH-5b.3 host-side transcode landed, but the Node
     /// oracle JS port of ahfl_xcode is still a stub (returns [1,0,0]), so
     /// the wasm module traps at its P4D_TO_JSON / JSON_TO_P4D transcode
     /// sites. The Node observation is withheld until the JS host gains
     /// transcode support.
     HostTranscodeAwaitsNodePort,
-    /// The module emits and the evaluator agrees (the native wasm3 lane
-    /// compares), but the workflow is a MULTI-NODE all-opaque schedule
+    /// The module emits and the native wasm3 lane has a checked-in blessing,
+    /// but the workflow is a MULTI-NODE all-opaque schedule
     /// (identity + capability mixed, with no ahfl_xcode transcode sites)
     /// whose per-node outputs only become host-observable through the
     /// WH-5c.5 guest stash-table join. The Node oracle host predates that
@@ -156,8 +150,8 @@ enum class WasmNodeObservationSkip {
     /// used for a module that emits ahfl_xcode sites (that gap is
     /// HostTranscodeAwaitsNodePort).
     NodeHostAwaitsMultiNodeStashJoin,
-    /// The module emits and the evaluator agrees (the native wasm3 lane
-    /// compares), but the workflow's wire-type matrix carries shapes the
+    /// The module emits and the native wasm3 lane has a checked-in blessing,
+    /// but the workflow's wire-type matrix carries shapes the
     /// Node oracle host's P6 frame packer/reader does not yet implement
     /// (Map / Decimal / Duration / Float are outside the JS host's
     /// rung-E frame subset). The C++ host supports them (WH-5c.7); the
@@ -178,7 +172,6 @@ struct WasmEngineEligibility {
 };
 
 struct EngineMatrix {
-    bool evaluator{false};
     WasmEngineEligibility wasm{};
 };
 
@@ -228,7 +221,7 @@ namespace detail {
 // Canonical wire JSON emission
 // ---------------------------------------------------------------------------
 //
-// Mirrors runtime::evaluator `value_to_json` byte conventions, applied to a
+// Mirrors the runtime `value_to_json` byte conventions, applied to a
 // plain JSON DOM so the validator stays engine-independent:
 //   * no insignificant whitespace;
 //   * floats keep the runtime SSOT spelling (json::format_wire_float): an
@@ -634,17 +627,6 @@ class ConformanceCaseReader {
         return std::string(*value);
     }
 
-    [[nodiscard]] std::optional<bool> require_bool(const json::JsonValue &node,
-                                                   std::string_view field) {
-        const auto value = node.as_bool();
-        if (!value.has_value()) {
-            error("conformance case field '" + std::string(field) + "' must be a boolean",
-                  range_of(node));
-            return std::nullopt;
-        }
-        return *value;
-    }
-
     [[nodiscard]] std::optional<std::string> require_nonempty_string(const json::JsonValue &node,
                                                                      std::string_view field) {
         auto value = require_string(node, field);
@@ -1031,13 +1013,10 @@ class ConformanceCaseReader {
             return std::nullopt;
         }
 
-        std::optional<bool> evaluator;
         std::optional<WasmEngineEligibility> wasm;
 
         for (const auto &[key, value] : object.object_fields) {
-            if (key == "evaluator") {
-                evaluator = require_bool(*value, "engines.evaluator");
-            } else if (key == "wasm") {
+            if (key == "wasm") {
                 wasm = parse_wasm_eligibility(*value);
             } else {
                 error("unsupported conformance case field 'engines." + key + "'", range_of(*value));
@@ -1048,17 +1027,12 @@ class ConformanceCaseReader {
             }
         }
 
-        if (!evaluator.has_value()) {
-            error("conformance case field 'engines.evaluator' is required", range_of(object));
-            return std::nullopt;
-        }
         if (!wasm.has_value()) {
             error("conformance case field 'engines.wasm' is required", range_of(object));
             return std::nullopt;
         }
 
         return EngineMatrix{
-            .evaluator = *evaluator,
             .wasm = std::move(*wasm),
         };
     }
@@ -1122,9 +1096,6 @@ class ConformanceCaseReader {
         if (*value == "blocked_kr66") {
             return WasmNodeObservationSkip::BlockedOnKr66;
         }
-        if (*value == "evaluator_surface_awaits_kr68") {
-            return WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
-        }
         if (*value == "host_transcode_awaits_node_port") {
             return WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
         }
@@ -1135,7 +1106,7 @@ class ConformanceCaseReader {
             return WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes;
         }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
-              "'blocked_kr66', 'evaluator_surface_awaits_kr68', "
+              "'blocked_kr66', "
               "'host_transcode_awaits_node_port', "
               "'node_host_awaits_multinode_stash_join', or "
               "'node_host_awaits_rich_wire_types', got '" +

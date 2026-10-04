@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6 CORE-GAPS 1 unwrap(Some(41)) lowers to an expression match whose payload binding drives the guard; landed on the orchestration lane"

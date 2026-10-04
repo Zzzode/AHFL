@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6 expression match used as a value (i64 arm results drive the guard); landed P6 match lowering on the orchestration lane"

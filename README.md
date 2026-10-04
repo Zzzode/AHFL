@@ -34,7 +34,6 @@ goldens, or aggregate test counts.
 - <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix.v1 --> Accepted success and failure lifecycle paths have unique terminal events.
 - <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence.v1 --> The AHFL formatter is lossless and idempotent over std/ and formatter fixtures, and its CI gate is blocking.
 - <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration.v1 --> Core containers resolve as nominal stdlib generics with no legacy runtime Option representation or migration flag.
-- <!-- beta-capability:BETA-07 schema=ahfl.beta-evidence.reference-workflow-recovery.v1 --> The reference workflow passes local HTTP provider fault injection, SIGKILL restart, operator-approved resume, partial-write recovery, and side-effect deduplication.
 - <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke.v1 --> Clean-prefix installs contain ahflc, ahfl-lsp, and the sysroot; platform VSIX packages contain the release LSP and sysroot and pass isolated installation.
 - <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze.v1 --> The beta product surface is frozen; new actions, backends, and artifacts require an accepted RFC.
 
@@ -51,8 +50,8 @@ AHFL is intended as a typed control and assurance layer for workflows where
 execution order, capability boundaries, failure handling, replay, and audit
 must remain explicit. The beta reference scenario is
 [`examples/execution-demo`](examples/execution-demo): a multi-agent incident
-workflow with deterministic nodes, an HTTP-backed LLM capability, budgets,
-durable checkpoint/receipt storage, crash recovery, and operator approval.
+workflow with deterministic nodes, an HTTP-backed LLM capability, and a
+canonical event stream with replay/audit projections.
 
 Formal emitters, additional infrastructure backends, and deeper IDE features
 remain available for development and evaluation, but are governed separately
@@ -164,7 +163,7 @@ include/ahfl/         Public compiler headers
 src/base/             Shared support, JSON, and validation utilities
 src/compiler/         Syntax, semantics, IR, passes, handoff, and backends
 src/pipeline/         Runtime-adjacent artifact models and builders
-src/runtime/          Local evaluator, workflow engine, and providers
+src/runtime/          WASM-embedded runtime, workflow engine, and providers
 src/tooling/          CLI, LSP, DAP, formatter, package, profiling, and test tooling
 tests/                Unit, golden, integration, and benchmark tests
 tools/vscode/         VS Code extension client and packaging workflow

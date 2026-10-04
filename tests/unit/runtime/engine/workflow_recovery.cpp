@@ -268,7 +268,7 @@ TEST_CASE("workflow recovery v2 round-trips with suspended record and memo") {
 }
 
 // WH-4b: the append-only `node` memo coordinate round-trips when set (wasm
-// whole-workflow memo) and stays nullopt when absent (evaluator per-node memo).
+// whole-workflow memo) and stays nullopt when absent (per-node memo).
 TEST_CASE("workflow recovery memo node coordinate round-trips present and absent") {
     const auto path = unique_store_path();
     WorkflowRecoveryStore store(path);
@@ -291,7 +291,7 @@ TEST_CASE("workflow recovery memo node coordinate round-trips present and absent
         .result = make_string("from-node-0"),
         .node = WorkflowNodeId{0},
     });
-    // Entry 1: evaluator-lane entry WITHOUT a node coordinate (nullopt == the
+    // Entry 1: per-node entry WITHOUT a node coordinate (nullopt == the
     // suspended node).
     suspended.memo.push_back(CapabilityMemoEntry{
         .ordinal = 1,

@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-B computed final projects the input String PtrLen straight into the output frame without a rodata region; p6-frame module on the orchestration lane"

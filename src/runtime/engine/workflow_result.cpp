@@ -1,9 +1,7 @@
-// RFC 0026 KR6.8 WH-4 (Decision 2, Option Z): the evaluator-free
-// WorkflowResult method definitions, moved verbatim from
-// workflow_runtime.cpp. The type is neutral (shared by the evaluator runtime
-// and the wasm facade); only the method bodies live here, in the engine
-// target — the survivor home that holds the resume/wire authorities and
-// survives WH-9.
+// RFC 0026 KR6.8 WH-4 (Decision 2, Option Z): the WorkflowResult method
+// definitions, moved verbatim out of the old evaluator-driven workflow TU
+// (deleted in WH-9). The type is neutral; only the method bodies live here, in
+// the engine target — the survivor home that holds the resume/wire authorities.
 
 #include "runtime/engine/workflow_result.hpp"
 

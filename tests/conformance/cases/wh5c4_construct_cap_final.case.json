@@ -23,7 +23,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "opaque-lane capability-final agent that constructs the capability argument in-module (WH-5c.4 GAP 2); the wasm codegen emits a P4D_TO_JSON self-transcode for the constructed O_k and a JSON_TO_P4D workflow-output crossing",

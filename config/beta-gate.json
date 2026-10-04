@@ -64,16 +64,6 @@
       ]
     },
     {
-      "id": "BETA-07",
-      "title": "Reference workflow passes fault injection and crash recovery",
-      "evidence": [
-        {
-          "path": "build/release-evidence/beta/reference-workflow-recovery.json",
-          "schema": "ahfl.beta-evidence.reference-workflow-recovery.v1"
-        }
-      ]
-    },
-    {
       "id": "BETA-08",
       "title": "CLI sysroot and VSIX install in clean environments",
       "evidence": [

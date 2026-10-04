@@ -17,10 +17,8 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": false,
     "wasm": {
       "eligible": "orchestration",
-      "node_observation_skip": "evaluator_surface_awaits_kr68",
       "reason": "RFC 0026 FB-3b higher-order lambda: the Init handler constructs a lifted lambda and passes it to a PURE fn whose FnT parameter is an eight-byte closure; the callable VALUE is invoked through call_indirect against the funcref table (Table(4)/Element(9)). Emits on the orchestration lane with landed Core closure codegen; the identity Done final forwards the borrowed input frame. The in-process evaluator does not yet execute user-defined pure fn calls / first-class closures, so the Node embedded-engine observation is authoritative until KR6.8 retires that evaluator surface."
     }
   }

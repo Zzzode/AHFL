@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "single-agent two-state f64 identity passthrough: the orchestration lane forwards the agent's input frame to its own output untouched (identity passthrough returns the BORROWED input frame, no copy and no field access), so any boundary type with a finalized P4-D layout -- including f64 -- emits on the E1 wasm subset"

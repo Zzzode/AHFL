@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "two-node identity workflow DAG with no capability imports; executable on the P5 orchestration wasm subset (E3)"

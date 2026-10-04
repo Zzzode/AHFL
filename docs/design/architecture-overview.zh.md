@@ -49,7 +49,7 @@ flowchart TD
 | --- | --- | --- |
 | **L3 平台与业务集成** | LLM 接入、能力传输、执行可观测性、部署视图、生产准入 | `src/runtime/providers/`、`src/runtime/engine/`（传输与事件部分）、`src/compiler/backends/infra/`、release gate 脚本 |
 | **L2 工具链** | 开发者入口：CLI、IDE、交互/调试、包管理、标准库、质量工程 | `src/tooling/`、`std/`、`tools/`、`tests/` |
-| **L1 语言与编译器核心** | 语言定义、编译管线、IR、后端、运行时语义 | `grammar/`、`src/compiler/`、`src/runtime/evaluator/`、`src/runtime/engine/`（核心部分）、`src/pipeline/`、`src/verification/` |
+| **L1 语言与编译器核心** | 语言定义、编译管线、IR、后端、运行时语义 | `grammar/`、`src/compiler/`、`src/runtime/wasm_host/`、`src/runtime/wasm_runner/`、`src/runtime/engine/`（核心部分）、`src/pipeline/`、`src/verification/` |
 | **L0 基础设施** | 与语言无关的支撑库、文法、vendored 依赖 | `src/base/`、`grammar/`、`third_party/` |
 
 **核心判断**：L1 是 AHFL 的本体——一门带形式化验证能力的强类型 DSL 及其编译器。L2 让这门语言可被使用。L3 让它接入真实的 AI Agent 运行环境。业务层可以替换或砍掉（换 provider、换部署目标），L1 的语义不受影响。
@@ -112,7 +112,7 @@ flowchart LR
 
 IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系统的**唯一语义源**：
 
-- **解释器执行 IR**——tree-walking 解释器直接遍历 `ir::Program` / `ir::Expr`，没有字节码、没有 native codegen（见 [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md)）
+- **唯一执行路径是 WASM**——验证后的 IR 降到 Core-IR,由 wasm 后端发射 wasm32 模块,vendored wasm3 内嵌引擎执行;WH-9 后树步解释器已退役,全仓库只有这一条执行引擎（见 [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md)）
 - **SMV 后端投影 IR**——agent 状态变量、workflow 生命周期、contract clauses → LTLSPEC
 - **可执行 wasm 后端从 Core-IR 发射二进制**——peer-tier 执行引擎(`src/compiler/backends/wasm/`),消费验证后的 Core-IR + P4-D layout,产出真实 wasm32 模块
 - **infra 后端消费 IR**——提取 agent/flow 结构生成部署描述(k8s/openapi/terraform)
@@ -134,10 +134,10 @@ IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系�
 
 ### 2.5 运行时
 
-运行时 = **解释器** + **编排引擎** + **事件内核**：
+运行时 = **WASM 内嵌执行** + **编排/能力桥** + **事件内核**：
 
-- **解释器**（`src/runtime/evaluator/`）：`ExpressionEvaluator` 遍历 `ir::Expr`；`StatementExecutor` 执行 IR 语句；`RuntimeFunctionTable` 注册顶层 IR 函数；stdlib 调用按名分发到库 IR 函数体或 `@builtin` C++ intrinsic
-- **编排引擎**（`src/runtime/engine/`）：`AgentRuntime`（状态机 + quota）、`WorkflowRuntime`（DAG 执行）、`CapabilityBridge`（能力调用）
+- **WASM 内嵌执行**（`src/runtime/wasm_host/` + `src/runtime/wasm_runner/`）：vendored wasm3 引擎端口（`wasm3_engine`）执行编译器发射的 wasm32 模块；agent runner 驱动状态机，workflow session 驱动 DAG 编排、capability import、P6 帧桥与挂起重放；`WasmWorkflowRuntime` facade（`wasm_runner/`）是 CLI / REPL / DAP 与嵌入方的唯一执行入口。WH-9 已删除旧的树步解释器（原 `src/runtime/evaluator/`）
+- **编排/能力桥**（`src/runtime/engine/`）：`CapabilityBridge`（能力调用 + 重试/熔断投影）、wire codec / frame module、durable resume controller 与恢复记录；宿主经 `ahfl_host.h` C ABI 提供 capability
 - **事件内核**（`src/runtime/engine/execution_event.*`）：`ExecutionEventStore` 是运行期事实的**唯一持有者**；report / replay / audit / scheduler / checkpoint / recovery 全部是它的投影，不得回退读取 AST、CLI 文本或 host log
 
 运行时架构详见 [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md)，事件与投影边界见 [project-status.zh.md](../plans/project-status.zh.md) §5.1。
@@ -202,7 +202,7 @@ CLI 管线架构见 [cli-pipeline-architecture.zh.md](cli-pipeline-architecture.
 
 - 执行事件 → human / JSON / JSONL report、replay、audit、scheduler、checkpoint 投影
 - OTel-compatible adapter：canonical events → deterministic OTLP spans
-- Recovery：`ahfl.workflow-recovery.v1`、crash/resume reference path（SIGKILL、approval、side-effect dedupe）
+- Recovery：加载器接受 `ahfl.workflow-recovery.v1`/`v2`，wasm lane 写 v2；Pending 挂起 → 冷启动 fresh instance 整模块重放 + 精确 memo 回喂（零重复 live side effect），证据为 `durable_resume_capstone` / `long_soak_smoke`
 
 ### 4.4 部署视图（Infra Backends）
 

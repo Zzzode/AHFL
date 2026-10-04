@@ -444,7 +444,7 @@ driver 只暴露一组 backend-facing 入口：
 
 1. Core backend：消费 `ir::Program`，通过 `BackendKind` / `BackendRegistry` / `emit_backend(...)` 分发。
 2. Package pipeline：消费 package metadata，生成 execution plan 或 deterministic dry-run trace。
-3. Runtime event/report pipeline：`WorkflowRuntime` 产生 events，renderer 和 projection 消费 events/report。
+3. Runtime event/report pipeline：`WasmWorkflowRuntime`（wasm3 内嵌执行）产生 events，renderer 和 projection 消费 events/report。
 4. Compiler diagnostic artifact：当前代表是 `emit opt-ir` / `emit opt-ir-json`，消费 `ir::Program` 后降到 `ir::opt::OptProgram`。
 5. Target generator：消费目标平台专用 config，例如 WASM、K8s CRD、OpenAPI、Terraform。
 

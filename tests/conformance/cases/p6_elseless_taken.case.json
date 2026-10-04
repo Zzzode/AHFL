@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-2 two-deep else-less if whose inner then-branch fires (br 2); landed on the orchestration lane"

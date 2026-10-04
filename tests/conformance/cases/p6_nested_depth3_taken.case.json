@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-1 companion to p6_nested_depth3: all three guards are entered, taking the innermost then-branch; landed on the orchestration lane"

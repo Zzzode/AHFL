@@ -33,7 +33,6 @@ release evidence 为准，不以存在源码、handler、golden 或聚合测试�
 - <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix.v1 --> 已接受的成功与失败生命周期路径都具有唯一 terminal event。
 - <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence.v1 --> AHFL formatter 对 std/ 与 formatter fixtures 无损且幂等，并由阻断式 CI gate 检查。
 - <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration.v1 --> 核心容器解析为 nominal stdlib 泛型，不再保留 legacy runtime Option 表示或迁移开关。
-- <!-- beta-capability:BETA-07 schema=ahfl.beta-evidence.reference-workflow-recovery.v1 --> Reference workflow 已通过本地 HTTP provider 故障注入、SIGKILL 重启、operator approval 恢复、partial-write recovery 与副作用去重。
 - <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke.v1 --> Clean-prefix 安装包含 ahflc、ahfl-lsp 与 sysroot；platform VSIX 包含 release LSP 与 sysroot，并通过隔离安装。
 - <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze.v1 --> Beta 产品面保持冻结；新增 action、backend 或 artifact 必须先有 accepted RFC。
 
@@ -47,8 +46,7 @@ beta readiness。Native Protobuf transport、多 region 运行、官方 registry
 AHFL 面向需要显式管理执行顺序、capability 边界、失败处理、replay 与 audit 的
 工作流，定位为 typed control and assurance layer。Beta reference scenario 是
 [`examples/execution-demo`](examples/execution-demo)：它包含多 Agent 节点、本地
-HTTP-backed LLM capability、预算、durable checkpoint/receipt store、crash recovery
-与 operator approval。
+HTTP-backed LLM capability 与带 replay/audit 投影的规范化事件流。
 
 Formal emitter、其他基础设施 backend 和更深 IDE 功能仍可用于开发与评估，但它们
 与已验证 beta runtime path 分开治理。
@@ -158,7 +156,7 @@ include/ahfl/         编译器公共头文件
 src/base/             共享 support、JSON 和 validation 工具
 src/compiler/         syntax、semantics、IR、passes、handoff 和 backends
 src/pipeline/         Runtime-adjacent artifact 模型与 builder
-src/runtime/          本地 evaluator、workflow engine 和 provider
+src/runtime/          WASM 内嵌运行时、workflow engine 和 provider
 src/tooling/          CLI、LSP、DAP、formatter、package、profiling 和测试工具
 tests/                单元、golden、集成和 benchmark 测试
 tools/vscode/         VS Code 扩展客户端与打包流程

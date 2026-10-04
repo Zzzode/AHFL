@@ -191,9 +191,9 @@ CLI 当前把输出命令显式分成两类：
 在单文件和 project-aware 模式下，validate 成功之前不会进入这两类输出路径。
 
 真实 workflow execution 不属于 package artifact builder。`RunWorkflow` 进入
-`WorkflowRuntime`，产生 canonical execution events，再由 report/renderer 输出 human、
-JSON 或 JSONL。replay、audit、scheduler、checkpoint 和 recovery 是 event-native
-library projection。
+`WasmWorkflowRuntime`（vendored wasm3 承载的唯一执行路径），产生 canonical
+execution events，再由 report/renderer 输出 human、JSON 或 JSONL。replay、audit、
+scheduler、checkpoint 和 recovery 是 event-native library projection。
 
 这条边界非常重要，因为它保证：
 

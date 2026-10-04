@@ -4,7 +4,7 @@
 //
 // Produces the canonical `ahfl.node-observation.v1` document that the
 // conformance comparator (observation_compare.hpp) diffs against the
-// evaluator observation. The field set, key order, and value formatting are
+// engine observation. The field set, key order, and value formatting are
 // pinned EXACTLY to the JS oracle's `emitObservation` in
 // tests/conformance/node_embedded_host.mjs:
 //

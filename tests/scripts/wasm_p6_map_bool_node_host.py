@@ -14,9 +14,11 @@ Two @repo-std fixtures pin the delivery end to end in the real Node v22 engine:
   * Map<Bool, Int>(4):  lookup input.table[true]  -> 42 (present, slot 1)
   * Map<Int, Bool>(4): lookup input.table[7]     -> true (present, slot 1)
 Each drives the computed goto HIGH, and on a FRESH instance removing the live
-entry the keyed lookup must TRAP (the evaluator returns "key not found"). The
+entry the keyed lookup must TRAP (the wasm engine traps on absent key). The
 producer reports the P4-D facts (including the Bool i32 words as keys/values)
-and the host mirrors them; it never re-derives a layout.
+and the host mirrors them; it never re-derives a layout. The wasm state-id
+paths are pinned against the frozen oracles captured at HEAD 620fadd8
+(WH-9 B0).
 
 SKIP (77) when node is unavailable.
 """
@@ -32,6 +34,18 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracles (WH-9 B0, HEAD 620fadd8), keyed by fixture stem.
+FROZEN_OBS: dict[str, dict[str, object]] = {
+    "p6_map_bool_key": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_map_bool_value": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+}
+
 _INT_KEYS = (
     "map_base", "backing_base", "header_offset", "ptr_offset", "len_offset",
     "len", "stride", "value_offset", "capacity", "backing_size",
@@ -42,24 +56,6 @@ _INT_KEYS = (
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    return {
-        "status": match.group(1),
-        "entered_ids": [int(x) for x in match.group(2).split(",") if x],
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def parse_map(stdout: str) -> dict[str, object]:
@@ -152,16 +148,14 @@ console.log("P6 Bool-Map keyed lookup Node step execution passed");
 
 def run_case(node: str, producer: Path, source: Path, td: Path) -> None:
     wasm = td / (source.stem + ".wasm")
-    run = subprocess.run(
+    compile_run = subprocess.run(
         [str(producer), str(source), str(wasm)],
         capture_output=True, text=True, timeout=60,
     )
-    if run.returncode != 0:
-        raise AssertionError(f"producer exited {run.returncode}: {run.stderr}")
-    obs = parse_observation(run.stdout)
-    if obs["status"] != "completed" or obs["entered_ids"] != [3, 1, 0]:
-        raise AssertionError(f"native Bool-Map run did not route High: {obs}")
-    layout = parse_map(run.stdout)
+    if compile_run.returncode != 0:
+        raise AssertionError(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+    obs = FROZEN_OBS[source.stem]
+    layout = parse_map(compile_run.stdout)
     if len(layout["keys"]) != layout["len"] or len(layout["values"]) != layout["len"]:
         raise AssertionError(f"map live entry counts disagree with len: {layout}")
 

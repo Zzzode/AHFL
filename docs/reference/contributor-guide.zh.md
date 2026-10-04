@@ -61,7 +61,7 @@ ctest --preset test-dev --output-on-failure
 运行期动态事实的唯一 owner 是 `ExecutionEventStore`：
 
 ```text
-WorkflowRuntime
+WasmWorkflowRuntime
   -> ExecutionEventSink
   -> ExecutionEventStore
   -> ExecutionReport / replay / audit / scheduler / checkpoint
@@ -73,9 +73,9 @@ WorkflowRuntime
 1. 先写 failing lifecycle/projection test。
 2. 确定需要的 strong ID 和 event payload。
 3. 定义 start/terminal pairing、retry/fallback/cancel/interruption path。
-4. 在 `WorkflowRuntime` 产生 event。
+4. 在 `WasmWorkflowRuntime` 产生 event。
 5. 同步 report 和所有受影响 projection。
-6. 若影响恢复，更新 `ahfl.workflow-recovery.v1` 的迁移或拒绝策略。
+6. 若影响恢复，更新 `ahfl.workflow-recovery.v1`/`v2` 的迁移或拒绝策略。
 7. 最后更新 renderer；renderer 不得补造运行事实。
 
 禁止：
@@ -156,7 +156,7 @@ runtime kernel 变更至少覆盖：
 
 ```bash
 ctest --preset test-dev --output-on-failure \
-  -R 'ahfl\.runtime\.(workflow_runtime|execution_event|execution_report|execution_projection|workflow_recovery)_all|ahfl\.reference_workflow\.recovery_smoke'
+  -R 'ahfl\.runtime\.(execution_event|execution_report|execution_projection|workflow_recovery|capability_bridge)_all|ahfl\.runtime\.core_wire_codec|ahfl\.reference_workflow\.(durable_resume_capstone|long_soak_smoke|production_matrix)'
 ```
 
 ## 完成标准

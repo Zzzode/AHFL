@@ -59,17 +59,17 @@ enum class CapabilityCallStatus {
 };
 
 /// Stable lowercase name for a CapabilityCallStatus, for diagnostics shared by
-/// the native evaluator and the wasm bridge/opaque import lanes.
+/// the wasm bridge/opaque import lanes.
 [[nodiscard]] std::string_view
 capability_call_status_name(CapabilityCallStatus status) noexcept;
 
 /// Classify a capability call status into a CapabilityFailureKind for the
-/// CapabilityFailed event. Relocated from workflow_runtime.cpp's anonymous
-/// namespace (WH-5c.8) so the shared capability event projection helper and
-/// the evaluator's node-capability-failure bookkeeping use one definition.
-/// Pending is not a failure (handled on the suspend path before failure
-/// classification); reaching here with Pending means a misrouted result,
-/// classified as Error (fail-closed) rather than asserted.
+/// CapabilityFailed event. Relocated out of the old evaluator-driven workflow
+/// TU's anonymous namespace (WH-5c.8; that TU was deleted in WH-9) so the
+/// shared capability event projection helper uses one definition. Pending is
+/// not a failure (handled on the suspend path before failure classification);
+/// reaching here with Pending means a
+/// misrouted result, classified as Error (fail-closed) rather than asserted.
 [[nodiscard]] inline CapabilityFailureKind
 capability_failure_kind(CapabilityCallStatus status) noexcept {
     switch (status) {

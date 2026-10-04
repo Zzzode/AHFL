@@ -1,7 +1,7 @@
 #include "ahfl/runtime/execution_projection.hpp"
 
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
@@ -11,7 +11,6 @@
 namespace {
 
 using namespace ahfl::runtime;
-using namespace ahfl::evaluator;
 using namespace std::chrono_literals;
 
 int test_count = 0;

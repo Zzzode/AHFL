@@ -2,10 +2,11 @@
 //
 // One binary drives, for every committed conformance case the wasm3 facade can
 // execute:
-//   1. the in-process evaluator adapter (canonical evaluator observation);
-//   2. the native wasm3-backed facade (WasmWorkflowRuntime / WasmAgentRunner);
-//   3. the differential comparator on status + state_sequence +
-//      capability_sequence + capability_arguments + output_json.
+//   1. the native wasm3-backed facade (WasmWorkflowRuntime / WasmAgentRunner);
+//   2. the differential comparator on status + state_sequence +
+//      capability_sequence + capability_arguments + output_json against the
+//      checked-in blessing (or the manifest's blessed expectation for the
+//      closure constructs that have no blessing).
 //
 // Unlike the Node differential lane (conformance_wasm_node_runner.cpp), this
 // lane is PURE IN-PROCESS: it compiles the AHFL-IR program through the facade
@@ -14,9 +15,10 @@
 // the program to wasm in its constructor; a compile failure is a hard failure
 // (the case must be orchestration-eligible), never a silent skip.
 //
-// The 7 evaluator_surface_awaits_kr68 (node-only) cases have no in-process
-// evaluator reference; the native observation is compared directly against the
-// manifest's blessed expectation, exactly as the Node lane does.
+// Data-driven blessing existence replaces the retired
+// evaluator-surface skip marker: a case with a checked-in blessing
+// compares the native observation against it; a case without one (the closure
+// constructs) compares against the manifest's blessed expectation.
 //
 // Modes:
 //   verify <repo-root> <cases-dir> [stem ...]
@@ -26,10 +28,11 @@
 // Exit: 0 agreement, 1 divergence/infra failure, 2 usage.
 
 #include <algorithm>
-#include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,7 +41,6 @@
 
 #include "base/json/json_value.hpp"
 #include "conformance/conformance_case.hpp"
-#include "conformance/evaluator_engine.hpp"
 #include "conformance/native_engine.hpp"
 #include "conformance/observation_compare.hpp"
 
@@ -53,7 +55,6 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 using ahfl::conformance::load_conformance_case;
 using ahfl::conformance::node_observation_matches_expectation;
 using ahfl::conformance::observations_agree;
-using ahfl::conformance::run_evaluator_scenario;
 using ahfl::conformance::run_native_scenario;
 
 // Pinned census of the committed catalogue's native-observation outcomes.
@@ -66,17 +67,17 @@ using ahfl::conformance::run_native_scenario;
 // TWO P6 workflow nodes. The per-instance D5 lifecycle gate rejected this
 // shape; the per-node cardinality flip (one node-frame block + runner
 // function per P6 NODE) lowers both nodes onto their own block/runner and
-// the wasm observation agrees with the evaluator: 68/0 -> 69/0.
+// the wasm observation agrees with the blessing: 68/0 -> 69/0.
 // WH-5c.4 (GAP 2): the construct-capability-final case
 // (wh5c4_construct_cap_final) constructs the capability argument in-module
-// and the wasm observation agrees with the evaluator: 69/0 -> 70/0.
+// and the wasm observation agrees with the blessing: 69/0 -> 70/0.
 // WH-5c.4 P0-3: the opaque-upstream construct-terminal case
 // (wh5c4_p03_opaque_upstream) carries BOTH a JSON_TO_P4D input crossing
 // and a P4D_TO_JSON self-transcode on one node; the two-slot scheduler
 // table keeps both, and the P6-frame opaque-node state collection
 // (workflow_session.cpp collect_opaque_node_states) recovers the opaque
 // producer's state transitions so the native observation matches the
-// evaluator: 70/0 -> 71/0.
+// blessing: 70/0 -> 71/0.
 // WH-5c.5: the GAP 4 stash-parity case (wh5c5_gap4_stash_parity) joins
 // the agreed set (three-node identity+capability+identity workflow; the
 // per-node output stash table makes every node output host-observable):
@@ -87,26 +88,9 @@ using ahfl::conformance::run_native_scenario;
 constexpr int kExpectedNativeAgreed = 73;
 constexpr int kExpectedNativeSkipped = 0;
 
-// Pinned STEM SET of cases allowed to declare
-// engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
-// node-only lane). Same pin as the Node runner: a manifest edit that moves a
-// comparable differential case onto the node-only lane while adding another
-// comparable case would keep the 66/0 totals green; this exact-set pin catches
-// that. Keep sorted; the runner compares the sorted observed set against it.
-constexpr std::array<std::string_view, 7> kExpectedNodeOnlyStems{
-    "fb1_aggregate_direct_call",
-    "fb1_direct_call",
-    "fb3_byvalue_capture",
-    "fb3_higher_order",
-    "fb3_nested_activation",
-    "fb3_nested_lambda_flow",
-    "fb4_effect_clause_pure_body",
-};
-
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
-std::vector<std::string> g_node_only_stems;
 
 // Internal sentinel for a structured per-case skip (a KR6.6-blocked case has
 // no orchestration module). ctest never observes this code: the census pin
@@ -193,12 +177,21 @@ discover_cases(const fs::path &repo_root, const fs::path &cases_dir,
     return cases;
 }
 
+[[nodiscard]] std::optional<std::string> read_file(const fs::path &path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 // Runs, compares, and returns the native observation for one scenario.
 // Returns:
-//   0 differential agreed (or node-only expectation matched);
+//   0 differential agreed (or expectation matched);
 //   1 a failure (and records g_failures);
 //   77 this scenario skips (blocked_kr66).
-int run_one(const CaseEntry &entry, const ConformanceScenario &scenario) {
+int run_one(const CaseEntry &entry, const ConformanceScenario &scenario,
+            const fs::path &observations_dir) {
     const auto &manifest = entry.loaded.manifest;
     const std::string stem = case_stem(entry.sidecar);
     const std::string label = stem + "/" + scenario.name;
@@ -212,24 +205,6 @@ int run_one(const CaseEntry &entry, const ConformanceScenario &scenario) {
         return kInternalNothingRanSentinel;
     }
 
-    const bool node_only =
-        declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
-
-    // The evaluator observation is the differential reference, EXCEPT on the
-    // node-only lane (the surfaced pure-fn/closure construct has no evaluator
-    // yet); there the manifest's blessed expectation is the reference.
-    std::optional<std::string> evaluator_observation;
-    if (!node_only) {
-        const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
-        if (!evaluator.ok) {
-            std::cerr << "ERROR: evaluator run failed for " << label << ":\n"
-                      << evaluator.error << "\n";
-            ++g_failures;
-            return 1;
-        }
-        evaluator_observation = evaluator.observation_json;
-    }
-
     // Drive the wasm3 facade directly in-process.
     const NativeScenarioResult native = run_native_scenario(entry.loaded, scenario);
     if (!native.ok) {
@@ -239,35 +214,44 @@ int run_one(const CaseEntry &entry, const ConformanceScenario &scenario) {
         return 1;
     }
 
-    if (node_only) {
-        const auto divergence =
-            node_observation_matches_expectation(scenario.expect, native.observation_json);
+    // Data-driven blessing existence replaces the retired
+    // evaluator-surface skip marker: a case with a checked-in blessing
+    // compares the native observation against it; a case without one (the
+    // closure constructs) compares against the manifest's blessed expectation.
+    const fs::path blessing_path =
+        observations_dir / (stem + "." + scenario.name + ".json");
+    if (fs::exists(blessing_path)) {
+        const auto blessing = read_file(blessing_path);
+        if (!blessing.has_value()) {
+            std::cerr << "FAIL: cannot open blessing " << blessing_path << "\n";
+            ++g_failures;
+            return 1;
+        }
+        const auto divergence = observations_agree(*blessing, native.observation_json);
         if (divergence.has_value()) {
-            std::cerr << "FAIL: node-only expectation mismatch for " << label << ":\n  "
-                      << *divergence << "\n--- native ---\n" << native.observation_json << "\n";
+            std::cerr << "FAIL: blessing-vs-native differential for " << label << ":\n  "
+                      << *divergence << "\n--- blessing ---\n" << *blessing
+                      << "\n--- native ---\n" << native.observation_json << "\n";
             ++g_failures;
             return 1;
         }
         ++g_compared;
-        g_node_only_stems.push_back(stem);
-        std::cout << "OK: " << label
-                  << " native observation matched the blessed manifest expectation "
-                     "(node-only FB-3b lane; evaluator surface awaits KR6.8)\n";
+        std::cout << "OK: " << label << " native observation agreed with blessing\n";
         return 0;
     }
 
+    // No blessing: compare against the manifest's blessed expectation.
     const auto divergence =
-        observations_agree(*evaluator_observation, native.observation_json);
+        node_observation_matches_expectation(scenario.expect, native.observation_json);
     if (divergence.has_value()) {
-        std::cerr << "FAIL: evaluator-vs-native differential for " << label << ":\n  "
-                  << *divergence << "\n--- evaluator ---\n" << *evaluator_observation
-                  << "\n--- native ---\n" << native.observation_json << "\n";
+        std::cerr << "FAIL: expectation mismatch for " << label << ":\n  "
+                  << *divergence << "\n--- native ---\n" << native.observation_json << "\n";
         ++g_failures;
         return 1;
     }
-
     ++g_compared;
-    std::cout << "OK: " << label << " native differential agreed\n";
+    std::cout << "OK: " << label
+              << " native observation matched the blessed manifest expectation\n";
     return 0;
 }
 
@@ -278,9 +262,11 @@ int mode_verify(const fs::path &repo_root, const fs::path &cases_dir,
         return 1;
     }
 
+    const fs::path observations_dir = cases_dir.parent_path() / "observations";
+
     for (const auto &entry : cases) {
         for (const auto &scenario : entry.loaded.manifest.scenarios) {
-            run_one(entry, scenario);
+            run_one(entry, scenario, observations_dir);
         }
     }
 
@@ -304,27 +290,6 @@ int mode_verify(const fs::path &repo_root, const fs::path &cases_dir,
             std::cerr << "FAIL: skipped count " << g_skipped << " != pinned "
                       << kExpectedNativeSkipped
                       << " (a case moved between the compared and skipped sets?)\n";
-            ++g_failures;
-        }
-        std::sort(g_node_only_stems.begin(), g_node_only_stems.end());
-        g_node_only_stems.erase(
-            std::unique(g_node_only_stems.begin(), g_node_only_stems.end()),
-            g_node_only_stems.end());
-        std::vector<std::string> expected_stems;
-        expected_stems.reserve(kExpectedNodeOnlyStems.size());
-        for (const std::string_view s : kExpectedNodeOnlyStems) {
-            expected_stems.emplace_back(s);
-        }
-        if (g_node_only_stems != expected_stems) {
-            std::cerr << "FAIL: node-only (evaluator_surface_awaits_kr68) stem set is {";
-            for (std::size_t i = 0; i < g_node_only_stems.size(); ++i) {
-                std::cerr << (i ? ", " : "") << g_node_only_stems[i];
-            }
-            std::cerr << "} but the pinned set is {";
-            for (std::size_t i = 0; i < expected_stems.size(); ++i) {
-                std::cerr << (i ? ", " : "") << expected_stems[i];
-            }
-            std::cerr << "} (an un-reviewed case moved onto the node-only lane?)\n";
             ++g_failures;
         }
     }
@@ -383,22 +348,24 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
         return 1;
     }
 
-    const bool node_only =
-        entry.loaded.manifest.engines.wasm.node_observation_skip ==
-        WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
+    const fs::path observations_dir = cases_dir.parent_path() / "observations";
+    const std::string stem = case_stem(entry.sidecar);
+    const fs::path blessing_path =
+        observations_dir / (stem + "." + scenario.name + ".json");
+    const bool has_blessing = fs::exists(blessing_path);
 
-    if (node_only) {
-        // Node-only lane: the comparator under test is
+    if (!has_blessing) {
+        // Expectation lane: the comparator under test is
         // node_observation_matches_expectation. Exercise its status /
         // state_sequence / output_json branches directly.
         // (N1) Flip the terminal status.
         {
             auto dom = ahfl::json::parse_json(pristine.observation_json);
             check(dom.has_value() && *dom && (*dom)->is_object(),
-                  "node-only observation parses");
+                  "expectation-lane observation parses");
             auto *status = (*dom)->get_mut("status");
             check(status != nullptr && status->as_string().has_value(),
-                  "node-only observation carries a status");
+                  "expectation-lane observation carries a status");
             if (status == nullptr || !status->as_string().has_value()) {
                 return 1;
             }
@@ -408,9 +375,9 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
             const auto divergence =
                 node_observation_matches_expectation(scenario.expect, mutated);
             check(divergence.has_value(),
-                  "node-only comparator FAILS on a deliberately mutated status");
+                  "expectation-lane comparator FAILS on a deliberately mutated status");
             if (divergence.has_value()) {
-                std::cout << "OK: node-only comparator detected mutated expectation: "
+                std::cout << "OK: expectation-lane comparator detected mutated expectation: "
                           << *divergence << "\n";
             }
         }
@@ -420,7 +387,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
             auto dom = ahfl::json::parse_json(pristine.observation_json);
             auto *states = (*dom)->get_mut("state_sequence");
             check(states != nullptr && states->is_array() && !states->array_items.empty(),
-                  "node-only observation carries a non-empty state_sequence");
+                  "expectation-lane observation carries a non-empty state_sequence");
             if (states == nullptr || !states->is_array() || states->array_items.empty()) {
                 return 1;
             }
@@ -435,9 +402,9 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
             const auto divergence =
                 node_observation_matches_expectation(scenario.expect, mutated);
             check(divergence.has_value(),
-                  "node-only comparator FAILS on a deliberately mutated state_sequence element");
+                  "expectation-lane comparator FAILS on a deliberately mutated state_sequence element");
             if (divergence.has_value()) {
-                std::cout << "OK: node-only comparator detected mutated expectation: "
+                std::cout << "OK: expectation-lane comparator detected mutated expectation: "
                           << *divergence << "\n";
             }
         }
@@ -447,7 +414,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
             auto dom = ahfl::json::parse_json(pristine.observation_json);
             auto *output = (*dom)->get_mut("output_json");
             check(output != nullptr && output->is_object(),
-                  "node-only observation carries an output_json object");
+                  "expectation-lane observation carries an output_json object");
             if (output == nullptr || !output->is_object()) {
                 return 1;
             }
@@ -465,7 +432,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
                     break;
                 }
             }
-            check(tampered, "the node-only output_json has a tamperable scalar field");
+            check(tampered, "the expectation-lane output_json has a tamperable scalar field");
             if (!tampered) {
                 return 1;
             }
@@ -473,9 +440,9 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
             const auto divergence =
                 node_observation_matches_expectation(scenario.expect, mutated);
             check(divergence.has_value(),
-                  "node-only comparator FAILS on deliberately mutated output_json");
+                  "expectation-lane comparator FAILS on deliberately mutated output_json");
             if (divergence.has_value()) {
-                std::cout << "OK: node-only comparator detected mutated expectation: "
+                std::cout << "OK: expectation-lane comparator detected mutated expectation: "
                           << *divergence << "\n";
             }
         }
@@ -483,10 +450,10 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
         return g_failures == 0 ? 0 : 1;
     }
 
-    // Differential lane: the comparator under test is observations_agree.
-    const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
-    check(evaluator.ok, "evaluator reference re-runs for the mutation lane");
-    if (!evaluator.ok) {
+    // Blessing lane: the comparator under test is observations_agree.
+    const auto blessing = read_file(blessing_path);
+    check(blessing.has_value(), "blessing loads for the mutation lane");
+    if (!blessing.has_value()) {
         return 1;
     }
 
@@ -502,7 +469,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
         status->string_val = status->string_val == "failed" ? "completed" : "failed";
         const std::string mutated = ahfl::json::serialize_json(**dom);
         const auto divergence =
-            observations_agree(evaluator.observation_json, mutated);
+            observations_agree(*blessing, mutated);
         check(divergence.has_value(), "comparator FAILS on the deliberately mutated status");
         if (divergence.has_value()) {
             std::cout << "OK: comparator detected mutated expectation: " << *divergence << "\n";
@@ -528,7 +495,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
         entry0->string_val = "mutated-unexpected-state";
         const std::string mutated = ahfl::json::serialize_json(**dom);
         const auto divergence =
-            observations_agree(evaluator.observation_json, mutated);
+            observations_agree(*blessing, mutated);
         check(divergence.has_value(),
               "comparator FAILS on a deliberately mutated state_sequence element");
         if (divergence.has_value()) {
@@ -562,7 +529,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
                            ahfl::json::JsonValue::make_string("mutated"));
             const std::string mutated = ahfl::json::serialize_json(**dom);
             const auto divergence =
-                observations_agree(evaluator.observation_json, mutated);
+                observations_agree(*blessing, mutated);
             check(divergence.has_value(),
                   "comparator FAILS on a deliberately mutated capability_arguments envelope");
             if (divergence.has_value()) {
@@ -594,7 +561,7 @@ int mode_mutation(const fs::path &repo_root, const fs::path &cases_dir,
             first_name->string_val = "mutated::unexpected::capability";
             const std::string mutated = ahfl::json::serialize_json(**dom);
             const auto divergence =
-                observations_agree(evaluator.observation_json, mutated);
+                observations_agree(*blessing, mutated);
             check(divergence.has_value(),
                   "comparator FAILS on a deliberately mutated capability_sequence element");
             if (divergence.has_value()) {

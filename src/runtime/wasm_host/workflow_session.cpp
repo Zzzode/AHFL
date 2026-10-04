@@ -6,9 +6,8 @@
 //
 // WH-4 fix-forward P1-2/P1-3: the session populates the
 // ExecutionMetadataStore, emits the lifecycle event stream, and builds the
-// ExecutionReport from those events via the shared wasm_lifecycle helper --
-// the SAME projection the evaluator-backed WorkflowRuntime uses. No
-// hand-populated report path survives. P2-2: per-import runner resolution
+// ExecutionReport from those events via the shared wasm_lifecycle helper.
+// No hand-populated report path survives. P2-2: per-import runner resolution
 // via source_symbol (not name-keyed first-wins). P2-3: node-event record
 // cross-checks against the descriptor. P2-4: workflow_completed_count
 // validation against descriptor.workflow_node_count.
@@ -305,7 +304,7 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 // order and fire state_entered_hook for every entry. In a P6-frame module
 // the trace ring fires P6 states live at import boundaries (out of schedule
 // order relative to opaque nodes); this post-run pass produces a single
-// schedule-ordered sequence that matches the evaluator's observation.
+// schedule-ordered sequence.
 // WH-8 (kr68 section 12.9.4 item 2): rebuild collected_states from
 // states_per_node in schedule order. Does NOT fire state_entered_hook --
 // the hook fires post-run AFTER node_completed_hook (per-node schedule
@@ -327,22 +326,20 @@ void rebuild_states(
 }
 
 // WH-4b: validate a recovery snapshot against the descriptor before a resume
-// run (the wasm mirror of the evaluator's validate_recovery_snapshot at
-// workflow_runtime.cpp:82-144). Fail-closed: any mismatch returns a
-// human-readable error and the session never silently runs fresh. The wasm
-// lane re-runs the WHOLE module on a fresh instance, so completed_nodes are
-// validated for record/closure but NOT used to skip nodes.
+// run. Fail-closed: any mismatch returns a human-readable error and the
+// session never silently runs fresh. The wasm lane re-runs the WHOLE module
+// on a fresh instance, so completed_nodes are validated for record/closure
+// but NOT used to skip nodes.
 [[nodiscard]] std::optional<std::string> validate_wasm_recovery_snapshot(
     const WorkflowRecoverySnapshot &snapshot,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
     if (!snapshot.workflow.valid()) {
         return "recovery snapshot workflow ID is invalid";
     }
-    // WH-4b P1-4: workflow-id cross-check (design 12.6.5 step 1, mirroring
-    // the evaluator's snapshot.workflow != plan.workflow gate at
-    // workflow_runtime.cpp:85). The descriptor carries the workflow's dense
-    // program index (stable across runs of the same program); a mismatch
-    // means the snapshot belongs to a different workflow.
+    // WH-4b P1-4: workflow-id cross-check (design 12.6.5 step 1). The
+    // descriptor carries the workflow's dense program index (stable across
+    // runs of the same program); a mismatch means the snapshot belongs to a
+    // different workflow.
     if (snapshot.workflow !=
         WorkflowId{static_cast<std::size_t>(descriptor.workflow_index)}) {
         return "recovery snapshot workflow ID does not match the selected "
@@ -412,8 +409,8 @@ void rebuild_states(
     for (const auto &entry : suspended.memo) {
         if (!entry.node.has_value()) {
             return "recovery snapshot memo entry is missing its node coordinate "
-                   "(an evaluator-originated snapshot cannot resume on the wasm "
-                   "lane)";
+                   "(a snapshot without per-node coordinates cannot resume on "
+                   "the wasm lane)";
         }
     }
 
@@ -621,8 +618,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                   node_to_schedule)) {
             return std::unexpected(
                 "run_workflow_session: recovery snapshot memo entry is missing "
-                "its node coordinate (an evaluator-originated snapshot cannot "
-                "resume on the wasm lane)");
+                "its node coordinate (a snapshot without per-node coordinates "
+                "cannot resume on the wasm lane)");
         }
     }
 
@@ -686,8 +683,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // WH-4b: fill the recorder's current-import correlation. The import
         // wrapper opened it (node / ordinal / cap_id); here the invoker
         // fills arg_hash + result once the args are decoded and the
-        // capability returns. Also stamp the idempotency key on the context
-        // so the host sees the same key as the evaluator lane.
+        // capability returns. Also stamp the idempotency key on the context.
         if (auto *current = recorder.current_import()) {
             import_node_id = static_cast<std::uint32_t>(current->node.index());
             if (auto arg_hash = runtime::hash_values(args)) {
@@ -751,17 +747,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             collected_failures.push_back(*result.failure_kind);
         }
         // WH-4b: a Pending call has no terminal yet (it completes on
-        // resume), so do NOT collect it for event projection (mirrors the
-        // evaluator at workflow_runtime.cpp:1039-1046). The NodeSuspended
-        // terminal records the pause instead.
+        // resume), so do NOT collect it for event projection. The
+        // NodeSuspended terminal records the pause instead.
         if (result.status != CapabilityCallStatus::Pending) {
             // WH-5c.8: collect the FULL aggregate CapabilityCallResult so
             // the shared capability_event_projection helper can synthesize
             // per-attempt events (Started/Retry/Usage/Failed/Degraded/
-            // Completed) exactly as the evaluator does. The result is
-            // deep-cloned (clone_capability_call_result) so the collected
-            // copy is independent of the result returned to the import
-            // callback.
+            // Completed). The result is deep-cloned
+            // (clone_capability_call_result) so the collected copy is
+            // independent of the result returned to the import callback.
             WasmCapabilityCall cap_call;
             cap_call.capability_name = name;
             cap_call.result = clone_capability_call_result(result);
@@ -1930,8 +1924,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
 
     // WH-4b: a replay run that completed (run2 OK) without hitting the
     // frontier diverged: the fresh instance took a different branch and the
-    // pending call never happened. Fail closed (mirrors the evaluator at
-    // workflow_runtime.cpp:1422-1434).
+    // pending call never happened. Fail closed.
     if (run_ok && recorder.is_replay() &&
         !recorder.frontier_was_hit()) {
         run_ok = false;
@@ -2017,8 +2010,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // nodes never write to the trace ring; their walks are recovered from
     // the node-event records. Collect them, then rebuild collected_states
     // from states_per_node in schedule order and fire the hook for the
-    // full sequence -- matching the evaluator's schedule-ordered
-    // state_entered_hook.
+    // full sequence.
     if (is_p6) {
         // Node-event records are written ONLY by the capability dispatch
         // path, so an import-free module never writes them. Skipping the
@@ -2256,8 +2248,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         fire_state_hooks_for_node(i);
     }
 
-    // --- 10b. WH-4b: on suspend, build the recovery snapshot and persist it
-    //          (mirrors the evaluator at workflow_runtime.cpp:1529-1577) ---
+    // --- 10b. WH-4b: on suspend, build the recovery snapshot and persist
+    //          it ---
     std::optional<WorkflowRecoverySnapshot> suspended_snapshot;
     if (run_suspended) {
         const auto pending = recorder.pending();
@@ -2311,8 +2303,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             snapshot.suspended = std::move(suspended);
 
             // Persist: a null store counts as persisted (the snapshot rides
-            // back in the result); a save failure downgrades to NodeFailed
-            // (mirrors the evaluator at workflow_runtime.cpp:1556-1577).
+            // back in the result); a save failure downgrades to NodeFailed.
             const bool persisted =
                 config.recovery_store == nullptr ||
                 config.recovery_store->save(snapshot).has_value();
@@ -2446,9 +2437,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // suspended_node_index instead (the suspended node is not a failure).
     // WH-8 (kr68 section 12.9.2): a Cancelled / Interrupted run has NO
     // Failed node -- every non-completed node is Skipped with empty
-    // blocking_dependencies, matching the evaluator at
-    // workflow_runtime.cpp:1120-1125 (the current and remaining nodes are
-    // skipped, not failed).
+    // blocking_dependencies (the current and remaining nodes are skipped,
+    // not failed).
     std::optional<std::size_t> failed_node_index;
     if (!run_ok && !run_suspended &&
         run_status != RunTerminalStatus::Cancelled &&
@@ -2545,12 +2535,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             }
         } else {
             node_facts.terminal = WasmNodeRunFacts::Terminal::Skipped;
-            // P2-1: align with the evaluator's NodeSkipped semantics. On
-            // suspend the evaluator emits empty blocking_dependencies
-            // (workflow_runtime.cpp: nodes never reached are not "blocked by"
-            // the suspended node); on dependency-failure it emits the actual
-            // failed deps. So the wasm lane pushes a blocking dep only on the
-            // failure path, never on the suspend path.
+            // P2-1: NodeSkipped semantics. On suspend the wasm lane emits
+            // empty blocking_dependencies (nodes never reached are not
+            // "blocked by" the suspended node); on dependency-failure it
+            // emits the actual failed deps. So the wasm lane pushes a
+            // blocking dep only on the failure path, never on the suspend
+            // path.
             if (failed_node_index.has_value()) {
                 node_facts.blocking_dependencies.push_back(
                     descriptor.nodes[*failed_node_index].node_id);
@@ -2573,8 +2563,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // WH-4b: carry the suspended snapshot in the result so the facade /
-    // caller can persist or inspect it (mirrors the evaluator's
-    // result.suspended at workflow_runtime.cpp:1566).
+    // caller can persist or inspect it.
     result.suspended = std::move(suspended_snapshot);
 
     return WorkflowSessionResult{

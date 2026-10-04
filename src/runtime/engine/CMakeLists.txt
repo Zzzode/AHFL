@@ -5,15 +5,11 @@ add_library(ahfl_runtime_engine STATIC
     execution_projection.cpp
     execution_renderer.cpp
     execution_report.cpp
-    agent_runtime.cpp
-    workflow_runtime.cpp
     workflow_result.cpp
     workflow_recovery.cpp
     capability_bridge.cpp
     capability_event_projection.cpp
-    capability_eval.cpp
     capability_transport_adapter.cpp
-    native_host_binding.cpp
     standard_capabilities.cpp
     connection_pool.cpp
     http_transport.cpp
@@ -47,13 +43,9 @@ add_library(ahfl_runtime_engine STATIC
 target_link_libraries(ahfl_runtime_engine
     PUBLIC
         ahfl_runtime_provider_secret
+        ahfl_runtime_value
         ahfl_compiler_ir
     PRIVATE
-        # WH-8 (kr68 section 12.9.8): the evaluator-backed WorkflowRuntime is
-        # now PRIVATE. The DAP (the only external production consumer) cut
-        # over to the wasm3-backed WasmWorkflowRuntime big-bang. Test targets
-        # that still exercise the evaluator link it explicitly.
-        ahfl_runtime_evaluator
         ahfl_base_support
         ahfl_base_json
 )

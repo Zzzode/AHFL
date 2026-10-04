@@ -31,14 +31,14 @@ jobs:
       - name: Build reference worker
         run: >-
           cmake --build --preset build-dev
-          --target ahfl_reference_workflow_recovery_worker
+          --target ahfl_reference_workflow_soak_worker
 
       - name: Run hour-scale soak
         # The harness verifies GitHub Actions provenance and rejects local execution
         # before it creates a work directory or starts the worker.
         run: >-
           python3 tests/scripts/reference_workflow_long_soak.py
-          --worker build/dev/tests/ahfl_reference_workflow_recovery_worker
+          --worker build/dev/tests/ahfl_reference_workflow_soak_worker
           --repo-root .
           --work-dir build/dev/tests/runtime/reference-workflow-hour-scale
           --minimum-seconds 3600

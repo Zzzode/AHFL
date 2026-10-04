@@ -27,7 +27,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-B computed final with a BOUNDED String(0,8) slot; the literals intern into the rodata pool like unbounded strings while the bound meters the frame; p6-frame module on the orchestration lane"

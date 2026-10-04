@@ -28,6 +28,9 @@ from pathlib import Path
 SKIP = 77
 LIED_LEN = 100_000
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8): the wasm-path initial_state_id.
+FROZEN_INITIAL_STATE_ID = 0
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
@@ -67,13 +70,13 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-fb2-lenlie-") as td:
         td_path = Path(td)
         wasm = td_path / "fb2_bounded_recursion.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"producer exited {native.returncode}: {native.stderr}")
-        layout = parse_collection(native.stdout)
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+        layout = parse_collection(compile_run.stdout)
         if layout["capacity"] != 4:
             return fail(f"fixture capacity drifted from 4: {layout}")
         if len(layout["elements"]) != layout["capacity"]:
@@ -83,10 +86,7 @@ def main(argv: list[str]) -> int:
         if expected_total != 91:
             return fail(f"fixture total drifted from 91: {expected_total}")
 
-        initial_match = re.search(r"initial_state_id=(\d+)", native.stdout)
-        if initial_match is None:
-            return fail("malformed native observation (no initial_state_id)")
-        initial = int(initial_match.group(1))
+        initial = FROZEN_INITIAL_STATE_ID
 
         host = td_path / "fb2_len_lie_host.mjs"
         host.write_text(

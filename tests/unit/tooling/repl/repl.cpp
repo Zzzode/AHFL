@@ -175,7 +175,7 @@ int main() {
 
     // Test 17: nominal failure face (kr68 §12.8.10.12 §3 item 10). Without a
     // prologue the detached pipeline cannot see enum/option constructors; the
-    // errors are honest strings, not traps, not evaluator fallbacks.
+    // errors are honest strings, not traps, not silent fallbacks.
     {
         auto r = ahfl::repl::execute_command("Option::Some(3)");
         check(!r.success, "Option::Some(3) eval fails");
@@ -237,7 +237,7 @@ int main() {
     }
 
     // Test 15: unsupported expressions surface actionable codegen diagnostics
-    // (kr68 §12.8.10.4), never wasm3 trap text, never an evaluator fallback.
+    // (kr68 §12.8.10.4), never wasm3 trap text, never a silent fallback.
     {
         auto r = ahfl::repl::execute_command("1.5 + 2.5");
         check(!r.success, "1.5 + 2.5 fails");

@@ -44,6 +44,9 @@ render_observation(const ConformanceCase &manifest,
                    const std::vector<std::string> &argument_envelopes,
                    const ahfl::runtime::Value *output) {
     auto root = json::JsonValue::make_object();
+    // The schema name is historical; the observation format is engine-agnostic
+    // and survives the evaluator retirement (WH-9, 2026-10-04). Renaming it
+    // would break every checked-in blessing's schema field.
     root->set("schema", make_string_node("ahfl.evaluator-observation.v1"));
     root->set("case", make_string_node(manifest.source));
     root->set("scenario", make_string_node(scenario.name));

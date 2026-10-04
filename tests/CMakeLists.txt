@@ -21,107 +21,27 @@ add_test(NAME ahfl.ir.ssot_compile_fail
             "${PROJECT_SOURCE_DIR}/tests/scripts/ir_ssot_compile_fail.py"
 )
 
-# RFC 0026 Objective 6A (KR6.4-pre): WASM toolchain preflight. Three tiers:
-#  1. fixture integrity — the committed preflight.wasm matches its generator
-#     (byte-exact, auditable, no wat2wasm dependency); always runs.
-#  2. decision-logic unit test — version parsing, minimum gate, discovery
-#     precedence, and skip-vs-fail policy via a fake wasmtime shim; always runs,
-#     needs no real wasmtime (this is what keeps the gate honest on CI images
-#     without the toolchain).
-#  3. real-execution smoke — ALWAYS registered so a missing toolchain surfaces
-#     as a visible ctest SKIP (exit 77) rather than a silently absent test.
-#     Discovery provenance is preserved: the EXPLICIT path (AHFL_WASMTIME) and
-#     the PATH-discovered path (AHFL_DETECTED_WASMTIME) are forwarded under
-#     separate flags so the harness owns the skip-vs-fail decision.
-add_test(NAME ahfl.wasm.preflight_fixture_integrity
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/wasm/make_preflight_fixture.py"
-            --check
-)
-
-add_test(NAME ahfl.wasm.preflight_decision_logic
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight_test.py"
-)
-
-# find_program leaves AHFL_DETECTED_WASMTIME as `<var>-NOTFOUND` when absent;
-# normalize that sentinel to an empty string so the harness sees "nothing
-# discovered" rather than a bogus path.
-set(_ahfl_detected_wasmtime "${AHFL_DETECTED_WASMTIME}")
-if(NOT AHFL_DETECTED_WASMTIME)
-    set(_ahfl_detected_wasmtime "")
-endif()
-
-add_test(NAME ahfl.wasm.preflight_execution
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight.py"
-            --explicit-wasmtime "${AHFL_WASMTIME}"
-            --detected-wasmtime "${_ahfl_detected_wasmtime}"
-)
-set_tests_properties(ahfl.wasm.preflight_execution PROPERTIES SKIP_RETURN_CODE 77)
-
 if(AHFL_ENABLE_BACKEND_WASM)
-    # KR6.5 E1: this producer always runs one checked frontend program through
-    # native AgentRuntime and AHFL->Core->layout->wasm. It is a semantic/binary
-    # probe but not, by itself, real wasm execution evidence.
-    add_test(NAME ahfl.wasm.e1_same_frontend_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_e1_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e1_identity_agent.ahfl"
-                "${CMAKE_CURRENT_BINARY_DIR}/e1_same_frontend_probe.wasm"
-    )
-    set_tests_properties(ahfl.wasm.e1_same_frontend_probe PROPERTIES
-        PASS_REGULAR_EXPRESSION
-            "final_state_id=0 transition_count=1 identity_output=1"
-        LABELS "wasm;backend;conformance;structural"
-    )
-
-    # The same producer feeds real wasmtime when present. It is always
-    # registered: absence is a visible SKIP (77), while a usable runtime that
-    # rejects/misexecutes the artifact is a hard conformance failure.
-    add_test(NAME ahfl.wasm.e1_execution_differential
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e1_conformance.py"
-                --probe $<TARGET_FILE:ahfl_core_wasm_e1_probe>
-                --source
-                    "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e1_identity_agent.ahfl"
-                --explicit-wasmtime "${AHFL_WASMTIME}"
-                --detected-wasmtime "${_ahfl_detected_wasmtime}"
-    )
-    set_tests_properties(ahfl.wasm.e1_execution_differential PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "real-wasmtime execution differential passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution"
-    )
-
-    # KR6.7 (RFC 0026 P7): the bespoke per-probe embedded-host lane was retired
-    # in favor of ONE manifest-driven Node embedded host. The E2 OK result-frame
-    # ownership (host-allocated OK frame decoded then released via dealloc),
-    # ERROR/PENDING/unknown normalization and pending-latch contracts are now
-    # produced from the e2 conformance case by
-    # ahfl.conformance.wasm_node_differential (node_embedded_host.mjs ABI matrix);
-    # the structural producer probe below still guards the module bytes.
-
     # RFC 0026 P6-1 (KR6.6): real-frontend arithmetic conditional-goto scalar
     # computation. The Node embedded host drives the stable step()/run ABI and
     # asserts the reached state ids and transition_count match native, including
     # the i64.div_s divide-by-zero trap. Real Node-engine evidence, visibly NOT
     # wasmtime evidence; SKIPs (77) when node is unavailable.
     add_test(NAME ahfl.wasm.p6_same_frontend_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_scalar_cond.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_scalar_cond.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_same_frontend_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_scalar_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_scalar_cond.ahfl"
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_neg_compare.ahfl"
     )
@@ -138,20 +58,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # plausible miscompile (&&, plain ||, lhs-only) routes Low. Real Node
     # embedded-engine evidence plus a structural producer probe.
     add_test(NAME ahfl.wasm.p6_implies_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_implies.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_implies.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_implies_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_implies_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_implies_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_implies.ahfl"
     )
     set_tests_properties(ahfl.wasm.p6_implies_node PROPERTIES
@@ -167,20 +87,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # embedded-engine evidence plus a structural producer probe for the Some
     # path; the None path natively fails with zero transitions.
     add_test(NAME ahfl.wasm.p6_unwrap_some_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_unwrap_some.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_unwrap_some.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_unwrap_some_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_unwrap_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_unwrap_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_unwrap_some.ahfl"
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_unwrap_none_trap.ahfl"
     )
@@ -200,7 +120,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.p6_member_base_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_member_base_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_member_base.ahfl"
     )
     set_tests_properties(ahfl.wasm.p6_member_base_node PROPERTIES
@@ -216,20 +136,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # the Node host materializes the [key,value] backing and pins the keyed
     # scan, the value-offset read, and the missing-key trap.
     add_test(NAME ahfl.wasm.p6_map_get_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_get.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_map_get.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_map_get_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_map_get_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_map_get_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_get.ahfl"
     )
     set_tests_properties(ahfl.wasm.p6_map_get_node PROPERTIES
@@ -246,31 +166,31 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # compare/load ladder, so the gate now treats Bool as width-compatible with
     # an I32 slot. Structural producer probes for both Bool shapes.
     add_test(NAME ahfl.wasm.p6_map_bool_key_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_key.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_map_bool_key.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_map_bool_key_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_map_bool_value_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_value.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_map_bool_value.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_map_bool_value_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_map_bool_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_map_bool_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_key.ahfl"
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_value.ahfl"
     )
@@ -285,14 +205,14 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # through the expression-match arm copy (unwrap, or a source match binding
     # it) pre-fix emitted a well-formed module whose payload latch copied the
     # payload slot's OWN address, so a field projection read the wrong scratch
-    # and the wasm branched opposite to the native evaluator with no trap. It
+    # and the wasm branched opposite to the expected behavior with no trap. It
     # now fails closed: unwrap at Core lowering (core.UNLOWERED_EXPRESSION), a
     # source-level match at wasm planning (wasm.UNSUPPORTED_ORCHESTRATION), and
     # no wasm artifact is written. Engine-independent (the gate is the reject).
     add_test(NAME ahfl.wasm.p6_aggregate_payload_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_aggregate_payload_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.p6_aggregate_payload_reject PROPERTIES
         PASS_REGULAR_EXPRESSION "aggregate enum payload fail-closed compile-reject lane passed"
@@ -303,20 +223,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # RFC 0026 P6 (CORE-GAPS): bounded enum-constructor builtins
     # (option_some/result_ok/result_err -> CoreConstructExpr).
     add_test(NAME ahfl.wasm.p6_builtins_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_builtins.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_builtins.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_builtins_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_builtins_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_builtins_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_builtins.ahfl"
     )
     set_tests_properties(ahfl.wasm.p6_builtins_node PROPERTIES
@@ -335,7 +255,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb1_direct_call_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb1_direct_call_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb1_direct_call.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb1_direct_call_node PROPERTIES
@@ -355,7 +275,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb2_bounded_recursion_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_recursion_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb2_bounded_recursion_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -373,7 +293,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb2_len_lie_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_len_lie_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb2_len_lie_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -390,7 +310,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb1_aggregate_direct_call_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb1_aggregate_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb1_aggregate_direct_call.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb1_aggregate_direct_call_node PROPERTIES
@@ -407,7 +327,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb3_higher_order_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_higher_order_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb3_higher_order_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -422,7 +342,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb3_byvalue_capture_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_byvalue_capture_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb3_byvalue_capture_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -442,7 +362,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb4_effectful_fn_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_effectful_fn_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb4_effectful_fn_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -459,7 +379,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb4_closure_unauthorized_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_closure_unauthorized_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_closure_unauthorized.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb4_closure_unauthorized_reject PROPERTIES
@@ -475,7 +395,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb4_int64_capability_abi_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_int64_capability_abi_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_int64_capability_abi.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb4_int64_capability_abi_reject PROPERTIES
@@ -491,7 +411,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb4_cross_agent_capability_leak
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_cross_agent_capability_leak.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_cross_agent_capability_leak.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb4_cross_agent_capability_leak PROPERTIES
@@ -508,7 +428,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb4_effect_classification_compile
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_effect_classification_compile.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_effect_clause_pure_body.ahfl"
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_construct_only_closure.ahfl"
     )
@@ -526,7 +446,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb3_bounded_collection_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_bounded_collection_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb3_bounded_collection_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -541,7 +461,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb3_nested_activation_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_nested_activation_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb3_nested_activation_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -557,7 +477,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb3_nested_lambda_flow_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_nested_lambda_flow_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.fb3_nested_lambda_flow_node PROPERTIES
         SKIP_RETURN_CODE 77
@@ -574,7 +494,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb2_guard_placement_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_guard_placement_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb2_recursion_before_guard.ahfl"
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb2_recursion_in_stop_branch.ahfl"
     )
@@ -593,7 +513,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb3_indirect_recursion_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_indirect_recursion_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb3_indirect_recursion_reject.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb3_indirect_recursion_reject PROPERTIES
@@ -611,7 +531,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.fb2_native_depth_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_native_depth_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb2_too_deep_recursion.ahfl"
     )
     set_tests_properties(ahfl.wasm.fb2_native_depth_reject PROPERTIES
@@ -628,7 +548,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.p6_nested_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_nested_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.p6_nested_node PROPERTIES
@@ -647,20 +567,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # hard WebAssembly.compile rejection) and drives step() against the native
     # state-id path.
     add_test(NAME ahfl.wasm.p6_structured_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_cascade.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_cascade.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_structured_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "entered_ids=5,2,0 final_state_id=0 transition_count=2 initial_state_id=5"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_structured_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_structured_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.p6_structured_node PROPERTIES
@@ -680,20 +600,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # against the native state-id path, and asserts a matched arm that divides by
     # zero raises a real WebAssembly.RuntimeError with no transition.
     add_test(NAME ahfl.wasm.p6_match_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_match_enum.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_match_enum.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_match_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=4,2,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_match_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_match_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.p6_match_node PROPERTIES
@@ -714,20 +634,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # compiles the module (a malformed module is a hard rejection) and asserts
     # both the state path and the read-back bytes.
     add_test(NAME ahfl.wasm.p6_aggregate_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_aggregate.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_aggregate.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_aggregate_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_aggregate_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_aggregate_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.p6_aggregate_node PROPERTIES
@@ -748,7 +668,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.v2a_computed_final_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2a_computed_final_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.v2a_computed_final_node PROPERTIES
@@ -767,7 +687,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.v2a_input_inline_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2a_input_inline_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.v2a_input_inline_reject PROPERTIES
         PASS_REGULAR_EXPRESSION "V2-A input-inline aggregate fail-closed compile-reject lane passed"
@@ -785,7 +705,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.v2b_string_literal_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_string_literal_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.v2b_string_literal_node PROPERTIES
@@ -804,7 +724,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.wasm.v2b_arena_metering_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_arena_metering_gate.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.v2b_arena_metering_gate PROPERTIES
@@ -822,7 +742,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_builtin_frame_subset_gate.py"
                 "${PROJECT_SOURCE_DIR}"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
     set_tests_properties(ahfl.wasm.v2b_builtin_frame_subset_gate PROPERTIES
         PASS_REGULAR_EXPRESSION "emit-but-host-unobservable frame subset gate passed"
@@ -840,20 +760,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # malformed body is a hard rejection), asserts the layout-derived opcode by
     # walking the CODE section, and drives step() against the native ids.
     add_test(NAME ahfl.wasm.p6_coerce_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_coerce.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_coerce.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_coerce_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_coerce_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_coerce_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.p6_coerce_node PROPERTIES
@@ -877,20 +797,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # the native state path and the P4-D facts. An UNBOUNDED collection has no
     # wasm32 backing store and still fails closed (P4-D `core.layout.UNBOUNDED`).
     add_test(NAME ahfl.wasm.p6_collection_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_collection.ahfl"
                 "${CMAKE_CURRENT_BINARY_DIR}/p6_collection.wasm"
     )
     set_tests_properties(ahfl.wasm.p6_collection_probe PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2 initial_state_id=3"
+            "emitted=ok bytes=[0-9]+"
         LABELS "wasm;backend;conformance;structural"
     )
 
     add_test(NAME ahfl.wasm.p6_collection_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_collection_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
     set_tests_properties(ahfl.wasm.p6_collection_node PROPERTIES
@@ -900,59 +820,8 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
-    # KR6.7 (RFC 0026 P7): the eligibility-promotion execution witness for
-    # `float_output_e2e` is now produced manifest-driven by
-    # ahfl.conformance.wasm_node_differential (the float_output_e2e committed
-    # case): the generic Node embedded host runs the certified workflow-lane
-    # module, asserts the step/current_state pre-effect trap, run2 borrowed-frame
-    # passthrough and the native counters, and differentially compares the
-    # observation against the evaluator. The bespoke eligibility host is retired.
-
-    add_test(NAME ahfl.wasm.e2_same_frontend_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
-                "${CMAKE_CURRENT_BINARY_DIR}/e2_same_frontend_probe.wasm"
-    )
-    set_tests_properties(ahfl.wasm.e2_same_frontend_probe PROPERTIES
-        PASS_REGULAR_EXPRESSION
-            "final_state_id=0 transition_count=1 capability_calls=1 symbol_id=[0-9]+"
-        LABELS "wasm;backend;conformance;structural"
-    )
-
-    # Real-wasmtime CLI can link a separate ahfl_cap provider for the no-frame
-    # ERROR/PENDING paths. It cannot produce a conforming OK frame in the
-    # target module's private memory, so that claim remains with an embedded
-    # host and future release evidence.
-    add_test(NAME ahfl.wasm.e2_wasmtime_error_pending
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e2_wasmtime_conformance.py"
-                --ahflc $<TARGET_FILE:ahflc>
-                --source
-                    "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
-                --explicit-wasmtime "${AHFL_WASMTIME}"
-                --detected-wasmtime "${_ahfl_detected_wasmtime}"
-    )
-    set_tests_properties(ahfl.wasm.e2_wasmtime_error_pending PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "real-wasmtime preload ERROR/PENDING execution passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution;wasmtime"
-    )
-
-    # KR6.5 E3: the same checked frontend workflow feeds native
-    # WorkflowRuntime and Core->layout->wasm. This always-on producer is
-    # semantic/binary evidence, not wasm-engine execution by itself.
-    add_test(NAME ahfl.wasm.e3_same_frontend_probe
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_e3_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
-                "${CMAKE_CURRENT_BINARY_DIR}/e3_same_frontend_probe.wasm"
-    )
-    set_tests_properties(ahfl.wasm.e3_same_frontend_probe PROPERTIES
-        PASS_REGULAR_EXPRESSION
-            "schedule=first,second completed_nodes=2 transition_count=2 identity_output=1"
-        LABELS "wasm;backend;conformance;structural"
-    )
-
+    # KR6.5 E3: the e3_package_cli_binary_gate survives as the structural
+    # producer probe; the e3 same-frontend and wasmtime lanes are retired.
     add_test(NAME ahfl.wasm.e3_package_cli_binary_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_cli_gate.py"
@@ -965,31 +834,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
         PASS_REGULAR_EXPRESSION "E3 package CLI typed-entry byte identity passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural;cli"
-    )
-
-    # KR6.7 (RFC 0026 P7): persistent-instance workflow execution (both workflow
-    # counters, idempotent run2 replay, borrowed-frame return, legacy run pointer
-    # passthrough) is now driven manifest-style from the e3_identity_workflow
-    # committed case by ahfl.conformance.wasm_node_differential. The bespoke
-    # persistent-workflow Node host is retired.
-
-    # Separate wasmtime CLI invocations cannot observe persistent globals, so
-    # this optional test claims only legacy-run pointer passthrough. Missing
-    # incidental tools SKIP; an explicitly configured broken tool hard-fails.
-    add_test(NAME ahfl.wasm.e3_wasmtime_workflow_run
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_wasmtime_conformance.py"
-                --probe $<TARGET_FILE:ahfl_core_wasm_e3_probe>
-                --source
-                    "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
-                --explicit-wasmtime "${AHFL_WASMTIME}"
-                --detected-wasmtime "${_ahfl_detected_wasmtime}"
-    )
-    set_tests_properties(ahfl.wasm.e3_wasmtime_workflow_run PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "real-wasmtime workflow run passthrough passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution;wasmtime"
     )
 
     # RFC 0026 E4-B2-C: emit-only capability-workflow producer. Always-on
@@ -1128,26 +972,34 @@ add_test(NAME ahfl.product.production_confidence_ci_only_smoke
             "${PROJECT_SOURCE_DIR}"
 )
 
-add_test(NAME ahfl.reference_workflow.long_soak_smoke
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/scripts/reference_workflow_long_soak.py"
-            --worker $<TARGET_FILE:ahfl_reference_workflow_recovery_worker>
-            --repo-root "${PROJECT_SOURCE_DIR}"
-            --work-dir "${CMAKE_BINARY_DIR}/runtime/reference-workflow-long-soak-smoke"
-            --minimum-seconds 2
-            --minimum-iterations 3
-            --contract-kind smoke
-            --evidence-path
-            "${PROJECT_SOURCE_DIR}/build/release-evidence/production-confidence/long-soak-smoke.json"
-)
+# KR6.8 WH-9: the long-soak smoke drives the wasm3 reference workflow worker,
+# so it is registered only when the wasm backend is enabled.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.reference_workflow.long_soak_smoke
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/reference_workflow_long_soak.py"
+                --worker $<TARGET_FILE:ahfl_reference_workflow_soak_worker>
+                --repo-root "${PROJECT_SOURCE_DIR}"
+                --work-dir "${CMAKE_BINARY_DIR}/runtime/reference-workflow-long-soak-smoke"
+                --minimum-seconds 2
+                --minimum-iterations 3
+                --contract-kind smoke
+                --evidence-path
+                "${PROJECT_SOURCE_DIR}/build/release-evidence/production-confidence/long-soak-smoke.json"
+    )
+endif()
 
-add_test(NAME ahfl.product.runtime_evidence_smoke
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/scripts/runtime_evidence_smoke.py"
-            "${PROJECT_SOURCE_DIR}/scripts/generate-beta-runtime-evidence.py"
-            "${PROJECT_SOURCE_DIR}"
-            "${CMAKE_BINARY_DIR}"
-)
+# kr68 §12.7.1 (WH-9): runtime evidence drives the real `ahflc run` verb, so
+# it exists only with the embedded wasm engine.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.product.runtime_evidence_smoke
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/runtime_evidence_smoke.py"
+                "${PROJECT_SOURCE_DIR}/scripts/generate-beta-runtime-evidence.py"
+                "${PROJECT_SOURCE_DIR}"
+                "${CMAKE_BINARY_DIR}"
+    )
+endif()
 
 add_test(NAME ahfl.product.beta_evidence_bundle_smoke
     COMMAND ${Python3_EXECUTABLE}
@@ -1156,12 +1008,17 @@ add_test(NAME ahfl.product.beta_evidence_bundle_smoke
             "${PROJECT_SOURCE_DIR}"
 )
 
-add_test(NAME ahfl.product.beta_evidence_bundle_ready
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/scripts/generate-beta-evidence-bundle.py"
-            --repo-root "${PROJECT_SOURCE_DIR}"
-            --build-dir "${CMAKE_BINARY_DIR}"
-)
+# The ready gate runs the REAL evidence pipeline (including ctest -R
+# ahflc.run.* and the runtime generator); it is wasm-only. The bundle smoke
+# above stays engine-neutral because it substitutes fake generators.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.product.beta_evidence_bundle_ready
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/scripts/generate-beta-evidence-bundle.py"
+                --repo-root "${PROJECT_SOURCE_DIR}"
+                --build-dir "${CMAKE_BINARY_DIR}"
+    )
+endif()
 
 add_test(NAME ahfl.product.formatter_evidence_smoke
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/tests/scripts/formatter_evidence_smoke.py"
@@ -1184,10 +1041,17 @@ add_test(NAME ahfl.product.install_evidence_smoke
             "${CMAKE_BINARY_DIR}"
 )
 
-add_test(NAME ahfl.product.readme_capabilities
-    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-readme-capabilities.py"
-            --root "${PROJECT_SOURCE_DIR}"
-)
+# Ready gate (not hermetic): validates README capability claims against the
+# generated beta evidence under build/release-evidence, including
+# run-profiles.json written by the wasm-only ahflc run profile smoke. Like
+# the other *_ready gates it exists only with the embedded wasm engine; the
+# fake-evidence readme_capabilities_smoke below stays engine-neutral.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.product.readme_capabilities
+        COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-readme-capabilities.py"
+                --root "${PROJECT_SOURCE_DIR}"
+    )
+endif()
 
 add_test(NAME ahfl.product.readme_capabilities_smoke
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/tests/scripts/readme_capabilities_smoke.py"

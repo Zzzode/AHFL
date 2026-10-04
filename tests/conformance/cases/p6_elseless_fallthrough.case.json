@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-2 else-less nested-if implicit fallthrough out of the outer then-branch to Low; landed on the orchestration lane"

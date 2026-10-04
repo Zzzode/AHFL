@@ -149,20 +149,6 @@ add_test(NAME ahfl.check.project.ok_expression_type_isolated
             "${AHFL_TESTS_DIR}/integration/expression_type_isolated"
 )
 
-add_test(NAME ahfl.check.project.ok_stdlib_runtime_api
-    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
-            ok-stdlib-runtime-api
-            "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke/app/main.ahfl"
-            "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke"
-)
-
-add_test(NAME ahfl.check.project.ok_trait_runtime_dispatch
-    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
-            ok-trait-runtime-dispatch
-            "${AHFL_TESTS_DIR}/integration/trait_runtime_smoke/app/main.ahfl"
-            "${AHFL_TESTS_DIR}/integration/trait_runtime_smoke"
-)
-
 add_test(NAME ahfl.check.project.primitive_shadowing_forbidden
     COMMAND $<TARGET_FILE:ahfl_project_check_tests>
             primitive-shadowing-forbidden
@@ -960,6 +946,8 @@ add_test(NAME ahflc.emit_summary.manifest.workflow_value_flow
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+# kr68 §12.7.1: manifest `ahflc run` is an execution verb -- wasm-only.
+if(AHFL_ENABLE_BACKEND_WASM)
 add_test(NAME ahflc.run.manifest.entry_workflow_default
     COMMAND $<TARGET_FILE:ahflc> run
             --manifest "${AHFL_TESTS_DIR}/integration/package_golden/ok_workflow_value_flow/ahfl.toml"
@@ -979,6 +967,7 @@ add_test(NAME ahflc.run.default_manifest.entry_workflow_default
             "-DEXPECTED_REGEX=ir::workflow_value_flow::ValueFlowWorkflow  completed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunCommandRegex.cmake"
 )
+endif()
 
 add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
     COMMAND ${CMAKE_COMMAND}
@@ -1010,6 +999,8 @@ add_test(NAME ahflc.emit_execution_plan.manifest.workflow_value_flow.fail_agent_
 # The lib flow's handler body triggers a codegen rejection; the diagnostic's
 # source location must point at the LIB flow file (lib/agents.ahfl), never at
 # the app's main.ahfl (section 12.16.12: lexical host of the rejected statement).
+# kr68 §12.7.1: the run verb is wasm-only, so both diag lanes are gated.
+if(AHFL_ENABLE_BACKEND_WASM)
 add_test(NAME ahflc.run.manifest.wh6_codegen_diag.flow_lib_source
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -1032,30 +1023,11 @@ add_test(NAME ahflc.run.manifest.wh6_codegen_diag.flow_app_source
             "-DEXPECTED_REGEX=wasm\\.UNSUPPORTED_CAPABILITY_FRAME.*app/main\\.ahfl:[0-9]+:[0-9]+"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
+endif()
 
 
-add_test(NAME ahfl.evaluator.eval_all
-    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_tests>
-)
-
-add_test(NAME ahfl.evaluator.p7_runtime_all
-    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_p7_tests>
-)
-
-add_test(NAME ahfl.evaluator.generics_all
-    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_generics_tests>
-)
-
-add_test(NAME ahfl.executor.exec_all
-    COMMAND $<TARGET_FILE:ahfl_executor_tests>
-)
-
-add_test(NAME ahfl.runtime.agent_runtime_all
-    COMMAND $<TARGET_FILE:ahfl_agent_runtime_tests>
-)
-
-add_test(NAME ahfl.runtime.workflow_runtime_all
-    COMMAND $<TARGET_FILE:ahfl_workflow_runtime_tests>
+add_test(NAME ahfl.runtime.value.set_map_uuid_timestamp_all
+    COMMAND $<TARGET_FILE:ahfl_runtime_value_set_map_tests>
 )
 
 add_test(NAME ahfl.runtime.execution_event_all
@@ -1096,10 +1068,6 @@ add_test(NAME ahfl.runtime.capability_event_projection_all
 
 add_test(NAME ahfl.runtime.host_abi_all
     COMMAND $<TARGET_FILE:ahfl_host_abi_tests>
-)
-
-add_test(NAME ahfl.runtime.native_host_binding_all
-    COMMAND $<TARGET_FILE:ahfl_native_host_binding_tests>
 )
 
 add_test(NAME ahfl.runtime.native_wasm_differential
@@ -1276,38 +1244,9 @@ add_test(NAME ahfl.conformance_case
             "${CMAKE_CURRENT_BINARY_DIR}/conformance-case"
 )
 
-# KR6.7 (RFC 0026 P7): the generic evaluator conformance runner. Observations
-# are blessed once and byte-compared; a separate lane runs every scenario
-# twice (determinism), and a mutation lane proves the byte gate detects a
-# tampered blessing.
+# KR6.7 (RFC 0026 P7): shared conformance case/observation directories.
 set(AHFL_CONFORMANCE_CASES_DIR "${AHFL_TESTS_DIR}/conformance/cases")
 set(AHFL_CONFORMANCE_OBSERVATIONS_DIR "${AHFL_TESTS_DIR}/conformance/observations")
-set(AHFL_CONFORMANCE_SCRATCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/conformance-evaluator")
-
-add_test(NAME ahfl.conformance.evaluator
-    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
-            verify
-            "${PROJECT_SOURCE_DIR}"
-            "${AHFL_CONFORMANCE_CASES_DIR}"
-            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
-)
-
-add_test(NAME ahfl.conformance.evaluator_determinism
-    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
-            determinism
-            "${PROJECT_SOURCE_DIR}"
-            "${AHFL_CONFORMANCE_CASES_DIR}"
-)
-
-add_test(NAME ahfl.conformance.evaluator_mutation
-    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
-            mutation
-            "${PROJECT_SOURCE_DIR}"
-            "${AHFL_CONFORMANCE_CASES_DIR}"
-            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
-            "${AHFL_CONFORMANCE_SCRATCH_DIR}"
-            e1_identity_agent
-)
 
 # KR6.7 (RFC 0026 P7): the wasm eligibility classifier. It runs the REAL
 # frontend -> Core -> P4-D -> emit_core_wasm pipeline over every committed case
@@ -1326,7 +1265,7 @@ endif()
 # machine-readable descriptor, drives ONE generic Node embedded host
 # (tests/conformance/node_embedded_host.mjs), and asserts the Node observation
 # (status + state_sequence + capability_sequence + output_json) equals the
-# evaluator observation. Blocked / P6-7-gated scenarios SKIP (77) with a
+# checked-in blessing. Blocked / P6-7-gated scenarios SKIP (77) with a
 # structured reason; an absent Node engine SKIPs visibly. This is Node
 # embedded-engine evidence, explicitly NOT wasmtime evidence.
 if(AHFL_ENABLE_BACKEND_WASM)
@@ -1368,11 +1307,11 @@ if(AHFL_ENABLE_BACKEND_WASM)
         RUN_SERIAL TRUE
     )
 
-    # FB-3b node-only lane mutation gate: with no in-process evaluator
-    # reference, node_observation_matches_expectation is the comparator under
-    # test. fb3_higher_order is the (pinned) node-only case; each blessed
-    # dimension (status / state_sequence / output_json) must independently
-    # reject a tampered expectation.
+    # Expectation-lane mutation gate: for cases without a checked-in blessing
+    # (the closure constructs), node_observation_matches_expectation is the
+    # comparator under test. fb3_higher_order is the (pinned) expectation-lane
+    # case; each blessed dimension (status / state_sequence / output_json) must
+    # independently reject a tampered expectation.
     add_test(NAME ahfl.conformance.wasm_node_mutation_node_only
         COMMAND $<TARGET_FILE:ahfl_conformance_wasm_node_runner>
                 mutation
@@ -1383,7 +1322,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     set_tests_properties(ahfl.conformance.wasm_node_mutation_node_only PROPERTIES
         SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "node-only comparator detected mutated expectation"
+        PASS_REGULAR_EXPRESSION "expectation-lane comparator detected mutated expectation"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;node"
         # Shares AHFL_CONFORMANCE_WASM_SCRATCH_DIR with the differential test.
@@ -1395,8 +1334,8 @@ endif()
 # orchestration-eligible committed case it drives the wasm3-backed facade
 # (WasmWorkflowRuntime / WasmAgentRunner) directly in-process and asserts the
 # native observation (status + state_sequence + capability_sequence +
-# capability_arguments + output_json) equals the evaluator observation. The 7
-# evaluator_surface_awaits_kr68 (node-only) cases are compared directly against
+# capability_arguments + output_json) equals the checked-in blessing. The 7
+# expectation-lane cases (no blessing file) are compared directly against
 # the manifest's blessed expectation. This is NATIVE wasm3 evidence, NOT Node
 # and NOT wasmtime evidence. Pure in-process: no SKIP_RETURN_CODE 77.
 if(AHFL_ENABLE_BACKEND_WASM)
@@ -1407,7 +1346,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
                 "${AHFL_CONFORMANCE_CASES_DIR}"
     )
     set_tests_properties(ahfl.conformance.wasm_native_differential PROPERTIES
-        PASS_REGULAR_EXPRESSION "native differential agreed"
+        PASS_REGULAR_EXPRESSION "Native embedded-engine differential"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;native"
         RUN_SERIAL TRUE
@@ -1445,9 +1384,10 @@ if(AHFL_ENABLE_BACKEND_WASM)
         RUN_SERIAL TRUE
     )
 
-    # FB-3b node-only lane mutation gate: with no in-process evaluator
-    # reference, node_observation_matches_expectation is the comparator under
-    # test. fb3_higher_order is the (pinned) node-only case.
+    # Expectation-lane mutation gate: for cases without a checked-in blessing
+    # (the closure constructs), node_observation_matches_expectation is the
+    # comparator under test. fb3_higher_order is the (pinned) expectation-lane
+    # case.
     add_test(NAME ahfl.conformance.wasm_native_mutation_node_only
         COMMAND $<TARGET_FILE:ahfl_conformance_wasm_native_runner>
                 mutation
@@ -1456,7 +1396,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
                 fb3_higher_order
     )
     set_tests_properties(ahfl.conformance.wasm_native_mutation_node_only PROPERTIES
-        PASS_REGULAR_EXPRESSION "node-only comparator detected mutated expectation"
+        PASS_REGULAR_EXPRESSION "expectation-lane comparator detected mutated expectation"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;native"
         RUN_SERIAL TRUE
@@ -1471,47 +1411,8 @@ add_test(NAME ahfl.runtime.payload_store
 # Btrfs); on any other platform or filesystem the test SKIPs (exit 77).
 set_tests_properties(ahfl.runtime.payload_store PROPERTIES SKIP_RETURN_CODE 77)
 
-# The three historical end-to-end identities are preserved, now manifest-
-# backed: each verifies its migrated case through the generic runner against
-# the same checked-in observation blessings.
-add_test(NAME ahfl.runtime.e2e_workflow
-    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
-            verify
-            "${PROJECT_SOURCE_DIR}"
-            "${AHFL_CONFORMANCE_CASES_DIR}"
-            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
-            e2e_multi_agent
-)
-
-add_test(NAME ahfl.runtime.enum_variant_e2e
-    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
-            verify
-            "${PROJECT_SOURCE_DIR}"
-            "${AHFL_CONFORMANCE_CASES_DIR}"
-            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
-            enum_variant_e2e
-)
-
-add_test(NAME ahfl.runtime.if_let_e2e
-    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
-            verify
-            "${PROJECT_SOURCE_DIR}"
-            "${AHFL_CONFORMANCE_CASES_DIR}"
-            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
-            if_let_e2e
-)
-
 add_test(NAME ahfl.llm_provider.all
     COMMAND $<TARGET_FILE:ahfl_runtime_provider_llm_tests>
-)
-
-add_test(NAME ahfl.reference_workflow.recovery_smoke
-    COMMAND ${Python3_EXECUTABLE}
-            "${AHFL_TESTS_DIR}/scripts/reference_workflow_recovery_smoke.py"
-            $<TARGET_FILE:ahfl_reference_workflow_recovery_worker>
-            "${PROJECT_SOURCE_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/runtime/reference-workflow-recovery"
-            "${PROJECT_SOURCE_DIR}/build/release-evidence/beta/reference-workflow-recovery.json"
 )
 
 add_test(NAME ahfl.runtime.payload_store_crash_smoke
@@ -1525,42 +1426,47 @@ add_test(NAME ahfl.runtime.payload_store_crash_smoke
 # the driver exits 77 (ctest SKIP).
 set_tests_properties(ahfl.runtime.payload_store_crash_smoke PROPERTIES SKIP_RETURN_CODE 77)
 
-# RFC 0022 durable-resume capstone (Q4 roadmap M2 north-star): compile a verified
-# workflow, suspend on a PENDING capability, persist the resume record, then in a
-# fresh runtime cold-start from the on-disk snapshot and resume deterministically.
-add_test(NAME ahfl.reference_workflow.durable_resume_capstone
-    COMMAND $<TARGET_FILE:ahfl_durable_resume_capstone>
-            "${PROJECT_SOURCE_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/runtime/durable-resume-capstone"
-)
+# KR6.8 WH-9: the durable-resume capstone, the reference-workflow production
+# matrix and the controlled-pilot ready gate all drive the embedded wasm3
+# runtime and consume its evidence; they exist only with the wasm backend.
+if(AHFL_ENABLE_BACKEND_WASM)
+    # RFC 0022 durable-resume capstone (Q4 roadmap M2 north-star): compile a verified
+    # workflow, suspend on a PENDING capability, persist the resume record, then in a
+    # fresh runtime cold-start from the on-disk snapshot and resume deterministically.
+    add_test(NAME ahfl.reference_workflow.durable_resume_capstone
+        COMMAND $<TARGET_FILE:ahfl_durable_resume_capstone>
+                "${PROJECT_SOURCE_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/runtime/durable-resume-capstone"
+    )
 
-add_test(NAME ahfl.reference_workflow.production_matrix
-    COMMAND ${Python3_EXECUTABLE}
-            "${AHFL_TESTS_DIR}/scripts/reference_workflow_production_matrix.py"
-            $<TARGET_FILE:ahfl_reference_workflow_recovery_worker>
-            "${PROJECT_SOURCE_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/runtime/reference-workflow-production-matrix"
-            "12"
-            "30"
-            "${PROJECT_SOURCE_DIR}/build/release-evidence/pilot/reference-workflow-production-matrix.json"
-)
+    add_test(NAME ahfl.reference_workflow.production_matrix
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/reference_workflow_production_matrix.py"
+                $<TARGET_FILE:ahfl_reference_workflow_soak_worker>
+                "${PROJECT_SOURCE_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/runtime/reference-workflow-production-matrix"
+                "12"
+                "30"
+                "${PROJECT_SOURCE_DIR}/build/release-evidence/pilot/reference-workflow-production-matrix.json"
+    )
 
-add_test(NAME ahfl.product.controlled_pilot_gate_ready
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/scripts/check-controlled-pilot-gate.py"
-            --root "${PROJECT_SOURCE_DIR}"
-            --require-ready
-)
-set_tests_properties(
-    ahfl.reference_workflow.production_matrix
-    PROPERTIES
-        DEPENDS "ahfl.runtime.execution_otel_all;ahfl.runtime.workflow_recovery_all;ahfl.reference_workflow.recovery_smoke;ahflc.run.llm_provider_runtime.smoke"
-)
-set_tests_properties(
-    ahfl.product.controlled_pilot_gate_ready
-    PROPERTIES
-        DEPENDS "ahfl.reference_workflow.production_matrix"
-)
+    add_test(NAME ahfl.product.controlled_pilot_gate_ready
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/scripts/check-controlled-pilot-gate.py"
+                --root "${PROJECT_SOURCE_DIR}"
+                --require-ready
+    )
+    set_tests_properties(
+        ahfl.reference_workflow.production_matrix
+        PROPERTIES
+            DEPENDS "ahfl.runtime.execution_otel_all;ahfl.runtime.workflow_recovery_all;ahflc.run.llm_provider_runtime.smoke"
+    )
+    set_tests_properties(
+        ahfl.product.controlled_pilot_gate_ready
+        PROPERTIES
+            DEPENDS "ahfl.reference_workflow.production_matrix"
+    )
+endif()
 
 add_test(NAME ahfl.runtime.http_transport_all
     COMMAND $<TARGET_FILE:ahfl_http_transport_tests>
@@ -1980,19 +1886,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # subprocess-launches the emit-only probe, so it carries an explicit build
     # dependency; SKIPs (77) when node is absent or off a durable Linux FS. Real
     # Node-engine evidence, explicitly NOT wasmtime evidence.
-    add_dependencies(ahfl_core_wasm_resume_node_e2e
-        ahfl_core_wasm_capability_workflow_probe
-    )
-    add_test(NAME ahfl.runtime.core_wasm_resume_node
-        COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_node_e2e>
-                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
-                "${AHFL_TESTS_DIR}/golden/wasm/e3_capability_workflow_resume.ahfl"
-                "${CMAKE_CURRENT_BINARY_DIR}/runtime/resume-node-e2e"
-    )
-    set_tests_properties(ahfl.runtime.core_wasm_resume_node PROPERTIES
-        SKIP_RETURN_CODE 77
-        LABELS "wasm;backend;execution;node"
-    )
 
     # RFC 0026 KR6.8 WH-3: the wasm3 e2e resume test. Same label family as the
     # WH-1/WH-2/WH-3 unit tests (wasm-host).

@@ -9,7 +9,7 @@ flowchart LR
     Manifest[Package manifest] --> Package[Native handoff package]
     Package --> Plan[ExecutionPlan]
     Plan --> DryRun[DryRunTrace]
-    Plan --> Runtime[WorkflowRuntime]
+    Plan --> Runtime[WasmWorkflowRuntime]
     Runtime --> Events[ExecutionEventStore]
     Events --> Report[ExecutionReport]
     Events --> Projections[Replay Audit Scheduler Checkpoint]
@@ -94,20 +94,32 @@ projection 不能互相成为第一输入；所有 builder 独立读取 canonica
 
 ## Recovery Schema
 
-当前持久化 schema：
+当前持久化 schema（加载器接受两种，wasm lane 写 v2）：
 
 ```text
 ahfl.workflow-recovery.v1
+ahfl.workflow-recovery.v2
 ```
 
-snapshot 保存 workflow ID、checkpoint ID 和已完成节点的 agent/value。保存使用 atomic replace。load 对 missing、read failure、schema/value corruption 和非法 identity fail closed。
+snapshot 保存 workflow ID、checkpoint ID 和已完成节点的 agent/value。v2 额外保存
+挂起节点坐标、节点 input（信息性，不作为恢复信任源）、pending capability 的
+SymbolId/ordinal，以及覆盖挂起点之前**整个 workflow** 的 capability memo
+（按 per-node ordinal 索引，带 cap_id/arg_hash 完整性交叉校验；结果带
+NativeOnly/LegacyV2/ExactSidecar 三态信任来源，sidecar 逐字保留 value wire JSON）。
+保存使用 atomic replace。load 对 missing、read failure、schema/value corruption、
+非法 identity 和 memo 坐标/ordinal 不一致 fail closed。
 
-恢复后的 event stream包含：
+wasm lane 的恢复模型是**冷启动整模块重放**：在 fresh wasm instance 上从头重跑整个
+module，frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），重放到
+pending 调用时由 host 提供结果后继续。恢复后的 event stream 包含：
 
 1. `RunResumed`
-2. 每个已完成节点的 `NodeRestored`
+2. memo 覆盖的每个已完成节点的 `NodeRestored`
 3. 后续未完成节点的正常 scheduled/start/terminal events
 4. 唯一 `RunCompleted`
+
+v1 是 v2 的未改动子集，两条 load path 共存；schema 演进只允许 append-only，破坏性
+变更必须发新版本字符串。参考证据为 `durable_resume_capstone` 与 `long_soak_smoke`。
 
 ## CLI Contract
 
@@ -133,7 +145,7 @@ span events；它不修改 runtime state，也不成为新的事实源。
 2. 更新 report、所有 projection 和 renderer。
 3. 更新 recovery schema 或给出明确拒绝策略。
 4. 更新 event/report/projection/recovery tests。
-5. 更新 reference workflow crash/restart evidence。
+5. 更新 reference workflow resume 证据（`durable_resume_capstone` / `long_soak_smoke`）。
 6. 运行 architecture、scope-freeze、controlled-pilot 和 beta gates：
 
 ```bash

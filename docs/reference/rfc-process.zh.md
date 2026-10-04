@@ -26,7 +26,7 @@ RFC 系统的目标是"轻量入口、严格出口"：
 | `compiler` | parser/frontend/resolver/typecheck/lowering 的跨层契约 |
 | `ir` | Semantic IR、JSON IR、Typed HIR serialization、backend input contract |
 | `stdlib` | `std/` public API、prelude 暴露、builtin hook、public trait 语义 |
-| `runtime` | evaluator、capability、LLM provider、wire contract、streaming/tool calling 语义 |
+| `runtime` | wasm3 内嵌执行、capability、LLM provider、wire contract、streaming/tool calling 语义 |
 | `tooling` | CLI/LSP/formatter/diagnostic 的用户可见行为 |
 | `formal` | SMV/backend verification semantics |
 | `process` | release gate、docs taxonomy、RFC process、compatibility policy |

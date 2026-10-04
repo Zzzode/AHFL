@@ -23,7 +23,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "two-node workflow DAG with one capability-bearing node; executable on the P5 orchestration wasm subset (E3 capability workflow)"

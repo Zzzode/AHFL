@@ -79,10 +79,10 @@ struct DecimalDecoded {
 //     `+`, leading zeros, and `-0`.
 enum class DurationFamily { SourceUnit, BareMillis };
 
-// Parse a source-unit `DIGIT+ (ms|s|m|h)` spelling to i64 milliseconds. Mirrors
-// the live evaluator millisecond semantics (ms=1, s=1000, m=60000,
-// h=3600000). Rejects a missing/unknown unit, a non-digit body, a sign, or a
-// value whose unit conversion overflows i64. Leading zeros are accepted.
+// Parse a source-unit `DIGIT+ (ms|s|m|h)` spelling to i64 milliseconds
+// (ms=1, s=1000, m=60000, h=3600000). Rejects a missing/unknown unit, a
+// non-digit body, a sign, or a value whose unit conversion overflows i64.
+// Leading zeros are accepted.
 [[nodiscard]] std::optional<std::int64_t> parse_source_duration_millis(std::string_view spelling);
 
 // Parse a bare-millis spelling: exactly `std::to_string(i64)`. Negative allowed;

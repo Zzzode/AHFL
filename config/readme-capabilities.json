@@ -38,12 +38,6 @@
       "chinese": "核心容器解析为 nominal stdlib 泛型，不再保留 legacy runtime Option 表示或迁移开关。"
     },
     {
-      "id": "BETA-07",
-      "evidence_schema": "ahfl.beta-evidence.reference-workflow-recovery.v1",
-      "english": "The reference workflow passes local HTTP provider fault injection, SIGKILL restart, operator-approved resume, partial-write recovery, and side-effect deduplication.",
-      "chinese": "Reference workflow 已通过本地 HTTP provider 故障注入、SIGKILL 重启、operator approval 恢复、partial-write recovery 与副作用去重。"
-    },
-    {
       "id": "BETA-08",
       "evidence_schema": "ahfl.beta-evidence.install-smoke.v1",
       "english": "Clean-prefix installs contain ahflc, ahfl-lsp, and the sysroot; platform VSIX packages contain the release LSP and sysroot and pass isolated installation.",

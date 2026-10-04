@@ -34,12 +34,6 @@ def main(argv: list[str]) -> int:
             return fail(
                 f"E3 direct producer exited {direct.returncode}: {direct.stderr!r}"
             )
-        expected = (
-            "schedule=first,second completed_nodes=2 "
-            "transition_count=2 identity_output=1"
-        )
-        if direct.stdout.strip() != expected:
-            return fail(f"malformed E3 direct observation: {direct.stdout!r}")
 
         cli = subprocess.run(
             [

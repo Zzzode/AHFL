@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-2 companion to p6_cascade: the outermost guard is true (br 1 through one if); landed on the orchestration lane"

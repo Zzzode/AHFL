@@ -227,7 +227,6 @@ def main() -> int:
                     "provider_request_count": iteration,
                 },
                 "network_faults": faults,
-                "process_crash_test": "ahfl.reference_workflow.recovery_smoke",
                 "recovery_schema_test": "ahfl.runtime.workflow_recovery_all",
                 "recovery_schema_policy": "reject unknown and legacy schemas",
                 "otel_adapter_test": "ahfl.runtime.execution_otel_all",

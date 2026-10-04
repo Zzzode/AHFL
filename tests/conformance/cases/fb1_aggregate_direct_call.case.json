@@ -17,10 +17,8 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": false,
     "wasm": {
       "eligible": "orchestration",
-      "node_observation_skip": "evaluator_surface_awaits_kr68",
       "reason": "RFC 0026 FB-1 fix-forward: outlined pure fns returning AGGREGATES allocate per native activation (repeated calls, distinct fns, nested calls, and an aggregate argument must never alias construct scratch); every aggregate survives so the computed goto reaches Good. Emits on the orchestration lane; the in-process evaluator does not yet execute user-defined pure fn calls, so the Node embedded-engine observation is authoritative until KR6.8."
     }
   }

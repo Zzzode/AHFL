@@ -26,7 +26,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "hybrid P6-bridge + opaque workflow DAG; the bridge PENDING arm latches and returns (PENDING,0,0) from the P6 runner, suspending the workflow at the first bridge node (WH-5b.2)"

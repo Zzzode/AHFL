@@ -1,5 +1,5 @@
-// KR6.5 E3 same-frontend producer. One checked program is forked to native
-// WorkflowRuntime and AHFL->Core->P4-D->wasm.
+// KR6.5 E3 same-frontend producer. Compiles one checked program through the
+// AHFL->Core->P4-D->wasm pipeline and writes the emitted module to disk.
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
@@ -9,14 +9,10 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/value/value.hpp"
-#include "runtime/value/value_json.hpp"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -54,13 +50,6 @@ using namespace ahfl;
     return lower_program_ir(*parse.program, resolve, typecheck);
 }
 
-[[nodiscard]] runtime::Value fixture_input() {
-    runtime::FieldMap fields;
-    fields.set("value", std::make_unique<runtime::Value>(runtime::make_string("identity")));
-    return runtime::Value{
-        runtime::StructValue{"wasm::e3_workflow::Frame", std::move(fields)}};
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -70,44 +59,6 @@ int main(int argc, char **argv) {
     }
     auto program = compile_fixture(argv[1]);
     if (!program.has_value()) {
-        return 1;
-    }
-
-    std::vector<std::string> schedule;
-    std::size_t completed_nodes = 0;
-    std::size_t state_entries = 0;
-    runtime::WorkflowRuntimeConfig config;
-    config.agent_input_hook = [&](runtime::AgentId,
-                                  std::string_view,
-                                  std::string_view node_name,
-                                  const runtime::Value &) {
-        schedule.emplace_back(node_name);
-    };
-    config.node_completed_hook =
-        [&](runtime::AgentId, std::string_view, const runtime::Value &) {
-            ++completed_nodes;
-        };
-    config.state_entered_hook =
-        [&](runtime::AgentId, std::string_view, std::string_view, std::string_view) {
-            ++state_entries;
-        };
-
-    auto input = fixture_input();
-    const auto input_json = runtime::value_to_json(input);
-    runtime::WorkflowRuntime native(*program, std::move(config));
-    const auto native_result =
-        native.run("wasm::e3_workflow::IdentityPipeline", std::move(input));
-    const std::vector<std::string> expected_schedule{"first", "second"};
-    if (native_result.status() != runtime::WorkflowStatus::Completed ||
-        native_result.output() == nullptr ||
-        runtime::value_to_json(*native_result.output()) != input_json ||
-        schedule != expected_schedule || completed_nodes != 2 || state_entries != 4) {
-        std::cerr << "native WorkflowRuntime observation does not match E3 identity contract"
-                  << " status=" << static_cast<int>(native_result.status())
-                  << " completed=" << completed_nodes
-                  << " state_entries=" << state_entries
-                  << " schedule_size=" << schedule.size() << "\n";
-        native_result.diagnostics.render(std::cerr);
         return 1;
     }
 
@@ -146,9 +97,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::cout << "schedule=first,second"
-              << " completed_nodes=" << completed_nodes
-              << " transition_count=" << (state_entries - completed_nodes)
-              << " identity_output=1\n";
+    std::cout << "emitted=ok bytes=" << bytes.size() << "\n";
     return 0;
 }

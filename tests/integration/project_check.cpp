@@ -7,8 +7,6 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
-#include "runtime/evaluator/eval_context.hpp"
-#include "runtime/evaluator/evaluator.hpp"
 #include "runtime/value/value.hpp"
 
 #include <cstdint>
@@ -280,157 +278,6 @@ int run_ok_expression_type_isolated(const std::filesystem::path &entry,
         if (two_reply_type.has_value()) {
             std::cerr << "  lib::two::TwoAgent -> " << *two_reply_type << '\n';
         }
-        return 1;
-    }
-
-    return 0;
-}
-
-int run_ok_stdlib_runtime_api(const std::filesystem::path &entry,
-                              const std::filesystem::path &root) {
-    auto input = ahfl::test_support::project_input_from_manifest(
-        root / "app" / "ahfl.toml",
-        entry,
-        ahfl::test_support::repo_root_from_integration_root(root));
-    if (input.has_errors()) {
-        print_diagnostics(input.diagnostics);
-        return 1;
-    }
-
-    const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend, *input.input);
-    if (parse_result.has_errors()) {
-        print_diagnostics(parse_result.diagnostics);
-        return 1;
-    }
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(parse_result.graph);
-    if (resolve_result.has_errors()) {
-        print_diagnostics(resolve_result.diagnostics);
-        return 1;
-    }
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(parse_result.graph, resolve_result);
-    if (type_check_result.has_errors()) {
-        print_diagnostics(type_check_result.diagnostics);
-        return 1;
-    }
-
-    const ahfl::Validator validator;
-    const auto validation_result =
-        validator.validate(parse_result.graph, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        print_diagnostics(validation_result.diagnostics);
-        return 1;
-    }
-
-    const auto ir_program =
-        ahfl::lower_program_ir(parse_result.graph, resolve_result, type_check_result);
-    const auto call_eval = ahfl::evaluator::make_program_call_eval(ir_program);
-    const auto expect_int = [&](std::string function_name, std::int64_t expected) {
-        const ahfl::ir::Expr call_expr{
-            .node = ahfl::ir::CallExpr{.callee = std::move(function_name), .arguments = {}},
-            .source_range = std::nullopt,
-            .resolved_type = {},
-        };
-        const auto result =
-            ahfl::evaluator::eval_expr(call_expr, ahfl::evaluator::EvalContext{}, call_eval);
-        if (result.has_errors()) {
-            print_diagnostics(result.diagnostics);
-            return false;
-        }
-        const auto *value = std::get_if<ahfl::runtime::IntValue>(&result.value.node);
-        if (value == nullptr || value->value != expected) {
-            std::cerr << "unexpected runtime result for function: expected " << expected;
-            if (value != nullptr) {
-                std::cerr << ", got " << value->value;
-            } else {
-                std::cerr << ", got non-Int value";
-            }
-            std::cerr << '\n';
-            return false;
-        }
-        return true;
-    };
-
-    if (!expect_int("app::main::runtime_collections_score", 26)) {
-        return 1;
-    }
-    if (!expect_int("app::main::runtime_option_result_score", 15)) {
-        return 1;
-    }
-
-    return 0;
-}
-
-int run_ok_trait_runtime_dispatch(const std::filesystem::path &entry,
-                                  const std::filesystem::path &root) {
-    auto input = ahfl::test_support::project_input_from_workspace(
-        root,
-        "trait-runtime-smoke",
-        entry,
-        ahfl::test_support::repo_root_from_integration_root(root));
-    if (input.has_errors()) {
-        print_diagnostics(input.diagnostics);
-        return 1;
-    }
-
-    const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend, *input.input);
-    if (parse_result.has_errors()) {
-        print_diagnostics(parse_result.diagnostics);
-        return 1;
-    }
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(parse_result.graph);
-    if (resolve_result.has_errors()) {
-        print_diagnostics(resolve_result.diagnostics);
-        return 1;
-    }
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(parse_result.graph, resolve_result);
-    if (type_check_result.has_errors()) {
-        print_diagnostics(type_check_result.diagnostics);
-        return 1;
-    }
-
-    const ahfl::Validator validator;
-    const auto validation_result =
-        validator.validate(parse_result.graph, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        print_diagnostics(validation_result.diagnostics);
-        return 1;
-    }
-
-    const auto ir_program =
-        ahfl::lower_program_ir(parse_result.graph, resolve_result, type_check_result);
-    const auto call_eval = ahfl::evaluator::make_program_call_eval(ir_program);
-    const ahfl::ir::Expr call_expr{
-        .node =
-            ahfl::ir::CallExpr{
-                .callee = "app::main::runtime_trait_dispatch_score",
-                .arguments = {},
-            },
-        .source_range = std::nullopt,
-        .resolved_type = {},
-    };
-    const auto result =
-        ahfl::evaluator::eval_expr(call_expr, ahfl::evaluator::EvalContext{}, call_eval);
-    if (result.has_errors()) {
-        print_diagnostics(result.diagnostics);
-        return 1;
-    }
-    const auto *value = std::get_if<ahfl::runtime::IntValue>(&result.value.node);
-    if (value == nullptr || value->value != 19) {
-        std::cerr << "unexpected trait dispatch runtime result: expected 19";
-        if (value != nullptr) {
-            std::cerr << ", got " << value->value;
-        }
-        std::cerr << '\n';
         return 1;
     }
 
@@ -958,14 +805,6 @@ int main(int argc, char **argv) {
 
     if (test_case == "ok-expression-type-isolated") {
         return run_ok_expression_type_isolated(entry, root);
-    }
-
-    if (test_case == "ok-stdlib-runtime-api") {
-        return run_ok_stdlib_runtime_api(entry, root);
-    }
-
-    if (test_case == "ok-trait-runtime-dispatch") {
-        return run_ok_trait_runtime_dispatch(entry, root);
     }
 
     if (test_case == "primitive-shadowing-forbidden") {

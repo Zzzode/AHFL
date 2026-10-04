@@ -10,8 +10,8 @@
 // the canonical native-value path rather than the CLI's string-wrapping
 // LLM-tool seam.
 //
-// Extracted from evaluator_engine.cpp (anonymous namespace) so the native
-// engine adapter (native_engine.cpp) can share the identical mock table
+// Shared by the native engine adapter (native_engine.cpp) and other
+// conformance engine adapters so each one builds the identical mock table
 // without duplicating the construction logic.
 
 #include <optional>

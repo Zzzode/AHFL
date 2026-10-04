@@ -23,7 +23,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "three-node workflow DAG (identity, capability, identity); WH-5c.5 per-node output stash table makes every node output host-observable, so output_value_id parity holds on the orchestration wasm subset",

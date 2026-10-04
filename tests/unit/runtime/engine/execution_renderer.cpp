@@ -2,8 +2,9 @@
 #include "ahfl/runtime/execution_event.hpp"
 #include "ahfl/runtime/execution_report.hpp"
 
+#include "ahfl/base/support/source.hpp"
 #include "base/json/json_value.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 
 #include <chrono>
@@ -15,7 +16,6 @@
 namespace {
 
 using namespace ahfl::runtime;
-using namespace ahfl::evaluator;
 using namespace std::chrono_literals;
 
 int test_count = 0;

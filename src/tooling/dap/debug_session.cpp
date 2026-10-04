@@ -120,7 +120,6 @@ struct CompileResult {
             [](const runtime::DurationValue &) -> std::string { return "Duration"; },
             [](const runtime::UuidValue &) -> std::string { return "Uuid"; },
             [](const runtime::TimestampValue &) -> std::string { return "Timestamp"; },
-            [](const runtime::InterpreterClosureHandle &) -> std::string { return "Callable"; },
             [](const runtime::UnitValue &) -> std::string { return "Unit"; },
         },
         v.node);

@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-4 nested-aggregate field projection (o.inner.p dereferences the stored child address) over constructed locals; landed on the orchestration lane"

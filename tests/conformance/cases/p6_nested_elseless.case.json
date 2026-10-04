@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-1 nested else-less if whose false inner guard implicitly falls through to Low; landed on the orchestration lane"

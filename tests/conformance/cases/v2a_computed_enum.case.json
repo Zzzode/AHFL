@@ -27,7 +27,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-A computed final returning a tag-only enum on BOTH sides of a structured if; p6-frame module on the orchestration lane"

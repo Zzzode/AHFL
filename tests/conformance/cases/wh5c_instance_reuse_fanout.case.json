@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "two P6 nodes (first, second) reusing ONE packaged agent instance; WH-5c.2 Approach B assigns one node-frame block + runner function per P6 node, so the fan-out lowers to wasm and both nodes run"

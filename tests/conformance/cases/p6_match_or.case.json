@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6 or-pattern if-let (High | Off) accepts the Off value; landed P6 or-pattern lowering on the orchestration lane"

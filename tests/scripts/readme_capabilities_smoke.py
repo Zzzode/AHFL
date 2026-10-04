@@ -44,6 +44,26 @@ def initialize_repository(root: Path) -> str:
     ).stdout.strip()
 
 
+def neutralize_retired_markers(root: Path) -> None:
+    """Strip retired BETA-07 markers from copied READMEs.
+
+    BETA-07 was retired in WH-9; the coordinator removes the marker lines
+    from the real READMEs. The smoke test copies the current READMEs (which
+    may still carry the marker) and neutralizes them to simulate the
+    post-retirement state.
+    """
+    for name in ("README.md", "README.zh.md"):
+        path = root / name
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            text.replace(
+                "<!-- beta-capability:BETA-07 ",
+                "<!-- retired:BETA-07 ",
+            ),
+            encoding="utf-8",
+        )
+
+
 def copy_inputs(source: Path, target: Path) -> None:
     for relative in (
         "README.md",
@@ -54,6 +74,7 @@ def copy_inputs(source: Path, target: Path) -> None:
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / relative, destination)
+    neutralize_retired_markers(target)
     gate = json.loads((source / "config/beta-gate.json").read_text())
     evidence_entries: list[tuple[Path, str, str]] = []
     for criterion in gate["criteria"]:
@@ -104,16 +125,19 @@ def main() -> int:
         )
         require(value["criterion"] == "BETA-09", "README evidence criterion mismatch")
         require(value["status"] == "passed", "valid README evidence must pass")
-        require(value["covered_criteria"] == [f"BETA-{index:02d}" for index in range(1, 9)] + ["BETA-10"],
-                "README evidence coverage mismatch")
+        require(value["covered_criteria"] == [
+            "BETA-01", "BETA-02", "BETA-03", "BETA-04", "BETA-05",
+            "BETA-06", "BETA-08", "BETA-10",
+        ], "README evidence coverage mismatch")
 
         readme = root / "README.md"
         text = readme.read_text()
-        readme.write_text(text.replace("<!-- beta-capability:BETA-07 ", "<!-- removed:BETA-07 ", 1))
+        readme.write_text(text.replace("<!-- beta-capability:BETA-06 ", "<!-- removed:BETA-06 ", 1))
         result = run_checker(checker, root)
         require(result.returncode != 0, "missing evidence marker must fail")
-        require("BETA-07" in result.stderr, "missing marker failure must name BETA-07")
+        require("BETA-06" in result.stderr, "missing marker failure must name BETA-06")
         shutil.copy2(source / "README.md", readme)
+        neutralize_retired_markers(root)
 
         chinese = root / "README.zh.md"
         chinese.write_text(chinese.read_text().replace("BETA-08", "BETA-88", 1))
@@ -121,6 +145,7 @@ def main() -> int:
         require(result.returncode != 0, "English/Chinese capability drift must fail")
         require("BETA-08" in result.stderr, "language drift failure must name BETA-08")
         shutil.copy2(source / "README.zh.md", chinese)
+        neutralize_retired_markers(root)
 
         readme.write_text(
             readme.read_text()

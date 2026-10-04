@@ -12,7 +12,6 @@ node is unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +19,9 @@ import tempfile
 from pathlib import Path
 
 SKIP = 77
+
+# Frozen oracle (WH-9 B0, HEAD 620fadd8): the wasm-path initial_state_id.
+FROZEN_INITIAL_STATE_ID = 0
 
 
 def fail(message: str) -> int:
@@ -43,14 +45,12 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-fb3-nested-") as td:
         td_path = Path(td)
         wasm_path = td_path / "fb3_nested_activation.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm_path)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"FB-3 producer exited {native.returncode}: {native.stderr}")
-        if re.search(r"initial_state_id=(\d+)", native.stdout) is None:
-            return fail(f"malformed native observation: {native.stdout!r}")
+        if compile_run.returncode != 0:
+            return fail(f"FB-3 producer exited {compile_run.returncode}: {compile_run.stderr}")
 
         host = td_path / "fb3_nested_host.mjs"
         host.write_text(

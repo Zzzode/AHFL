@@ -76,10 +76,6 @@ struct ExpectedCase {
     std::size_t capability_count;
     std::size_t scenario_count;
     WasmEligibility wasm;
-    // KR6.7: a raw-P4-D-frame P6 case (aggregate/collection) emits on the wasm
-    // lane but its inline raw input frame cannot be materialized from canonical
-    // wire JSON by the evaluator adapter, so it runs the wasm/Node lane only.
-    bool evaluator{true};
     // Pinned Node-observation skip: None for compared cases; the two raw-frame
     // cases and the KR6.6-blocked cases declare their exact skip reason.
     WasmNodeObservationSkip node_observation_skip{WasmNodeObservationSkip::None};
@@ -131,7 +127,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             1,
             1,
             WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin,
         },
         {
@@ -142,7 +137,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0,
             1,
             WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::None,
         },
         {
@@ -153,7 +147,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0,
             2,
             WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::None,
         },
         {
@@ -164,7 +157,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             4,
             2,
             WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::None,
         },
         {
@@ -181,8 +173,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
         },
         // KR6.7 (RFC 0026 P7): landed KR6.6 (P6) computation slices, expressed
         // as manifest-driven cases. Each completes with an identity final that
-        // forwards the borrowed wire frame, so it runs on BOTH the evaluator and
-        // the orchestration wasm/Node lane and differentially compares.
+        // forwards the borrowed wire frame, so it runs on the orchestration
+        // wasm/Node lane and differentially compares.
         {
             "p6_scalar_cond.case.json",
             "tests/golden/wasm/p6_scalar_cond.ahfl",
@@ -431,8 +423,9 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
         // KR6.7 corpus widening (FB-5): V2-B String/computed-final and
         // bounded-arena agents migrated from bespoke Node probes. The String
         // tuple-variant fixture v2b_enum_string is deliberately absent: the
-        // evaluator misroutes Hit("hit") enum construction through its
-        // capability invoker while the wasm run is correct (tracked defect).
+        // wasm run is correct but the case was never blessed (the retired
+        // evaluator misrouted Hit("hit") enum construction; WH-9 removed that
+        // engine, so the fixture can be re-added when a blessing is captured).
         {
             "v2b_string_passthrough.case.json",
             "tests/golden/wasm/v2b_string_passthrough.ahfl",
@@ -479,14 +472,13 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
         },
         // P4-D input-frame handlers: rung E packs their input frame, calls
         // runv, and encodes the output, so the Node lane now DIFFERENTIALLY
-        // COMPARES them (engines.evaluator=true and blessed observations
-        // exist); no node_observation_skip.
+        // COMPARES them (blessed observations exist); no node_observation_skip.
         {
             "p6_aggregate.case.json",
             "tests/golden/wasm/p6_aggregate.ahfl",
             CaseKind::Agent,
             "wasm::p6_aggregate::AggregateAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
+            0, 1, WasmEligibility::Orchestration,
             WasmNodeObservationSkip::None,
         },
         {
@@ -494,7 +486,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "tests/golden/wasm/p6_collection.ahfl",
             CaseKind::Agent,
             "std::collections::CollectionAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
+            0, 1, WasmEligibility::Orchestration,
             WasmNodeObservationSkip::None,
         },
         // RFC 0026 P6-7: two same-typed bounded lists in one input struct.
@@ -505,63 +497,63 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "tests/golden/wasm/p6_frame_two_containers.ahfl",
             CaseKind::Agent,
             "std::collections::TwoContainersAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
+            0, 1, WasmEligibility::Orchestration,
             WasmNodeObservationSkip::None,
         },
         // RFC 0026 FB-3b: higher-order lambda / call_indirect. Emits on the
-        // orchestration lane with the funcref table; the in-process evaluator
-        // has no user-fn / closure surface yet (node-only until KR6.8).
+        // orchestration lane with the funcref table; the closure constructs
+        // have no checked-in blessing (expectation-lane comparison).
         {
             "fb3_higher_order.case.json",
             "tests/golden/wasm/fb3_higher_order.ahfl",
             CaseKind::Agent,
             "wasm::fb3_higher_order::HigherOrderAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
-        // KR6.7 corpus widening (FB-5): more node-only user pure-fn / closure
-        // cases from the FB-1 direct-call and FB-3b closure ladders. The Node
-        // embedded-engine observation is blessed directly; each module emits on
-        // the orchestration lane while the evaluator surface awaits KR6.8.
+        // KR6.7 corpus widening (FB-5): more user pure-fn / closure
+        // cases from the FB-1 direct-call and FB-3b closure ladders. Each
+        // module emits on the orchestration lane; the closure constructs
+        // have no checked-in blessing (expectation-lane comparison).
         {
             "fb1_direct_call.case.json",
             "tests/golden/wasm/fb1_direct_call.ahfl",
             CaseKind::Agent,
             "wasm::fb1_direct_call::DirectCallAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
         {
             "fb1_aggregate_direct_call.case.json",
             "tests/golden/wasm/fb1_aggregate_direct_call.ahfl",
             CaseKind::Agent,
             "wasm::fb1_aggregate_direct_call::Fb1AggregateAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
         {
             "fb3_byvalue_capture.case.json",
             "tests/golden/wasm/fb3_byvalue_capture.ahfl",
             CaseKind::Agent,
             "wasm::fb3_byvalue_capture::ByValueCaptureAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
         {
             "fb3_nested_activation.case.json",
             "tests/golden/wasm/fb3_nested_activation.ahfl",
             CaseKind::Agent,
             "wasm::fb3_nested_activation::NestedActivationAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
         {
             "fb3_nested_lambda_flow.case.json",
             "tests/golden/wasm/fb3_nested_lambda_flow.ahfl",
             CaseKind::Agent,
             "wasm::fb3_nested_lambda_flow::NestedLambdaFlowAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
         // KR6.7 corpus widening (FB-5) slice E.
         {
@@ -576,8 +568,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "tests/golden/wasm/fb4_effect_clause_pure_body.ahfl",
             CaseKind::Agent,
             "wasm::fb4_effect_clause_pure_body::DeclEffectAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
-            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
         },
         // WH-5b.2: hybrid P6-bridge + opaque workflow that suspends at the
         // first bridge node's PENDING arm. The scenario expects run_status
@@ -614,8 +606,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
         // WH-5c.4 (GAP 2): an opaque-lane capability-final agent that
         // constructs the capability argument in-module. The wasm codegen emits
         // a P4D_TO_JSON self-transcode for the constructed O_k and a
-        // JSON_TO_P4D workflow-output crossing. The native wasm3 lane agrees
-        // with the evaluator; the Node observation withholds on
+        // JSON_TO_P4D workflow-output crossing. The native wasm3 lane has a
+        // checked-in blessing; the Node observation withholds on
         // host_transcode_awaits_node_port (the C++ WH-5b.3 transcode landed,
         // but the Node oracle JS port of ahfl_xcode is still a stub).
         {
@@ -624,15 +616,14 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "wasm::wh5c4_construct_cap_final::ReplyWorkflow",
             1, 1, WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::HostTranscodeAwaitsNodePort,
         },
         // WH-5c.4 P0-3: a construct-capability terminal whose upstream node is
         // opaque (Echo capability-final). The construct node carries BOTH a
         // JSON_TO_P4D input crossing (opaque producer output -> P4-D input)
         // AND a P4D_TO_JSON self-transcode (constructed Request -> wire-JSON);
-        // the two-slot scheduler table keeps both. The native wasm3 lane
-        // agrees with the evaluator; the Node observation withholds on
+        // the two-slot scheduler table keeps both. The native wasm3 lane has
+        // a checked-in blessing; the Node observation withholds on
         // host_transcode_awaits_node_port.
         {
             "wh5c4_p03_opaque_upstream.case.json",
@@ -640,7 +631,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "wasm::wh5c4_p03_opaque_upstream::OpaqueUpstreamWorkflow",
             2, 1, WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::HostTranscodeAwaitsNodePort,
         },
         {
@@ -649,7 +639,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "app::rich_matrix::RichMatrix",
             0, 1, WasmEligibility::Orchestration,
-            /*evaluator=*/true,
             WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
         },
     };
@@ -717,8 +706,6 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
               "capability count: " + file_name);
         check(manifest.scenarios.size() == expectation->scenario_count,
               "scenario count: " + file_name);
-        check(manifest.engines.evaluator == expectation->evaluator,
-              "evaluator enabled: " + file_name);
         check(manifest.engines.wasm.eligibility == expectation->wasm,
               "wasm eligibility: " + file_name);
         check(!manifest.engines.wasm.reason.empty(),
@@ -820,7 +807,6 @@ constexpr std::string_view kValidCase = R"({
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1 identity subset"}
   }
 })";
@@ -887,7 +873,6 @@ void test_malformed_manifests() {
   ],
   "capabilities": [{"name": "wasm::e2_capability::Echo", "status": "exploded"}],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E2"}
   }
 })",
@@ -913,7 +898,6 @@ void test_malformed_manifests() {
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   }
 })",
@@ -939,7 +923,6 @@ void test_malformed_manifests() {
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   }
 })",
@@ -967,7 +950,6 @@ void test_malformed_manifests() {
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   },
   "surprise": 1
@@ -989,7 +971,7 @@ void test_malformed_manifests() {
     }
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "unsupported conformance case format_version");
@@ -1006,7 +988,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
                     "field 'kind' must be 'agent' or 'workflow'");
@@ -1023,7 +1005,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
                     "expect.run_status' must be 'completed', 'suspended', or 'failed'");
@@ -1040,7 +1022,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "both", "reason": "r"}}
 })",
                     "engines.wasm.eligible' must be 'orchestration', 'computation', or 'none'");
@@ -1057,7 +1039,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true, "wasm": {"eligible": "none"}}
+  "engines": {"wasm": {"eligible": "none"}}
 })",
                     "engines.wasm.reason' is required");
 
@@ -1073,7 +1055,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "r",
                        "node_observation_skip": "bogus"}}
 })",
@@ -1096,7 +1078,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "r",
                        "node_observation_skip": "blocked_kr66"}}
 })",
@@ -1114,7 +1096,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "computation", "reason": "r",
                        "node_observation_skip": "host_transcode_awaits_node_port"}}
 })",
@@ -1132,7 +1114,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "computation", "reason": "r",
                        "node_observation_skip":
                            "node_host_awaits_multinode_stash_join"}}
@@ -1153,7 +1135,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "computation", "reason": "r",
                        "node_observation_skip":
                            "node_host_awaits_rich_wire_types"}}
@@ -1175,7 +1157,7 @@ void test_malformed_manifests() {
   ],
   "capabilities": [{"name": "wasm::e2_capability::Echo", "status": "pending",
                     "result_json": {"_type":"wasm::e2_capability::OutputFrame","value":"x"}}],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
                     "status 'pending' must not carry 'result_json'");
@@ -1192,7 +1174,7 @@ void test_malformed_manifests() {
                 "capability_sequence": ["wasm::e2_capability::Echo"]}}
   ],
   "capabilities": [{"name": "wasm::e2_capability::Echo", "status": "ok"}],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
                     "status 'ok' must carry its result frame in 'result_json'");
@@ -1213,7 +1195,7 @@ void test_malformed_manifests() {
      "result_json": {"_type":"wasm::e2_capability::OutputFrame","value":"x"}},
     {"name": "wasm::e2_capability::Echo", "status": "error"}
   ],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
                     "lists capability 'wasm::e2_capability::Echo' more than once");
@@ -1230,7 +1212,7 @@ void test_malformed_manifests() {
                 "capability_sequence": ["wasm::e2_capability::Echo"]}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
                     "invokes capability 'wasm::e2_capability::Echo' that has no entry");
@@ -1248,7 +1230,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
                     "must leave 'expect.state_sequence' empty");
@@ -1265,7 +1247,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
                     "must not escape the repository");
@@ -1282,7 +1264,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
                     "must be a repo-relative path");
@@ -1302,7 +1284,6 @@ void test_malformed_manifests() {
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   }
 })",
@@ -1316,7 +1297,6 @@ void test_malformed_manifests() {
   "entry": "wasm::e1_identity::IdentityAgent",
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   }
 })",
@@ -1331,7 +1311,6 @@ void test_malformed_manifests() {
   "scenarios": [],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   }
 })",
@@ -1352,7 +1331,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "lists scenario 'same' more than once");
@@ -1369,7 +1348,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "scenario is missing required field 'name'");
@@ -1386,7 +1365,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "is missing required field 'input'");
@@ -1407,7 +1386,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "must be a path-safe name matching [A-Za-z0-9_-]+");
@@ -1424,7 +1403,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "must be a path-safe name matching [A-Za-z0-9_-]+");
@@ -1441,7 +1420,7 @@ void test_malformed_manifests() {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "unsupported conformance case field 'scenarios[].bogus'");
@@ -1473,7 +1452,7 @@ void test_canonicality_gate() {
     }
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })";
     auto rejected = parse_conformance_case_json(noncanonical_input, "noncanonical-input");
@@ -1505,7 +1484,7 @@ void test_float_canonicality_gate() {
     }
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })";
     };
@@ -1552,7 +1531,7 @@ void test_enum_empty_payload_gate() {
     }
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })";
     };
@@ -1589,7 +1568,7 @@ void test_dangling_source_rejected(const std::filesystem::path &scratch_dir) {
                 "capability_sequence": []}}
   ],
   "capabilities": [],
-  "engines": {"evaluator": true,
+  "engines": {
               "wasm": {"eligible": "none", "reason": "host-only"}}
 })";
     auto parsed = parse_conformance_case_json(manifest, "dangling");
@@ -1639,7 +1618,6 @@ void test_capabilities_required() {
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
   }
 })",

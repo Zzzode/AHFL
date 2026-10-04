@@ -1,9 +1,8 @@
 // WH-5c.8 (GAP 8): unit tests for the shared capability event projection
 // helper (capability_event_projection.hpp). The helper is the SINGLE
-// implementation of the evaluator's aggregate->per-attempt event synthesis,
-// called by BOTH the evaluator (workflow_runtime.cpp) and the wasm lanes
-// (wasm_lifecycle.cpp). These tests pin the event ORDINALS/order (not just
-// kinds) so a synthesis regression in either lane is caught here.
+// implementation of the aggregate->per-attempt event synthesis,
+// called by the wasm lanes (wasm_lifecycle.cpp). These tests pin the event
+// ORDINALS/order (not just kinds) so a synthesis regression is caught here.
 
 #include "runtime/engine/capability_event_projection.hpp"
 
@@ -102,7 +101,7 @@ void test_attempts_two_retry_ordering() {
                                    fx.capability, fx.provider, call,
                                    std::nullopt, InvocationId{});
     const auto &events = fx.result.events.events();
-    // Ordinal pin (mirrors the evaluator's synthesis loop): a non-terminal
+    // Ordinal pin: a non-terminal
     // attempt that eventually succeeds still emits a retryable Failed.
     // Started(1), Failed(1, retryable), RetryScheduled, Started(2), Completed.
     check(events.size() == 5, "attempts2_retry.event_count");

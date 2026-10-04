@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-1 companion to p6_nested_elseless: both true guards enter the inner then-branch to High; landed on the orchestration lane"

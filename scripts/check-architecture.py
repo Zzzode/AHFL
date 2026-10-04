@@ -45,7 +45,6 @@ STALE_PREFIXES = (
     "persistence_export/",
     "store_import/",
     "durable_store_import/",
-    "evaluator/",
     "llm_provider/",
     "secret/",
     "formal/",

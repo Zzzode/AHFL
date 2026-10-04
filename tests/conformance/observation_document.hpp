@@ -13,9 +13,9 @@
 //    "capability_arguments":[<canonical wire envelope per call>,...],
 //    "output_json":<canonical wire value, absent when no output>}
 //
-// Extracted from evaluator_engine.cpp (anonymous namespace) so the native
-// engine adapter (native_engine.cpp) produces the SAME canonical bytes the
-// evaluator engine produces, ensuring the comparator diffs apples to apples.
+// Shared by the native engine adapter (native_engine.cpp) and other
+// conformance engine adapters so each one produces the SAME canonical bytes,
+// ensuring the comparator diffs apples to apples.
 
 #include <string>
 #include <utility>

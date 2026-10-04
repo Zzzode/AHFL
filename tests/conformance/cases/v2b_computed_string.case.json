@@ -27,7 +27,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-B computed STRING final selects between two hash-consed rodata literals through an if; p6-frame module on the orchestration lane"

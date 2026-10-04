@@ -611,9 +611,8 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     }
 
     // P1-2: build the result via the shared lifecycle helper (metadata +
-    // lifecycle events + report from events, the SAME projection the
-    // evaluator uses). The agent lane wraps the bare agent in a synthetic
-    // single-node workflow.
+    // lifecycle events + report from events). The agent lane wraps the bare
+    // agent in a synthetic single-node workflow.
     WasmAgentRunResult result;
     const bool report_ok = finalize_wasm_agent_run(
         result.result, descriptor, walk->states,

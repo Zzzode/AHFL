@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6 if-let chain with no matching arm falls through to a direct final goto; landed P6 match lowering on the orchestration lane"

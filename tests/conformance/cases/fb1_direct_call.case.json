@@ -17,10 +17,8 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": false,
     "wasm": {
       "eligible": "orchestration",
-      "node_observation_skip": "evaluator_surface_awaits_kr68",
       "reason": "RFC 0026 FB-1: the Init handler invokes statically resolved PURE direct fns (double_it, generic identity<Int>, and a chained fn calling another fn) reached by plain wasm call with env=0; the scalar results drive a computed goto. Emits on the orchestration lane; the in-process evaluator does not yet execute user-defined pure fn calls, so the Node embedded-engine observation is authoritative until KR6.8."
     }
   }

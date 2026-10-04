@@ -100,8 +100,7 @@ struct WorkflowSessionConfig {
     std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
 
     // WH-4b: the store to persist the recovery snapshot on suspend. Null means
-    // no persistence: a suspend downgrades to NodeFailed (mirrors the evaluator
-    // at workflow_runtime.cpp:1582-1603).
+    // no persistence: a suspend downgrades to NodeFailed.
     const WorkflowRecoveryStore *recovery_store{nullptr};
 
     // WH-4b: the pending capability result for a resume run, as a native Value.

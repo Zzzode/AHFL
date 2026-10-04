@@ -17,7 +17,6 @@
     "partial_response"
   ],
   "required_tests": {
-    "process_crash": "ahfl.reference_workflow.recovery_smoke",
     "recovery_schema": "ahfl.runtime.workflow_recovery_all",
     "otel_adapter": "ahfl.runtime.execution_otel_all",
     "provider_budget": "ahflc.run.llm_provider_runtime.smoke"

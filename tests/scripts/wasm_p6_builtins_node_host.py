@@ -5,11 +5,11 @@ enum-constructor builtins (option_some / result_ok / result_err).
 App code reaches the identity constructor through enum syntax; the bodyless
 hook lowering is the same CoreConstructExpr. The fixture unwraps two Some
 payloads and routes High only when both payload extractions are correct.
-SKIP (77) when node is unavailable.
+The wasm state-id path is pinned against the frozen oracle captured at HEAD
+620fadd8 (WH-9 B0). SKIP (77) when node is unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +17,15 @@ import tempfile
 from pathlib import Path
 
 SKIP = 77
+
+# Frozen oracle (WH-9 B0, HEAD 620fadd8).
+FROZEN_OBS = {
+    "status": "completed",
+    "entered_ids": [3, 1, 0],
+    "final_state_id": 0,
+    "transition_count": 2,
+    "initial_state_id": 3,
+}
 
 
 def fail(message: str) -> int:
@@ -39,22 +48,16 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-p6-builtins-node-") as td:
         td_path = Path(td)
         wasm = td_path / "p6_builtins.wasm"
-        run = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if run.returncode != 0:
-            return fail(f"producer exited {run.returncode}: {run.stderr}")
-        match = re.search(
-            r"native_status=(\w+) entered_ids=([0-9,]*) .*transition_count=(\d+) "
-            r"initial_state_id=(\d+)",
-            run.stdout,
-        )
-        if match is None or match.group(1) != "completed":
-            return fail(f"native builtins run did not complete: {run.stdout!r}")
-        entered = [int(x) for x in match.group(2).split(",") if x]
-        transitions = int(match.group(3))
-        initial = int(match.group(4))
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+        obs = FROZEN_OBS
+        entered = obs["entered_ids"]
+        transitions = obs["transition_count"]
+        initial = obs["initial_state_id"]
         expected = entered[1:]
 
         host = td_path / "p6_builtins_host.mjs"

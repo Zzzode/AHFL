@@ -54,7 +54,6 @@ def main() -> int:
             "-R",
             (
                 "^(ahfl\\.semantics\\.(typed_hir_all|type_resolver_all)|"
-                "ahfl\\.evaluator\\.eval_all|ahfl\\.executor\\.exec_all|"
                 "ahfl\\.runtime\\.(value_json_all|core_wire_codec|"
                 "capability_bridge_all)|ahflc\\.check\\.stdlib_api_smoke)$"
             ),
@@ -135,7 +134,6 @@ def main() -> int:
         "test_command": (
             f"ctest --test-dir {build} --output-on-failure -R "
             "'^(ahfl\\.semantics\\.(typed_hir_all|type_resolver_all)|"
-            "ahfl\\.evaluator\\.eval_all|ahfl\\.executor\\.exec_all|"
             "ahfl\\.runtime\\.(value_json_all|core_wire_codec|capability_bridge_all)|"
             "ahflc\\.check\\.stdlib_api_smoke)$'"
         ),

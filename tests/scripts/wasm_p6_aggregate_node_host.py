@@ -36,29 +36,19 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8).
+FROZEN_OBS = {
+    "status": "completed",
+    "entered_ids": [3, 1, 0],
+    "final_state_id": 0,
+    "transition_count": 2,
+    "initial_state_id": 3,
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def parse_frame(stdout: str) -> tuple[int, list[tuple[str, int, int]]]:
@@ -91,16 +81,14 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-p6-aggregate-node-") as td:
         td_path = Path(td)
         wasm = td_path / "p6_aggregate.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"producer exited {native.returncode}: {native.stderr}")
-        obs = parse_observation(native.stdout)
-        if obs["status"] != "completed" or not obs["entered_ids"]:
-            return fail(f"native aggregate run did not complete: {obs}")
-        base, fields = parse_frame(native.stdout)
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+        obs = FROZEN_OBS
+        base, fields = parse_frame(compile_run.stdout)
         if [name for name, _o, _v in fields] != ["a", "b"]:
             return fail(f"unexpected input frame fields: {fields}")
 
@@ -137,14 +125,14 @@ for (const f of fields) {
   view.setBigInt64(base + f.offset, BigInt(f.value), true);
 }
 
-// The native run's entered-id sequence drives step(); the wasm path is that
+// The frozen oracle's entered-id sequence drives step(); the wasm path is that
 // sequence minus the leading initial id.
 const expectedEntered = process.argv[5].split(",").map(Number);
 const initial = Number(process.argv[6]);
 const transitions = Number(process.argv[7]);
 const expected = expectedEntered.slice(1);
 if (expectedEntered[0] !== initial)
-  throw new Error("native initial id does not match initial_state_id");
+  throw new Error("frozen initial id does not match initial_state_id");
 if (exports.current_state() !== initial)
   throw new Error(`initial state ${exports.current_state()} != ${initial}`);
 const sequence = [];
@@ -169,7 +157,7 @@ while (guard-- > 0) {
 const path = sequence.slice(0, expected.length);
 if (JSON.stringify(path) !== JSON.stringify(expected))
   throw new Error(
-    `state path ${path} != native ${expected} ` + "(a wrong field offset misroutes the branch)");
+    `state path ${path} != oracle ${expected} ` + "(a wrong field offset misroutes the branch)");
 if (exports.transition_count.value !== transitions)
   throw new Error(`transition_count ${exports.transition_count.value} != ${transitions}`);
 

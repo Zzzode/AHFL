@@ -4,9 +4,9 @@
 //
 // `run_native_scenario` drives the wasm3-backed facade
 // (WasmWorkflowRuntime / WasmAgentRunner) directly in-process and produces
-// the SAME canonical observation document the evaluator engine produces
-// (ahfl.evaluator-observation.v1), so the differential comparator
-// (observation_compare.hpp) can diff evaluator-vs-native without a Node
+// the canonical observation document (ahfl.evaluator-observation.v1,
+// historical schema name), so the differential comparator
+// (observation_compare.hpp) can diff blessing-vs-native without a Node
 // subprocess.
 //
 // This is the NATIVE lane: it compiles the AHFL-IR program through the facade

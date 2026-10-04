@@ -27,7 +27,7 @@
 // authority gates). The token is an identity/collision authority only -- never
 // an authenticity or rollback authority. It is intentionally a distinct
 // identity from the native process-local FNV-1a u64
-// `compute_idempotency_key` in workflow_runtime.cpp: neither type converts to
+// `compute_idempotency_key` in workflow_recovery.cpp: neither type converts to
 // the other and the native path is not replaced.
 
 #include <array>

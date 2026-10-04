@@ -11,7 +11,7 @@
 
 ## 用户故事
 
-一个高风险 Agent workflow 在第三个节点调用外部 capability 时被 `SIGKILL`。操作者重启同一个工程，检查已持久化 checkpoint，批准恢复，然后继续执行。恢复过程必须满足：
+一个高风险 Agent workflow 在第三个节点调用外部 capability 时收到 `AHFL_CAP_PENDING`：运行在该 capability 边界挂起，并把 workflow 级恢复快照（schema v2）原子落盘——包含已完成节点、pending 坐标与覆盖挂起点之前整个 workflow 的精确 capability memo。随后一个**冷启动的新 runtime**（fresh wasm instance）加载快照、从头重放整个模块：frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），重放到 pending 调用时由 host 提供结果后继续。WH-9 后仓库里只有 wasm 这一条执行路径，旧的杀进程节点 checkpoint / operator 批准恢复路径已退役。恢复过程必须满足：
 
 1. 已完成节点不会再次执行副作用。
 2. scheduler、audit、replay 和恢复候选来自同一组 execution events。
@@ -25,7 +25,7 @@
 flowchart LR
     Manifest[ahfl.toml run profile] --> Handoff[Native handoff package]
     Handoff --> Plan[ExecutionPlan]
-    Plan --> Runtime[WorkflowRuntime]
+    Plan --> Runtime[WasmWorkflowRuntime]
     Runtime --> Sink[ExecutionEventSink]
     Provider[Capability and LLM providers] --> Runtime
     Sink --> Store[ExecutionEventStore]
@@ -41,7 +41,7 @@ flowchart LR
     Store --> JSONL[JSONL renderer]
 ```
 
-`DryRunTrace` 是 `ExecutionPlan` + deterministic capability mocks 的离线演练结果，不冒充真实 runtime event log，也不进入 crash/recovery 主链。
+`DryRunTrace` 是 `ExecutionPlan` + deterministic capability mocks 的离线演练结果，不冒充真实 runtime event log，也不进入 suspend/recovery 主链。
 
 ## 核心不变量
 
@@ -126,14 +126,15 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 
 ## Recovery Contract
 
-当前 recovery schema 是 `ahfl.workflow-recovery.v1`。
+加载器接受 `ahfl.workflow-recovery.v1` 与 `v2`；wasm lane 写 `v2`。
 
 1. checkpoint projection 只保存 completed nodes 与对应 `RuntimeValueId`。
 2. materialization 从 `WorkflowResult` 的 value store 深拷贝 runtime values，禁止保存悬空引用。
-3. `WorkflowRecoveryStore` 通过 atomic replace 保存 snapshot。
-4. load 必须验证 schema、ID、节点唯一性和值结构；损坏或部分写入 fail closed。
-5. resume 发出 `RunResumed` 与 `NodeRestored`，已恢复节点不能再次触发 capability side effect。
-6. operator approval 属于 reference workflow 的外部恢复门禁，不被伪造成编译器静态证明。
+3. v2 快照额外保存挂起节点坐标、节点 input（信息性）与覆盖挂起点之前整个 workflow 的 capability memo（per-node ordinal 索引，cap_id/arg_hash 交叉校验，ExactSidecar 逐字 wire 字节）。
+4. `WorkflowRecoveryStore` 通过 atomic replace 保存 snapshot。
+5. load 必须验证 schema、ID、节点唯一性、memo 三态与坐标；损坏、部分写入或 memo/frontier 与实际调用坐标不一致 fail closed。
+6. 恢复在冷启动 fresh wasm instance 上整模块重放：frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），发 `RunResumed` 与 `NodeRestored`，已恢复节点不会再次触发 capability side effect。
+7. WH-9 前的 operator approval / SIGKILL 节点 checkpoint 恢复路径已随树步评估器退役，不在当前 contract 内；跨进程生产级 exactly-once host 是 RFC 0026 E4-B2 后续。
 
 ## Compiler / Runtime Boundary
 
@@ -142,7 +143,7 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 | Package manifest | package、target、run profile、capability binding handle | secret material、运行历史 |
 | Native handoff package | workflow graph、capability surface、policy summary | runtime values、checkpoint |
 | `ExecutionPlan` | 静态 node/dependency/lifecycle/input summary | 执行结果、retry、provider 状态 |
-| `WorkflowRuntime` | 解释 plan、执行 Agent/capability、产生 events | 终端文案 |
+| `WasmWorkflowRuntime` | 执行编译产物 wasm 模块（agent 状态机 / workflow DAG）、经宿主 ABI 调用 capability、产生 events | 终端文案 |
 | Renderer | 消费 report/events | 执行 workflow、修复 event stream |
 
 ## 非目标
@@ -167,4 +168,4 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 2. projection 需要新事实时，优先扩 event payload；禁止新增平行 snapshot source。
 3. schema 变化必须同步 recovery compatibility policy、测试和 evidence generator。
 4. renderer 变化不能改变 event 或 report 语义。
-5. 修改 runtime kernel 后至少运行 event、report、projection、recovery、workflow runtime 和 reference recovery smoke。
+5. 修改 runtime kernel 后至少运行 event、report、projection、recovery、wasm workflow runtime 测试,以及 `durable_resume_capstone` 与 `long_soak_smoke`。

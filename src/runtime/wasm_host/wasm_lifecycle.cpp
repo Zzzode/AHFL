@@ -44,10 +44,9 @@ add_error(WorkflowResult &result, std::string code, std::string message,
     return id;
 }
 
-// Build the report from the event stream via the SAME projection the
-// evaluator uses (finalize_report in workflow_runtime.cpp). Returns false
-// if the event stream violated the lifecycle contract. On failure the
-// report is left fail-closed: status=Failed (default) +
+// Build the report from the event stream via the shared projection.
+// Returns false if the event stream violated the lifecycle contract. On
+// failure the report is left fail-closed: status=Failed (default) +
 // failure_kind=EvaluationFailed, and a wasm.event-stream-invalid
 // diagnostic is emitted.
 bool build_report(WorkflowResult &result) {
@@ -75,14 +74,13 @@ struct WorkflowMetadataPlan {
     std::unordered_map<std::uint32_t, WorkflowNodeId> node_by_id;
     // Capability canonical name -> CapabilityId (import ordinal order).
     std::unordered_map<std::string, CapabilityId> capability_by_name;
-    // The runtime provider (matches the evaluator's "runtime" provider).
+    // The runtime provider.
     ProviderId provider;
 };
 
 // Populate the metadata store from the descriptor. Agents are assigned by
-// first-appearance by NAME in node_id (source) order, matching the
-// evaluator's build_runtime_plan. Nodes are added in node_id order so the
-// dense WorkflowNodeId equals the source-order index.
+// first-appearance by NAME in node_id (source) order. Nodes are added in
+// node_id order so the dense WorkflowNodeId equals the source-order index.
 [[nodiscard]] WorkflowMetadataPlan
 populate_workflow_metadata(WorkflowResult &result,
                            const bd::CoreWasmExecutionDescriptor &descriptor) {
@@ -143,7 +141,7 @@ populate_workflow_metadata(WorkflowResult &result,
 }
 
 // Emit the lifecycle event stream for a workflow run. Events are emitted in
-// the SAME order as the evaluator's WorkflowRuntime::run:
+// schedule order:
 //   RunStarted, WorkflowStarted, NodeScheduled (all, in schedule order),
 //   per node: NodeStarted, AgentStateEntered (per state), terminal,
 //   WorkflowCompleted|WorkflowFailed, RunCompleted.
@@ -209,8 +207,7 @@ void emit_workflow_events(WorkflowResult &result,
 
         emit(NodeStarted{.node = node_id, .agent = agent_id});
 
-        // AgentStateEntered: add states lazily (in entry order) to match
-        // the evaluator's insertion order for AgentStateId.
+        // AgentStateEntered: add states lazily (in entry order).
         for (const auto &state_entry : node_facts.states) {
             const auto state_id = result.metadata.add_agent_state(
                 agent_id, state_entry.state_name);
@@ -223,13 +220,11 @@ void emit_workflow_events(WorkflowResult &result,
 
         // Capability lifecycle: project each collected call's aggregate
         // CapabilityCallResult into the event stream via the SHARED
-        // capability_event_projection helper (the SAME synthesis the
-        // evaluator uses). The wasm lane projects post-run (events are
-        // buffered during invoke_run2 and projected here, before the node
-        // terminal); the projection input (CapabilityCallResult) and output
-        // (event stream) are identical to the evaluator's call-time
-        // projection. The first invocation id is allocated by the helper
-        // (the wasm lane has no pre-invocation idempotency context).
+        // capability_event_projection helper. The wasm lane projects
+        // post-run (events are buffered during invoke_run2 and projected
+        // here, before the node terminal). The first invocation id is
+        // allocated by the helper (the wasm lane has no pre-invocation
+        // idempotency context).
         for (auto &cap_call : facts.capability_calls) {
             auto node_it = plan.node_by_id.find(cap_call.node_id);
             if (node_it == plan.node_by_id.end() ||
@@ -267,9 +262,8 @@ void emit_workflow_events(WorkflowResult &result,
                    WasmNodeRunFacts::Terminal::Suspended) {
             // WH-4b: the node suspended on a pending capability call. No
             // CapabilityStarted was emitted for the pending call (it has no
-            // terminal yet; it completes on resume), matching the evaluator
-            // (workflow_runtime.cpp:1079-1082). The node-level NodeSuspended
-            // terminal records the pause.
+            // terminal yet; it completes on resume). The node-level
+            // NodeSuspended terminal records the pause.
             emit(NodeSuspended{
                 .node = node_id,
                 .agent = agent_id,
@@ -279,8 +273,7 @@ void emit_workflow_events(WorkflowResult &result,
         } else {
             // WH-5c.6: emit ONE ranged diagnostic and record its id so the
             // workflow-level WorkflowFailed reuses it (no duplicate bag
-            // entry, mirroring the evaluator at
-            // workflow_runtime.cpp:1594-1597).
+            // entry).
             const auto diag_id =
                 add_error(result, node_facts.failure_code,
                           node_facts.failure_message,
@@ -327,8 +320,7 @@ void emit_workflow_events(WorkflowResult &result,
         });
     } else {
         // WH-8 (kr68 section 12.9.2): emit the cancellation / interruption
-        // event before the workflow terminal, mirroring the evaluator at
-        // workflow_runtime.cpp:1130-1134.
+        // event before the workflow terminal.
         if (facts.status == RunTerminalStatus::Cancelled) {
             emit(RunCancellationRequested{.run = RunId{0}});
         } else if (facts.status == RunTerminalStatus::Interrupted) {
@@ -418,9 +410,8 @@ bool finalize_wasm_agent_run(
 
     // Capability lifecycle: project each collected call's aggregate
     // CapabilityCallResult into the event stream via the SHARED
-    // capability_event_projection helper (the SAME synthesis the
-    // evaluator uses). See the workflow lane above for the post-run
-    // projection rationale.
+    // capability_event_projection helper. See the workflow lane above for
+    // the post-run projection rationale.
     for (auto &cap_call : capability_calls) {
         const auto cap_id =
             capability_by_name.count(cap_call.capability_name)

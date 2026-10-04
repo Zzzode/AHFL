@@ -7,12 +7,16 @@ generic fn, and an fn that calls another fn). The outlined fn bodies are real
 wasm functions invoked with a plain `call` (env=0); the scalar return drives a
 computed goto. This script compiles the emitted module with the Node v22
 WebAssembly engine and drives the stable step() ABI, asserting the reached
-state ids and transition_count match the native observation. Real Node-engine
-evidence, NOT wasmtime evidence. SKIP (77) when node is unavailable.
+state ids and transition_count match the wasm-path expectation frozen at HEAD
+620fadd8 (WH-9 B0). This fixture was NOT executable by the tree-walking
+evaluator (its native token in the B0 capture is status=failed), so the
+frozen value is a wasm-path expectation derived at freeze time and backed by
+the checked-in conformance manifest, not a captured native observation. Real
+Node-engine evidence, NOT wasmtime evidence. SKIP (77) when node is
+unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -21,29 +25,22 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8): the wasm-path expectation. The
+# retired evaluator could not execute user-defined direct fn calls; the wasm
+# path is the authoritative engine evidence. The fixture declares exactly two
+# states [Init, Done], so Done = initial+1 = 1.
+FROZEN_OBS = {
+    "status": "completed",
+    "entered_ids": [0, 1],
+    "final_state_id": 1,
+    "transition_count": 1,
+    "initial_state_id": 0,
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -61,32 +58,13 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-fb1-node-") as td:
         td_path = Path(td)
         wasm_path = td_path / "fb1_direct_call.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm_path)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"FB-1 producer exited {native.returncode}: {native.stderr}")
-        obs = parse_observation(native.stdout.strip())
-        # The native evaluator does not execute user-defined direct fn calls
-        # yet (that execution surface is exactly what FB-1 moves to wasm; the
-        # evaluator retires with KR6.8). The native run therefore stays in its
-        # initial state; the Node wasm path is the authoritative engine
-        # evidence. The expected destination is the agent's sole final state
-        # (Done), whose dense id the probe reports as `final_state_id` only for
-        # a completed native run — here derive it from the fixture's state
-        # table the probe already resolved: initial_state_id is present and the
-        # fixture declares exactly two states [Init, Done], so Done = initial+1.
-        if obs["status"] != "completed":
-            initial = int(obs["initial_state_id"])
-            done = initial + 1
-            obs = {
-                "status": "completed",
-                "entered_ids": [initial, done],
-                "final_state_id": done,
-                "transition_count": 1,
-                "initial_state_id": initial,
-            }
+        if compile_run.returncode != 0:
+            return fail(f"FB-1 producer exited {compile_run.returncode}: {compile_run.stderr}")
+        obs = FROZEN_OBS
 
         host = td_path / "fb1_host.mjs"
         host.write_text(
@@ -106,7 +84,7 @@ const expectedSequence = expectedEntered.slice(1);
 const expectedTransitions = Number(process.argv[5]);
 
 if (expectedEntered[0] !== expectedInitial)
-  throw new Error("native initial id does not match initial_state_id");
+  throw new Error("frozen initial id does not match initial_state_id");
 if (c.current_state() !== expectedInitial)
   throw new Error(`initial state ${c.current_state()} != ${expectedInitial}`);
 
@@ -131,7 +109,7 @@ while (guard-- > 0) {
 }
 const observed = sequence.slice(0, expectedSequence.length);
 if (JSON.stringify(observed) !== JSON.stringify(expectedSequence))
-  throw new Error(`state-id path ${observed} != native ${expectedSequence}`);
+  throw new Error(`state-id path ${observed} != oracle ${expectedSequence}`);
 if (c.transition_count.value !== expectedTransitions)
   throw new Error(`transition_count ${c.transition_count.value} != ${expectedTransitions}`);
 

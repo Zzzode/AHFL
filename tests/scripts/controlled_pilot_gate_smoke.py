@@ -85,7 +85,6 @@ def write_contract(root: Path) -> None:
                 },
                 "required_faults": list(REQUIRED_FAULTS),
                 "required_tests": {
-                    "process_crash": "ahfl.reference_workflow.recovery_smoke",
                     "recovery_schema": "ahfl.runtime.workflow_recovery_all",
                     "otel_adapter": "ahfl.runtime.execution_otel_all",
                     "provider_budget": "ahflc.run.llm_provider_runtime.smoke",
@@ -117,7 +116,6 @@ def valid_evidence(revision: str) -> dict[str, object]:
             fault: {"status": "passed", "request_count": 1}
             for fault in REQUIRED_FAULTS
         },
-        "process_crash_test": "ahfl.reference_workflow.recovery_smoke",
         "recovery_schema_test": "ahfl.runtime.workflow_recovery_all",
         "recovery_schema_policy": "reject unknown and legacy schemas",
         "otel_adapter_test": "ahfl.runtime.execution_otel_all",

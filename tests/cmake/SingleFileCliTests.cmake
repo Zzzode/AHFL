@@ -350,6 +350,11 @@ set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
 set(AHFL_RUN_SECRET_HANDLE_INPUT [[{"_type":"runtime::e2e_multi_agent::SupportRequest","user_id":"u-1","message":"hello","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"}}]])
 set(AHFL_RUN_SCHEMA_MISMATCH_INPUT [[{"_type":"runtime::e2e_multi_agent::SupportRequest","user_id":"u-1","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"}}]])
 
+# KR6.8 WH-6/7/8 product policy (kr68 §12.7.1): `ahflc run` is an execution
+# verb and exists only with the embedded wasm engine. Every run-verb test
+# below is therefore registered only for WASM=ON; the WASM=OFF product
+# instead carries the explicit refusal contract further down.
+if(AHFL_ENABLE_BACKEND_WASM)
 add_test(NAME ahflc.run.llm_config.fail_missing_api_key_secret
     COMMAND ${CMAKE_COMMAND} -E env --unset=AHFL_TEST_MISSING_LLM_API_KEY_DO_NOT_SET
             ${CMAKE_COMMAND}
@@ -410,7 +415,7 @@ add_test(NAME ahflc.run.llm_provider_runtime.smoke
 # real autoregressive inference over the committed tiny-llama GGUF fixture,
 # through AHFL's production LLM provider path. Optional: only registered when a
 # llama-server binary was discovered at configure time (see AHFL_LLAMA_SERVER).
-if(AHFL_LLAMA_SERVER)
+if(AHFL_ENABLE_BACKEND_WASM AND AHFL_LLAMA_SERVER)
     add_test(NAME ahflc.run.real_llm.evidence
         COMMAND ${Python3_EXECUTABLE}
                 "${AHFL_TESTS_DIR}/scripts/real_llm_run_evidence.py"
@@ -503,6 +508,21 @@ add_test(NAME ahflc.run.wasm.wh6_codegen_diag.caret
             "-DEXPECTED_REGEX=\\| *~+"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
+endif()
+
+# kr68 §12.7.1 refusal contract (WASM=OFF product): the run verb must fail
+# closed with the actionable rebuild diagnostic and non-zero exit -- never
+# silently fall back to another engine (Principle 1 forbids one).
+if(NOT AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahflc.run.wasm_off_refusal.contract
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SECRET_HANDLE_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+                "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+                "-DEXPECTED_REGEX=ahflc run requires the embedded wasm engine"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+    )
+endif()
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_missing_effect

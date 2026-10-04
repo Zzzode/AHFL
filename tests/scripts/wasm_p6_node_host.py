@@ -3,18 +3,18 @@
 
 The producer compiles one real-frontend arithmetic conditional-goto fixture
 (and one integer divide-by-zero trap fixture) through the full
-AHFL->Core->P4-D->wasm pipeline and reports the native AgentRuntime state-id
-sequence. This script instantiates the emitted modules with the Node v22
-WebAssembly engine and drives the stable step() ABI: the computed-goto
-handler's scalar result is observable purely through the state ids step()
-moves to and transition_count, with no frame encoding or import callback.
+AHFL->Core->P4-D->wasm pipeline. This script instantiates the emitted modules
+with the Node v22 WebAssembly engine and drives the stable step() ABI: the
+computed-goto handler's scalar result is observable purely through the state
+ids step() moves to and transition_count, with no frame encoding or import
+callback. The wasm state-id paths are pinned against the frozen oracles
+captured at HEAD 620fadd8 (WH-9 B0).
 
 This is embedded-engine evidence, NOT wasmtime evidence. SKIP (77) when the
 node interpreter is unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -23,29 +23,26 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracles (WH-9 B0, HEAD 620fadd8), keyed by fixture stem.
+FROZEN_OBS: dict[str, dict[str, object]] = {
+    "p6_scalar_cond": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_scalar_trap": {
+        "status": "failed", "entered_ids": [1],
+        "final_state_id": 1, "transition_count": 0, "initial_state_id": 1,
+    },
+    "p6_neg_compare": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -74,38 +71,34 @@ def main(argv: list[str]) -> int:
         trap_wasm = td_path / "p6_trap.wasm"
         neg_wasm = td_path / "p6_neg.wasm"
 
-        cond_native = subprocess.run(
+        cond_compile = subprocess.run(
             [str(producer), str(cond_source), str(cond_wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if cond_native.returncode != 0:
-            return fail(f"P6 cond producer exited {cond_native.returncode}: "
-                        f"{cond_native.stderr}")
-        cond_obs = parse_observation(cond_native.stdout.strip())
-        if cond_obs["status"] != "completed" or not cond_obs["entered_ids"]:
-            return fail(f"native cond run did not complete: {cond_obs}")
+        if cond_compile.returncode != 0:
+            return fail(f"P6 cond producer exited {cond_compile.returncode}: "
+                        f"{cond_compile.stderr}")
+        cond_obs = FROZEN_OBS[cond_source.stem]
 
-        trap_native = subprocess.run(
+        trap_compile = subprocess.run(
             [str(producer), str(trap_source), str(trap_wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if trap_native.returncode != 0:
-            return fail(f"P6 trap producer exited {trap_native.returncode}: "
-                        f"{trap_native.stderr}")
-        trap_obs = parse_observation(trap_native.stdout.strip())
+        if trap_compile.returncode != 0:
+            return fail(f"P6 trap producer exited {trap_compile.returncode}: "
+                        f"{trap_compile.stderr}")
+        trap_obs = FROZEN_OBS[trap_source.stem]
 
         neg_obs: dict[str, object] | None = None
         if neg_source is not None:
-            neg_native = subprocess.run(
+            neg_compile = subprocess.run(
                 [str(producer), str(neg_source), str(neg_wasm)],
                 capture_output=True, text=True, timeout=60,
             )
-            if neg_native.returncode != 0:
-                return fail(f"P6 neg producer exited {neg_native.returncode}: "
-                            f"{neg_native.stderr}")
-            neg_obs = parse_observation(neg_native.stdout.strip())
-            if neg_obs["status"] != "completed" or not neg_obs["entered_ids"]:
-                return fail(f"native negative-compare run did not complete: {neg_obs}")
+            if neg_compile.returncode != 0:
+                return fail(f"P6 neg producer exited {neg_compile.returncode}: "
+                            f"{neg_compile.stderr}")
+            neg_obs = FROZEN_OBS[neg_source.stem]
 
         host = td_path / "p6_host.mjs"
         host.write_text(
@@ -126,7 +119,7 @@ if (c.ahfl_abi_version.value !== 1)
   throw new Error("abi version mismatch");
 
 const expectedInitial = Number(process.argv[3]);
-// The native observation includes the initial state before any transition;
+// The frozen oracle includes the initial state before any transition;
 // step() results begin AFTER the first transition, so the wasm path is the
 // entered-id sequence minus its leading initial id.
 const expectedEntered = process.argv[4].split(",").map(Number);
@@ -134,14 +127,14 @@ const expectedSequence = expectedEntered.slice(1);
 const expectedTransitions = Number(process.argv[5]);
 
 if (expectedEntered[0] !== expectedInitial)
-  throw new Error("native initial id does not match initial_state_id");
+  throw new Error("frozen initial id does not match initial_state_id");
 if (c.current_state() !== expectedInitial)
   throw new Error(`initial state ${c.current_state()} != ${expectedInitial}`);
 const sequence = [];
 let previous = expectedInitial;
 let guard = expectedSequence.length + 2;
 // Drive step() until it reports a stable final state (step returns the same
-// id twice). The native observation is the exact expected id sequence.
+// id twice). The frozen oracle is the exact expected id sequence.
 while (guard-- > 0) {
   const before = c.transition_count.value;
   const next = c.step();
@@ -161,7 +154,7 @@ while (guard-- > 0) {
 }
 const observedPath = sequence.slice(0, expectedSequence.length);
 if (JSON.stringify(observedPath) !== JSON.stringify(expectedSequence))
-  throw new Error(`state-id path ${observedPath} != native ${expectedSequence}`);
+  throw new Error(`state-id path ${observedPath} != oracle ${expectedSequence}`);
 if (c.transition_count.value !== expectedTransitions)
   throw new Error(`transition_count ${c.transition_count.value} != ${expectedTransitions}`);
 
@@ -195,7 +188,7 @@ if (t.current_state() !== trapInitial || t.transition_count.value !== trapCount)
 // --- negative-operand signed comparison: -5 <= 0 must select High ---
 // This is the input domain that exposes a swapped-direction or unsigned
 // opcode: a wrong gt_s/le_u byte would take Low instead of High. The
-// module is only present when the native comparison observation is.
+// module is only present when the frozen comparison oracle is.
 if (process.argv[7]) {
   const negBytes = load(process.argv[7]);
   const {exports: n} = await WebAssembly.instantiate(
@@ -221,7 +214,7 @@ if (process.argv[7]) {
   const negPath = negSequence.slice(0, negExpected.length);
   if (JSON.stringify(negPath) !== JSON.stringify(negExpected))
     throw new Error(
-      `negative-operand -5<=0 state path ${negPath} != native ${negExpected} ` +
+      `negative-operand -5<=0 state path ${negPath} != oracle ${negExpected} ` +
       "(signed comparison opcode miscompiled)");
   if (n.transition_count.value !== negTransitions)
     throw new Error(
@@ -257,11 +250,11 @@ console.log("P6 scalar Node step/run execution passed");
                 f"Node P6 host exited {executed.returncode}: "
                 f"stdout={executed.stdout!r} stderr={executed.stderr!r}"
             )
-        # The trap fixture's native run fails (the evaluator reports division
-        # by zero); the wasm engine traps. Both fail the same handler without a
+        # The trap fixture's frozen oracle is failed (the wasm engine traps
+        # on division by zero). Both fail the same handler without a
         # transition, which is the cross-engine agreement the test asserts.
         if trap_obs["status"] != "failed" or trap_obs["transition_count"] != 0:
-            return fail(f"native trap fixture unexpectedly non-failing: {trap_obs}")
+            return fail(f"trap fixture frozen oracle unexpectedly non-failing: {trap_obs}")
 
     print("OK: RFC 0026 P6-1 scalar Node embedded-engine execution passed "
           "(real Node v22 engine, NOT wasmtime evidence)")

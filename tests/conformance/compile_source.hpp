@@ -3,8 +3,8 @@
 // KR6.7 (RFC 0026 P7): the ONE compile seam for conformance test
 // infrastructure.
 //
-// Every conformance consumer that needs a compiled AHFL program (the evaluator
-// engine adapter, the wasm eligibility classifier) runs the identical
+// Every conformance consumer that needs a compiled AHFL program (the wasm
+// eligibility classifier) runs the identical
 // parse -> resolve -> typecheck -> validate -> lower pipeline through this
 // function. It replaced the per-driver copies the bespoke end-to-end binaries
 // each carried, so the pipeline order and its diagnostic rendering exist
@@ -443,7 +443,7 @@ compile_conformance_source(const std::filesystem::path &file_path, std::string &
 /// UnitValue (not NoneValue), and Decimal/Duration as their typed spelling
 /// variants (which the P6 frame packer requires).
 ///
-/// Both the evaluator and wasm conformance engines MUST use this (not
+/// All conformance engines MUST use this (not
 /// `value_from_json`) so that the two lanes start from identical typed values
 /// and their observations agree byte-for-byte.
 [[nodiscard]] inline std::optional<runtime::Value>

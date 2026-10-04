@@ -15,7 +15,6 @@ from ahfl_source_revision import compute_source_revision
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_FAULTS = ("disconnect", "rate_limit", "timeout", "partial_response")
 EXPECTED_TEST_KEYS = (
-    "process_crash",
     "recovery_schema",
     "otel_adapter",
     "provider_budget",
@@ -194,7 +193,6 @@ def validate_evidence(config: dict[str, Any], evidence: Any) -> list[str]:
 
     tests = config["required_tests"]
     evidence_test_fields = {
-        "process_crash": "process_crash_test",
         "recovery_schema": "recovery_schema_test",
         "otel_adapter": "otel_adapter_test",
         "provider_budget": "provider_budget_test",

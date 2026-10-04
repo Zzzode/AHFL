@@ -28,7 +28,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "WH-5c.4 P0-3: construct-capability terminal with an opaque upstream; the construct node carries BOTH a JSON_TO_P4D input crossing (opaque producer output -> P4-D input) AND a P4D_TO_JSON self-transcode (constructed Request -> wire-JSON); the two-slot scheduler table keeps both",

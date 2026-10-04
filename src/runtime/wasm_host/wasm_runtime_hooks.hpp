@@ -1,15 +1,7 @@
 #pragma once
 
 // RFC 0026 KR6.8 WH-4: the shared hook configuration for the wasm3-backed
-// runtime facade.
-//
-// SIGNATURE PARITY (2026-09-30 fix-forward): every hook in this struct has the
-// EXACT same signature as its WorkflowRuntimeConfig counterpart
-// (src/runtime/engine/workflow_runtime.hpp) -- same parameter types, same order,
-// same arity. A host that already drives the evaluator-backed WorkflowRuntime
-// through these hooks can switch to the wasm3 facade without changing its hook
-// wiring. The FIRING POINTS differ by lane, and are documented per hook below;
-// the signatures do not.
+// runtime.
 //
 // Firing-point semantics (where the wasm lane fires each hook):
 //   * state_entered_hook   -- per state entry (agent: step-walk on the
@@ -32,9 +24,9 @@
 //                             ALWAYS empty on the wasm agent lane (a bare agent
 //                             has no workflow node); the workflow session never
 //                             fires it (in-guest materialized node input is not
-//                             host-observable). The evaluator fires it with the
-//                             real node name; the wasm lane cannot, so the
-//                             parameter is present for signature parity only.
+//                             host-observable). The wasm agent lane cannot
+//                             supply a node name, so the parameter is always
+//                             empty on this lane.
 //   * capability_invoked_hook  -- PRE-call, before the capability invoker
 //   * capability_result_observer -- POST-call, after the invoker returns
 //   * node_completed_hook  -- per node, after the run completes (workflow only)
@@ -79,8 +71,7 @@ struct WasmRuntimeHooks {
 
     // Debug/test hook invoked LIVE before the agent step-walk with the
     // agent's input Value (agent lane only; not fired for workflow nodes,
-    // whose in-guest materialized input is not host-observable). Signature
-    // matches WorkflowRuntimeConfig::agent_input_hook exactly; `node_name`
+    // whose in-guest materialized input is not host-observable). `node_name`
     // is always empty on the wasm agent lane (see the header comment).
     std::function<void(AgentId, std::string_view agent_name,
                        std::string_view node_name, const Value &)>

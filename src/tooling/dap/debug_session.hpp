@@ -156,9 +156,9 @@ class DebugSession {
     /// segment indexes into a struct field or a named enum payload. On success
     /// the result is serialized via `value_to_json`; a structured result gets a
     /// chained `variablesReference`. Malformed or unresolvable expressions
-    /// return `{"error": "..."}`. Driving the full Evaluator would require a
-    /// parse+resolve+typecheck+lower pipeline over a synthetic program, which
-    /// the paused session cannot honestly reconstruct; this limitation is
+    /// return `{"error": "..."}`. A full expression evaluation would require
+    /// a parse+resolve+typecheck+lower pipeline over a synthetic program,
+    /// which the paused session cannot honestly reconstruct; this limitation is
     /// documented in the RFC Decision History.
     [[nodiscard]] std::string evaluate_json(const std::string &expression, int frame_id);
 

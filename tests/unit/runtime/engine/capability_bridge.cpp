@@ -1,7 +1,6 @@
 #include "runtime/engine/capability_bridge.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
-#include "runtime/engine/capability_eval.hpp"
 #include "runtime/value/value.hpp"
 
 #include <cstdlib>
@@ -16,7 +15,6 @@
 namespace {
 
 using namespace ahfl;
-using namespace ahfl::evaluator;
 using namespace ahfl::runtime;
 using namespace ahfl::ir;
 
@@ -30,15 +28,6 @@ void check(bool condition, const std::string &test_name) {
     } else {
         std::cerr << "FAIL: " << test_name << "\n";
     }
-}
-
-ExprArena &test_expr_arena() {
-    static ExprArena arena;
-    return arena;
-}
-
-ExprRef make_expr_ptr(ExprNode node) {
-    return test_expr_arena().make(std::move(node));
 }
 
 class FakeCapabilityTransport final : public CapabilityTransportAdapter {
@@ -985,229 +974,6 @@ void test_multiple_capabilities() {
 }
 
 // ============================================================================
-// Test 10: eval_with_capability_call
-// ============================================================================
-
-void test_eval_with_capability_call() {
-    // Build an IR CallExpr
-    Expr expr;
-    CallExpr call;
-    call.callee = "my_capability";
-
-    // Append a string argument
-    call.arguments.push_back(make_expr_ptr(StringLiteralExpr{"hello"}));
-    expr.node = std::move(call);
-
-    // Configure the registry
-    CapabilityRegistry registry;
-    registry.register_function("my_capability", [](const std::vector<Value> &args) -> Value {
-        if (!args.empty()) {
-            if (auto *sv = std::get_if<StringValue>(&args[0].node)) {
-                return make_string(sv->value + "_processed");
-            }
-        }
-        return make_none();
-    });
-
-    evaluator::EvalContext eval_ctx;
-
-    auto result = eval_expr_with_capabilities(expr, eval_ctx, &registry);
-
-    check(!result.has_errors(), "eval_cap.no_errors");
-    auto *sv = std::get_if<StringValue>(&result.value.node);
-    check(sv != nullptr && sv->value == "hello_processed", "eval_cap.value_processed");
-
-    auto invoker = registry.as_invoker();
-    auto invoker_result = eval_expr_with_capabilities(expr, eval_ctx, invoker);
-    check(!invoker_result.has_errors(), "eval_cap.invoker_no_errors");
-    auto *invoker_sv = std::get_if<StringValue>(&invoker_result.value.node);
-    check(invoker_sv != nullptr && invoker_sv->value == "hello_processed",
-          "eval_cap.invoker_value_processed");
-
-    registry.register_function("inner_cap", [](const std::vector<Value> & /*args*/) -> Value {
-        return make_string("inner");
-    });
-    registry.register_function("outer_cap", [](const std::vector<Value> &args) -> Value {
-        if (!args.empty()) {
-            if (auto *arg = std::get_if<StringValue>(&args[0].node)) {
-                return make_string(arg->value + "_outer");
-            }
-        }
-        return make_none();
-    });
-
-    Expr nested_expr;
-    CallExpr outer_call;
-    outer_call.callee = "outer_cap";
-    CallExpr inner_call;
-    inner_call.callee = "inner_cap";
-    outer_call.arguments.push_back(make_expr_ptr(std::move(inner_call)));
-    nested_expr.node = std::move(outer_call);
-
-    auto nested_result = eval_expr_with_capabilities(nested_expr, eval_ctx, registry.as_invoker());
-    check(!nested_result.has_errors(), "eval_cap.nested_invoker_no_errors");
-    auto *nested_sv = std::get_if<StringValue>(&nested_result.value.node);
-    check(nested_sv != nullptr && nested_sv->value == "inner_outer",
-          "eval_cap.nested_invoker_value");
-
-    registry.register_function(
-        "is_ready", [](const std::vector<Value> & /*args*/) -> Value { return make_bool(true); });
-
-    Expr binary_expr;
-    BinaryExpr equality;
-    equality.op = ExprBinaryOp::Equal;
-    CallExpr ready_call;
-    ready_call.callee = "is_ready";
-    equality.lhs = make_expr_ptr(std::move(ready_call));
-    equality.rhs = make_expr_ptr(BoolLiteralExpr{true});
-    binary_expr.node = std::move(equality);
-
-    auto binary_result = eval_expr_with_capabilities(binary_expr, eval_ctx, registry.as_invoker());
-    check(!binary_result.has_errors(), "eval_cap.binary_call_no_errors");
-    auto *binary_bool = std::get_if<BoolValue>(&binary_result.value.node);
-    check(binary_bool != nullptr && binary_bool->value, "eval_cap.binary_call_value");
-
-    Expr optional_expr;
-    CallExpr optional_call;
-    optional_call.callee = "inner_cap";
-    CallExpr some_call;
-    some_call.callee = "std::option::Option::Some";
-    some_call.arguments.push_back(make_expr_ptr(std::move(optional_call)));
-    optional_expr.node = std::move(some_call);
-
-    auto optional_result =
-        eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());
-    check(!optional_result.has_errors(), "eval_cap.optional_call_no_errors");
-    // Option is represented canonically as a nominal EnumValue.
-    const auto *optional_result_inner = ahfl::runtime::optional_inner(optional_result.value);
-    auto *optional_inner = optional_result_inner != nullptr
-                               ? std::get_if<StringValue>(&optional_result_inner->node)
-                               : nullptr;
-    check(optional_inner != nullptr && optional_inner->value == "inner",
-          "eval_cap.optional_call_value");
-
-    Expr struct_expr;
-    StructLiteralExpr literal;
-    literal.type_name = "CapabilityResult";
-    CallExpr field_call;
-    field_call.callee = "inner_cap";
-    literal.fields.push_back(StructFieldInit{
-        .name = "value",
-        .value = make_expr_ptr(std::move(field_call)),
-    });
-    struct_expr.node = std::move(literal);
-
-    auto struct_result = eval_expr_with_capabilities(struct_expr, eval_ctx, registry.as_invoker());
-    check(!struct_result.has_errors(), "eval_cap.struct_call_no_errors");
-    auto *struct_value = std::get_if<StructValue>(&struct_result.value.node);
-    const StringValue *field_string = nullptr;
-    if (struct_value != nullptr) {
-        auto value_field = struct_value->fields.find("value");
-        if (value_field != struct_value->fields.end() && value_field->value) {
-            field_string = std::get_if<StringValue>(&value_field->value->node);
-        }
-    }
-    check(field_string != nullptr && field_string->value == "inner", "eval_cap.struct_call_value");
-
-    // Test that a null registry reports an error
-    auto null_result = eval_expr_with_capabilities(expr, eval_ctx, nullptr);
-    check(null_result.has_errors(), "eval_cap.null_registry_error");
-
-    // Test that an unregistered capability reports an error
-    Expr expr2;
-    CallExpr call2;
-    call2.callee = "unknown_cap";
-    expr2.node = std::move(call2);
-
-    auto unknown_result = eval_expr_with_capabilities(expr2, eval_ctx, &registry);
-    check(unknown_result.has_errors(), "eval_cap.unknown_cap_error");
-
-    Expr ranged_expr;
-    ranged_expr.source_range =
-        ahfl::SourceRange{.begin_offset = 10, .end_offset = 20};
-    CallExpr failing_call;
-    failing_call.callee = "failing_cap";
-    ranged_expr.node = std::move(failing_call);
-    CapabilityInvoker failing_invoker =
-        [](const std::string &, const std::vector<Value> &) -> CapabilityCallResult {
-        return CapabilityCallResult{
-            .status = CapabilityCallStatus::Error,
-            .error_message = "provider unavailable",
-        };
-    };
-    auto ranged_result =
-        eval_expr_with_capabilities(ranged_expr, eval_ctx, failing_invoker);
-    check(ranged_result.has_errors(), "eval_cap.ranged_failure_has_error");
-    const auto &ranged_diagnostics = ranged_result.diagnostics.entries();
-    check(!ranged_diagnostics.empty() && ranged_diagnostics.front().range.has_value() &&
-              ranged_diagnostics.front().range->begin_offset == 10 &&
-              ranged_diagnostics.front().range->end_offset == 20,
-          "eval_cap.ranged_failure_preserves_call_site");
-}
-
-// ============================================================================
-// Bare @builtin hooks under the capability-bridged dispatcher.
-//
-// The frontend lowers stdlib collection intrinsics (`xs.length`, `xs[i]`) to
-// UNQUALIFIED CallExpr callees -- "list_raw_length" / "list_raw_get" -- which
-// the default evaluator dispatcher serves from the global builtin table. The
-// capability-bridged dispatcher (AgentRuntime/WorkflowRuntime always install
-// one) used to route ONLY "std::"-prefixed callees to that table, so a bare
-// hook fell through to the capability registry and failed with "unknown
-// capability" for capability-free agents (the P6 conformance p6_collection
-// failure). Bare hooks must resolve through the builtin table regardless of
-// the "std::" prefix, both through a registry and through a plain invoker.
-// ============================================================================
-void test_eval_bare_builtin_hook_under_capability_dispatch() {
-    evaluator::EvalContext eval_ctx;
-    {
-        std::vector<Value> xs;
-        xs.push_back(make_int(90));
-        xs.push_back(make_int(1));
-        eval_ctx.bind_local("xs", make_list(std::move(xs)));
-    }
-
-    auto call_with_path_arg = [](std::string callee, std::string local,
-                                 std::optional<int64_t> index) {
-        CallExpr call;
-        call.callee = std::move(callee);
-        PathExpr path_node;
-        path_node.path.root_name = std::move(local);
-        call.arguments.push_back(make_expr_ptr(std::move(path_node)));
-        if (index.has_value()) {
-            call.arguments.push_back(
-                make_expr_ptr(IntegerLiteralExpr{std::to_string(*index)}));
-        }
-        Expr root;
-        root.node = std::move(call);
-        return root;
-    };
-
-    CapabilityRegistry empty_registry;
-
-    Expr length_expr = call_with_path_arg("list_raw_length", "xs", std::nullopt);
-    auto length_result = eval_expr_with_capabilities(length_expr, eval_ctx, &empty_registry);
-    check(!length_result.has_errors(), "bare_hook.length_no_errors");
-    auto *length_int = std::get_if<IntValue>(&length_result.value.node);
-    check(length_int != nullptr && length_int->value == 2, "bare_hook.length_is_2");
-
-    Expr get_expr = call_with_path_arg("list_raw_get", "xs", int64_t{0});
-    auto get_result = eval_expr_with_capabilities(get_expr, eval_ctx, empty_registry.as_invoker());
-    check(!get_result.has_errors(), "bare_hook.get_no_errors");
-    auto *get_int = std::get_if<IntValue>(&get_result.value.node);
-    check(get_int != nullptr && get_int->value == 90, "bare_hook.get0_is_90");
-
-    // A genuinely unknown bare callee still fails through the registry; the
-    // builtin shortcut must not swallow non-builtin names.
-    Expr unknown_expr;
-    CallExpr unknown_call;
-    unknown_call.callee = "not_a_capability_or_builtin";
-    unknown_expr.node = std::move(unknown_call);
-    auto unknown_result =
-        eval_expr_with_capabilities(unknown_expr, eval_ctx, &empty_registry);
-    check(unknown_result.has_errors(), "bare_hook.unknown_still_errors");
-}
-
 } // anonymous namespace
 
 namespace {
@@ -2000,8 +1766,6 @@ int main() {
     test_grpc_capability_mtls_auth_paths();
     test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
-    test_eval_with_capability_call();
-    test_eval_bare_builtin_hook_under_capability_dispatch();
     test_http_poison_conflict_fails_closed_pre_transport();
     test_grpc_poison_conflict_fails_closed_pre_transport();
     test_http_four_state_neither_and_binding_only();

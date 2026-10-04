@@ -2,7 +2,7 @@
 
 #include "ahfl/runtime/execution_projection.hpp"
 #include "base/json/json_value.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value_json.hpp"
 
 #include <cstdint>
@@ -212,8 +212,7 @@ non_negative_id(const JsonValue &object, std::string_view key) {
             memo_item->set("cap_id", id_json(entry.cap_id));
             memo_item->set("arg_hash",
                            JsonValue::make_string(std::to_string(entry.arg_hash)));
-            // WH-4b: append-only whole-workflow memo coordinate. The evaluator
-            // never sets it (per-node memo == the suspended node); the wasm lane
+            // WH-4b: append-only whole-workflow memo coordinate. The wasm lane
             // sets it on every entry. Absent on write == nullopt on read (older
             // readers ignore the unknown field).
             if (entry.node.has_value()) {
@@ -411,10 +410,9 @@ WorkflowRecoveryStore::load() const {
                 .cap_id = *cap_id,
                 .arg_hash = arg_hash_value,
             };
-            // WH-4b: append-only whole-workflow memo coordinate. Absent on an
-            // evaluator-originated snapshot (per-node memo == the suspended
-            // node); the wasm consumer requires it on every entry and fails
-            // closed at its own load if missing.
+            // WH-4b: append-only whole-workflow memo coordinate. The wasm
+            // consumer requires it on every entry and fails closed at its own
+            // load if missing.
             if (const auto memo_node = non_negative_id(*memo_item, "node_id");
                 memo_node.has_value()) {
                 entry.node = WorkflowNodeId{*memo_node};

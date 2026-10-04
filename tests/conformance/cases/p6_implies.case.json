@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6 boolean implication synthesized as Not(lhs) Or rhs over comparison operands; landed on the orchestration lane"

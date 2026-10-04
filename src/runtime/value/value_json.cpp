@@ -37,18 +37,8 @@ void write_int64(std::ostream &out, std::int64_t value) {
 
 template <class T> constexpr bool always_false_v = false;
 
-// Observation-only spelling of the interpreter-only closure kind. It is valid
-// JSON (so DAP panels, traces and tool output never contain malformed bytes),
-// but it is NOT a wire encoding: nothing decodes it and the strict serializer
-// (`try_value_to_json`) rejects the closure arm instead. The bytes match the
-// pre-WH-S placeholder so existing observations stay stable.
-constexpr std::string_view kOpaqueClosureJson = R"({"_callable":"runtime"})";
-
-// Strict=true is the trust-boundary encoder: a closure anywhere in the value
-// tree makes the whole value non-encodable and the function returns false
-// WITHOUT producing a frame (callers serialize into a scratch stream and
-// discard on false — never splice partial bytes onto the wire). Strict=false
-// is the observation encoder and renders the opaque placeholder.
+// Strict=true is the trust-boundary encoder. Strict=false is the observation
+// encoder.
 template <bool Strict>
 [[nodiscard]] bool write_json_impl(const Value &v, std::ostream &out) {
     // Option is a semantic view over EnumValue, not a variant arm, so its
@@ -169,13 +159,6 @@ template <bool Strict>
                     out << '}';
                 }
                 out << '}';
-            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
-                // Closures are interpreter state, never wire values.
-                if constexpr (Strict) {
-                    rejected = true;
-                    return;
-                }
-                out << kOpaqueClosureJson;
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 // Serialize Set as a JSON array; canonical ordering is already
                 // baked into the storage, so equal sets serialize identically.
@@ -276,9 +259,6 @@ std::optional<std::string> try_value_to_json(const Value &v) {
 std::optional<std::uint64_t> hash_values(const std::vector<Value> &values) {
     // FNV-1a (64-bit). Deterministic across runs: no pointer identity, no
     // allocator order — we hash the canonical JSON bytes of each argument.
-    // Strict encoding: a closure (even nested inside a composite) is not wire
-    // state, so hashing fails closed instead of collapsing every such call to
-    // one digest and defeating the replay coordinate cross-check.
     constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
     constexpr std::uint64_t kPrime = 1099511628211ULL;
     std::uint64_t hash = kOffsetBasis;

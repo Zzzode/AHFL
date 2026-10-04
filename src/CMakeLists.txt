@@ -25,7 +25,6 @@ target_include_directories(ahfl_pipeline_validation INTERFACE ${PROJECT_SOURCE_D
 
 add_subdirectory(pipeline/execution)
 add_subdirectory(runtime/value)
-add_subdirectory(runtime/evaluator)
 add_subdirectory(runtime/engine)
 if(AHFL_ENABLE_BACKEND_WASM)
     # RFC 0026 KR6.8 WH-1: the wasm3 embedded execution host (peer of
@@ -80,7 +79,6 @@ target_link_libraries(ahfl_runtime_bundle
         ahfl_compiler_handoff
         ahfl_pipeline_execution
         ahfl_runtime_value
-        ahfl_runtime_evaluator
         ahfl_runtime_engine
         ahfl_verification_formal
         ahfl_runtime_provider_llm

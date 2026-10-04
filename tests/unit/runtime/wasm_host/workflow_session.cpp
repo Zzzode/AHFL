@@ -20,7 +20,7 @@
 
 #include "runtime/engine/core_wasm_resume_engine.hpp"
 #include "runtime/engine/core_wasm_schema_module.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
@@ -160,10 +160,8 @@ void check_event_sequence(const ahfl::runtime::WorkflowResult &result,
 struct EmittedWorkflow {
     std::vector<std::uint8_t> module_bytes;
     ahfl::backends::CoreWasmExecutionDescriptor descriptor;
-    // The compiled program, retained for the evaluator-parity comparison
-    // (P2-3): the same source runs through the in-process WorkflowRuntime so
-    // the wasm lane's output Value is checked against the evaluator's
-    // structurally, not against a hardcoded JSON string.
+    // The compiled program, retained for tests that inspect the IR shape
+    // (capability ranges, program index, etc.).
     ir::Program program;
     // WH-5c.7 P1-2/P2-2: the codegen diagnostics, retained so a test can pin
     // the exact compile-time rejection code (kUnsupportedCapabilityFrame)
@@ -382,75 +380,6 @@ failed_event_ids(const ahfl::runtime::WorkflowResult &result) {
         }
     }
     return ids;
-}
-
-// P2-3 (spec AC1): run the SAME fixture source through the in-process
-// evaluator (WorkflowRuntime) with the SAME echo invoker the wasm session
-// mock uses, so the wasm lane's output Value is compared against the
-// evaluator's structurally — not against a hardcoded JSON string. The
-// evaluator has no encoding boundary, so it is the reference for what the
-// workflow means.
-struct EvaluatorParity {
-    ahfl::runtime::WorkflowResult result;
-    int cap_invoked_count{0};
-    std::vector<std::string> cap_names;
-};
-
-[[nodiscard]] EvaluatorParity
-run_evaluator_parity(const ir::Program &program,
-                     const std::string &workflow_name, const Value &input) {
-    EvaluatorParity parity;
-    ahfl::runtime::WorkflowRuntimeConfig config;
-    config.capability_invoked_hook =
-        [&parity](AgentId, std::string_view name) {
-            ++parity.cap_invoked_count;
-            parity.cap_names.emplace_back(name);
-        };
-    // Echo mock: returns the input unchanged (the SAME answers the wasm
-    // session mock returns).
-    config.capability_invoker =
-        [](const std::string &,
-           const std::vector<Value> &args) -> CapabilityCallResult {
-        CapabilityCallResult r;
-        r.status = CapabilityCallStatus::Success;
-        if (!args.empty()) {
-            r.value = ahfl::runtime::clone_value(args[0]);
-        }
-        return r;
-    };
-    ahfl::runtime::WorkflowRuntime runtime(program, std::move(config));
-    parity.result =
-        runtime.run(workflow_name, ahfl::runtime::clone_value(input));
-    return parity;
-}
-
-// Compare a wasm session outcome against the evaluator's: workflow status,
-// capability invocation count (and names), and the output Value structurally.
-void check_evaluator_parity(const ir::Program &program,
-                            const std::string &workflow_name,
-                            const Value &input,
-                            const ahfl::runtime::WorkflowResult &wasm_result,
-                            int wasm_cap_count, std::string_view label) {
-    auto parity = run_evaluator_parity(program, workflow_name, input);
-    check(parity.result.status() == wasm_result.status(),
-          std::string(label) + ".parity_status");
-    check(parity.cap_invoked_count == wasm_cap_count,
-          std::string(label) + ".parity_cap_count");
-    for (const auto &name : parity.cap_names) {
-        // The evaluator passes the canonical (module-qualified) capability
-        // name; the wasm session's name_resolver returns the bare "Echo".
-        // Compare by suffix so both lanes agree on the capability identity.
-        check(name.size() >= 4 && name.substr(name.size() - 4) == "Echo",
-              std::string(label) + ".parity_cap_name");
-    }
-    const auto *wasm_output = wasm_result.output();
-    const auto *eval_output = parity.result.output();
-    check((wasm_output == nullptr) == (eval_output == nullptr),
-          std::string(label) + ".parity_output_presence");
-    if (wasm_output != nullptr && eval_output != nullptr) {
-        check(ahfl::runtime::structurally_equal(*wasm_output, *eval_output),
-              std::string(label) + ".parity_output_value");
-    }
 }
 
 // ==== 1. P6-frame workflow (trace ring, no capabilities) ====
@@ -799,8 +728,8 @@ void test_event_sequence_identity(const std::filesystem::path &repo_root) {
         return;
     }
 
-    // P1-2: the wasm lane emits the SAME event variant sequence + order as
-    // the evaluator: RunStarted, WorkflowStarted, NodeScheduled (all, in
+    // P1-2: the wasm lane emits the expected event variant sequence + order:
+    // RunStarted, WorkflowStarted, NodeScheduled (all, in
     // schedule order), per node: NodeStarted/AgentStateEntered/NodeCompleted,
     // WorkflowCompleted, RunCompleted.
     static constexpr std::string_view expected[] = {
@@ -869,7 +798,7 @@ void test_event_sequence_and_report_fields(
         return;
     }
 
-    // P1-2: same event sequence as the evaluator, including
+    // P1-2: same event sequence as expected, including
     // CapabilityStarted/CapabilityCompleted for node 0 (which calls Echo).
     static constexpr std::string_view expected[] = {
         "RunStarted",
@@ -1110,7 +1039,7 @@ void test_trap_pipeline(const std::filesystem::path &repo_root) {
 
     // P2-1: the first node Completed, the second (trapping) node Failed,
     // the third node Skipped (never executed because its dependency
-    // failed). This is the evaluator's per-node terminal semantics.
+    // failed). This is the expected per-node terminal semantics.
     check(report.nodes.size() == 3, "trap_pipe.report_node_count");
     if (report.nodes.size() == 3) {
         check(report.nodes[0].status ==
@@ -1537,16 +1466,6 @@ void test_hybrid_p6_before_cap(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_p6cap.completed");
 
-    // P2-3 (spec AC1): the wasm lane's output Value is compared against the
-    // in-process evaluator's structurally (same fixture source, same input,
-    // same echo invoker), not against a hardcoded JSON string. The evaluator
-    // has no encoding boundary, so it is the reference for what the workflow
-    // means.
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_p6_before_cap::HybridPipeline",
-                           *input, result->result, cap_invoked_count,
-                           "hybrid_p6cap");
-
     check(result->workflow_completed_count == 2,
           "hybrid_p6cap.completed_count");
 }
@@ -1654,12 +1573,6 @@ void test_hybrid_cap_before_p6(const std::filesystem::path &repo_root) {
 
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_capp6.completed");
-
-    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_cap_before_p6::HybridPipeline",
-                           *input, result->result, cap_invoked_count,
-                           "hybrid_capp6");
 
     check(result->workflow_completed_count == 2,
           "hybrid_capp6.completed_count");
@@ -1778,14 +1691,6 @@ void test_hybrid_kahn_reordered(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_kahn.completed");
 
-    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
-    // The echo2 node is a no-site passthrough; the evaluator still invokes it
-    // (it is a capability call), so the cap counts match.
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_kahn_reordered::HybridKahn",
-                           *input, result->result, cap_invoked_count,
-                           "hybrid_kahn");
-
     check(result->workflow_completed_count == 3,
           "hybrid_kahn.completed_count");
 }
@@ -1899,12 +1804,6 @@ void test_hybrid_p6_to_opaque(const std::filesystem::path &repo_root) {
           "hybrid_p6opaque.node_completed_count");
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_p6opaque.completed");
-
-    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_p6_to_opaque::P6ToOpaque", *input,
-                           result->result, cap_invoked_count,
-                           "hybrid_p6opaque");
 
     check(result->workflow_completed_count == 2,
           "hybrid_p6opaque.completed_count");
@@ -2023,12 +1922,6 @@ void test_hybrid_opaque_to_p6(const std::filesystem::path &repo_root) {
           "hybrid_opaquep6.node_completed_count");
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_opaquep6.completed");
-
-    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_opaque_to_p6::OpaqueToP6", *input,
-                           result->result, cap_invoked_count,
-                           "hybrid_opaquep6");
 
     check(result->workflow_completed_count == 2,
           "hybrid_opaquep6.completed_count");
@@ -2156,15 +2049,6 @@ void test_hybrid_opaque_return(const std::filesystem::path &repo_root) {
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_opaque_ret.completed");
 
-    // P2-3 (spec AC1): evaluator parity (same source, input, echo invoker).
-    // The opaque echo node's result crosses the JSON_TO_P4D workflow-output
-    // boundary; the evaluator has no such boundary, so parity proves the
-    // transcode preserved the Value.
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_opaque_return::OpaqueReturn",
-                           *input, result->result, cap_invoked_count,
-                           "hybrid_opaque_ret");
-
     check(result->workflow_completed_count == 2,
           "hybrid_opaque_ret.completed_count");
 }
@@ -2173,7 +2057,7 @@ void test_hybrid_opaque_return(const std::filesystem::path &repo_root) {
 //
 // Drives a TAG-ONLY enum, String, Int, and Bool through a P4D_TO_JSON ENTRY
 // transcode and a JSON_TO_P4D workflow-output transcode on real wasm3, then
-// compares the wasm output Value against the in-process evaluator's
+// compares the wasm output Value against the expected output
 // structurally. The String fields exercise the transcode payload arena
 // (JSON_TO_P4D bump-allocation) and the entry-payload arena (P4D_TO_JSON
 // PtrLen read).
@@ -2190,7 +2074,7 @@ void test_hybrid_opaque_return(const std::filesystem::path &repo_root) {
 //     fixture because compile_conformance_source parses a single file
 //     without the project/sysroot module graph (an `import std::option`
 //     fixture needs the // @repo-std project parse used by
-//     core_wasm_p6_probe). The tag-only enum exercises the
+//     core_wasm_producer_probe). The tag-only enum exercises the
 //     CoreWireSchemaEnum discriminant path; the Option null/payload and
 //     payload-bearing Enum arms are covered by the synthetic
 //     frame_packer_reader.cpp pins and core_json_round_trip.
@@ -2285,14 +2169,6 @@ void test_hybrid_rich_fidelity(const std::filesystem::path &repo_root) {
     check(node_completed_count == 2, "hybrid_rich.node_completed_count");
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_rich.completed");
-
-    // P2-3 (spec AC1): evaluator parity. The echo node's result crosses the
-    // JSON_TO_P4D workflow-output boundary; the evaluator has no boundary, so
-    // parity proves the transcode preserved every rich field.
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_rich_fidelity::RichFidelity",
-                           *input, result->result, cap_invoked_count,
-                           "hybrid_rich");
 
     check(result->workflow_completed_count == 2,
           "hybrid_rich.completed_count");
@@ -2392,14 +2268,6 @@ void test_hybrid_rich_p6_to_opaque(const std::filesystem::path &repo_root) {
     check(node_completed_count == 2, "hybrid_rich_p6o.node_completed_count");
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
           "hybrid_rich_p6o.completed");
-
-    // P2-3: evaluator parity on the P4D_TO_JSON NODE_OUTPUT path. The
-    // workflow return is the P6 node's O_k; parity proves the transcode
-    // preserved every flat field (tag-only enum variant, String, Int, Bool).
-    check_evaluator_parity(wf->program,
-                           "wasm::wh5b_hybrid_rich_p6_to_opaque::P6ToOpaqueRich",
-                           *input, result->result, cap_invoked_count,
-                           "hybrid_rich_p6o");
 
     check(result->workflow_completed_count == 2,
           "hybrid_rich_p6o.completed_count");

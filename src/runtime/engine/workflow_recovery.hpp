@@ -68,16 +68,13 @@ enum class PersistedMemoResultSource {
 // ordinal, never a name.
 //
 // WH-4b (RFC 0026 KR6.8): the optional `node` coordinate generalizes the memo
-// from a single suspended node to the WHOLE workflow. The evaluator suspends
-// per node and its memo covers only the suspended node, so it never sets this
-// field (every entry is nullopt == the suspended node, unchanged semantics).
-// The wasm lane resumes on a FRESH instance that re-runs the whole module, so
-// it must memo-supply capability calls from EVERY node before the pending one;
-// it sets `node` on every entry. The wasm consumer REQUIRES it (an entry
-// without `node` fails closed at load); the evaluator consumer ignores it.
-// `node` is orthogonal to the result three-state (NativeOnly/LegacyV2/
-// ExactSidecar): it records WHERE the call happened, not how its result is
-// trusted.
+// from a single suspended node to the WHOLE workflow. The wasm lane resumes on
+// a FRESH instance that re-runs the whole module, so it must memo-supply
+// capability calls from EVERY node before the pending one; it sets `node` on
+// every entry. The wasm consumer REQUIRES it (an entry without `node` fails
+// closed at load). `node` is orthogonal to the result three-state
+// (NativeOnly/LegacyV2/ExactSidecar): it records WHERE the call happened, not
+// how its result is trusted.
 struct CapabilityMemoEntry {
     std::uint64_t ordinal{0};       // per-node invocation ordinal (memo key)
     std::size_t cap_id{0};          // capability SymbolId (integrity cross-check)
@@ -87,8 +84,7 @@ struct CapabilityMemoEntry {
     PersistedMemoResultSource source{PersistedMemoResultSource::NativeOnly};
     std::optional<std::string> authoritative_json{}; // exact wire spelling (Legacy/Sidecar)
     std::optional<bool> result_present{true};         // presence bit (P0-17/18); nullopt iff LegacyV2
-    // WH-4b: the workflow node this call belongs to. nullopt == the suspended
-    // node (evaluator per-node memo semantics, unchanged). The wasm lane always
+    // WH-4b: the workflow node this call belongs to. The wasm lane always
     // sets it (whole-workflow memo for fresh-instance replay).
     std::optional<WorkflowNodeId> node{};
 };
@@ -114,12 +110,13 @@ struct SuspendedNodeState {
     WorkflowNodeId node;
     AgentId agent;
     // v2 PERSISTS the node input for format completeness / potential observation,
-    // but the current WorkflowRuntime does NOT use it as a trust authority and does
-    // NOT restore execution from it: on resume the node-input expression is
-    // RE-EVALUATED and its capability calls are replayed from `memo`. This field is
-    // therefore informational today; treating it as authoritative would be a future
-    // change (and a residual risk if a reader assumes it drives resume). See the
-    // node_input_snapshot capture site in workflow_runtime.cpp.
+    // but the wasm lane does NOT use it as a trust authority and does NOT restore
+    // execution from it: on resume a FRESH wasm instance re-runs the whole module,
+    // so the node-input expression is RE-DERIVED and capability calls up to the
+    // pending one are replayed from `memo`. This field is therefore informational
+    // today; treating it as authoritative would be a future change (and a residual
+    // risk if a reader assumes it drives resume). See the capture site in
+    // wasm_host/workflow_session.cpp.
     std::optional<runtime::Value> node_input{};
     std::size_t pending_cap_id{0};                       // capability SymbolId of the pending call
     std::uint64_t pending_ordinal{0};                    // its per-node invocation ordinal
@@ -169,8 +166,8 @@ materialize_workflow_recovery_snapshot(const WorkflowResult &result,
 // Must be reproducible across resume — every input is index/id-based (workflow,
 // node, the stable per-node ordinal, capability SymbolId) plus the
 // resolved-argument hash — so a host can dedup a durable_write effect that
-// committed before a crash. Shared by the evaluator and the wasm lane (WH-4b)
-// so a host sees the same key for the same invocation on either engine.
+// committed before a crash. The wasm lane (WH-4b) uses it so a host sees the
+// same key for the same invocation across replay.
 [[nodiscard]] std::uint64_t compute_idempotency_key(std::size_t workflow_index,
                                                     std::size_t node_index,
                                                     std::uint64_t ordinal,

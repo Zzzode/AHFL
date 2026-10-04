@@ -19,7 +19,8 @@
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/engine/workflow_result.hpp"
+#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 #include "runtime/value/value.hpp"
 
 #include <cstdlib>
@@ -37,9 +38,9 @@ using ahfl::runtime::CapabilityInvocationContext;
 using ahfl::runtime::WorkflowRecoverySnapshot;
 using ahfl::runtime::Value;
 using ahfl::runtime::WorkflowRecoveryStore;
-using ahfl::runtime::WorkflowRuntime;
-using ahfl::runtime::WorkflowRuntimeConfig;
 using ahfl::runtime::WorkflowStatus;
+using ahfl::runtime::wasm_runner::WasmWorkflowRuntime;
+using ahfl::runtime::wasm_runner::WasmWorkflowRuntimeConfig;
 
 int test_count = 0;
 int pass_count = 0;
@@ -138,17 +139,17 @@ constexpr const char *kRecoveredText = "durable recovered summary";
 // A synchronous baseline: DraftIncidentSummary returns the summary immediately.
 [[nodiscard]] std::optional<std::string>
 run_synchronous(const ahfl::ir::Program &program) {
-    WorkflowRuntimeConfig config;
-    config.contextual_capability_invoker =
+    WasmWorkflowRuntimeConfig config;
+    config.invoker =
         [](const CapabilityInvocationContext &, const std::string &name,
            const std::vector<Value> &) -> CapabilityCallResult {
-        CapabilityCallResult r;
-        r.status = CapabilityCallStatus::Success;
-        r.value = name.ends_with("DraftIncidentSummary") ? make_summary(kRecoveredText)
-                                                          : ahfl::runtime::make_none();
-        return r;
-    };
-    WorkflowRuntime runtime(program, std::move(config));
+            CapabilityCallResult r;
+            r.status = CapabilityCallStatus::Success;
+            r.value = name.ends_with("DraftIncidentSummary") ? make_summary(kRecoveredText)
+                                                              : ahfl::runtime::make_none();
+            return r;
+        };
+    WasmWorkflowRuntime runtime(program, std::move(config));
     auto result = runtime.run("execution_demo::main::IncidentWorkflow", make_incident_input());
     if (result.status() != WorkflowStatus::Completed) {
         return std::nullopt;
@@ -179,8 +180,8 @@ void test_capstone(const std::filesystem::path &repo, const std::filesystem::pat
     {
         WorkflowRecoveryStore store(snapshot_path);
         std::size_t process_a_invocations = 0;
-        WorkflowRuntimeConfig config;
-        config.contextual_capability_invoker =
+        WasmWorkflowRuntimeConfig config;
+        config.invoker =
             [&process_a_invocations](const CapabilityInvocationContext &,
                                      const std::string &name,
                                      const std::vector<Value> &) -> CapabilityCallResult {
@@ -194,7 +195,7 @@ void test_capstone(const std::filesystem::path &repo, const std::filesystem::pat
             }
             return r;
         };
-        WorkflowRuntime runtime(*program, std::move(config));
+        WasmWorkflowRuntime runtime(*program, std::move(config));
         auto suspended =
             runtime.run("execution_demo::main::IncidentWorkflow", make_incident_input());
 
@@ -227,10 +228,10 @@ void test_capstone(const std::filesystem::path &repo, const std::filesystem::pat
         }
 
         std::size_t process_b_invocations = 0;
-        WorkflowRuntimeConfig config;
+        WasmWorkflowRuntimeConfig config;
         config.recovery_snapshot = std::move(*loaded);
         config.resume_pending_result = make_summary(kRecoveredText);
-        config.contextual_capability_invoker =
+        config.invoker =
             [&process_b_invocations](const CapabilityInvocationContext &,
                                      const std::string &name,
                                      const std::vector<Value> &) -> CapabilityCallResult {
@@ -242,7 +243,7 @@ void test_capstone(const std::filesystem::path &repo, const std::filesystem::pat
             r.value = ahfl::runtime::make_none();
             return r;
         };
-        WorkflowRuntime runtime(*cold_program, std::move(config));
+        WasmWorkflowRuntime runtime(*cold_program, std::move(config));
         auto resumed =
             runtime.run("execution_demo::main::IncidentWorkflow", make_incident_input());
 

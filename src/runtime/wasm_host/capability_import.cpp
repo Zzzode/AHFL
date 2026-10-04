@@ -423,7 +423,7 @@ handle_bridge(const CapabilityImportConfig &config,
         //
         // WH-5c.1: ERROR traps the guest by design, so record the
         // human-readable capability failure for the session's trap diagnostic
-        // (mirrors the native evaluator's capability_call_status_name path).
+        // (via the shared capability_call_status_name path).
         if (result.status != runtime::CapabilityCallStatus::Pending) {
             std::string message = "capability '" + *name + "' failed with status " +
                                   std::string(capability_call_status_name(result.status));

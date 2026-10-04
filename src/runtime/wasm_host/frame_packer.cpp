@@ -176,12 +176,6 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         return std::unexpected(FramePackError::LayoutIdOutOfRange);
     }
 
-    // Fail closed on values with no CoreLayout wire representation.
-    // Closures (and any future non-wire value kind) must never be packed.
-    if (std::holds_alternative<InterpreterClosureHandle>(value.node)) {
-        return std::unexpected(FramePackError::ValueNotWireEncodable);
-    }
-
     // Unit: no write (the JS oracle returns immediately).
     if (std::holds_alternative<ir::core::CoreWireSchemaUnit>(w->shape)) {
         if (!std::holds_alternative<UnitValue>(value.node) &&
@@ -350,7 +344,7 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
             return std::unexpected(FramePackError::ShapeMismatch);
         }
         // Pack the payload BEFORE writing the tag, so a non-encodable inner
-        // (e.g. a closure) fails closed without leaving a partial Some tag.
+        // value fails closed without leaving a partial Some tag.
         // The Some variant's payload is a one-slot struct (the enum payload
         // wrapper); the inner value lands at the struct's sole field.
         const auto *payload_layout =
@@ -434,8 +428,7 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
             return std::unexpected(FramePackError::ShapeMismatch);
         }
         // Pack the payload BEFORE writing the tag, so a non-encodable payload
-        // (e.g. a closure in a variant field) fails closed without leaving a
-        // partial tag byte.
+        // fails closed without leaving a partial tag byte.
         std::expected<void, FramePackError> packed =
             std::unexpected(FramePackError::ShapeMismatch);
         if (wire_variant.payload_kind == ir::core::CoreWirePayloadKind::Tuple) {
@@ -551,7 +544,7 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
     // Decimal: rides an i64 word (mantissa). The spelling is parsed through
     // the runtime's single spelling authority; the parsed scale MUST match the
     // wire-schema scale so the reader can rebuild a spelling identical to the
-    // evaluator's preserved source literal (WH-5c.7 mechanism (f)).
+    // preserved source literal (WH-5c.7 mechanism (f)).
     if (const auto *w_dec = std::get_if<CoreWireSchemaDecimal>(&w->shape)) {
         const auto *scalar = std::get_if<CoreLayoutScalar>(&l->shape);
         if (scalar == nullptr || scalar->repr != CoreScalarRepr::I64) {
@@ -674,8 +667,8 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         return {};
     }
 
-    // Timestamp / Uuid / Closure: outside the frame subset (or not a wire
-    // value) — fail closed.
+    // Timestamp / Uuid: outside the frame subset (or not a wire value) —
+    // fail closed.
     return std::unexpected(FramePackError::ValueNotWireEncodable);
 }
 

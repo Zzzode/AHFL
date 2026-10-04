@@ -2,16 +2,15 @@
 """RFC 0026 P6 (CORE-GAPS) Node embedded-engine evidence for `=>` lowering.
 
 The producer compiles the real-frontend boolean implication fixture through
-the full AHFL->Core->P4-D->wasm pipeline and reports the native AgentRuntime
-state-id sequence. This script instantiates the emitted module with the Node
-v22 WebAssembly engine and drives the stable step() ABI, asserting the wasm
-state-id path matches native. The fixture is true only under the Sema shape
+the full AHFL->Core->P4-D->wasm pipeline. This script instantiates the emitted
+module with the Node v22 WebAssembly engine and drives the stable step() ABI,
+asserting the wasm state-id path matches the frozen oracle captured at HEAD
+620fadd8 (WH-9 B0). The fixture is true only under the Sema shape
 `a => b == !a || b`: a miscompile to `&&`, plain `||`, or lhs-only routes to
 the opposite branch. SKIP (77) when node is unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -20,28 +19,21 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8): the wasm state-id path the producer
+# emitted at freeze time. The tree-walking evaluator that previously produced
+# this observation was retired in WH-9; the constant is the frozen oracle.
+FROZEN_OBS = {
+    "status": "completed",
+    "entered_ids": [3, 1, 0],
+    "final_state_id": 0,
+    "transition_count": 2,
+    "initial_state_id": 3,
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    return {
-        "status": match.group(1),
-        "entered_ids": [int(x) for x in match.group(2).split(",") if x],
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -60,15 +52,13 @@ def main(argv: list[str]) -> int:
         td_path = Path(td)
         wasm_path = td_path / "p6_implies.wasm"
 
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm_path)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"P6 producer exited {native.returncode}: {native.stderr}")
-        obs = parse_observation(native.stdout.strip())
-        if obs["status"] != "completed" or not obs["entered_ids"]:
-            return fail(f"native implies run did not complete: {obs}")
+        if compile_run.returncode != 0:
+            return fail(f"P6 producer exited {compile_run.returncode}: {compile_run.stderr}")
+        obs = FROZEN_OBS
 
         host = td_path / "p6_implies_host.mjs"
         host.write_text(
@@ -89,7 +79,7 @@ const expectedSequence = expectedEntered.slice(1);
 const expectedTransitions = Number(process.argv[5]);
 
 if (expectedEntered[0] !== expectedInitial)
-  throw new Error("native initial id does not match initial_state_id");
+  throw new Error("frozen initial id does not match initial_state_id");
 if (c.current_state() !== expectedInitial)
   throw new Error(`initial state ${c.current_state()} != ${expectedInitial}`);
 const sequence = [];
@@ -113,7 +103,7 @@ while (guard-- > 0) {
 }
 const observedPath = sequence.slice(0, expectedSequence.length);
 if (JSON.stringify(observedPath) !== JSON.stringify(expectedSequence))
-  throw new Error(`implies state-id path ${observedPath} != native ${expectedSequence}`);
+  throw new Error(`implies state-id path ${observedPath} != oracle ${expectedSequence}`);
 if (c.transition_count.value !== expectedTransitions)
   throw new Error(`transition_count ${c.transition_count.value} != ${expectedTransitions}`);
 

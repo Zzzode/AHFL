@@ -43,12 +43,12 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-fb1-agg-node-") as td:
         td_path = Path(td)
         wasm_path = td_path / "fb1_aggregate.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm_path)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"producer exited {native.returncode}: {native.stderr}")
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
 
         host = td_path / "fb1_agg_host.mjs"
         # States: Init=0, Good=1, Bad=2.

@@ -23,7 +23,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6-packaged agent whose non-final handler constructs an aggregate with a String field from the input frame and passes it to a bridge capability; the relocated workflow-lane runner names the construct root scratch_base()+offset (WH-5c.1)"

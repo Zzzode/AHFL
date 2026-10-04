@@ -199,16 +199,6 @@ int compare_values(const Value &lhs, const Value &rhs) {
                     }
                 }
                 return 0;
-            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
-                // Interpreter-only: closures are not wire values. Their id is a
-                // monotonic, process-local assignment ordinal, so comparing it
-                // gives a total order that is stable for the process lifetime
-                // (unlike a heap address, which can alias through reuse).
-                const auto *r = std::get_if<InterpreterClosureHandle>(&rhs.node);
-                if (inner.id == r->id) {
-                    return 0;
-                }
-                return inner.id < r->id ? -1 : 1;
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: unit has exactly one value; trivially equal.
                 return 0;
@@ -342,13 +332,6 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 const auto *r = std::get_if<TimestampValue>(&rhs.node);
                 return inner.unix_ms == r->unix_ms;
-            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
-                // Interpreter-only: two closure values are equal iff they are
-                // the same closure instance (same monotonic id). Two distinct
-                // evaluations of one source lambda are different captures and
-                // compare different; clones share the handle and stay equal.
-                const auto *r = std::get_if<InterpreterClosureHandle>(&rhs.node);
-                return inner.id == r->id;
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: unit has exactly one value.
                 return true;
@@ -397,8 +380,6 @@ ValueKind value_kind(const Value &v) {
                 return ValueKind::Uuid;
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 return ValueKind::Timestamp;
-            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
-                return ValueKind::Callable;
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 return ValueKind::Unit;
             }
@@ -540,10 +521,6 @@ void print_value(const Value &v, std::ostream &out) {
                 out << "uuid(" << inner.hex << ")";
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 out << "timestamp(" << inner.unix_ms << ")";
-            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
-                // Interpreter-only: render the kind and its stable id without
-                // dereferencing the descriptor.
-                out << "<lambda/" << inner.id << ">";
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: the unit value renders as its literal spelling.
                 out << "{}";
@@ -555,25 +532,6 @@ void print_value(const Value &v, std::ostream &out) {
 // ============================================================================
 // Convenience constructor implementations
 // ============================================================================
-
-namespace {
-
-// Monotonic closure-instance id (Principle 2: id identity, never a heap
-// address). Process-local; ids are never put on the wire. Starts at 1 so 0
-// stays available as a sentinel for "no closure" in future side tables.
-std::uint64_t next_closure_id() {
-    static constinit std::atomic<std::uint64_t> counter{1};
-    return counter.fetch_add(1, std::memory_order_relaxed);
-}
-
-} // namespace
-
-Value make_interpreter_closure(InterpreterClosureRef closure) {
-    return Value{InterpreterClosureHandle{
-        .id = next_closure_id(),
-        .descriptor = std::move(closure),
-    }};
-}
 
 Value make_struct(std::string type_name, std::unordered_map<std::string, Value> fields) {
     StructValue sv;
@@ -783,12 +741,6 @@ Value clone_value(const Value &v) {
                 return Value{UuidValue{inner.hex}};
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 return Value{TimestampValue{inner.unix_ms}};
-            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
-                // Interpreter-only: the clone is the same closure instance
-                // (same id, shared descriptor). Invocation copies the captured
-                // EvalContext before binding arguments, so a clone can never
-                // mutate another value's environment through the shared handle.
-                return Value{inner};
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: zero-sized; clone is a fresh unit value.
                 return make_unit();

@@ -17,10 +17,8 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": false,
     "wasm": {
       "eligible": "orchestration",
-      "node_observation_skip": "evaluator_surface_awaits_kr68",
       "reason": "RFC 0026 FB-4 fix-forward: an fn whose effect clause is an upper bound has a PURE body, so the call is a pure CoreCallExpr returning n+1; the in-process evaluator does not yet execute user-defined pure fn calls, so the Node embedded-engine observation is authoritative until KR6.8."
     }
   }

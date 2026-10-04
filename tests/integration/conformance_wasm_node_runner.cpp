@@ -2,17 +2,23 @@
 //
 // One binary drives, for every committed conformance case the compiler emits on
 // the orchestration wasm lane:
-//   1. the in-process evaluator adapter (canonical evaluator observation);
-//   2. the manifest-driven Core-Wasm module producer (module + descriptor);
-//   3. the generic Node embedded host (canonical node observation);
-//   4. the differential comparator on status + state_sequence +
-//      capability_sequence + output_json.
+//   1. the manifest-driven Core-Wasm module producer (module + descriptor);
+//   2. the generic Node embedded host (canonical node observation);
+//   3. the differential comparator on status + state_sequence +
+//      capability_sequence + output_json against the checked-in blessing (or
+//      the manifest's blessed expectation for the closure constructs that have
+//      no blessing).
 //
 // Cases the emit path rejects, or whose handler projects the raw P4-D input
 // frame (P6-7 output-frame gate), are SKIPPED with a structured code
 // (kr6.6 / p6-7 / the compiler diagnostic) -- never faked. When the Node
 // embedding is unavailable the whole lane SKIPs (77) so ctest reports it
 // visibly.
+//
+// Data-driven blessing existence replaces the retired
+// evaluator-surface skip marker: a case with a checked-in blessing
+// compares the Node observation against it; a case without one (the closure
+// constructs) compares against the manifest's blessed expectation.
 //
 // Modes:
 //   verify   <repo-root> <cases-dir> <scratch-dir> [stem ...]
@@ -39,7 +45,6 @@
 
 #include "base/json/json_value.hpp"
 #include "conformance/conformance_case.hpp"
-#include "conformance/evaluator_engine.hpp"
 #include "conformance/observation_compare.hpp"
 #include "conformance/wasm_engine.hpp"
 
@@ -50,7 +55,6 @@ using ahfl::conformance::ConformanceScenario;
 using ahfl::conformance::load_conformance_case;
 using ahfl::conformance::LoadedConformanceCase;
 using ahfl::conformance::produce_conformance_wasm;
-using ahfl::conformance::run_evaluator_scenario;
 using ahfl::conformance::WasmNodeObservationSkip;
 using ahfl::conformance::WasmProduceResult;
 using ahfl::conformance::WasmProduceSkip;
@@ -124,19 +128,21 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // arena agents (list_string_arena, list_nested_string_arena), and the
 // bounded-String durable-resume capability workflow (e3_capability_workflow_
 // resume) add eight differential scenarios: 51/0 -> 59/0. v2b_enum_string is
-// excluded: the evaluator misroutes its String tuple-variant enum construction
-// through the capability invoker while the wasm run is correct.
-// FB-5 slice D: five node-only FB-1/FB-3 cases (fb1_direct_call,
+// excluded: the retired evaluator misrouted its String tuple-variant enum
+// construction through the capability invoker while the wasm run is correct;
+// the fixture can be re-added when a blessing is captured.
+// FB-5 slice D: five expectation-lane FB-1/FB-3 cases (fb1_direct_call,
 // fb1_aggregate_direct_call, fb3_byvalue_capture, fb3_nested_activation,
-// fb3_nested_lambda_flow) land on the evaluator_surface_awaits_kr68 lane:
-// the modules emit and the Node observations are blessed directly, adding
-// five compared scenarios without an evaluator reference: 59/0 -> 64/0.
+// fb3_nested_lambda_flow) land on the expectation lane:
+// the modules emit and the Node observations compare against the manifest's
+// blessed expectation, adding five compared scenarios without a blessing:
+// 59/0 -> 64/0.
 // The two bounded-list recursion fixtures (fb2_bounded_recursion,
 // fb3_bounded_collection) stay out: their wire_json-classified modules
 // physically read the fixed P4-D input frame and only the bespoke
 // hand-packing hosts can drive them; the generic descriptor-driven host has
 // no frame_lane to pack from.
-// FB-5 slice E: fb4_effect_clause_pure_body adds one node-only pure-fn
+// FB-5 slice E: fb4_effect_clause_pure_body adds one expectation-lane pure-fn
 // scenario and fb4_cross_agent_capability_leak adds one full differential
 // scenario (the capability-free PureAgent compiled from a two-agent module,
 // proving zero imports): 64/0 -> 66/0. fb4_construct_only_closure (dormant
@@ -149,10 +155,10 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // TWO P6 workflow nodes. The per-instance D5 lifecycle gate rejected this
 // shape; the per-node cardinality flip (one node-frame block + runner
 // function per P6 NODE) lowers both nodes onto their own block/runner and
-// the Node observation agrees with the evaluator: 68/0 -> 69/0.
+// the Node observation agrees with the blessing: 68/0 -> 69/0.
 // WH-5c.4 (GAP 2): the construct-capability-final case
 // (wh5c4_construct_cap_final) constructs the capability argument in-module
-// and the native wasm3 observation agrees with the evaluator: 69/0 -> 70/0.
+// and the native wasm3 observation agrees with the blessing: 69/0 -> 70/0.
 // The Node embedded host withholds its observation because it lacks the
 // ahfl_xcode transcode adapter (WH-5b.3 host transcode building): the wasm
 // module traps at its P4D_TO_JSON / JSON_TO_P4D transcode sites. The Node
@@ -176,7 +182,7 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // WH-5c.7: the 9-shape rich wire-type matrix case (wh5c7_rich_input_matrix)
 // skips the Node lane under another SEPARATE, truthful reason
 // (node_host_awaits_rich_wire_types): the module emits and the native
-// wasm3 lane agrees with the evaluator, but the Node oracle host's P6
+// wasm3 lane agrees with the blessing, but the Node oracle host's P6
 // frame packer/reader does not implement Map / Decimal / Duration / Float
 // (they are outside the JS host's rung-E frame subset). The C++ host
 // supports them (WH-5c.7); the Node observation is withheld until the JS
@@ -184,27 +190,9 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 constexpr int kExpectedAgreed = 69;
 constexpr int kExpectedSkipped = 4;
 
-// Pinned STEM SET (not merely a census) of cases allowed to declare
-// engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
-// FB-3b node-only lane). A manifest edit that moves a comparable differential
-// case onto the node-only lane (dropping its evaluator reference) while adding
-// another comparable case would keep the 18/5 totals green; this exact-set pin
-// catches that. The pin moves deliberately when the KR6.8 evaluator surface
-// retires or a reviewed node-only case lands. Keep sorted; the runner compares
-// the sorted observed set against it.
-constexpr std::array<std::string_view, 7> kExpectedNodeOnlyStems{
-    "fb1_aggregate_direct_call",
-    "fb1_direct_call",
-    "fb3_byvalue_capture",
-    "fb3_higher_order",
-    "fb3_nested_activation",
-    "fb3_nested_lambda_flow",
-    "fb4_effect_clause_pure_body",
-};
-
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip='host_transcode_awaits_node_port'. The wasm
-// module emits and the native wasm3 lane agrees with the evaluator, but the
+// module emits and the native wasm3 lane agrees with the blessing, but the
 // Node embedded host lacks the ahfl_xcode transcode adapter: the C++ WH-5b.3
 // host-side transcode landed, but the Node oracle JS port of ahfl_xcode is
 // still a stub (returns [1,0,0]), so the module traps at its transcode sites.
@@ -232,7 +220,7 @@ constexpr std::array<std::string_view, 1> kExpectedMultiNodeStashStems{
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip=
 // 'node_host_awaits_rich_wire_types'. The module emits and the native
-// wasm3 lane agrees with the evaluator, but the Node oracle host's P6
+// wasm3 lane agrees with the blessing, but the Node oracle host's P6
 // frame packer/reader does not implement the rich wire-type matrix
 // (Map / Decimal / Duration / Float are outside the JS host's rung-E
 // frame subset). The C++ host supports them (WH-5c.7); the Node
@@ -245,9 +233,6 @@ constexpr std::array<std::string_view, 1> kExpectedRichWireTypesStems{
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
-// Stems that actually ran the node-only (evaluator_surface_awaits_kr68) lane in
-// this invocation; compared against kExpectedNodeOnlyStems on a full run.
-std::vector<std::string> g_node_only_stems;
 // Stems that skipped the Node observation due to missing ahfl_xcode transcode
 // support (host_transcode_awaits_node_port); compared against
 // kExpectedHostTranscodeStems on a full run.
@@ -519,7 +504,8 @@ int run_one(const CaseEntry &entry,
             const ConformanceScenario &scenario,
             const std::string &node,
             const fs::path &host_script,
-            const fs::path &scratch_dir) {
+            const fs::path &scratch_dir,
+            const fs::path &observations_dir) {
     const auto &manifest = entry.loaded.manifest;
     const std::string stem = case_stem(entry.sidecar);
     const std::string label = stem + "/" + scenario.name;
@@ -561,9 +547,6 @@ int run_one(const CaseEntry &entry,
     // case that actually produces a comparable module is a stale skip claim --
     // fail before running the Node host so neither outcome can mask it. The
     // exceptions are:
-    //  - the FB-3b node-only lane (EvaluatorSurfaceAwaitsKr68): the module runs,
-    //    but there is no evaluator reference, so the Node observation is
-    //    compared directly against the manifest's blessed expectation below.
     //  - the host-transcode lane (HostTranscodeAwaitsNodePort): the module emits
     //    and the native wasm3 lane agrees, but the Node embedded host lacks the
     //    ahfl_xcode transcode adapter (the C++ WH-5b.3 transcode landed; the
@@ -577,15 +560,13 @@ int run_one(const CaseEntry &entry,
     //    packer/reader does not implement Map / Decimal / Duration / Float
     //    (outside the JS host's rung-E frame subset), so the observation is
     //    withheld.
-    const bool node_only =
-        declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
     const bool host_transcode_skip =
         declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
     const bool multinode_stash_skip =
         declared_skip == WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin;
     const bool rich_wire_types_skip =
         declared_skip == WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes;
-    if (declared_skip != WasmNodeObservationSkip::None && !node_only &&
+    if (declared_skip != WasmNodeObservationSkip::None &&
         !host_transcode_skip && !multinode_stash_skip && !rich_wire_types_skip) {
         std::cerr << "FAIL: " << label
                   << " emits a comparable module but its manifest declares a "
@@ -594,16 +575,9 @@ int run_one(const CaseEntry &entry,
         ++g_failures;
         return 1;
     }
-    if (node_only && produced.skip != WasmProduceSkip::EvaluatorSurfaceAwaitsKr68) {
-        std::cerr << "FAIL: " << label
-                  << " declares the node-only KR6.8 lane but the producer did not return that "
-                     "structured skip\n";
-        ++g_failures;
-        return 1;
-    }
 
     // The host-transcode lane: the module emits and the native wasm3 lane
-    // already agrees with the evaluator, but the Node embedded host stubs the
+    // already agrees with the blessing, but the Node embedded host stubs the
     // ahfl_xcode transcode imports with error returns, so the module traps at
     // its P4D_TO_JSON / JSON_TO_P4D sites. Withhold the Node observation until
     // the Node oracle JS port of ahfl_xcode lands.
@@ -632,7 +606,7 @@ int run_one(const CaseEntry &entry,
     }
 
     // The WH-5c.7 rich wire-type lane: the module emits and the native wasm3
-    // lane agrees with the evaluator, but the Node oracle host's P6 frame
+    // lane agrees with the blessing, but the Node oracle host's P6 frame
     // packer/reader does not implement Map / Decimal / Duration / Float
     // (they are outside the JS host's rung-E frame subset). Withhold the
     // Node observation until the JS host ports the rich wire-type matrix.
@@ -644,21 +618,6 @@ int run_one(const CaseEntry &entry,
                      "matrix (Map / Decimal / Duration / Float outside the "
                      "JS host's rung-E frame subset)\n";
         return 77;
-    }
-
-    // The evaluator observation is the differential reference, EXCEPT on the
-    // FB-3b node-only lane (the surfaced pure-fn/closure construct has no
-    // evaluator yet); there the manifest's blessed expectation is the reference.
-    std::optional<std::string> evaluator_observation;
-    if (!node_only) {
-        const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
-        if (!evaluator.ok) {
-            std::cerr << "ERROR: evaluator run failed for " << label << ":\n"
-                      << evaluator.error << "\n";
-            ++g_failures;
-            return 1;
-        }
-        evaluator_observation = evaluator.observation_json;
     }
 
     const fs::path case_scratch = scratch_dir / stem;
@@ -706,44 +665,53 @@ int run_one(const CaseEntry &entry,
         return 1;
     }
 
-    if (node_only) {
-        // No evaluator reference exists: assert the Node observation against
-        // the manifest's blessed expectation (status + state/capability/output).
-        const auto divergence = ahfl::conformance::node_observation_matches_expectation(
-            scenario.expect, *node_observation);
+    // Data-driven blessing existence replaces the retired
+    // evaluator-surface skip marker: a case with a checked-in blessing
+    // compares the Node observation against it; a case without one (the
+    // closure constructs) compares against the manifest's blessed expectation.
+    const fs::path blessing_path =
+        observations_dir / (stem + "." + scenario.name + ".json");
+    if (fs::exists(blessing_path)) {
+        const auto blessing = read_file(blessing_path);
+        if (!blessing.has_value()) {
+            std::cerr << "FAIL: cannot open blessing " << blessing_path << "\n";
+            ++g_failures;
+            return 1;
+        }
+        const auto divergence =
+            ahfl::conformance::observations_agree(*blessing, *node_observation);
         if (divergence.has_value()) {
-            std::cerr << "FAIL: node-only expectation mismatch for " << label << ":\n  "
-                      << *divergence << "\n--- node ---\n" << *node_observation << "\n";
+            std::cerr << "FAIL: blessing-vs-Node differential for " << label << ":\n  "
+                      << *divergence << "\n--- blessing ---\n" << *blessing
+                      << "\n--- node ---\n" << *node_observation;
+            if (!node_run.stderr_text.empty()) {
+                std::cerr << "\n--- node stderr ---\n" << node_run.stderr_text;
+            }
+            std::cerr << "\n";
             ++g_failures;
             return 1;
         }
         ++g_compared;
-        g_node_only_stems.push_back(stem);
         std::cout << "OK: " << label
-                  << " Node embedded-engine observation matched the blessed manifest expectation "
-                     "(node-only FB-3b lane; evaluator surface awaits KR6.8; NOT wasmtime)\n";
+                  << " Node embedded-engine differential agreed (Node embedded-engine "
+                     "evidence, NOT wasmtime evidence)\n";
         return 0;
     }
 
+    // No blessing: compare against the manifest's blessed expectation.
     const auto divergence =
-        ahfl::conformance::observations_agree(*evaluator_observation, *node_observation);
+        ahfl::conformance::node_observation_matches_expectation(
+            scenario.expect, *node_observation);
     if (divergence.has_value()) {
-        std::cerr << "FAIL: evaluator-vs-Node differential for " << label << ":\n  " << *divergence
-                  << "\n--- evaluator ---\n"
-                  << *evaluator_observation << "\n--- node ---\n"
-                  << *node_observation;
-        if (!node_run.stderr_text.empty()) {
-            std::cerr << "\n--- node stderr ---\n" << node_run.stderr_text;
-        }
-        std::cerr << "\n";
+        std::cerr << "FAIL: expectation mismatch for " << label << ":\n  "
+                  << *divergence << "\n--- node ---\n" << *node_observation << "\n";
         ++g_failures;
         return 1;
     }
-
     ++g_compared;
     std::cout << "OK: " << label
-              << " Node embedded-engine differential agreed (Node embedded-engine "
-                 "evidence, NOT wasmtime evidence)\n";
+              << " Node embedded-engine observation matched the blessed manifest "
+                 "expectation (Node embedded-engine evidence, NOT wasmtime evidence)\n";
     return 0;
 }
 
@@ -763,10 +731,13 @@ int mode_verify(const fs::path &repo_root,
         return 1;
     }
 
+    const fs::path observations_dir = cases_dir.parent_path() / "observations";
+
     bool node_seen = false;
     for (const auto &entry : cases) {
         for (const auto &scenario : entry.loaded.manifest.scenarios) {
-            const int outcome = run_one(entry, scenario, node, host_script, scratch_dir);
+            const int outcome = run_one(entry, scenario, node, host_script, scratch_dir,
+                                        observations_dir);
             if (outcome == 78) {
                 if (!node_seen) {
                     // Node is unavailable: emit the ctest-visible skip once.
@@ -800,31 +771,6 @@ int mode_verify(const fs::path &repo_root,
         if (g_skipped != kExpectedSkipped) {
             std::cerr << "FAIL: skipped count " << g_skipped << " != pinned " << kExpectedSkipped
                       << " (a case moved between the compared and skipped sets?)\n";
-            ++g_failures;
-        }
-        // Exact-set pin of the node-only (evaluator_surface_awaits_kr68) stems:
-        // a manifest cannot silently move a differential case onto the
-        // evaluator-free lane (or add an un-reviewed node-only case) while
-        // holding the 14/7 census steady.
-        std::sort(g_node_only_stems.begin(), g_node_only_stems.end());
-        g_node_only_stems.erase(
-            std::unique(g_node_only_stems.begin(), g_node_only_stems.end()),
-            g_node_only_stems.end());
-        std::vector<std::string> expected_stems;
-        expected_stems.reserve(kExpectedNodeOnlyStems.size());
-        for (const std::string_view s : kExpectedNodeOnlyStems) {
-            expected_stems.emplace_back(s);
-        }
-        if (g_node_only_stems != expected_stems) {
-            std::cerr << "FAIL: node-only (evaluator_surface_awaits_kr68) stem set is {";
-            for (std::size_t i = 0; i < g_node_only_stems.size(); ++i) {
-                std::cerr << (i ? ", " : "") << g_node_only_stems[i];
-            }
-            std::cerr << "} but the pinned set is {";
-            for (std::size_t i = 0; i < expected_stems.size(); ++i) {
-                std::cerr << (i ? ", " : "") << expected_stems[i];
-            }
-            std::cerr << "} (an un-reviewed case moved onto the node-only lane?)\n";
             ++g_failures;
         }
         // Exact-set pin of the host-transcode (host_transcode_awaits_node_port)
@@ -931,7 +877,9 @@ int mode_mutation(const fs::path &repo_root,
     check(!entry.loaded.manifest.scenarios.empty(), "mutation case has a scenario");
     const auto &scenario = entry.loaded.manifest.scenarios.front();
 
-    const int pristine = run_one(entry, scenario, node, host_script, scratch_dir);
+    const fs::path observations_dir = cases_dir.parent_path() / "observations";
+    const int pristine = run_one(entry, scenario, node, host_script, scratch_dir,
+                                 observations_dir);
     if (pristine == 78) {
         std::cout << "SKIP: Node embedded engine is unavailable for the mutation lane\n";
         return 77;
@@ -948,24 +896,28 @@ int mode_mutation(const fs::path &repo_root,
         return 1;
     }
 
-    // FB-3b node-only lane (evaluator_surface_awaits_kr68): there is no
-    // in-process evaluator reference, so the comparator under test is
-    // node_observation_matches_expectation against the manifest's blessed
-    // expectation. Exercise its status / state_sequence / output_json branches
-    // directly; the differential observations_agree path below needs an
-    // evaluator and is skipped for this lane.
-    const bool node_only =
-        entry.loaded.manifest.engines.wasm.node_observation_skip ==
-        WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
-    if (node_only) {
+    // Data-driven blessing existence replaces the retired
+    // evaluator-surface skip marker: a case without a blessing (the
+    // closure constructs) exercises node_observation_matches_expectation
+    // against the manifest's blessed expectation; a case with a blessing
+    // exercises observations_agree against the checked-in blessing.
+    const std::string stem = case_stem(entry.sidecar);
+    const fs::path blessing_path =
+        observations_dir / (stem + "." + scenario.name + ".json");
+    const bool has_blessing = fs::exists(blessing_path);
+
+    if (!has_blessing) {
+        // Expectation lane: the comparator under test is
+        // node_observation_matches_expectation. Exercise its status /
+        // state_sequence / output_json branches directly.
         // (N1) Flip the terminal status.
         {
             auto dom = ahfl::json::parse_json(*node_observation);
             check(dom.has_value() && *dom && (*dom)->is_object(),
-                  "node-only observation parses");
+                  "expectation-lane observation parses");
             auto *status = (*dom)->get_mut("status");
             check(status != nullptr && status->as_string().has_value(),
-                  "node-only observation carries a status");
+                  "expectation-lane observation carries a status");
             if (status == nullptr || !status->as_string().has_value()) {
                 return 1;
             }
@@ -975,9 +927,9 @@ int mode_mutation(const fs::path &repo_root,
             const auto divergence = ahfl::conformance::node_observation_matches_expectation(
                 scenario.expect, mutated);
             check(divergence.has_value(),
-                  "node-only comparator FAILS on a deliberately mutated status");
+                  "expectation-lane comparator FAILS on a deliberately mutated status");
             if (divergence.has_value()) {
-                std::cout << "OK: node-only comparator detected mutated expectation: "
+                std::cout << "OK: expectation-lane comparator detected mutated expectation: "
                           << *divergence << "\n";
             }
         }
@@ -987,7 +939,7 @@ int mode_mutation(const fs::path &repo_root,
             auto dom = ahfl::json::parse_json(*node_observation);
             auto *states = (*dom)->get_mut("state_sequence");
             check(states != nullptr && states->is_array() && !states->array_items.empty(),
-                  "node-only observation carries a non-empty state_sequence");
+                  "expectation-lane observation carries a non-empty state_sequence");
             if (states == nullptr || !states->is_array() || states->array_items.empty()) {
                 return 1;
             }
@@ -1002,9 +954,9 @@ int mode_mutation(const fs::path &repo_root,
             const auto divergence = ahfl::conformance::node_observation_matches_expectation(
                 scenario.expect, mutated);
             check(divergence.has_value(),
-                  "node-only comparator FAILS on a deliberately mutated state_sequence element");
+                  "expectation-lane comparator FAILS on a deliberately mutated state_sequence element");
             if (divergence.has_value()) {
-                std::cout << "OK: node-only comparator detected mutated expectation: "
+                std::cout << "OK: expectation-lane comparator detected mutated expectation: "
                           << *divergence << "\n";
             }
         }
@@ -1014,7 +966,7 @@ int mode_mutation(const fs::path &repo_root,
             auto dom = ahfl::json::parse_json(*node_observation);
             auto *output = (*dom)->get_mut("output_json");
             check(output != nullptr && output->is_object(),
-                  "node-only observation carries an output_json object");
+                  "expectation-lane observation carries an output_json object");
             if (output == nullptr || !output->is_object()) {
                 return 1;
             }
@@ -1034,7 +986,7 @@ int mode_mutation(const fs::path &repo_root,
                     break;
                 }
             }
-            check(tampered, "the node-only output_json has a tamperable scalar field");
+            check(tampered, "the expectation-lane output_json has a tamperable scalar field");
             if (!tampered) {
                 return 1;
             }
@@ -1042,9 +994,9 @@ int mode_mutation(const fs::path &repo_root,
             const auto divergence = ahfl::conformance::node_observation_matches_expectation(
                 scenario.expect, mutated);
             check(divergence.has_value(),
-                  "node-only comparator FAILS on deliberately mutated output_json");
+                  "expectation-lane comparator FAILS on deliberately mutated output_json");
             if (divergence.has_value()) {
-                std::cout << "OK: node-only comparator detected mutated expectation: "
+                std::cout << "OK: expectation-lane comparator detected mutated expectation: "
                           << *divergence << "\n";
             }
         }
@@ -1052,11 +1004,10 @@ int mode_mutation(const fs::path &repo_root,
         return g_failures == 0 ? 0 : 1;
     }
 
-    // Mutation matrix on the pristine observation: each dimension the
-    // comparator is responsible for must independently fail closed.
-    const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
-    check(evaluator.ok, "evaluator reference re-runs for the mutation lane");
-    if (!evaluator.ok) {
+    // Blessing lane: the comparator under test is observations_agree.
+    const auto blessing = read_file(blessing_path);
+    check(blessing.has_value(), "blessing loads for the mutation lane");
+    if (!blessing.has_value()) {
         return 1;
     }
 
@@ -1072,7 +1023,7 @@ int mode_mutation(const fs::path &repo_root,
         status->string_val = status->string_val == "failed" ? "completed" : "failed";
         const std::string mutated = ahfl::json::serialize_json(**dom);
         const auto divergence =
-            ahfl::conformance::observations_agree(evaluator.observation_json, mutated);
+            ahfl::conformance::observations_agree(*blessing, mutated);
         check(divergence.has_value(), "comparator FAILS on the deliberately mutated status");
         if (divergence.has_value()) {
             std::cout << "OK: comparator detected mutated expectation: " << *divergence << "\n";
@@ -1098,7 +1049,7 @@ int mode_mutation(const fs::path &repo_root,
         entry0->string_val = "mutated-unexpected-state";
         const std::string mutated = ahfl::json::serialize_json(**dom);
         const auto divergence =
-            ahfl::conformance::observations_agree(evaluator.observation_json, mutated);
+            ahfl::conformance::observations_agree(*blessing, mutated);
         check(divergence.has_value(),
               "comparator FAILS on a deliberately mutated state_sequence element");
         if (divergence.has_value()) {

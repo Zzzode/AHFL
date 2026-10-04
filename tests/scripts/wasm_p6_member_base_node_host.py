@@ -11,12 +11,9 @@ reads a field off:
   * a match expression yielding an aggregate   `(match m {...}).y`.
 
 The wasm state-id path (Decide=3 -> High=1 -> Done=0) is reachable only when
-every read selects the correct P4-D field. The probe's NATIVE evaluator path
-is expected to fail on this fixture for the same pre-existing reason the FB-1
-direct-call fixtures' native probes fail (free-fn aggregate calls are an
-evaluator-surface limitation, not a Core/wasm gap): wasm emission still
-succeeds and this host drives the stable step() ABI directly. SKIP (77) when
-node is unavailable.
+every read selects the correct P4-D field. The wasm emission succeeds and this
+host drives the stable step() ABI directly. SKIP (77) when node is
+unavailable.
 """
 from __future__ import annotations
 
@@ -56,9 +53,7 @@ def main(argv: list[str]) -> int:
         )
         if compile_run.returncode != 0:
             # The probe exits non-zero only when Core lowering / layout / wasm
-            # emission fails. The native evaluator status is informational and
-            # expected "failed" here (free-fn aggregate-call surface), so it
-            # never drives the return code.
+            # emission fails.
             return fail(f"P6 producer (Core/wasm path) failed: {compile_run.stderr}")
 
         host = td_path / "p6_member_host.mjs"

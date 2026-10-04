@@ -10,7 +10,7 @@
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 #include "runtime/value/value_json.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
@@ -90,26 +90,6 @@ compile_reference_workflow(const std::filesystem::path &repo) {
         return std::nullopt;
     }
     return ahfl::lower_program_ir(parsed.graph, resolved, typed);
-}
-
-[[nodiscard]] bool approval_accepted(const std::filesystem::path &path,
-                                     ahfl::runtime::CheckpointId checkpoint) {
-    const auto content = read_text(path);
-    if (!content.has_value()) {
-        return false;
-    }
-    auto parsed = ahfl::json::parse_json(*content);
-    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
-        return false;
-    }
-    const auto *schema = (*parsed)->get("schema");
-    const auto *decision = (*parsed)->get("decision");
-    const auto *checkpoint_id = (*parsed)->get("checkpoint_id");
-    return schema != nullptr && schema->as_string() == "ahfl.operator-approval.v1" &&
-           decision != nullptr && decision->as_string() == "approved" &&
-           checkpoint_id != nullptr &&
-           checkpoint_id->as_int() ==
-               static_cast<std::int64_t>(checkpoint.index());
 }
 
 struct ProcessMetrics {
@@ -296,8 +276,8 @@ latency_summary(const LatencySummary &values) {
 
 int main(int argc, char **argv) {
     if (argc != 6) {
-        std::cerr << "usage: reference_workflow_recovery_worker "
-                     "<run|crash|resume|soak> <repo-root> <work-dir> <endpoint> "
+        std::cerr << "usage: reference_workflow_soak_worker "
+                     "<run|soak> <repo-root> <work-dir> <endpoint> "
                      "<approval-or-control-file>\n";
         return 2;
     }
@@ -306,8 +286,7 @@ int main(int argc, char **argv) {
     const std::filesystem::path work = argv[3];
     const std::string endpoint = argv[4];
     const std::filesystem::path approval = argv[5];
-    if (mode != "run" && mode != "crash" && mode != "resume" &&
-        mode != "soak") {
+    if (mode != "run" && mode != "soak") {
         return 2;
     }
     std::filesystem::create_directories(work);
@@ -327,20 +306,6 @@ int main(int argc, char **argv) {
     }
 
     ahfl::runtime::WorkflowRecoveryStore recovery_store(work / "workflow-recovery.json");
-    std::optional<ahfl::runtime::WorkflowRecoverySnapshot> recovery;
-    if (mode == "resume") {
-        auto loaded = recovery_store.load();
-        if (!loaded.has_value()) {
-            std::cerr << "recovery snapshot unavailable\n";
-            return 3;
-        }
-        if (!approval_accepted(approval, loaded->checkpoint)) {
-            std::cerr << "operator approval required for checkpoint "
-                      << loaded->checkpoint.index() << '\n';
-            return 4;
-        }
-        recovery = std::move(*loaded);
-    }
 
     ahfl::llm_provider::LLMProviderConfig provider_config;
     provider_config.endpoint = endpoint;
@@ -387,10 +352,10 @@ int main(int argc, char **argv) {
             const auto iteration_started = std::chrono::steady_clock::now();
             ahfl::llm_provider::LLMCapabilityProvider provider(
                 *program, provider_config);
-            ahfl::runtime::WorkflowRuntimeConfig soak_config;
-            soak_config.contextual_capability_invoker =
+            ahfl::runtime::wasm_runner::WasmWorkflowRuntimeConfig soak_config;
+            soak_config.invoker =
                 provider.as_contextual_invoker();
-            ahfl::runtime::WorkflowRuntime runtime(*program, std::move(soak_config));
+            ahfl::runtime::wasm_runner::WasmWorkflowRuntime runtime(*program, std::move(soak_config));
             auto iteration_result = runtime.run(
                 "execution_demo::main::IncidentWorkflow",
                 ahfl::runtime::clone_value(*input));
@@ -466,42 +431,11 @@ int main(int argc, char **argv) {
     }
 
     ahfl::llm_provider::LLMCapabilityProvider provider(*program, std::move(provider_config));
-    ahfl::runtime::WorkflowRuntimeConfig runtime_config;
-    runtime_config.contextual_capability_invoker = provider.as_contextual_invoker();
+    ahfl::runtime::wasm_runner::WasmWorkflowRuntimeConfig runtime_config;
+    runtime_config.invoker = provider.as_contextual_invoker();
     runtime_config.recovery_store = &recovery_store;
-    runtime_config.recovery_snapshot = std::move(recovery);
-    if (mode == "crash") {
-        runtime_config.checkpoint_after_node =
-            [](ahfl::runtime::WorkflowNodeId node)
-            -> std::optional<ahfl::runtime::CheckpointId> {
-            return node.index() < 2
-                       ? std::optional{ahfl::runtime::CheckpointId{node.index()}}
-                       : std::nullopt;
-        };
-        runtime_config.capability_result_observer =
-            [&work](const ahfl::runtime::CapabilityInvocationContext &context,
-                    const ahfl::runtime::CapabilityCallResult &result) {
-            if (context.workflow_node_id != ahfl::runtime::WorkflowNodeId{2} ||
-                result.status != ahfl::runtime::CapabilityCallStatus::Success) {
-                return;
-            }
-            auto marker = JsonValue::make_object();
-            marker->set("schema", JsonValue::make_string("ahfl.reference-fault-marker.v1"));
-            marker->set("workflow_node_id",
-                        JsonValue::make_int(
-                            static_cast<std::int64_t>(context.workflow_node_id.index())));
-            marker->set("cache_hit", JsonValue::make_bool(result.cache_hit));
-            marker->set("fault", JsonValue::make_string("process_kill_after_provider_commit"));
-            (void)ahfl::support::atomic_replace_text(
-                work / "fault-ready.json", ahfl::json::serialize_json(*marker));
-            std::cout << "FAULT_READY\n" << std::flush;
-            for (;;) {
-                std::this_thread::sleep_for(std::chrono::seconds{1});
-            }
-        };
-    }
 
-    ahfl::runtime::WorkflowRuntime runtime(*program, std::move(runtime_config));
+    ahfl::runtime::wasm_runner::WasmWorkflowRuntime runtime(*program, std::move(runtime_config));
     auto result = runtime.run(
         "execution_demo::main::IncidentWorkflow", std::move(*input));
     if (!write_process_metrics(work / "process-metrics.json")) {

@@ -250,9 +250,10 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // KR6.7 corpus widening (FB-5): the V2-B String/computed-final and
         // bounded-arena fixtures now run as manifest-driven p6-frame cases
         // (String PtrLen projection / rodata literals / bounded list packing).
-        // v2b_enum_string stays OUT of the catalogue: its String tuple-variant
-        // construction misroutes through the evaluator's capability invoker
-        // (a tracked evaluator defect), even though the wasm run is correct.
+        // v2b_enum_string stays OUT of the catalogue: the retired evaluator
+        // misrouted its String tuple-variant construction through the
+        // capability invoker while the wasm run is correct; the fixture can
+        // be re-added when a blessing is captured.
         {"v2b_bounded_string.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
@@ -284,18 +285,18 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // KR6.7 corpus widening (FB-5): node-only FB-1/FB-3 cases whose user
-        // pure-fn / first-class-closure surface the in-process evaluator does
-        // not execute yet. The modules emit cleanly on the orchestration lane
-        // (WireJson identity finals) and the Node observation is blessed
-        // directly; the manifest pins evaluator_surface_awaits_kr68.
+        // KR6.7 corpus widening (FB-5): expectation-lane FB-1/FB-3 cases whose
+        // user pure-fn / first-class-closure constructs have no checked-in
+        // blessing. The modules emit cleanly on the orchestration lane
+        // (WireJson identity finals) and the Node observation compares
+        // against the manifest's blessed expectation.
         {"fb1_aggregate_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb1_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_byvalue_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_activation.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_lambda_flow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7 corpus widening (FB-5) slice E: the FB-4 effect-classification
-        // pure fn case (node-only KR6.8 surface) and the least-privilege
+        // pure fn case (expectation-lane KR6.8 surface) and the least-privilege
         // capability-free agent compiled from a two-agent module (zero imports).
         {"fb4_cross_agent_capability_leak.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
@@ -357,8 +358,9 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          CoreWasmFrameContract::P6Frame},
         // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
         // cleanly on the orchestration lane (funcref table + closure env). Its
-        // node-only observation (no evaluator reference until KR6.8) is a
-        // manifest-pinned skip cross-checked separately by the Node runner.
+        // expectation-lane observation (no checked-in blessing) is
+        // cross-checked separately by the Node runner against the manifest's
+        // blessed expectation.
         {"fb3_higher_order.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // V2-D emission half 1: a workflow packaging a computed-final node now
         // emits as a P6-frame module: the relocated frame handlers run on the

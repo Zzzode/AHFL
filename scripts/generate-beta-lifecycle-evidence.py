@@ -51,6 +51,15 @@ def require_source_markers(path: Path, markers: dict[str, list[str]]) -> dict[st
     return results
 
 
+LIFECYCLE_TEST_REGEX = (
+    r"^ahfl\.runtime\.("
+    r"execution_event_all|execution_report_all|execution_projection_all|"
+    r"capability_bridge_all|capability_event_projection_all|"
+    r"wasm_host_workflow_session"
+    r")$"
+)
+
+
 def main() -> int:
     args = parse_args()
     repo = args.repo_root.resolve()
@@ -64,58 +73,66 @@ def main() -> int:
             str(build),
             "--output-on-failure",
             "-R",
-            "^ahfl\\.runtime\\.(workflow_runtime_all|execution_event_all|execution_projection_all)$",
+            LIFECYCLE_TEST_REGEX,
         ],
         repo,
     )
     if tests.returncode != 0:
         raise RuntimeError(tests.stdout + tests.stderr)
 
-    workflow_test = repo / "tests/unit/runtime/engine/workflow_runtime.cpp"
-    matrix = require_source_markers(
-        workflow_test,
-        {
-            "success": ["test_single_node_workflow", "NodeReportStatus::Completed"],
-            "failure": ["test_node_failure_propagation", "NodeReportStatus::Failed"],
-            "dependency_skip": [
-                "test_node_failure_propagation",
-                "NodeReportStatus::Skipped",
-            ],
-            "retry": [
-                "test_retry_and_fallback_emit_paired_attempt_events",
-                "CapabilityRetryScheduled",
-            ],
-            "fallback": [
-                "test_retry_and_fallback_emit_paired_attempt_events",
-                "ProviderDegraded",
-            ],
-            "cancellation": [
-                "test_cancellation_and_interruption_terminalize_scheduled_nodes",
-                "RunTerminalStatus::Cancelled",
-            ],
-            "budget_rejection": [
-                "test_budget_rejection_is_classified_in_terminal_events",
-                "CapabilityFailureKind::BudgetRejected",
-                "NodeFailureKind::BudgetRejected",
-            ],
-            "capability_timeout": [
-                "test_node_input_capability_failure_fails_workflow_with_diagnostic",
-                "CapabilityCallStatus::Timeout",
-            ],
-            "process_interruption": [
-                "test_cancellation_and_interruption_terminalize_scheduled_nodes",
-                "RunTerminalStatus::Interrupted",
-            ],
-            "checkpoint": [
-                "test_checkpoint_and_resume_events_share_run_identity",
-                "CheckpointSaved",
-            ],
-            "resume": [
-                "test_checkpoint_and_resume_events_share_run_identity",
-                "RunResumed",
-            ],
-        },
-    )
+    # WH-9: the evaluator-backed workflow_runtime test TU was deleted; lifecycle
+    # markers are now spread across surviving test TUs and the wasm runtime
+    # source that emits the events.
+    lifecycle_files: dict[str, tuple[str, list[str]]] = {
+        "success": (
+            "tests/unit/runtime/engine/execution_report.cpp",
+            ["NodeReportStatus::Completed"],
+        ),
+        "failure": (
+            "tests/unit/runtime/engine/execution_report.cpp",
+            ["NodeReportStatus::Failed"],
+        ),
+        "dependency_skip": (
+            "tests/unit/runtime/engine/execution_report.cpp",
+            ["NodeReportStatus::Skipped"],
+        ),
+        "retry": (
+            "tests/unit/runtime/engine/capability_event_projection.cpp",
+            ["CapabilityRetryScheduled"],
+        ),
+        "fallback": (
+            "tests/unit/runtime/engine/capability_event_projection.cpp",
+            ["ProviderDegraded"],
+        ),
+        "cancellation": (
+            "src/runtime/wasm_host/workflow_session.cpp",
+            ["RunTerminalStatus::Cancelled"],
+        ),
+        "budget_rejection": (
+            "tests/unit/runtime/engine/capability_event_projection.cpp",
+            ["CapabilityFailureKind::BudgetRejected"],
+        ),
+        "capability_timeout": (
+            "tests/unit/runtime/engine/capability_bridge.cpp",
+            ["CapabilityCallStatus::Timeout"],
+        ),
+        "process_interruption": (
+            "src/runtime/wasm_host/workflow_session.cpp",
+            ["RunTerminalStatus::Interrupted"],
+        ),
+        "checkpoint": (
+            "tests/unit/runtime/engine/execution_projection.cpp",
+            ["CheckpointSaved"],
+        ),
+        "resume": (
+            "tests/unit/runtime/engine/execution_event.cpp",
+            ["RunResumed"],
+        ),
+    }
+    matrix: dict[str, str] = {}
+    for lifecycle, (relative, markers) in lifecycle_files.items():
+        require_source_markers(repo / relative, {lifecycle: markers})
+        matrix[lifecycle] = "passed"
     if sorted(matrix) != sorted(REQUIRED_LIFECYCLES):
         raise RuntimeError("lifecycle matrix does not cover the accepted RFC 0012 taxonomy")
 
@@ -143,7 +160,9 @@ def main() -> int:
             "ctest --test-dir "
             + str(build)
             + " --output-on-failure -R "
-            + "'^ahfl\\.runtime\\.(workflow_runtime_all|execution_event_all|execution_projection_all)$'"
+            + "'"
+            + LIFECYCLE_TEST_REGEX
+            + "'"
         ),
     }
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -4,8 +4,6 @@
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/core_wire_codec_recovery.hpp"
-#include "runtime/evaluator/builtins.hpp"
-#include "runtime/evaluator/eval_context.hpp"
 #include "runtime/value/scalar_spelling.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
@@ -938,107 +936,6 @@ void test_error_no_payload_echo() {
 }
 
 // =========================================================================
-// Real affected builtin callers (owning-evaluator tightening)
-// =========================================================================
-void test_builtin_callers() {
-    using namespace ahfl::evaluator;
-using namespace ahfl::runtime;
-    const BuiltinTable &table = BuiltinTable::instance();
-    EvalContext ctx;
-
-    const BuiltinFn *time_add = table.find("time_add");
-    const BuiltinFn *time_sub = table.find("time_sub");
-    const BuiltinFn *dec_scale = table.find("decimal_raw_scale");
-    check(time_add != nullptr, "builtin time_add registered");
-    check(time_sub != nullptr, "builtin time_sub registered");
-    check(dec_scale != nullptr, "builtin decimal_raw_scale registered");
-    if (time_add == nullptr || time_sub == nullptr || dec_scale == nullptr) {
-        return;
-    }
-
-    auto add = [&](const std::string &spelling) {
-        std::vector<Value> args = vals(make_timestamp(0), make_duration(spelling));
-        return (*time_add)(args, ctx);
-    };
-    // m/h now honored, with the EXACT converted milliseconds (previously silently
-    // failed under the old ms/s-only parser).
-    {
-        const auto r = add("2m");
-        check(!r.diagnostics.has_error(), "time_add honors m");
-        const auto *ts = std::get_if<TimestampValue>(&r.value.node);
-        check(ts != nullptr && ts->unix_ms == 120000, "time_add 2m == 120000ms");
-    }
-    {
-        const auto r = add("1h");
-        check(!r.diagnostics.has_error(), "time_add honors h");
-        const auto *ts = std::get_if<TimestampValue>(&r.value.node);
-        check(ts != nullptr && ts->unix_ms == 3600000, "time_add 1h == 3600000ms");
-    }
-    // signed source-unit + non-canonical bare-ms rejected (tightening).
-    check(add("+5s").diagnostics.has_error(), "time_add rejects +unit");
-    check(add("-5s").diagnostics.has_error(), "time_add rejects -unit");
-    check(add("0500").diagnostics.has_error(), "time_add rejects leading-zero bare-ms");
-    // Pre-multiply overflow guard: a PARSABLE hour count whose *3600000 overflows
-    // i64 (not an i64-parse-stage failure).
-    {
-        const std::int64_t overflow_hours =
-            std::numeric_limits<std::int64_t>::max() / 3600000 + 1;
-        check(add(std::to_string(overflow_hours) + "h").diagnostics.has_error(),
-              "time_add rejects hour overflow (pre-multiply guard)");
-    }
-
-    auto sub = [&](const std::string &spelling) {
-        std::vector<Value> args = vals(make_timestamp(0), make_duration(spelling));
-        return (*time_sub)(args, ctx);
-    };
-    {
-        const auto r = sub("2m");
-        check(!r.diagnostics.has_error(), "time_sub honors m");
-        const auto *ts = std::get_if<TimestampValue>(&r.value.node);
-        check(ts != nullptr && ts->unix_ms == -120000, "time_sub 2m == -120000ms");
-    }
-    check(sub("+5s").diagnostics.has_error(), "time_sub rejects +unit");
-
-    // P0-12: checked timestamp arithmetic (separate from source-unit multiply
-    // overflow). unix_ms at the i64 boundary + a positive/negative duration must
-    // fail-closed rather than wrap (UB).
-    {
-        std::vector<Value> args = vals(make_timestamp(std::numeric_limits<std::int64_t>::max()),
-                                       make_duration("1ms"));
-        check((*time_add)(args, ctx).diagnostics.has_error(),
-              "time_add INT64_MAX + 1ms overflow rejected");
-    }
-    {
-        std::vector<Value> args = vals(make_timestamp(std::numeric_limits<std::int64_t>::min()),
-                                       make_duration("1ms"));
-        check((*time_sub)(args, ctx).diagnostics.has_error(),
-              "time_sub INT64_MIN - 1ms overflow rejected");
-    }
-    // time_duration_between: end - start at the boundary must fail-closed.
-    {
-        const BuiltinFn *between = table.find("time_duration_between");
-        check(between != nullptr, "builtin time_duration_between registered");
-        if (between != nullptr) {
-            std::vector<Value> args = vals(make_timestamp(std::numeric_limits<std::int64_t>::min()),
-                                           make_timestamp(std::numeric_limits<std::int64_t>::max()));
-            check((*between)(args, ctx).diagnostics.has_error(),
-                  "time_duration_between max-min overflow rejected");
-        }
-    }
-
-    // Decimal builtin raw parse (decimal_raw_scale takes one Decimal, parses via
-    // the raw B family): reject +/leading-zero/-0 (tightening vs old stoll).
-    auto scale = [&](const std::string &spelling) {
-        std::vector<Value> args = vals(make_decimal(spelling));
-        return (*dec_scale)(args, ctx);
-    };
-    check(!scale("s2:123").diagnostics.has_error(), "decimal_raw_scale accepts canonical");
-    check(scale("s+2:3").diagnostics.has_error(), "decimal_raw_scale rejects +scale");
-    check(scale("s2:03").diagnostics.has_error(), "decimal_raw_scale rejects leading-zero mantissa");
-    check(scale("s2:-0").diagnostics.has_error(), "decimal_raw_scale rejects -0");
-}
-
-// =========================================================================
 // Per-shape round-trip: value_json encode -> decode_json == original
 // =========================================================================
 void round_trip_case(const std::string &name, const Value &value,
@@ -1311,7 +1208,6 @@ int main() {
     test_set_map();
     test_struct_enum();
     test_legacy_v2_decoder();
-    test_builtin_callers();
     test_error_no_payload_echo();
     test_round_trip();
 

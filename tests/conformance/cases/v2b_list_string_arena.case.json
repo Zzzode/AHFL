@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-B fix-forward: a packed input List<String(0,8)>(4) meters the input-payload arena at capacity*bound; the computed final itself is a constant scalar; p6-frame module on the orchestration lane"

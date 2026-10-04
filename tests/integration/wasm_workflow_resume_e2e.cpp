@@ -64,6 +64,7 @@
 #include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 
 #include "runtime/engine/workflow_recovery.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
@@ -539,7 +540,7 @@ void test_wh5b2_bridge_pending_resume(
         check_workflow_completed(suspended, 0, "wh5b2.suspend");
 
         // P2-1: on suspend, the wasm lane's NodeSkipped events must carry
-        // EMPTY blocking_dependencies, matching the evaluator's semantics
+        // EMPTY blocking_dependencies, matching the expected semantics
         // (nodes never reached are not "blocked by" the suspended node).
         // The wh5b_hybrid_p6_bridge fixture has 3 nodes; bridge_a suspends,
         // so bridge_b and echo are NodeSkipped with empty deps.
@@ -616,7 +617,7 @@ void test_wh5b2_bridge_pending_resume(
 //
 // Case 5: ERROR status word. The Bridge invoker returns Error. The guest's
 // bridge call must propagate the failure -> the workflow node fails
-// (NodeFailed), parity with the evaluator's capability-error handling.
+// (NodeFailed), the expected capability-error handling.
 void test_wh5b2_bridge_error_fails(
     const std::filesystem::path &repo_root,
     const std::filesystem::path &work_dir) {
@@ -2509,7 +2510,7 @@ void test_p2e_pending_cap_unresolvable(
 // CapabilityCompleted for Echo (cap output -> value ID 1), so the node
 // output_value_ids are [0, 2, 3] and the workflow output is 4. On a
 // resumed run the frontier injection bypasses the invoker wrapper (no
-// CapabilityStarted/CapabilityCompleted, mirroring the evaluator), so
+// CapabilityStarted/CapabilityCompleted), so
 // the node output_value_ids are [0, 1, 2] and the workflow output is
 // 3. Both sequences are contiguous; the fresh-vs-resumed delta is
 // exactly the skipped capability event. The test pins both sequences
@@ -2675,7 +2676,7 @@ void test_wh5c5_gap4_replay_stash_parity(
     }
 
     // Resumed-run expectation: no CapabilityCompleted on the frontier
-    // path (mirrors the evaluator), so node ids are [0, 1, 2] and the
+    // path, so node ids are [0, 1, 2] and the
     // workflow output is 3. The stash table was rebuilt: every node has
     // a decoded output (no NoneValue fallback).
     check(resumed_node_ids.size() == 3, "wh5c5rp.resumed_3_nodes");

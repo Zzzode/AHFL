@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "single-agent two-state identity return; executable on the P5 orchestration wasm subset (E1)"

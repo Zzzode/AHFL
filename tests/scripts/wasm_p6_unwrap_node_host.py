@@ -11,11 +11,12 @@ The producer compiles two real-frontend fixtures:
 The lowering introduces no Core node: unwrap is an expression match
 (`Some(x) => x`) with an UnwrapFailed trap fallback. The success path pins
 payload-slot extraction of a generic Option<Int>; the trap path pins the
-fallback `unreachable`. SKIP (77) when node is unavailable.
+fallback `unreachable`. The wasm state-id paths are pinned against the frozen
+oracles captured at HEAD 620fadd8 (WH-9 B0). SKIP (77) when node is
+unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -24,28 +25,22 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracles (WH-9 B0, HEAD 620fadd8), keyed by fixture stem.
+FROZEN_OBS: dict[str, dict[str, object]] = {
+    "p6_unwrap_some": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_unwrap_none_trap": {
+        "status": "failed", "entered_ids": [1],
+        "final_state_id": 1, "transition_count": 0, "initial_state_id": 1,
+    },
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    return {
-        "status": match.group(1),
-        "entered_ids": [int(x) for x in match.group(2).split(",") if x],
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -67,23 +62,21 @@ def main(argv: list[str]) -> int:
         some_wasm = td_path / "p6_unwrap_some.wasm"
         none_wasm = td_path / "p6_unwrap_none.wasm"
 
-        some_native = subprocess.run(
+        some_compile = subprocess.run(
             [str(producer), str(some_source), str(some_wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if some_native.returncode != 0:
-            return fail(f"Some producer exited {some_native.returncode}: {some_native.stderr}")
-        some_obs = parse_observation(some_native.stdout.strip())
-        if some_obs["status"] != "completed" or not some_obs["entered_ids"]:
-            return fail(f"native unwrap-Some run did not complete: {some_obs}")
+        if some_compile.returncode != 0:
+            return fail(f"Some producer exited {some_compile.returncode}: {some_compile.stderr}")
+        some_obs = FROZEN_OBS[some_source.stem]
 
-        none_native = subprocess.run(
+        none_compile = subprocess.run(
             [str(producer), str(none_source), str(none_wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if none_native.returncode != 0:
-            return fail(f"None producer exited {none_native.returncode}: {none_native.stderr}")
-        none_obs = parse_observation(none_native.stdout.strip())
+        if none_compile.returncode != 0:
+            return fail(f"None producer exited {none_compile.returncode}: {none_compile.stderr}")
+        none_obs = FROZEN_OBS[none_source.stem]
 
         host = td_path / "p6_unwrap_host.mjs"
         host.write_text(
@@ -119,7 +112,7 @@ while (guard-- > 0) {
 }
 const observedPath = sequence.slice(0, expectedSequence.length);
 if (JSON.stringify(observedPath) !== JSON.stringify(expectedSequence))
-  throw new Error(`unwrap state-id path ${observedPath} != native ${expectedSequence} ` +
+  throw new Error(`unwrap state-id path ${observedPath} != oracle ${expectedSequence} ` +
     "(payload slot not extracted)");
 if (c.transition_count.value !== expectedTransitions)
   throw new Error(`transition_count ${c.transition_count.value} != ${expectedTransitions}`);
@@ -162,7 +155,7 @@ console.log("P6 unwrap Some/None Node step execution passed");
                 f"stdout={executed.stdout!r} stderr={executed.stderr!r}"
             )
         if none_obs["status"] != "failed" or none_obs["transition_count"] != 0:
-            return fail(f"native unwrap-None fixture unexpectedly non-failing: {none_obs}")
+            return fail(f"unwrap-None frozen oracle unexpectedly non-failing: {none_obs}")
 
     print("OK: CORE-GAPS unwrap Node embedded-engine execution passed "
           "(real Node v22 engine, NOT wasmtime evidence)")

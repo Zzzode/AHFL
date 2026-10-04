@@ -129,10 +129,9 @@ class WasmResumeRecorder {
     // schedule space ONCE here, so classify/memo_entry compare schedule
     // positions (the Kahn order the session actually walks), never source
     // order. Returns false (fail-closed) if any memo entry lacks a node
-    // coordinate (the wasm consumer requires it on every entry; an
-    // evaluator-originated snapshot has none and is rejected here, not
-    // silently re-run) or a node coordinate is out of range for the
-    // mapping.
+    // coordinate (the wasm consumer requires it on every entry; a snapshot
+    // without one is rejected here, not silently re-run) or a node
+    // coordinate is out of range for the mapping.
     [[nodiscard]] bool
     load_replay(WorkflowRecoverySnapshot snapshot,
                 std::span<const std::size_t> node_to_schedule);

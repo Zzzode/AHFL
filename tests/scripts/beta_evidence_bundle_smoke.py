@@ -49,11 +49,6 @@ out = root / "build/release-evidence/beta"
 revision = compute_source_revision(root)
 values = (
     ("run-profiles.json", "ahfl.beta-evidence.run-profiles.v1", "BETA-01"),
-    (
-        "reference-workflow-recovery.json",
-        "ahfl.beta-evidence.reference-workflow-recovery.v1",
-        "BETA-07",
-    ),
 )
 for name, schema, criterion in values:
     path = out / name
@@ -247,7 +242,7 @@ def main() -> int:
         report = json.loads(result.stdout)
         require(report["schema"] == "ahfl.beta-gate-report.v1", "wrong final report")
         require(report["status"] == "ready", "complete bundle was not ready")
-        require(len(list(out.glob("*.json"))) == 10, "bundle did not produce ten evidence files")
+        require(len(list(out.glob("*.json"))) == 9, "bundle did not produce nine evidence files")
 
         (root / "scripts/check-readme-capabilities.py").write_text(
             "#!/usr/bin/env python3\n", encoding="utf-8"

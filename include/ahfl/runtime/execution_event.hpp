@@ -94,7 +94,6 @@ enum class ProviderDegradationReason {
 
 enum class NodeFailureKind {
     AgentFailed,
-    EvaluationFailed,
     CapabilityFailed,
     BudgetRejected,
     Cancelled,

@@ -15,17 +15,16 @@ must skip all k labels to reach the handler block. Emitting `br 0` (or any wrong
 depth) lands on an inner `if` instead, which the wasm validator rejects or which
 misroutes the state id -- exactly the class of bug this script exists to catch.
 
-For each real-frontend fixture the producer reports the native AgentRuntime
-state-id observation; this script compiles the emitted module with the Node v22
-WebAssembly engine (WebAssembly.compile REJECTS a malformed module) and drives
-the stable step() ABI, asserting the reached state ids and transition_count match
-native.
+For each real-frontend fixture the producer compiles the wasm; this script
+compiles the emitted module with the Node v22 WebAssembly engine
+(WebAssembly.compile REJECTS a malformed module) and drives the stable
+step() ABI, asserting the reached state ids and transition_count match the
+frozen oracles captured at HEAD 620fadd8 (WH-9 B0).
 
 SKIP (77) when the node interpreter is unavailable.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -42,29 +41,30 @@ FIXTURES = [
     ("p6_elseless_taken.ahfl", "else-less nested if, inner arm taken (br depth 2)"),
 ]
 
+# Frozen oracles (WH-9 B0, HEAD 620fadd8), keyed by fixture stem.
+FROZEN_OBS: dict[str, dict[str, object]] = {
+    "p6_cascade": {
+        "status": "completed", "entered_ids": [5, 2, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 5,
+    },
+    "p6_cascade_high": {
+        "status": "completed", "entered_ids": [5, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 5,
+    },
+    "p6_elseless_fallthrough": {
+        "status": "completed", "entered_ids": [3, 2, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+    "p6_elseless_taken": {
+        "status": "completed", "entered_ids": [3, 1, 0],
+        "final_state_id": 0, "transition_count": 2, "initial_state_id": 3,
+    },
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -87,16 +87,14 @@ def main(argv: list[str]) -> int:
         cases: list[tuple[str, Path, dict[str, object]]] = []
         for src, desc in sources:
             wasm = td_path / (src.stem + ".wasm")
-            native = subprocess.run(
+            compile_run = subprocess.run(
                 [str(producer), str(src), str(wasm)],
                 capture_output=True, text=True, timeout=60,
             )
-            if native.returncode != 0:
-                return fail(f"{src.name} producer exited {native.returncode}: "
-                            f"{native.stderr}")
-            obs = parse_observation(native.stdout.strip())
-            if obs["status"] != "completed" or not obs["entered_ids"]:
-                return fail(f"{src.name} native run did not complete: {obs}")
+            if compile_run.returncode != 0:
+                return fail(f"{src.name} producer exited {compile_run.returncode}: "
+                            f"{compile_run.stderr}")
+            obs = FROZEN_OBS[src.stem]
             cases.append((desc, wasm, obs))
 
         host = td_path / "p6_structured_host.mjs"
@@ -129,7 +127,7 @@ for (const c of cases) {
   // AFTER the first transition.
   const expected = c.entered.slice(1);
   if (c.entered[0] !== c.initial)
-    throw new Error(`${c.path}: native initial id mismatch`);
+    throw new Error(`${c.path}: frozen initial id mismatch`);
   if (exports.current_state() !== c.initial)
     throw new Error(`${c.path}: initial state ${exports.current_state()} != ${c.initial}`);
   const sequence = [];
@@ -153,7 +151,7 @@ for (const c of cases) {
   }
   const path = sequence.slice(0, expected.length);
   if (JSON.stringify(path) !== JSON.stringify(expected))
-    throw new Error(`${c.path}: state path ${path} != native ${expected}`);
+    throw new Error(`${c.path}: state path ${path} != oracle ${expected}`);
   if (exports.transition_count.value !== c.transitions)
     throw new Error(
       `${c.path}: transition_count ${exports.transition_count.value} != ${c.transitions}`);

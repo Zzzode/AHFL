@@ -37,7 +37,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "V2-A fix-forward: an if-let arm whose body ends in a structured if returning on both branches, with the implicit else falling through to the outer return; p6-frame module on the orchestration lane"

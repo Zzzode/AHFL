@@ -7,12 +7,8 @@
 // backend (ahfl_compiler_backend_wasm); the wasm_host free functions stay
 // backend-free.
 //
-// The surface mirrors the evaluator-backed WorkflowRuntime
-// (src/runtime/engine/workflow_runtime.hpp): same constructor shape
-// (const ir::Program& + config), same run(name, input) -> WorkflowResult.
-// A host that already drives the evaluator-backed runtime through the shared
-// WasmRuntimeHooks can switch to this facade without changing its hook
-// wiring.
+// The wasm3-backed workflow runtime: constructor takes (const ir::Program& +
+// config), run(name, input) -> WorkflowResult.
 
 #include "runtime/wasm_host/wasm_runtime_hooks.hpp"
 
@@ -51,7 +47,7 @@ struct LocatedDiagnosticSource {
 
 // Configuration for the wasm3-backed workflow runtime.
 struct WasmWorkflowRuntimeConfig {
-    // The shared hook set (identical signatures to WorkflowRuntimeConfig).
+    // The shared hook set.
     wasm_host::WasmRuntimeHooks hooks;
     // The contextual capability invoker (production host capability dispatch).
     ContextualCapabilityInvoker invoker;
@@ -66,7 +62,7 @@ struct WasmWorkflowRuntimeConfig {
 
     // WH-4b: recovery snapshot for a resume run. When set, the session loads
     // the snapshot's memo + pending frontier and replays (memo-supply /
-    // inject / live). Mirrors WorkflowRuntimeConfig::recovery_snapshot.
+    // inject / live).
     std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
 
     // WH-4b: the store to persist the recovery snapshot on suspend. Null
@@ -85,8 +81,7 @@ struct WasmWorkflowRuntimeConfig {
     // WH-4b: write-ahead intent sink for durable_write / financial_write
     // effects. The facade wraps the user invoker with an intent-emitting
     // wrapper that fires this sink with the idempotency key right before a
-    // durable effect is dispatched (mirrors the evaluator at
-    // workflow_runtime.cpp:1050-1058). Memo hits and frontier injections
+    // durable effect is dispatched. Memo hits and frontier injections
     // never reach the invoker, so a resumed run emits zero intents.
     std::function<void(std::uint64_t idempotency_key,
                        std::string_view capability_name)>
@@ -105,8 +100,7 @@ struct WasmWorkflowRuntimeConfig {
     // run_workflow_session entry (pre-run, before admission). A workflow
     // with no capability imports has no mid-run cancellation point (its
     // guest computation is bounded by the grammar); the pre-run check is
-    // the only observation. Mirrors WorkflowRuntimeConfig (evaluator checks
-    // at the node loop top). NOT in WasmRuntimeHooks: hooks are value-
+    // the only observation. NOT in WasmRuntimeHooks: hooks are value-
     // observation channels, not control channels.
     std::function<bool()> cancellation_requested;
     std::function<bool()> interruption_requested;

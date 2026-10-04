@@ -103,8 +103,7 @@ void project_capability_call_events(
         });
     }
 
-    // usage.notices -> WARNING diagnostics (same code/message the evaluator
-    // used to emit at the capability_eval boundary).
+    // usage.notices -> WARNING diagnostics.
     if (call.usage.has_value()) {
         for (const auto &notice : call.usage->notices) {
             result.diagnostics.warning()

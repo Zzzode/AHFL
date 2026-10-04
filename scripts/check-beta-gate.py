@@ -13,7 +13,17 @@ from ahfl_source_revision import compute_source_revision
 
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_CRITERIA = [f"BETA-{index:02d}" for index in range(1, 11)]
+EXPECTED_CRITERIA = [
+    "BETA-01",
+    "BETA-02",
+    "BETA-03",
+    "BETA-04",
+    "BETA-05",
+    "BETA-06",
+    "BETA-08",
+    "BETA-09",
+    "BETA-10",
+]
 
 
 def parse_args() -> argparse.Namespace:

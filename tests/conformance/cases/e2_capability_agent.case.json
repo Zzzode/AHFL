@@ -23,7 +23,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "single terminal ahfl_cap call with owned result frame; executable on the P5 orchestration wasm subset (E2)"

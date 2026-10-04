@@ -107,40 +107,6 @@ else()
     message(STATUS "AHFL llama-server for optional real-LLM test: not found")
 endif()
 
-# RFC 0026 Objective 6A (KR6.4-pre): optional wasmtime for the WASM toolchain
-# preflight and, later, the Core-IR -> WASM execution tests (KR6.5+). wasmtime
-# is a TEST/HOST tool only and is never linked into the AHFL core build (see
-# RFC 0019/0021 no-strong-runtime boundary).
-#
-# CRITICAL — discovery PROVENANCE is preserved, because the preflight's
-# skip-vs-fail contract depends on it: a user who EXPLICITLY names a broken /
-# too-old wasmtime must FAIL, while a merely PATH-discovered one that is unusable
-# must SKIP. So we keep two distinct variables and never collapse them:
-#   * AHFL_WASMTIME          — an EXPLICIT path (-D on the command line, or the
-#                              AHFL_WASMTIME environment variable). User intent.
-#   * AHFL_DETECTED_WASMTIME — a PATH lookup result. Not user intent.
-# Both are forwarded to the harness under separate flags so it can honour the
-# contract (see tests/scripts/wasm_preflight.py).
-set(AHFL_WASMTIME "" CACHE FILEPATH
-    "EXPLICIT path to a wasmtime binary for optional RFC 0026 WASM tests (user intent; broken/too-old -> FAIL)"
-)
-if(NOT AHFL_WASMTIME AND DEFINED ENV{AHFL_WASMTIME})
-    set(AHFL_WASMTIME "$ENV{AHFL_WASMTIME}" CACHE FILEPATH
-        "EXPLICIT path to a wasmtime binary for optional RFC 0026 WASM tests (user intent; broken/too-old -> FAIL)"
-        FORCE
-    )
-endif()
-# PATH discovery is kept in its OWN variable and never merged into AHFL_WASMTIME,
-# so the harness still sees it as non-explicit (unusable -> SKIP, not FAIL).
-find_program(AHFL_DETECTED_WASMTIME NAMES wasmtime)
-if(AHFL_WASMTIME)
-    message(STATUS "AHFL wasmtime (explicit) for optional WASM tests: ${AHFL_WASMTIME}")
-elseif(AHFL_DETECTED_WASMTIME)
-    message(STATUS "AHFL wasmtime (PATH-discovered) for optional WASM tests: ${AHFL_DETECTED_WASMTIME}")
-else()
-    message(STATUS "AHFL wasmtime for optional WASM tests: not found")
-endif()
-
 option(AHFL_ENABLE_BACKEND_FORMAL "Build formal verification backend (SMV)" ON)
 option(AHFL_ENABLE_BACKEND_WASM "Build executable WebAssembly backend" ON)
 option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure view backends (K8s, OpenAPI, Terraform)" ON)

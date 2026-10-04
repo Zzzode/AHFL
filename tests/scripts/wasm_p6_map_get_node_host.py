@@ -7,7 +7,8 @@ entries. The host writes the inline (ptr,len) header at the reported frame
 offset and the [key@0, value@value_offset] entries one `stride` apart in the
 module's backing region, using ONLY the P4-D facts the producer reports.
 
-The reached state-id path pins:
+The reached state-id path is pinned against the frozen oracle captured at
+HEAD 620fadd8 (WH-9 B0):
   * the scan COMPARES KEYS (key 7 is at slot 1, never slot 0),
   * the returned word is the VALUE at value_offset (42, not the key 7),
   * the stride / offsets are exactly the P4-D facts.
@@ -27,28 +28,19 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8).
+FROZEN_OBS = {
+    "status": "completed",
+    "entered_ids": [3, 1, 0],
+    "final_state_id": 0,
+    "transition_count": 2,
+    "initial_state_id": 3,
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    return {
-        "status": match.group(1),
-        "entered_ids": [int(x) for x in match.group(2).split(",") if x],
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def parse_map(stdout: str) -> dict[str, object]:
@@ -86,16 +78,14 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-p6-map-node-") as td:
         td_path = Path(td)
         wasm = td_path / "p6_map_get.wasm"
-        run = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if run.returncode != 0:
-            return fail(f"producer exited {run.returncode}: {run.stderr}")
-        obs = parse_observation(run.stdout)
-        if obs["status"] != "completed" or not obs["entered_ids"]:
-            return fail(f"native map run did not complete: {obs}")
-        layout = parse_map(run.stdout)
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+        obs = FROZEN_OBS
+        layout = parse_map(compile_run.stdout)
         if len(layout["keys"]) != layout["len"] or len(layout["values"]) != layout["len"]:
             return fail(f"map live entry counts disagree with len: {layout}")
 
@@ -160,7 +150,7 @@ if (JSON.stringify(path) !== JSON.stringify(expected))
 if (c.transition_count.value !== Number(process.argv[6]))
   throw new Error("transition_count mismatch");
 
-// Missing key -> the scan must TRAP (evaluator returns "key not found").
+// Missing key -> the scan must TRAP (the wasm engine traps on absent key).
 // Drive a FRESH instance: after the successful run the machine is in the
 // terminal Done state, so the frame must be rebuilt on a new instance with
 // key 7 removed from the live entries.

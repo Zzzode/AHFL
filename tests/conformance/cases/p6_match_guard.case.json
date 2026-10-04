@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "P6 guarded match arm (High if flag) selects the leading guarded arm; landed P6 guard lowering on the orchestration lane"

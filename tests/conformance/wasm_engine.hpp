@@ -37,10 +37,6 @@ enum class WasmProduceSkip {
     /// The emit path rejects the case on the orchestration lane (KR6.6
     /// computation seam / layout / out-of-contract).
     Blocked,
-    /// The module emits and runs, but the surfaced construct (user-defined
-    /// pure fn calls / first-class closures) has no in-process evaluator
-    /// reference yet; the Node run is authoritative (evaluator retires KR6.8).
-    EvaluatorSurfaceAwaitsKr68,
 };
 
 struct WasmProduceResult {

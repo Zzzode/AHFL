@@ -5,7 +5,7 @@
 配置、canonical runtime event、recovery 和发布证据边界。
 
 本指南不把“运行成功一次”描述成生产就绪。真实运行的动态事实只来自
-`WorkflowRuntime` 的 canonical event store；replay、audit、scheduler、checkpoint、
+`WasmWorkflowRuntime` 的 canonical event store；replay、audit、scheduler、checkpoint、
 recovery 与 OTel projection 都从该事实派生，不通过公开 proxy artifact 命令串联。
 Package/workspace/sysroot 规则见 [Package Usage](./project-usage.zh.md)，命令选择见
 [CLI 工作流](./user-guide-cli.zh.md)，effect/formal/release evidence 见
@@ -440,28 +440,27 @@ Provider 内部会计算 prompt、usage、cost 和累计预算。OpenAI-compatib
 | `--input` 与 workflow input schema 不匹配 | 执行失败 |
 | workflow 运行失败或产生 runtime error | 非零退出 |
 
-## Crash / Resume
+## Suspend / Resume（wasm lane）
 
-当前恢复 schema 是 `ahfl.workflow-recovery.v1`。runtime 在 checkpoint 时从 canonical events 计算 completed nodes，再从 value store materialize 深拷贝 snapshot。保存使用 atomic replace；损坏 schema、部分写入或未知 ID 会 fail closed。
+当前恢复快照 schema 是 `ahfl.workflow-recovery.v2`（加载器仍接受 v1/v2）。live run 命中返回 Pending 的 capability 时挂起：completed nodes 从模块写入的 node-event buffer 派生，挂起点记录 pending capability 坐标，capability memo 以精确 wire 字节（ExactSidecar，绝不重新序列化）连同快照持久化。保存使用 atomic replace；损坏 schema、部分写入或未知 ID 会 fail closed。
 
-恢复时：
+恢复时在**冷启动 fresh wasm instance** 上整模块确定性重放：
 
-1. 读取并验证 snapshot。
-2. 发出 `RunResumed`。
-3. 对已完成节点发出 `NodeRestored`。
-4. scheduler projection 计算 resume candidate。
-5. 只执行未完成节点，避免重复 capability side effect。
+1. 读取并验证快照。
+2. 重放 frontier 之前的 capability 调用，逐字回喂 memo，零 live side effect。
+3. 在 frontier 注入挂起 capability 的恢复结果。
+4. frontier 之后继续 live 执行；memo / frontier 与模块实际调用坐标不符即 fail closed，不重复已完成节点的 capability side effect。
 
-端到端证据由 `tests/scripts/reference_workflow_recovery_smoke.py` 覆盖本地 HTTP provider、`SIGKILL`、人工批准、partial temp file 和副作用去重。
+端到端证据由 `tests/integration/durable_resume_capstone.cpp`（同进程挂起 → 落盘 → 冷启动重放恢复，ctest `ahfl.reference_workflow.durable_resume_capstone`）与小时级 `ahfl.reference_workflow.long_soak_smoke` 覆盖。旧树步评估器的“节点边界 checkpoint + SIGKILL 杀进程重启”证据已在 WH-9 随该引擎退役；生产级跨进程持久 exactly-once host（POSIX 落盘、KMS、真实重放）仍是 [RFC 0026](../rfcs/0026-ir-tower-and-execution-model.zh.md) E4-B2 的后续工作。
 
 ## 从运行到交付证据
 
-开发者的 `run`、dry run 或 recovery smoke 证明的是具体路径；它们不自动带来 beta 或
+开发者的 `run`、dry run 或一次 suspend/resume 证明的是具体路径；它们不自动带来 beta 或
 production-ready 结论。发布前必须区分三层证据：
 
 | 层级 | 主证据 | 运行位置 | 结论边界 |
 |---|---|---|---|
-| Beta | `beta-gate` 的 10 项 revision-bound evidence | 本地或 CI 可重建 | 当前 verified beta surface |
+| Beta | `beta-gate` 的 9 项 revision-bound evidence(BETA-01..06、BETA-08..10;BETA-07 已退役) | 本地或 CI 可重建 | 当前 verified beta surface |
 | Controlled pilot | 30 秒 / 至少 12 次 reference workflow、fault matrix、recovery、OTel、budget | 受控测试环境 | 受控试点，不代表生产 |
 | Production confidence | 3600 秒 single-long-lived-worker、RSS/allocator、provider retry | **仅**专用 GitHub Actions workflow | 当前 revision 的长稳信心，不等于真实部署生产就绪 |
 

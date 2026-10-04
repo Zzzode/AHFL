@@ -23,7 +23,6 @@
     }
   ],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "bounded-String variant of the E3 two-node capability workflow DAG (the durable-resume replay fixture); executable on the P5 orchestration wasm subset"

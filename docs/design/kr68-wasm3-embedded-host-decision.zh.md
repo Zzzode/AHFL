@@ -4677,3 +4677,146 @@ CMake:`ahfl_tooling_repl` 删除直接 `ahfl_runtime_evaluator` 边,显式 `ahfl
 - DAP pause()/disconnect 的 stopped-vs-terminated 事件竞态(既有,任务 #125;WH-8 增大窗口但未改变语义,pause() 合约注释已标注)。
 - 共线 handler 第 8 行仅影响活性**消息**;断点命中仍按 (agent,state) 对每个 handler 各自暂停(正确 DAP 语义)。
 - evaluator 本体保留至 WH-9 单一原子 BREAKING CHANGE 删除(§12.10)。
+
+### 12.20 WH-9 落地记录(2026-10-04,base `620fadd8`):树步行评估器原子退役,KR6.8 收官
+
+单一原子 BREAKING CHANGE commit 落在 WH-8 HEAD `620fadd8` 之上。生产侧 CLI(WH-6)/
+REPL(WH-7)/DAP(WH-8)此前已 100% 运行在 vendored wasm3 v0.9.0 facade;WH-9 删除整个
+树步行评估器与其驱动的 engine TU,并一次性对账全部测试 / 门 / 脚本 / 配置 /
+conformance schema / 文档。无 flag、无 shim、无并行路径、无转发头(Principle 1
+big-bang)。生产行为零变化:存活工具早已只走 wasm3。
+
+#### 12.20.1 三轮专用决策代理裁决(2026-10-04,只读决策代理,builder 与裁决者分离,无人类 owner 门)
+
+WH-9 的测试 / 门爆炸半径由独立只读决策代理裁决;coordinator 对每条 load-bearing
+主张在 HEAD `620fadd8` 独立复核,两次发现漏边后经同一"修订决策"机制推翻原裁决:
+
+1. **生产侧删除形状**:删 `src/runtime/evaluator/`(13 文件,5866 LOC)+ engine 四 TU
+   (`agent_runtime` / `capability_eval` / `native_host_binding` /
+   `workflow_runtime` 的 .cpp/.hpp)。生产零消费者由 grep 证实(src/tooling、
+   src/compiler、include、examples 零 include)。
+2. **闭包值臂整条删除 + 枚举拆分**:`Value` 的 `InterpreterClosure`/
+   `InterpreterClosureHandle` 臂、`ValueKind::Callable`、
+   `{"_callable":"runtime"}` 观察拼写、frame_packer 闭包拒绝、DAP "Callable"
+   visitor、make_interpreter_closure/next_closure_id 在同一 commit 删除。枚举:
+   `NodeFailureKind::EvaluationFailed` 删(唯一生产者是将死的 workflow TU);
+   `WorkflowFailureKind::EvaluationFailed` 与 `WorkflowStatus::EvalError` **保留**
+   ——wasm lane 有 6 个存活 fail-closed 生产者(wasm_lifecycle.cpp:62;
+   workflow_session.cpp:2108/2213/2349/2371/2388;switch 在
+   workflow_result.cpp:27-28)。
+3. **修订裁决 #1——recovery worker 是 SPLIT 不是整体删**:初裁决主张整删
+   `reference_workflow_recovery_worker.cpp`;coordinator 证实
+   `.github/workflows/production-confidence.yml` 小时级生产置信度门正构建该 target,
+   且 soak/run 模式不碰 checkpoint 机制。修订:SOK/run 半移植到 wasm facade 并更名
+   `reference_workflow_soak_worker.cpp`,crash/checkpoint/resume 半删除;
+   production-confidence 门、long-soak harness、evidence schema
+   ahfl.production-confidence-soak.v2 全部保留(门不改名)。
+4. **修订裁决 #2——p6/e3 probe 是 SPLIT 不是 Class C 删**:`core_wasm_p6_probe`
+   双用途,emit 半支撑 52 个存活 block ctest(含 P0 安全拒绝门:FB-4 闭包白名单、
+   Int64 ABI、跨 agent 泄漏、computed-goto 伪造)。修订:`core_wasm_p6_probe` 拆分
+   更名 `core_wasm_producer_probe`(只留编译/emit/inspect,删 native fork),e1/e2
+   probe 整删,e3 probe 拆分留 emit 去 native;58 个 block ctest 中 52 个存活。
+   coordinator 另补裁决者遗漏:`wasm_e3_cli_gate.py` 钉的是 native stdout token,
+   收缩为仅 direct.wasm-vs-CLI 字节 diff。
+5. **冻结 oracle 技术(诚实性核心)**:gut native 半之前,先在 HEAD `620fadd8` 用旧
+   probe 把 **43 个 fixture 的 native token**(status/entered_ids/final_state_id/
+   transition_count/initial_state_id;30 completed / 13 failed,冻结文件留日期戳与
+   probe 路径)捕获并核验真实性,随后 25 个细粒度 node_host 脚本中的 20 个把
+   oracle 冻结为脚本内 FROZEN 常量(同 conformance blessing 处理),probe 自此只产
+   wasm。**闭包类 fixture 的冻结值不是旧引擎观测**——树步引擎对闭包 B0 捕获即
+   status=failed;这些 stem 的期望值是 freeze 时由 conformance manifest 背书的 wasm
+   路径期望,脚本 docstring 明确标注,不冒充 captured native observation。
+6. **BETA-07 诚实退役**:BETA-07(reference crash recovery smoke)随其唯一证据死亡而
+   退役,编号永不复用;beta 门 10 标准 -> 9(BETA-01..06、BETA-08..10),
+   readme-capabilities / checker / smoke / evidence-bundle generator 同步。
+7. **受控试点门保留但收缩**:整门存活,仅移除 process_crash 证据键(指向已删
+   recovery_smoke);其余 label 成员、production_matrix、CI step 不动。
+8. **conformance schema 退役**:删 EvaluatorSurfaceAwaitsKr68 枚举/解析/错误消息、
+   `engines.evaluator` manifest 字段(65 份 manifest big-bang 改写,现存 0
+   evaluator 键)与 evaluator 专属 skip 标记(保留的 4 个
+   host_transcode×2 / multinode_stash / rich_wire_types 是真实 Node-port gap);
+   native runner 转为数据驱动(blessing 存在则比 blessing,否则比 manifest
+   output_json,7 个闭包 stem),node runner 收缩为纯 parity smoke,evaluator
+   runner(6 ctest)整删。
+
+#### 12.20.2 实际落地形状
+
+- **删除(47 个跟踪路径)**:`src/runtime/evaluator/` 13 文件(含 CMakeLists);
+  engine 8 文件(agent_runtime / capability_eval / native_host_binding /
+  workflow_runtime 的 .cpp/.hpp);conformance evaluator 适配 2 文件;
+  conformance_evaluator_runner;e1/e2 probe、p6 probe 旧文件(拆分后以新名存活)、
+  node-resume tier 3 文件(core_wasm_node_resume_engine .cpp/.hpp +
+  resume_node_e2e);preflight tier 4 文件(fixture maker + preflight.wasm + 2 脚本);
+  wasmtime e1/e2/e3 三脚本;reference_workflow_recovery_worker + recovery_smoke.py;
+  旧 evaluator 专用单测 7 个 TU(agent_runtime/native_host_binding/
+  workflow_runtime 各一,evaluator 目录 4 个);`scripts/bootstrap-wasmtime.sh`
+  (wasmtime script tier 删除后的死代码,Principle 1 同 commit 清)。
+- **新增(3 个文件)**:`tests/integration/core_wasm_producer_probe.cpp`(probe
+  拆分的 emit-only 幸存者)、`tests/integration/reference_workflow_soak_worker.cpp`
+  (recovery worker 的 soak/run 半,wasm facade 端口)、
+  `tests/unit/runtime/value/set_map_uuid_timestamp.cpp`(从 evaluator 测试目录移到
+  value 目标的存活测试)。
+- **代码对账**:`Value` 闭包臂全链删除(value/.cpp/.hpp、value_json `_callable`
+  拼写、frame_packer 守卫、DAP visitor、id 工厂);`NodeFailureKind::EvaluationFailed`
+  删除;存活代码注释中原 workflow_runtime.cpp 路径锚点订正到实际存活 TU;
+  `.gitignore` 删除 `.wasmtime/` bootstrap 死条目;全部 build/install/export 边、
+  architecture allowlist、test 注册对账(ProjectTests 292->276,tests/CMakeLists
+  88->79)。
+- **门 / 配置对账**:beta-gate / readme-capabilities 两 JSON 去 BETA-07;
+  controlled-pilot gate 去 process_crash;production-confidence.yml 改构建
+  soak_worker;beta/pilot evidence 生成脚本改存活 regex;README 双语去 BETA-07 与
+  crash/approval 宣传。
+- **文档对账(coordinator 独立完成,同 commit)**:README ×2、architecture-overview、
+  native-runtime-architecture、ir-backend-architecture、cli-pipeline-architecture、
+  host-abi、native-runtime-artifacts、user-guide-execution、user-guide-assurance、
+  contributor-guide、cli-commands、project-status、q4-roadmap、issue-backlog、
+  conformance-suite 设计门(加 WH-9 postscript),全部改为单执行路径 + v2
+  suspend/resume 口径;RFC/kr68/core-ir 历史决策记录保持原样作档案。
+
+#### 12.20.3 验证证据(coordinator 独立复跑)
+
+- dev:wipe build/dev 后 fresh configure + -j2 全量重建,**803/803 零项目 warning**
+  (`-Wall -Wextra -Werror`;唯一 warning 来自 vendored antlr4 -Wdeprecated,既有)。
+- 完整无标签 dev ctest(从仓库根,node v22.23.2 在 PATH):**99%,567 pass /
+  3 failed / 570**。3 个失败全部为本机环境噪声:#75 VSIX 打包
+  (`pnpm: command not found`,exit 127)、#72 beta_evidence_bundle_ready 与 #76
+  readme_capabilities 为其级联(install-smoke.json 永不产出;#76 在文件读取阶段
+  0.05s 失败,未到达 README marker 检查);CI 有 pnpm,该级联不存在。关键门逐一复核
+  全绿:#252 wasm_native_differential(73/0)、#249 wasm_node_differential(69/4)、
+  #259 durable_resume_capstone(14/14 check;facade 端口后 14 个 check 名与断言集合不变,coordinator 实跑确认)、#260
+  production_matrix、#69 long_soak_smoke、#62/#63 beta、#64/#65/#261 pilot、
+  #66/#67/#68 production-confidence。
+- ASan:单独 fresh configure + -j2 全量重建(exit 0,零项目 warning)+ **单独**全量
+  ctest(node 在 PATH,ASAN_OPTIONS quarantine 关闭):**570 总 567 过 / 3 失败,失败集与 dev 完全同集(#72/#75/#76 本机 pnpm 缺失级联),总时长 3213s;全程零 AddressSanitizer / LeakSanitizer / UBSan 报告,long_soak_smoke(#69)在 quarantine 关闭下通过(RSS 误报治疗生效),native/node census 与 capstone/production_matrix 全过**。
+- WASM=OFF scratch 冷重建(Debug,-j2,`-DAHFL_ENABLE_BACKEND_WASM=OFF -DAHFL_INSTALL=ON`)+ **完整无标签 ctest**:configure / build 均 exit 0,安装树断言零 wasm3 目录、零 stray wasm/evaluator target;注册 **464** 测试(ON 570 减去 108 个 wasm/执行动词专属,加 2 个 OFF 专属拒绝契约:WH-7 `repl process_smoke_wasm_off` + WH-9 `ahflc.run.wasm_off_refusal.contract`);**463/464 通过;唯一失败 `ahfl.product.install_evidence_smoke` 与 ON 树 #75 同因——本机无 pnpm,VSIX 打包 exit 127(CI 有 pnpm,不存在该噪声)**。WH-9 首次把「完整 OFF ctest」列入签字阶梯(此前 §12.7.1 的 OFF 验收仅 "configure + build clean"),由此暴露并一次性清偿 WH-6 拒绝诊断上线以来的三轮注册欠债:① 8 条 wasm conformance lane 的 `ahfl_label_tests` 无条件注册,OFF configure 直接 FATAL;② `ahfl_reference_workflow_soak_worker` / `ahfl_durable_resume_capstone` 两可执行无条件链接 wasm-only 静态库,且 `long_soak_smoke` / `production_matrix` / `durable_resume_capstone` + `controlled_pilot_gate_ready` 无条件注册;③ 20 个 `ahflc.run.*` 执行动词 ctest(其中 `wh6_codegen_diag.caret` 在 OFF 下**假通过**——regex 误中 detached-file note 的 caret,而非 codegen 诊断)、`runtime_evidence_smoke` 与 `beta_evidence_bundle_ready` / `readme_capabilities` 三个消费生成证据的非 hermetic ready 门未守卫。三类全部收入 `if(AHFL_ENABLE_BACKEND_WASM)`(目标/注册/标签/DEPENDS 边四处一致,遵循 §12.2 既定模式),fake-generator 的 `*_smoke` 保持引擎中立;新增 `ahflc.run.wasm_off_refusal.contract` 在 OFF 下钉死 §12.7.1 拒绝字节(对齐 WH-7 `repl process_smoke_wasm_off` 先例);`docs/rfcs/index.yml` updated 2026-09-29→2026-10-04(RFC 0026 frontmatter 已是 10-04,rfc_check #6/#7 因此报红)。每轮修复后 ON 树 `ctest -N` 名字集逐字节 diff 不变(570),守卫只改 OFF 分支。
+- release preset + cmake --install / export 树:scratch 冷重建(Release,-j2,`-DAHFL_WARNINGS_AS_ERRORS=ON -DAHFL_INSTALL=ON`),configure / build / `cmake --install` 全部 exit 0。安装树六项完整性断言全绿:`bin/ahflc` 存在且 `--help` exit 0、`lib/cmake/AHFL/AHFLConfig.cmake` + `AHFLTargets.cmake` 存在、安装头树零 evaluator / agent_runtime / native_host_binding 路径、导出目标文件零 `runtime_evaluator` 边、安装树零 workflow_runtime 产物。export consumer 矩阵:一个仅 `find_package(AHFL REQUIRED)` + 链接 `AHFL::ahfl_base_public` 的 C++23 外部工程,只 `#include "ahfl/runtime/execution_event.hpp"` 并引用删除后存活的 `NodeFailureKind::AgentFailed`,configure / build / 运行(exit 0,AgentFailed 恰为 enumerator 0)全绿——证明导出 SDK 在 WH-9 之后对第三方消费者自足可用。Release/-O2 下的 GCC 12 `-Wrestrict`(libstdc++ char_traits 内联)与 `-Wmaybe-uninitialized` 噪声均为 `AhflCompiler.cmake` 明文记录的已知误报类别(保留诊断、降为非致命,-Werror 全量覆盖在 CI 的 clang 上);唯一落进项目源码的一条是 `typecheck.cpp:3996` 的 `-Wmaybe-uninitialized`(`TypePtr` 默认初始化为空指针的既有代码,WH-9 变更集不触碰该文件,非本切片新增),WH-9 触碰的源文件零 Release warning。
+- census 硬钉:native **73 agreed / 0 skipped**;node **69 agreed / 4 skipped**
+  (skip 集恰好是 HostTranscode×2、MultiNodeStash、RichWireTypes 三个既有 Node-port
+  gap-pin 数组)。
+- grep-zero 门(third_party 之外)全部为零:InterpreterClosure /
+  make_interpreter_closure / ahfl::evaluator / ahfl_runtime_evaluator /
+  evaluator_surface_awaits_kr68 / NodeFailureKind::EvaluationFailed /
+  reference_workflow_recovery_worker / recovery_smoke / process_crash;
+  `runtime/evaluator` 路径在 CMake/脚本零引用;architecture / product-scope-freeze
+  两门脚本通过。
+- 受保护文件:src/tooling/cli/CMakeLists.txt、tests/conformance/observations/、
+  goldens 零改动;src/tooling/repl/ 仅 1 个测试 TU 的两处注释文字(evaluator
+  fallback -> silent fallback);builder 全程被禁止 git 写操作,HEAD 停留 620fadd8
+  未移动,coordinator 提交后报告新 HEAD。
+
+#### 12.20.4 已知边界(不在本 slice)
+
+- 评估器时代的节点边界 checkpoint 恢复(checkpoint_after_node / NodeRestored /
+  SIGKILL 重启 / operator approval)与 wasm 的 suspend-at-Pending + ExactSidecar
+  memo + 冷启动 whole-module replay 结构不兼容;crash 证据诚实退役,不重新指向。
+  capstone 证明的是同进程两个 fresh WasmWorkflowRuntime scope 的挂起-重放;跨进程
+  生产级持久 exactly-once host(POSIX 落盘、KMS、真实重放)仍是 RFC 0026 E4-B2
+  后续,且不替代业务系统自己的 disaster-recovery 演练。
+- 冻结 native oracle 是历史行为冻结(同 blessing),不是活差分;未来 native 语义若
+  需变更,须显式重冻并评审。
+- Node runner 4 skipped 为真实 Node 宿主移植缺口(任务 #74 第 5 维 / Node port)。
+- 挂账:#74 conformance 第 5 维 + capability mutation 变体;#109 WH-5c.4 后续;
+  #119 REPL session/prelude;#120 long-soak RSS/ASan quarantine 门决议;
+  #125 DAP pause 竞态。
+- KR6.8(WH-0..WH-9)至此完成;RFC 0026 整体保持 implementing(KR6.6 计算层尾段、
+  KR6.9 分层 IR-JSON 投影仍 ⬜)。

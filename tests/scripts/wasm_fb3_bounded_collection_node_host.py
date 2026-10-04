@@ -65,13 +65,13 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-fb3-bounded-") as td:
         td_path = Path(td)
         wasm_path = td_path / "fb3_bounded_collection.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm_path)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"FB-3 producer exited {native.returncode}: {native.stderr}")
-        layout = parse_collection(native.stdout)
+        if compile_run.returncode != 0:
+            return fail(f"FB-3 producer exited {compile_run.returncode}: {compile_run.stderr}")
+        layout = parse_collection(compile_run.stdout)
         if len(layout["elements"]) != layout["capacity"]:
             return fail(f"element value count != capacity: {layout}")
         if not (0 < layout["len"] <= layout["capacity"]):

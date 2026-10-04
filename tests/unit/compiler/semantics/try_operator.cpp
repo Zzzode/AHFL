@@ -13,8 +13,6 @@
 //   let x = unwrap(<tmp>);                  // success path
 //
 // This file covers:
-//   - Option<T> smoke: Some path yields T, None path returns None early.
-//   - Result<T, E> smoke: Ok path yields T, Err path returns Err early.
 //   - Negative diagnostics: non-Option/Result operand, incompatible enclosing
 //     return type, `?` outside let-binding position.
 // =============================================================================
@@ -28,8 +26,6 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "compiler/syntax/frontend/project.hpp"
-#include "runtime/evaluator/executor.hpp"
-#include "runtime/evaluator/runtime_fn_table.hpp"
 #include "runtime/value/value.hpp"
 
 #include "common/project_input_support.hpp"
@@ -104,172 +100,7 @@ struct CompileArtifacts {
     return a;
 }
 
-struct EvaluatorRun {
-    bool ok{false};
-    std::optional<ahfl::evaluator::ExecResult> exec_result;
-};
-
-[[nodiscard]] EvaluatorRun run_function_body(const CompileArtifacts &a, std::string_view fn_name) {
-    using namespace ahfl::evaluator;
-using namespace ahfl::runtime;
-    EvaluatorRun r;
-    if (a.parse.has_errors() || a.resolve.has_errors() || a.tc.has_errors()) {
-        return r;
-    }
-
-    auto program_ir = ahfl::lower_program_ir(a.parse.graph,
-                                             a.resolve,
-                                             a.tc,
-                                             /*include_stdlib=*/true);
-    RuntimeFunctionTable fn_table(program_ir);
-
-    const ahfl::ir::Block *body = nullptr;
-    const std::string suffix = std::string("::") + std::string(fn_name);
-    for (const auto &decl : program_ir.declarations) {
-        const auto *fn = std::get_if<ahfl::ir::FnDecl>(&decl);
-        if (fn == nullptr)
-            continue;
-        const auto &cname = fn->symbol_ref.canonical_name;
-        if (fn->name == fn_name || cname == fn_name) {
-            body = fn->body.get();
-            break;
-        }
-        if (cname.size() >= suffix.size() &&
-            cname.compare(cname.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            body = fn->body.get();
-            break;
-        }
-    }
-    if (body == nullptr)
-        return r;
-
-    ExecContext ctx;
-    RuntimeFnTrace trace_cfg;
-    fn_table.install(ctx, trace_cfg);
-    r.ok = true;
-    r.exec_result = exec_block(*body, ctx);
-    return r;
-}
-
-/// Extract the EnumValue from an ExecReturn, or nullptr if the outcome is
-/// not a return of an enum value.
-[[nodiscard]] const ahfl::runtime::EnumValue *
-expect_enum_return(const ahfl::evaluator::ExecResult &result) {
-    const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&result.outcome);
-    if (ret == nullptr)
-        return nullptr;
-    return std::get_if<ahfl::runtime::EnumValue>(&ret->value.node);
-}
-
 } // anonymous namespace
-
-// =============================================================================
-// Option<T> smoke tests
-// =============================================================================
-
-TEST_CASE("try_option_some yields T") {
-    constexpr auto source = R"AHFL(module app::main;
-fn try_some() -> Option<Int> {
-    let x = std::option::Option::Some(42)?;
-    return std::option::Option::Some(x + 1);
-}
-)AHFL";
-    const auto a = compile_project_loose("try_option_some", source);
-    REQUIRE_FALSE(a.tc.has_errors());
-
-    const auto run = run_function_body(a, "try_some");
-    REQUIRE(run.ok);
-    REQUIRE(run.exec_result.has_value());
-    CHECK_FALSE(run.exec_result->has_errors());
-
-    const auto *ev = expect_enum_return(*run.exec_result);
-    REQUIRE(ev != nullptr);
-    CHECK(ev->enum_name == "std::option::Option");
-    CHECK(ev->variant == "Some");
-    REQUIRE(ev->payload.size() == 1);
-    REQUIRE(ev->payload.front() != nullptr);
-    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ev->payload.front()->node);
-    REQUIRE(iv != nullptr);
-    CHECK(iv->value == 43);
-}
-
-TEST_CASE("try_option_none returns None early") {
-    constexpr auto source = R"AHFL(module app::main;
-fn try_none() -> Option<Int> {
-    let x = std::option::Option::None?;
-    return std::option::Option::Some(x + 1);
-}
-)AHFL";
-    const auto a = compile_project_loose("try_option_none", source);
-    REQUIRE_FALSE(a.tc.has_errors());
-
-    const auto run = run_function_body(a, "try_none");
-    REQUIRE(run.ok);
-    REQUIRE(run.exec_result.has_value());
-    CHECK_FALSE(run.exec_result->has_errors());
-
-    const auto *ev = expect_enum_return(*run.exec_result);
-    REQUIRE(ev != nullptr);
-    CHECK(ev->enum_name == "std::option::Option");
-    CHECK(ev->variant == "None");
-    CHECK(ev->payload.empty());
-}
-
-// =============================================================================
-// Result<T, E> smoke tests
-// =============================================================================
-
-TEST_CASE("try_result_ok yields T") {
-    constexpr auto source = R"AHFL(module app::main;
-fn try_ok() -> Result<Int, String> {
-    let x = std::result::Result::Ok(42)?;
-    return std::result::Result::Ok(x + 1);
-}
-)AHFL";
-    const auto a = compile_project_loose("try_result_ok", source);
-    REQUIRE_FALSE(a.tc.has_errors());
-
-    const auto run = run_function_body(a, "try_ok");
-    REQUIRE(run.ok);
-    REQUIRE(run.exec_result.has_value());
-    CHECK_FALSE(run.exec_result->has_errors());
-
-    const auto *ev = expect_enum_return(*run.exec_result);
-    REQUIRE(ev != nullptr);
-    CHECK(ev->enum_name == "std::result::Result");
-    CHECK(ev->variant == "Ok");
-    REQUIRE(ev->payload.size() == 1);
-    REQUIRE(ev->payload.front() != nullptr);
-    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ev->payload.front()->node);
-    REQUIRE(iv != nullptr);
-    CHECK(iv->value == 43);
-}
-
-TEST_CASE("try_result_err returns Err early") {
-    constexpr auto source = R"AHFL(module app::main;
-fn try_err() -> Result<Int, String> {
-    let x = std::result::Result::Err("boom")?;
-    return std::result::Result::Ok(x + 1);
-}
-)AHFL";
-    const auto a = compile_project_loose("try_result_err", source);
-    REQUIRE_FALSE(a.tc.has_errors());
-
-    const auto run = run_function_body(a, "try_err");
-    REQUIRE(run.ok);
-    REQUIRE(run.exec_result.has_value());
-    CHECK_FALSE(run.exec_result->has_errors());
-
-    const auto *ev = expect_enum_return(*run.exec_result);
-    REQUIRE(ev != nullptr);
-    CHECK(ev->enum_name == "std::result::Result");
-    CHECK(ev->variant == "Err");
-    REQUIRE(ev->payload.size() == 1);
-    REQUIRE(ev->payload.front() != nullptr);
-    const auto *sv = std::get_if<ahfl::runtime::StringValue>(&ev->payload.front()->node);
-    REQUIRE(sv != nullptr);
-    CHECK(sv->value == "boom");
-}
 
 // =============================================================================
 // Negative diagnostics

@@ -618,20 +618,6 @@ WasmProduceResult produce_conformance_wasm(const LoadedConformanceCase &loaded,
         return result;
     }
 
-    // RFC 0026 FB-3b: a case the in-process evaluator cannot execute (the
-    // user-defined pure-fn / first-class-closure surface retires with KR6.8)
-    // is still emitted and runs on the Node embedded engine. The manifest
-    // declares this node-only observation; surface it as a structured skip so
-    // the runner drives Node WITHOUT an evaluator differential reference.
-    if (manifest.engines.wasm.node_observation_skip ==
-        WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68) {
-        result.skip = WasmProduceSkip::EvaluatorSurfaceAwaitsKr68;
-        result.code = "kr6.8";
-        result.reason = "module emits on the orchestration lane but the surfaced pure-fn / "
-                        "closure construct has no in-process evaluator reference yet; the Node "
-                        "embedded-engine observation is authoritative (evaluator retires KR6.8)";
-    }
-
     const std::string descriptor_json = render_descriptor(manifest, *emitted.descriptor);
     if (descriptor_json.empty()) {
         result.skip = WasmProduceSkip::Blocked;

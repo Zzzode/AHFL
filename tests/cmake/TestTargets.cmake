@@ -29,7 +29,6 @@ target_link_libraries(ahfl_project_check_tests
     PRIVATE
         ahfl_compiler_package_graph
         ahfl_compiler_ir
-        ahfl_runtime_evaluator
 )
 target_include_directories(ahfl_project_check_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
                                                             ${PROJECT_SOURCE_DIR}/tests)
@@ -143,43 +142,6 @@ target_link_libraries(ahfl_dry_run_tests
 )
 ahfl_apply_project_warnings(ahfl_dry_run_tests)
 
-add_executable(ahfl_runtime_evaluator_tests
-    unit/runtime/evaluator/evaluator.cpp
-)
-target_link_libraries(ahfl_runtime_evaluator_tests
-    PRIVATE
-        ahfl_runtime_evaluator
-)
-ahfl_apply_project_warnings(ahfl_runtime_evaluator_tests)
-
-add_executable(ahfl_executor_tests
-    unit/runtime/evaluator/executor.cpp
-)
-target_link_libraries(ahfl_executor_tests
-    PRIVATE
-        ahfl_runtime_evaluator
-)
-ahfl_apply_project_warnings(ahfl_executor_tests)
-
-add_executable(ahfl_agent_runtime_tests
-    unit/runtime/engine/agent_runtime.cpp
-)
-target_link_libraries(ahfl_agent_runtime_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_agent_runtime_tests)
-
-add_executable(ahfl_workflow_runtime_tests
-    unit/runtime/engine/workflow_runtime.cpp
-)
-target_link_libraries(ahfl_workflow_runtime_tests
-    PRIVATE
-        ahfl_runtime_engine
-        ahfl_runtime_evaluator
-)
-ahfl_apply_project_warnings(ahfl_workflow_runtime_tests)
-
 add_executable(ahfl_execution_event_tests
     unit/runtime/engine/execution_event.cpp
 )
@@ -274,15 +236,6 @@ target_link_libraries(ahfl_host_abi_tests
         ahfl_base_public
 )
 ahfl_apply_project_warnings(ahfl_host_abi_tests)
-
-add_executable(ahfl_native_host_binding_tests
-    unit/runtime/engine/native_host_binding.cpp
-)
-target_link_libraries(ahfl_native_host_binding_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_native_host_binding_tests)
 
 add_executable(ahfl_native_wasm_differential_tests
     unit/runtime/engine/native_wasm_differential.cpp
@@ -475,28 +428,6 @@ target_compile_definitions(ahfl_conformance_case_tests
 )
 ahfl_apply_project_warnings(ahfl_conformance_case_tests)
 
-# KR6.7 (RFC 0026 P7): generic in-process evaluator conformance runner. Links
-# the actual tree-walking engine (ahfl_runtime_engine, which pulls the
-# compiler pipeline) and the engine-independent manifest parser, and drives
-# both over the checked-in case catalogue.
-add_executable(ahfl_conformance_evaluator_runner
-    conformance/evaluator_engine.cpp
-    conformance/conformance_mock_registry.cpp
-    conformance/observation_document.cpp
-    integration/conformance_evaluator_runner.cpp
-)
-target_link_libraries(ahfl_conformance_evaluator_runner
-    PRIVATE
-        ahfl_runtime_engine
-        ahfl_base_json
-)
-target_include_directories(ahfl_conformance_evaluator_runner
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/src
-        ${PROJECT_SOURCE_DIR}/tests
-)
-ahfl_apply_project_warnings(ahfl_conformance_evaluator_runner)
-
 # KR6.7 (RFC 0026 P7): WASM eligibility classifier. Links the real compiler
 # wasm backend (so it can actually run lower -> layout -> emit) plus the
 # engine-independent manifest parser. Registered only when the executable
@@ -525,12 +456,11 @@ endif()
 # KR6.7 (RFC 0026 P7): manifest-driven Node embedded-engine differential
 # runner. Produces the Core-Wasm module + machine-readable descriptor from each
 # conformance case, drives the generic Node embedded host, and compares the
-# evaluator and Node observations on the three differential dimensions. Links
-# the real evaluator engine and the wasm backend (the producer emits real
-# bytes); only registered when the executable wasm backend exists.
+# wasm and Node observations on the three differential dimensions. Links
+# the wasm backend (the producer emits real bytes); only registered when the
+# executable wasm backend exists.
 if(AHFL_ENABLE_BACKEND_WASM)
     add_executable(ahfl_conformance_wasm_node_runner
-        conformance/evaluator_engine.cpp
         conformance/conformance_mock_registry.cpp
         conformance/observation_document.cpp
         conformance/wasm_engine.cpp
@@ -553,14 +483,13 @@ endif()
 # KR6.8 WH-5 (RFC 0026): native embedded-host conformance census runner.
 # Drives the wasm3-backed facade (WasmWorkflowRuntime / WasmAgentRunner)
 # directly in-process over the committed case catalogue and compares the
-# native observation against the evaluator observation (or the manifest's
-# blessed expectation for the 7 node-only cases). Pure in-process: no Node
+# native observation against the blessed expectation (or the manifest's
+# output_json for the 7 node-only cases). Pure in-process: no Node
 # subprocess, no artifact staging, no SKIP_RETURN_CODE 77. Links the wasm_runner
 # facade (which transitively links the wasm backend); only registered when the
 # executable wasm backend exists.
 if(AHFL_ENABLE_BACKEND_WASM)
     add_executable(ahfl_conformance_wasm_native_runner
-        conformance/evaluator_engine.cpp
         conformance/conformance_mock_registry.cpp
         conformance/observation_document.cpp
         conformance/native_engine.cpp
@@ -570,7 +499,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
         PRIVATE
             ahfl_runtime_wasm_runner
             ahfl_runtime_engine
-            ahfl_runtime_evaluator
             ahfl_runtime_value
             ahfl_base_json
             ahfl_base_support
@@ -601,22 +529,26 @@ target_link_libraries(ahfl_runtime_provider_llm_tests
 )
 ahfl_apply_project_warnings(ahfl_runtime_provider_llm_tests)
 
-add_executable(ahfl_reference_workflow_recovery_worker
-    integration/reference_workflow_recovery_worker.cpp
-)
-target_link_libraries(ahfl_reference_workflow_recovery_worker
-    PRIVATE
-        ahfl_compiler_package_graph
-        ahfl_compiler_ir
-        ahfl_runtime_provider_llm
-        ahfl_runtime_evaluator
-)
-target_include_directories(ahfl_reference_workflow_recovery_worker
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/src
-        ${PROJECT_SOURCE_DIR}/tests
-)
-ahfl_apply_project_warnings(ahfl_reference_workflow_recovery_worker)
+# KR6.8 WH-9: the soak worker drives the embedded wasm3 runtime, so the
+# target exists only when the wasm backend is enabled.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_executable(ahfl_reference_workflow_soak_worker
+        integration/reference_workflow_soak_worker.cpp
+    )
+    target_link_libraries(ahfl_reference_workflow_soak_worker
+        PRIVATE
+            ahfl_compiler_package_graph
+            ahfl_compiler_ir
+            ahfl_runtime_provider_llm
+            ahfl_runtime_wasm_runner
+    )
+    target_include_directories(ahfl_reference_workflow_soak_worker
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_reference_workflow_soak_worker)
+endif()
 
 add_executable(ahfl_payload_store_worker
     integration/payload_store_worker.cpp
@@ -632,22 +564,26 @@ target_include_directories(ahfl_payload_store_worker
 )
 ahfl_apply_project_warnings(ahfl_payload_store_worker)
 
-add_executable(ahfl_durable_resume_capstone
-    integration/durable_resume_capstone.cpp
-)
-target_link_libraries(ahfl_durable_resume_capstone
-    PRIVATE
-        ahfl_compiler_package_graph
-        ahfl_compiler_ir
-        ahfl_runtime_provider_llm
-        ahfl_runtime_evaluator
-)
-target_include_directories(ahfl_durable_resume_capstone
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/src
-        ${PROJECT_SOURCE_DIR}/tests
-)
-ahfl_apply_project_warnings(ahfl_durable_resume_capstone)
+# KR6.8 WH-9: the durable-resume capstone exercises the wasm-backed
+# WasmWorkflowRuntime and is wasm-only.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_executable(ahfl_durable_resume_capstone
+        integration/durable_resume_capstone.cpp
+    )
+    target_link_libraries(ahfl_durable_resume_capstone
+        PRIVATE
+            ahfl_compiler_package_graph
+            ahfl_compiler_ir
+            ahfl_runtime_provider_llm
+            ahfl_runtime_wasm_runner
+    )
+    target_include_directories(ahfl_durable_resume_capstone
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_durable_resume_capstone)
+endif()
 
 add_executable(ahfl_value_json_tests
     unit/runtime/value/value_json.cpp
@@ -659,32 +595,17 @@ target_link_libraries(ahfl_value_json_tests
 target_include_directories(ahfl_value_json_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_value_json_tests)
 
-# RFC P7 runtime additions: Set / Map / UUID / Timestamp evaluation tests.
-add_executable(ahfl_runtime_evaluator_p7_tests
-    unit/runtime/evaluator/set_map_uuid_timestamp.cpp
+# RFC P7 runtime additions: Set / Map / UUID / Timestamp Value tests.
+add_executable(ahfl_runtime_value_set_map_tests
+    unit/runtime/value/set_map_uuid_timestamp.cpp
 )
-target_link_libraries(ahfl_runtime_evaluator_p7_tests
+target_link_libraries(ahfl_runtime_value_set_map_tests
     PRIVATE
-        ahfl_runtime_evaluator
+        ahfl_runtime_value
 )
-target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
-ahfl_apply_project_warnings(ahfl_runtime_evaluator_p7_tests)
-
-# P2d.S5: evaluator end-to-end generics dispatch through mangled instance names.
-add_executable(ahfl_runtime_evaluator_generics_tests
-    unit/runtime/evaluator/evaluator_generics.cpp
-)
-target_link_libraries(ahfl_runtime_evaluator_generics_tests
-    PRIVATE
-        ahfl_compiler_semantics
-        ahfl_compiler_ir
-        ahfl_runtime_evaluator
-        doctest
-)
-target_include_directories(ahfl_runtime_evaluator_generics_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_include_directories(ahfl_runtime_evaluator_generics_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
-ahfl_apply_project_warnings(ahfl_runtime_evaluator_generics_tests)
+target_include_directories(ahfl_runtime_value_set_map_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_runtime_value_set_map_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+ahfl_apply_project_warnings(ahfl_runtime_value_set_map_tests)
 
 add_executable(ahfl_counterexample_parse_tests
     unit/verification/formal/counterexample_parse.cpp
@@ -999,7 +920,6 @@ add_executable(ahfl_semantics_typed_hir_tests
 target_link_libraries(ahfl_semantics_typed_hir_tests
     PRIVATE
         ahfl_compiler_ir
-        ahfl_runtime_evaluator
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_typed_hir_tests)
@@ -1060,7 +980,6 @@ target_link_libraries(ahfl_semantics_stmt_diagnostics_tests
     PRIVATE
         ahfl_compiler_semantics
         ahfl_compiler_ir
-        ahfl_runtime_evaluator
         doctest
 )
 target_include_directories(ahfl_semantics_stmt_diagnostics_tests
@@ -1076,7 +995,6 @@ target_link_libraries(ahfl_semantics_try_operator_tests
     PRIVATE
         ahfl_compiler_semantics
         ahfl_compiler_ir
-        ahfl_runtime_evaluator
         doctest
 )
 target_include_directories(ahfl_semantics_try_operator_tests
@@ -1092,7 +1010,6 @@ target_link_libraries(ahfl_semantics_bounded_quantifier_tests
     PRIVATE
         ahfl_compiler_semantics
         ahfl_compiler_ir
-        ahfl_runtime_evaluator
         doctest
 )
 target_include_directories(ahfl_semantics_bounded_quantifier_tests
@@ -1142,7 +1059,6 @@ target_link_libraries(ahfl_semantics_b2_impl_body_parser_gaps_tests
         ahfl_compiler_ir
         ahfl_compiler_ir_opt
         ahfl_compiler_backends
-        ahfl_runtime_evaluator
         ahfl_runtime_engine
         ahfl_tooling_formatter
         doctest
@@ -1164,7 +1080,6 @@ target_link_libraries(ahfl_semantics_p2_s1_inference_tests
         ahfl_compiler_ir
         ahfl_compiler_ir_opt
         ahfl_compiler_backends
-        ahfl_runtime_evaluator
         ahfl_runtime_engine
         ahfl_tooling_formatter
         doctest
@@ -1184,7 +1099,6 @@ target_link_libraries(ahfl_semantics_d3_decreases_expr_tests
     PRIVATE
         ahfl_compiler_semantics
         ahfl_compiler_ir
-        ahfl_runtime_evaluator
         doctest
 )
 target_include_directories(ahfl_semantics_d3_decreases_expr_tests
@@ -1294,7 +1208,6 @@ target_link_libraries(ahfl_assurance_obligations_tests
         ahfl_compiler_ir
         ahfl_compiler_assurance
         ahfl_compiler_backends
-        ahfl_runtime_evaluator
         doctest
 )
 target_include_directories(ahfl_assurance_obligations_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -1837,42 +1750,20 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_core_wasm_codegen_tests)
 
-    add_executable(ahfl_core_wasm_e1_probe
-        integration/core_wasm_e1_probe.cpp
-    )
-    target_link_libraries(ahfl_core_wasm_e1_probe
-        PRIVATE
-            ahfl_compiler_backend_wasm
-            ahfl_runtime_engine
-    )
-    target_include_directories(ahfl_core_wasm_e1_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    ahfl_apply_project_warnings(ahfl_core_wasm_e1_probe)
-
-    add_executable(ahfl_core_wasm_e2_probe
-        integration/core_wasm_e2_probe.cpp
-    )
-    target_link_libraries(ahfl_core_wasm_e2_probe
-        PRIVATE
-            ahfl_compiler_backend_wasm
-            ahfl_runtime_engine
-    )
-    target_include_directories(ahfl_core_wasm_e2_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    ahfl_apply_project_warnings(ahfl_core_wasm_e2_probe)
-
     # RFC 0026 P6-1 (KR6.6): real-frontend scalar-computation computed-goto
-    # producer. Links the same backend + runtime as the E1/E3 probes.
-    add_executable(ahfl_core_wasm_p6_probe
-        integration/core_wasm_p6_probe.cpp
+    # producer. Links the same backend + runtime as the E3 probe.
+    add_executable(ahfl_core_wasm_producer_probe
+        integration/core_wasm_producer_probe.cpp
     )
-    target_link_libraries(ahfl_core_wasm_p6_probe
+    target_link_libraries(ahfl_core_wasm_producer_probe
         PRIVATE
             ahfl_compiler_backend_wasm
             ahfl_compiler_package_graph
-            ahfl_runtime_engine
+            ahfl_runtime_value
     )
-    target_include_directories(ahfl_core_wasm_p6_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_include_directories(ahfl_core_wasm_p6_probe PRIVATE ${PROJECT_SOURCE_DIR}/tests)
-    ahfl_apply_project_warnings(ahfl_core_wasm_p6_probe)
+    target_include_directories(ahfl_core_wasm_producer_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_include_directories(ahfl_core_wasm_producer_probe PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    ahfl_apply_project_warnings(ahfl_core_wasm_producer_probe)
 
     add_executable(ahfl_core_wasm_e3_probe
         integration/core_wasm_e3_probe.cpp
@@ -1880,8 +1771,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
     target_link_libraries(ahfl_core_wasm_e3_probe
         PRIVATE
             ahfl_compiler_backend_wasm
-            ahfl_runtime_engine
-            ahfl_runtime_evaluator
     )
     target_include_directories(ahfl_core_wasm_e3_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(ahfl_core_wasm_e3_probe)
@@ -1899,27 +1788,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
     target_include_directories(ahfl_core_wasm_capability_workflow_probe
         PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(ahfl_core_wasm_capability_workflow_probe)
-
-    # RFC 0026 E4-B2-D2a (F5): end-to-end durable-resume replay of the emitted
-    # capability workflow over a REAL Node embedded Wasm engine. The binary links
-    # only the runtime engine (+ base support for process.hpp/find_executable);
-    # the emit-only capability-workflow probe is a ctest-level build dependency,
-    # launched as a subprocess to produce the real artifact under replay.
-    add_executable(ahfl_core_wasm_resume_node_e2e
-        integration/core_wasm_node_resume_engine.cpp
-        integration/core_wasm_resume_node_e2e.cpp
-    )
-    target_link_libraries(ahfl_core_wasm_resume_node_e2e
-        PRIVATE
-            ahfl_runtime_engine
-            ahfl_base_support
-    )
-    target_include_directories(ahfl_core_wasm_resume_node_e2e
-        PRIVATE
-            ${PROJECT_SOURCE_DIR}/src
-            ${PROJECT_SOURCE_DIR}/tests
-    )
-    ahfl_apply_project_warnings(ahfl_core_wasm_resume_node_e2e)
 
     # RFC 0026 KR6.8 WH-3: end-to-end resume test over the REAL wasm3 engine
     # with the production capability-import executor as the import callback.
@@ -1957,7 +1825,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
         PRIVATE
             ahfl_runtime_wasm_runner
             ahfl_runtime_engine
-            ahfl_runtime_evaluator
             ahfl_runtime_value
             ahfl_base_json
             ahfl_base_support
@@ -2077,14 +1944,9 @@ foreach(_tgt
     ahfl_compiler_handoff_package_compat_tests
     ahfl_compiler_backends_registry_tests
     ahfl_cli_command_routing_tests
-    ahfl_runtime_evaluator_tests
-    ahfl_executor_tests
-    ahfl_agent_runtime_tests
-    ahfl_workflow_runtime_tests
     ahfl_workflow_recovery_tests
     ahfl_capability_bridge_tests
     ahfl_capability_event_projection_tests
-    ahfl_native_host_binding_tests
     ahfl_native_wasm_differential_tests
     ahfl_core_wire_codec_tests
     ahfl_core_wasm_resume_record_tests
@@ -2097,9 +1959,7 @@ foreach(_tgt
     ahfl_payload_store_codec_tests
     ahfl_payload_store_tests
     ahfl_runtime_provider_llm_tests
-    ahfl_reference_workflow_recovery_worker
     ahfl_payload_store_worker
-    ahfl_durable_resume_capstone
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
     ahfl_smt_encode_tests

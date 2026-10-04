@@ -5,11 +5,9 @@
 // (workflow_session.cpp) and the agent runner (wasm_agent_runner.cpp) use
 // this to populate the ExecutionMetadataStore, emit the lifecycle event
 // stream, and build the ExecutionReport from those events via
-// build_execution_report -- the SAME projection the evaluator-backed
-// WorkflowRuntime uses (finalize_report in workflow_runtime.cpp). No
-// hand-populated report path survives: the report is ALWAYS a projection of
-// the event stream, so the replay/audit projections in execution_renderer
-// produce correct counts on both lanes.
+// build_execution_report. No hand-populated report path survives: the report
+// is ALWAYS a projection of the event stream, so the replay/audit projections
+// in execution_renderer produce correct counts.
 
 #include "runtime/engine/workflow_result.hpp"
 #include "runtime/engine/capability_bridge.hpp"
@@ -65,11 +63,10 @@ struct WasmNodeRunFacts {
 // One capability call observed during the run, in call order. The workflow
 // session collects these from the import callback; the lifecycle helper
 // projects the aggregate CapabilityCallResult into the event stream via the
-// shared capability_event_projection helper (the SAME synthesis the
-// evaluator uses), between NodeStarted and NodeCompleted for the calling
-// node. node_id is the descriptor's dense source-order node id (NOT the
-// WorkflowNodeId assigned by the metadata store); the lifecycle helper
-// resolves it via plan.node_by_id.
+// shared capability_event_projection helper, between NodeStarted and
+// NodeCompleted for the calling node. node_id is the descriptor's dense
+// source-order node id (NOT the WorkflowNodeId assigned by the metadata
+// store); the lifecycle helper resolves it via plan.node_by_id.
 //
 // WH-5c.8: collapsed to {node_id, capability_name, result} — success /
 // output / attempts / cache_hit / usage all derive from the aggregate
@@ -88,8 +85,7 @@ struct WasmCapabilityCall {
 // suspended node's facts to Terminal::Suspended (with pending_cap_id +
 // pending_ordinal), and every node after it in schedule order to
 // Terminal::Skipped (blocking dependency = the suspended node). The helper
-// emits NodeSuspended / WorkflowSuspended / RunCompleted{Suspended}, matching
-// the evaluator's suspend terminal (workflow_runtime.cpp:1585-1591).
+// emits NodeSuspended / WorkflowSuspended / RunCompleted{Suspended}.
 struct WasmWorkflowRunFacts {
     std::vector<WasmNodeRunFacts> nodes; // schedule order
     std::vector<WasmCapabilityCall> capability_calls; // call order
@@ -103,8 +99,7 @@ struct WasmWorkflowRunFacts {
     ahfl::ir::SourceRangeOpt failure_range;
     // WH-5c.6: the DiagnosticId of the failed node's NodeFailed diagnostic,
     // so the workflow-level WorkflowFailed reuses it (one bag entry
-    // referenced by both events, mirroring the evaluator at
-    // workflow_runtime.cpp:1594-1597). Nullopt when no node failed.
+    // referenced by both events). Nullopt when no node failed.
     std::optional<DiagnosticId> node_failure_diagnostic;
 };
 
@@ -114,12 +109,10 @@ struct WasmWorkflowRunFacts {
 // WorkflowCompleted|WorkflowFailed|WorkflowSuspended / RunCompleted), and
 // build the report from those events via build_execution_report.
 //
-// AgentId assignment matches the evaluator's build_runtime_plan:
-// first-appearance by agent NAME in node_id (source) order, NOT runner
-// order. WorkflowNodeId is assigned in node_id order so it equals the
-// evaluator's dense source-order index. NodeScheduled is emitted in
-// schedule (Kahn) order with dependencies + execution_slot, matching the
-// evaluator.
+// AgentId assignment: first-appearance by agent NAME in node_id (source)
+// order, NOT runner order. WorkflowNodeId is assigned in node_id order so it
+// equals the dense source-order index. NodeScheduled is emitted in schedule
+// (Kahn) order with dependencies + execution_slot.
 //
 // Returns false if the event stream violated the lifecycle contract (a
 // diagnostic is emitted and the report is left in a failed state).
@@ -133,9 +126,8 @@ struct WasmWorkflowRunFacts {
 // (workflow + node named after the agent). walk_states are the state names
 // in entry order (from the effects-free step-walk). capability_calls are
 // the capability calls observed during the run (in call order); the helper
-// emits CapabilityStarted / CapabilityCompleted events for each, matching
-// the evaluator's event order (between AgentStateEntered and the node
-// terminal).
+// emits CapabilityStarted / CapabilityCompleted events for each, between
+// AgentStateEntered and the node terminal.
 [[nodiscard]] bool finalize_wasm_agent_run(
     WorkflowResult &result,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,

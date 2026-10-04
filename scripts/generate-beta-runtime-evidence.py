@@ -87,7 +87,7 @@ def main() -> int:
             (
                 "^(ahfl\\.runtime\\."
                 "(execution_(event|report|metadata|renderer|projection|otel)_all|"
-                "workflow_(runtime|recovery)_all)|"
+                "workflow_recovery_all)|"
                 "ahflc\\.run\\.llm_provider_runtime\\.smoke)$"
             ),
         ],
@@ -96,12 +96,6 @@ def main() -> int:
     if runtime_tests.returncode != 0:
         raise RuntimeError(runtime_tests.stdout + runtime_tests.stderr)
 
-    require_no_match(
-        repo,
-        r"struct NodeExecutionResult|std::vector<std::string> execution_order",
-        ["src/runtime/engine/workflow_runtime.hpp"],
-        "string-based workflow result identity",
-    )
     require_no_match(
         repo,
         r"print_workflow_result|=== AHFL Workflow Execution ===|print_llm_provider_observability",
@@ -114,11 +108,11 @@ def main() -> int:
         ["src/runtime/providers/llm"],
         "string-based cumulative budget identity",
     )
-    state_event_source = (repo / "src/runtime/engine/workflow_runtime.cpp").read_text(
+    state_event_source = (repo / "src/runtime/wasm_host/wasm_lifecycle.cpp").read_text(
         encoding="utf-8"
     )
     if "AgentStateEntered{" not in state_event_source:
-        raise RuntimeError("WorkflowRuntime does not emit AgentStateEntered events")
+        raise RuntimeError("wasm lifecycle does not emit AgentStateEntered events")
     call_identity_source = (repo / "include/ahfl/compiler/ir/expr.hpp").read_text(encoding="utf-8")
     if "SymbolRef callee_ref" not in call_identity_source:
         raise RuntimeError("IR CallExpr does not preserve callee symbol identity")
@@ -166,7 +160,7 @@ def main() -> int:
     runtime_test_pattern = (
         "^(ahfl\\.runtime\\."
         "(execution_(event|report|metadata|renderer|projection|otel)_all|"
-        "workflow_(runtime|recovery)_all)|"
+        "workflow_recovery_all)|"
         "ahflc\\.run\\.llm_provider_runtime\\.smoke)$"
     )
     common = {

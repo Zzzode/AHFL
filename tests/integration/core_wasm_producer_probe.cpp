@@ -1,11 +1,11 @@
 // RFC 0026 P6-1 (KR6.6) same-frontend scalar-computation producer. One checked
-// program is forked to native AgentRuntime and AHFL->Core->P4-D->wasm. Unlike
-// the E1 identity probe, the non-final handlers carry real scalar computation
+// program is lowered through AHFL->Core->P4-D->wasm. Unlike the E1 identity
+// probe, the non-final handlers carry real scalar computation
 // (Literal/ValueRef/Unary/Binary) that drives computed gotos; the result is
-// observable purely through the state ids step()/run transition through, with
-// no frame encoding. The probe prints the native state-entry id sequence and
-// final state so the Node embedded host can drive step() and assert the same
-// ids and transition_count (real Node-engine evidence, NOT wasmtime).
+// observable through the emitted wasm module's frame layout and computed-final
+// reports. The probe writes the wasm module to the output path and prints
+// frame/arena/import reports so the Node embedded host can drive the module
+// and assert the same behavior (real Node-engine evidence, NOT wasmtime).
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
@@ -18,7 +18,6 @@
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
-#include "runtime/engine/agent_runtime.hpp"
 #include "runtime/value/value.hpp"
 
 #include <algorithm>
@@ -150,39 +149,6 @@ constexpr std::uint32_t kCollectionInputLen = 2;
     return lower_program_ir(*parse.program, resolve, typecheck);
 }
 
-[[nodiscard]] runtime::Value fixture_input() {
-    runtime::FieldMap fields;
-    fields.set("value", std::make_unique<runtime::Value>(runtime::make_string("identity")));
-    return runtime::Value{runtime::StructValue{"wasm::p6::Frame", std::move(fields)}};
-}
-
-// RFC 0026 P6-4: the aggregate fixture's input frame. The struct is
-// `{ a: Int; b: Int }` (both unbounded Int -> i64), so the frame is written with
-// those two typed values in DECLARATION order and the native run reads them
-// through the same `input.a` / `input.b` projections the wasm path uses.
-[[nodiscard]] runtime::Value aggregate_input() {
-    runtime::FieldMap fields;
-    fields.set("a", std::make_unique<runtime::Value>(runtime::make_int(kAggregateInputA)));
-    fields.set("b", std::make_unique<runtime::Value>(runtime::make_int(kAggregateInputB)));
-    return runtime::Value{runtime::StructValue{"wasm::p6::Frame", std::move(fields)}};
-}
-
-// RFC 0026 P6-5: the bounded-collection fixture's input frame. The struct is
-// `{ items: List<Int>(4) }` — a four-element bounded list whose elements are
-// `[kCollectionInputLow, kCollectionInputHigh, ...]`. The native run reads
-// through the same `input.items[i]` / `input.items.length` surfaces the wasm
-// path uses, so the branch it takes pins the element offsets AND the length word
-// end to end.
-[[nodiscard]] runtime::Value collection_input() {
-    runtime::FieldMap fields;
-    std::vector<runtime::Value> items;
-    items.push_back(runtime::make_int(kCollectionInputHigh));
-    items.push_back(runtime::make_int(kCollectionInputLow));
-    fields.set("items",
-               std::make_unique<runtime::Value>(runtime::make_list(std::move(items))));
-    return runtime::Value{runtime::StructValue{"wasm::p6::Frame", std::move(fields)}};
-}
-
 // CORE-GAPS: the bounded-Map keyed-lookup fixture's input frame. The struct is
 // `{ table: Map<K, V>(4) }` with two live entries; only the second entry's
 // keyed lookup is used by the fixture. Entries are positional in the value
@@ -228,23 +194,6 @@ struct MapSpec {
     return spec;
 }
 
-[[nodiscard]] runtime::Value map_input(const MapSpec &spec) {
-    runtime::FieldMap fields;
-    std::vector<std::pair<runtime::Value, runtime::Value>> entries;
-    for (std::size_t i = 0; i < spec.keys.size(); ++i) {
-        auto key = spec.key_is_bool ? runtime::make_bool(spec.keys[i] != 0)
-                                    : runtime::make_int(spec.keys[i]);
-        auto value = spec.value_is_bool
-                         ? runtime::make_bool(spec.values[i] != 0)
-                         : runtime::make_int(spec.values[i]);
-        entries.emplace_back(std::move(key), std::move(value));
-    }
-    fields.set(
-        "table",
-        std::make_unique<runtime::Value>(runtime::make_map(std::move(entries))));
-    return runtime::Value{runtime::StructValue{"app::main::Frame", std::move(fields)}};
-}
-
 // The single argument-less nominal value type naming core type `type` (index
 // identity, never a name — Principle 2).
 [[nodiscard]] std::optional<ir::core::CoreValueTypeId>
@@ -262,14 +211,13 @@ nominal_value_type(const ir::core::CoreProgram &program, ir::core::CoreTypeId ty
 
 int main(int argc, char **argv) {
     if (argc != 3 && argc != 4) {
-        std::cerr << "usage: ahfl_core_wasm_p6_probe <source.ahfl> <output.wasm> [agent_index]\n";
+        std::cerr << "usage: ahfl_core_wasm_producer_probe <source.ahfl> <output.wasm> [agent_index]\n";
         return 2;
     }
     const char *source_path = argv[1];
     const char *output_path = argv[2];
-    // Optional explicit Core agent ordinal to compile. The default (0) keeps
-    // the historical single-agent native-differential path; an explicit index
-    // skips the single-agent native run and emits + reports that ONE agent's
+    // Optional explicit Core agent ordinal to compile. The default (0) compiles
+    // the single agent; an explicit index emits + reports that ONE agent's
     // module imports (used by the multi-agent least-privilege regression,
     // where compiling one agent must not plan another agent's capabilities).
     bool multi_agent_inspect = false;
@@ -341,61 +289,6 @@ int main(int argc, char **argv) {
         input_struct != nullptr && !input_struct->fields.empty() &&
         input_struct->fields.front().name == "table";
     const MapSpec map_spec = map_fixture ? map_spec_for(input_struct) : MapSpec{};
-
-    // Native observation: collect every entered state NAME in order. The
-    // observer requires a valid invocation agent id to fire. In multi-agent
-    // inspection mode the single-agent native differential is not meaningful
-    // for the selected index, so it is skipped.
-    std::vector<std::string> entered_names;
-    std::vector<std::uint32_t> entered_ids;
-    std::size_t native_transitions = 0;
-    const char *native_status = "skipped";
-    std::int64_t final_id = -1;
-    if (!multi_agent_inspect) {
-    auto input = aggregate_fixture
-                    ? aggregate_input()
-                    : (collection_fixture
-                           ? collection_input()
-                           : (map_fixture ? map_input(map_spec) : fixture_input()));
-    runtime::AgentRuntime native(*agent, *flow);
-    runtime::CapabilityInvocationContext context;
-    context.agent_id = runtime::AgentId{0};
-    native.set_invocation_context(std::move(context));
-    native.set_state_entered_observer(
-        [&](runtime::AgentId, std::string_view state_name) -> runtime::AgentStateId {
-            entered_names.emplace_back(state_name);
-            return runtime::AgentStateId{entered_names.size() - 1};
-        });
-    const auto native_result = native.run(std::move(input));
-    switch (native_result.status) {
-    case runtime::AgentStatus::Completed:
-        native_status = "completed";
-        break;
-    case runtime::AgentStatus::Failed:
-        native_status = "failed";
-        break;
-    default:
-        native_status = "other";
-        break;
-    }
-
-    // Resolve entered state names to dense ids (the same index identity Core
-    // and the wasm globals use; names are display-only).
-    for (const auto &name : entered_names) {
-        const auto it = std::find(agent->states.begin(), agent->states.end(), name);
-        if (it == agent->states.end()) {
-            std::cerr << "native entered an undeclared state '" << name << "'\n";
-            return 1;
-        }
-        entered_ids.push_back(static_cast<std::uint32_t>(it - agent->states.begin()));
-    }
-    const auto final_it =
-        std::find(agent->states.begin(), agent->states.end(), native_result.current_state);
-    final_id = final_it == agent->states.end()
-                   ? -1
-                   : static_cast<std::int64_t>(final_it - agent->states.begin());
-    native_transitions = native_result.stats.state_transitions;
-    }
 
     const auto core = ir::core::lower_ahfl_to_core(*program);
     if (!core.ok()) {
@@ -622,16 +515,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::cout << "native_status=" << native_status << " entered_ids=";
-    for (std::size_t i = 0; i < entered_ids.size(); ++i) {
-        std::cout << (i == 0 ? "" : ",") << entered_ids[i];
-    }
-    std::cout << " final_state_id=" << final_id
-              << " transition_count=" << native_transitions
-              << " initial_state_id="
-              << (std::find(agent->states.begin(), agent->states.end(), agent->initial_state) -
-                  agent->states.begin())
-              << "\n";
+    std::cout << "emitted=ok bytes=" << bytes.size() << "\n";
 
     // RFC 0026 P6-4: for the aggregate fixture, report the P4-D input frame the
     // host must write (base + per-field offset/width/value) so the Node host

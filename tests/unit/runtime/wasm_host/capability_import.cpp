@@ -690,60 +690,6 @@ with_a2_admission_string_result(std::vector<std::uint8_t> module_bytes,
     return module_bytes;
 }
 
-// 10. Opaque closure-in-result: the mock returns Success with a closure Value.
-//     The executor validates the result against the Int result binding and
-//     rejects it as ResultSchemaInvalid. Post-effect: the invoker WAS called
-//     (the capability executed and returned a value the host must not wire).
-void test_abort_opaque_closure_result() {
-    constexpr std::uint64_t kSymbol = 400;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
-    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
-    check(admitted.ok(), "abort closure result: A2 admission");
-
-    wh::Wasm3ResumeEngine engine;
-    auto inst = engine.fresh_instance(
-        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            return eng::ImportReply{};
-        });
-    check(inst.has_value(), "abort closure result: engine instantiated");
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{
-        runtime::InterpreterClosureHandle{.id = 1, .descriptor = nullptr}};
-    auto invoker = mock.as_invoker();
-
-    wh::CapabilityImportState state;
-    ir::core::CoreFrameLayoutSection section;
-    runtime::CapabilityInvocationContext context;
-    wh::CapabilityImportConfig config{
-        .engine = engine,
-        .module = *admitted.module,
-        .frame_section = section,
-        .invoker = invoker,
-        .context = context,
-        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
-        .state = state,
-    };
-    auto callback = wh::make_capability_import_callback(std::move(config));
-
-    const std::string arg_json = "{\"value\":42}";
-    eng::ImportObservation obs;
-    obs.import_ordinal = 0;
-    obs.param_frame = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
-    auto mem = engine.read_whole_memory();
-    obs.whole_memory = *mem;
-
-    auto reply = callback(obs);
-    check(std::holds_alternative<eng::ImportAbort>(reply),
-          "abort closure result: reply is ImportAbort");
-    check(state.last_error.has_value() &&
-              *state.last_error == wh::CapabilityImportError::ResultSchemaInvalid,
-          "abort closure result: error is ResultSchemaInvalid");
-    check(mock.call_count == 1, "abort closure result: invoker called once (post-effect)");
-}
-
 // 11. Opaque oversized frame: the mock returns Success with a StringValue whose
 //     JSON serialization exceeds the fixed single-page capacity (65536). The
 //     executor validates the result (String, unbounded), serializes it to
@@ -1218,7 +1164,6 @@ int main() {
     test_abort_unknown_name();
     test_abort_bridge_block_oob();
     test_abort_bridge_site_id_mismatch();
-    test_abort_opaque_closure_result();
     test_abort_opaque_oversized_frame();
     test_abort_bridge_arg_count();
     test_abort_bridge_stride();

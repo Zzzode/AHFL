@@ -2,6 +2,17 @@
 
 > Status: **implemented (foundation slice)** (RFC 0026 P7 / KR6.7).
 >
+> **Post-WH-9 update (2026-10-04):** the tree-walking native evaluator and
+> evaluator-driven `WorkflowRuntime` have been deleted. Lane (1) below no
+> longer exists as a live engine: the differential census now compares the
+> wasm lane against a **frozen native oracle** — per-fixture observations
+> captured at the last pre-retirement revision (43-fixture freeze at HEAD 620fadd8, 30 completed / 13 failed) plus
+> checked-in conformance manifests (closure stems were never evaluable by the
+> tree-walking engine; their expected values are wasm-path expectations backed
+> by the manifests). The wasm lane is the single execution path. Census at
+> retirement: native differential 73 agreed / 0 skipped, node differential
+> 69 agreed / 4 skipped (documented Node-port gaps).
+>
 > Scope: define the engine-neutral conformance case manifest format
 > (`ahfl.conformance-case.v1`), the committed `tests/conformance/cases/`
 > catalogue, and the fail-closed schema validator that every later conformance

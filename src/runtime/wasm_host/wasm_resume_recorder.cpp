@@ -104,8 +104,8 @@ bool WasmResumeRecorder::load_replay(
     for (std::size_t i = 0; i < memo_.size(); ++i) {
         const auto &entry = memo_[i];
         // The wasm consumer requires a node coordinate on every memo entry
-        // (whole-workflow memo for fresh-instance replay). An evaluator-
-        // originated snapshot has none -> fail closed.
+        // (whole-workflow memo for fresh-instance replay). A snapshot
+        // without one -> fail closed.
         if (!entry.node.has_value()) {
             return false;
         }

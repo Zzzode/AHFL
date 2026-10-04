@@ -219,18 +219,8 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
         }
         return Skip::None;
     }();
-    // RFC 0026 FB-3b: a case that RUNS on the wasm orchestration lane but whose
-    // surfaced construct (user-defined pure fn calls / first-class closures)
-    // the in-process evaluator does not yet execute is a deliberate,
-    // manifest-declared node-only observation (KR6.8 retires that evaluator
-    // surface). The compiler-derived emit facts cannot detect the evaluator
-    // gap, so this one skip is the manifest's honest claim; it is still
-    // validated below as being attached to a genuinely RUNNABLE artifact (a
-    // blocked case may not claim it), and the Node runner enforces the exact
-    // set via its pinned census. Every other skip must equal the computed one.
-    //
     // WH-5c.4 (GAP 2): a case that RUNS on the wasm orchestration lane and
-    // agrees with the evaluator on the native wasm3 lane, but whose wasm
+    // has a checked-in blessing on the native wasm3 lane, but whose wasm
     // module reaches ahfl_xcode transcode sites the Node embedded host does
     // not yet implement (WH-5b.3 host transcode building). The compiler-derived
     // emit facts cannot detect the JS host gap, so this skip is the manifest's
@@ -253,24 +243,13 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     // native wasm3 lane agrees, but the Node observation is withheld until
     // the JS host ports the rich wire-type matrix. Same manifest-claim
     // treatment; the Node runner pins an exact stem set.
-    const bool declared_node_only =
-        declared.node_observation_skip == Skip::EvaluatorSurfaceAwaitsKr68;
     const bool declared_host_transcode =
         declared.node_observation_skip == Skip::HostTranscodeAwaitsNodePort;
     const bool declared_multinode_stash =
         declared.node_observation_skip == Skip::NodeHostAwaitsMultiNodeStashJoin;
     const bool declared_rich_wire_types =
         declared.node_observation_skip == Skip::NodeHostAwaitsRichWireTypes;
-    if (declared_node_only) {
-        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
-            return "manifest declares engines.wasm.node_observation_skip="
-                   "'evaluator_surface_awaits_kr68' but the module does not emit on the "
-                   "orchestration lane (" +
-                   std::string{wasm_eligibility_verdict_name(verdict)} +
-                   ": " + computed.reason +
-                   ") -- a node-only observation requires a runnable artifact";
-        }
-    } else if (declared_host_transcode) {
+    if (declared_host_transcode) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
                    "'host_transcode_awaits_node_port' but the module does not emit on the "

@@ -41,9 +41,9 @@ flowchart TD
     RuntimeArtifacts --> Runtime["Runtime Execution"]
     Runtime --> Events["Flat ExecutionEventStore"]
     Events --> Projections["Report / Human / JSON / JSONL / Replay / Audit / Scheduler / Checkpoint"]
-    Projections --> Recovery["ahfl.workflow-recovery.v1"]
-    Runtime --> Evaluator["ExpressionEvaluator / StatementExecutor"]
-    Runtime --> Engines["AgentRuntime / WorkflowRuntime"]
+    Projections --> Recovery["ahfl.workflow-recovery.v2"]
+    Runtime --> WasmEngine["vendored wasm3 (wasm32)"]
+    Runtime --> WasmRunners["wasm agent runner / workflow session / WasmWorkflowRuntime"]
     Runtime --> Capability["CapabilityBridge / HTTP / gRPC JSON Transcoding"]
     Runtime --> LLM["LLM Provider"]
 ```
@@ -84,8 +84,8 @@ flowchart TD
 | Lifecycle closure | 已实现 | success、skip、retry/fallback、cancel、budget rejection、timeout、interruption、checkpoint/resume |
 | Report/renderers | 已实现 | human、JSON、JSONL、quiet 共享 event/report facts |
 | Runtime projections | 已实现 | replay、audit、scheduler、checkpoint 全部从 `WorkflowResult.events` 构造 |
-| Recovery store | 已实现 | `ahfl.workflow-recovery.v1` + `v2`(RFC 0022 durable resume,schema v2 = stable-artifact)、atomic replace、deep-cloned values |
-| Reference recovery path | 已实现 | local HTTP provider、`SIGKILL`、approval、partial write、resume、side-effect dedupe |
+| Recovery store | 已实现 | 加载器接受 `ahfl.workflow-recovery.v1`/`v2`,wasm lane 写 `v2`(RFC 0022 durable resume)、atomic replace;快照含 completed nodes(node-event buffer 派生)+ pending 坐标 + 精确 memo |
+| Reference recovery path | wasm 冷启动重放(WH-9) | `durable_resume_capstone`(同进程 Pending 挂起 → 落盘 → 冷启动整模块重放,恢复零 live side effect)+ 小时级 `long_soak_smoke`;旧 `SIGKILL` 节点 checkpoint/approval 路径已随树步评估器退役 |
 | Durable capability resume | 已实现(RFC 0022 `stabilized`) | capability 返回 `AHFL_CAP_PENDING` → 节点挂起 + v2 resume record（node input + per-node ordinal memo）→ 跨进程冷启动从磁盘恢复 → 确定复现；memo 命中不二次调用、cap_id+arg_hash 交叉校验、注入/memo 值 fail-closed 类型校验、`durable_write` 写前 idempotency-key intent。经原生 `ahfl_host.h` ABI 与 shell（`--recovery-store`/`--resume-pending-result`/`--suspend-capability`/`--intent-log`）均可驱动；`examples/durable-resume/` 为可运行 demo |
 
 旧 `RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> persistence/store-import/provider artifact` 链已物理删除。它们曾经形成第二套 name-based runtime fact source；不能再以“历史上有源码和 golden”为理由恢复。
@@ -101,17 +101,16 @@ flowchart TD
 | 网络故障矩阵 | 已实现受控试点 | disconnect、HTTP 429、timeout、partial response、process crash 全部 fail closed |
 | OTel-compatible adapter | 已实现 | canonical events -> deterministic OTLP-compatible run/workflow/node/capability spans |
 | Controlled-pilot gate | 已实现 | `ahfl-controlled-pilot` 显式覆盖 bounded soak、provider budget、recovery、schema rejection 与 OTel；evidence revision 必须等于当前 checkout |
-| Beta evidence gate | 已实现 | `ahfl-beta-gate` 从空目录重建 10 项 evidence，拒绝 stale/mixed revision、缺项和失败状态 |
+| Beta evidence gate | 已实现 | `ahfl-beta-gate` 从空目录重建 9 项 evidence(BETA-01..06、BETA-08..10;BETA-07 已退役、编号不复用),拒绝 stale/mixed revision、缺项和失败状态 |
 | 长时间 nightly soak | 已治理，状态由 live evidence 决定 | hour-scale 模式 CI-only；本地在启动 worker 前拒绝。单一长生命周期 worker、RSS/allocator 趋势、GitHub Actions provenance、nightly workflow 与 `production-confidence` checker 已落地；是否 ready 必须读取当前 revision 的 gate report，不能从文档静态推断 |
 
 ### 3.4 Runtime execution baseline
 
 | 模块 | 状态 | 关键产物 |
 |------|------|----------|
-| 表达式求值 | 已实现 | Expression evaluator、`EvalContext`、`Value` |
-| 语句执行 | 已实现 | Statement executor、let/assign/if/goto/return/assert |
-| Agent 运行时 | 已实现 | Agent state-machine runtime、quota enforcement |
-| Workflow 运行时 | 已实现 | Workflow runtime、DAG execution |
+| 表达式/语句执行 | 编译期 lower 到 Core-IR → wasm codegen | P6 标量栈机、match/coercion/aggregate、P4-D 帧布局（原树步 Expression evaluator / Statement executor 已在 WH-9 删除） |
+| Agent 运行时 | 已实现 | wasm32 上的 Agent state-machine runner、state-trace、quota |
+| Workflow 运行时 | 已实现 | wasm workflow session、DAG execution、capability import、Pending 挂起 + memo 冷启动重放 |
 | Structured execution | 已实现 | strong IDs、event store、report、projection、renderer、recovery |
 | Capability 桥接 | 已实现，仍需生产化 | Capability bridge、function capability、HTTP transport、gRPC JSON transcoding、retry/fallback/budget |
 
@@ -135,7 +134,7 @@ flowchart TD
     Client --> Response["ResponseParser"]
     Provider --> OptionalModules["Streaming / Registry / Token Budget / Response Cache"]
     Response --> RuntimeValue["runtime Value"]
-    RuntimeValue --> WorkflowRuntime["WorkflowRuntime"]
+    RuntimeValue --> WorkflowRuntime["WasmWorkflowRuntime"]
     CapabilityBridge --> WorkflowRuntime
 ```
 
@@ -216,10 +215,10 @@ Runtime 提供单路径真实执行；Formal 提供安全/活性属性验证。�
 | Execution plan / Dry run | compiler-to-runtime handoff | 已实现 |
 | Event-native Runtime Kernel | runtime execution facts | 已实现 |
 | Replay / Audit / Scheduler / Checkpoint | event projections | 已实现 |
-| Crash / Resume | recovery | reference workflow 已实现 |
-| Durable capability resume | RFC 0022 embedding | 已实现(`stabilized`)——PENDING 挂起 + 跨进程冷启动 memo 恢复 + exactly-once |
+| Suspend / Resume（wasm lane） | recovery | WH-9 后唯一恢复路径:`durable_resume_capstone`(同进程 Pending 挂起 → v2 快照 → 冷启动整模块 memo 重放) |
+| Durable capability resume | RFC 0022 embedding | 已实现(`stabilized`)——PENDING 挂起 + 冷启动 memo 恢复 + exactly-once;跨进程生产 host 仍是 RFC 0026 E4-B2 后续 |
 | SMT-BMC 契约可验证子集 | RFC 0017 / 0024 / 0025 formal | 已实现——标量数据谓词(0017 `stabilized`)+ 有界集合量化 `forall`/`exists`(0024 `stabilized`)+ `List<T>(N)` capacity 静态上界(0025 `stabilized`);无界集合量化按 `formal.UNBOUNDED_QUANTIFIER` fail-closed |
 | Bounded soak / network matrix / OTel adapter | controlled pilot | 已实现 |
 | Hour-scale soak / RSS trend | production confidence | 仅由 `Production Confidence` GitHub Actions workflow 执行；本地只读取 live gate，不运行 hour-scale，文档不缓存 ready 状态 |
-| 解释器与 runtime baseline | runtime execution | 已实现 |
+| 唯一执行路径(wasm3 内嵌) | runtime execution | WH-9 后已实现——Core-IR → wasm codegen + vendored wasm3;树步解释器已删除 |
 | LLM Provider、tooling、formal/infra 扩展 | 当前重点 | 已落库但未产品化 |

@@ -33,29 +33,19 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8).
+FROZEN_OBS = {
+    "status": "completed",
+    "entered_ids": [3, 1, 0],
+    "final_state_id": 0,
+    "transition_count": 2,
+    "initial_state_id": 3,
+}
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def parse_collection(stdout: str) -> dict[str, object]:
@@ -94,16 +84,14 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-p6-collection-node-") as td:
         td_path = Path(td)
         wasm = td_path / "p6_collection.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"producer exited {native.returncode}: {native.stderr}")
-        obs = parse_observation(native.stdout)
-        if obs["status"] != "completed" or not obs["entered_ids"]:
-            return fail(f"native collection run did not complete: {obs}")
-        layout = parse_collection(native.stdout)
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+        obs = FROZEN_OBS
+        layout = parse_collection(compile_run.stdout)
         if len(layout["elements"]) != layout["capacity"]:
             return fail(f"element value count != capacity: {layout}")
         if layout["len"] > layout["capacity"] or layout["len"] <= 0:
@@ -169,14 +157,14 @@ const header = layout.collection_base + layout.header_offset;
 view.setInt32(header + layout.ptr_offset, layout.backing_base, true);
 view.setInt32(header + layout.len_offset, layout.len, true);
 
-// The native entered-id sequence drives step(); the wasm path is that sequence
+// The frozen oracle's entered-id sequence drives step(); the wasm path is that
 // minus the leading initial id.
 const expectedEntered = process.argv[4].split(",").map(Number);
 const initial = Number(process.argv[5]);
 const transitions = Number(process.argv[6]);
 const expected = expectedEntered.slice(1);
 if (expectedEntered[0] !== initial)
-  throw new Error("native initial id does not match initial_state_id");
+  throw new Error("frozen initial id does not match initial_state_id");
 if (exports.current_state() !== initial)
   throw new Error(`initial state ${exports.current_state()} != ${initial}`);
 const sequence = [];
@@ -201,7 +189,7 @@ while (guard-- > 0) {
 const path = sequence.slice(0, expected.length);
 if (JSON.stringify(path) !== JSON.stringify(expected))
   throw new Error(
-    `state path ${path} != native ${expected} ` +
+    `state path ${path} != oracle ${expected} ` +
     "(a wrong header offset / stride / element width misroutes the branch)");
 if (exports.transition_count.value !== transitions)
   throw new Error(`transition_count ${exports.transition_count.value} != ${transitions}`);
@@ -213,7 +201,7 @@ if (exports.transition_count.value !== transitions)
 // lands on a POISONED slot (index >= len) and routes to Low; a wrong len word
 // offset breaks the equality. The expected branch is re-derived from the
 // reported values, so the assertion is self-checking rather than a restatement
-// of the native ids.
+// of the oracle ids.
 const threshold = BigInt(layout.threshold);
 const poison = BigInt(layout.poison);
 const highId = 1;
@@ -227,7 +215,7 @@ if (poison <= threshold || poison === second)
 if (layout.len <= 0)
   throw new Error("host wrote a non-positive length");
 if (expected[0] !== highId || expected.includes(lowId))
-  throw new Error(`native path ${expected} does not take only the High branch`);
+  throw new Error(`oracle path ${expected} does not take only the High branch`);
 
 console.log("P6 bounded-collection Node execution passed");
 ''',

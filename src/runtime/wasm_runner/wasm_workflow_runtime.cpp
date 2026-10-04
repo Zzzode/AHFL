@@ -237,8 +237,7 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
             return std::nullopt;
         };
 
-    // WH-4b: intent-emitting wrapper. Mirrors the evaluator at
-    // workflow_runtime.cpp:1050-1058: right BEFORE a durable_write /
+    // WH-4b: intent-emitting wrapper. Right BEFORE a durable_write /
     // financial_write capability is dispatched, fire the write-ahead intent
     // with the idempotency key stamped by the session. Memo hits and
     // frontier injections never reach the invoker, so a resumed run emits

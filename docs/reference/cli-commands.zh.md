@@ -28,7 +28,7 @@
    `DetachedSourceUnit`，只获得 primitive prelude、当前文件局部语义和有限诊断，
    不会隐式加载 `std` package。
 4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
-5. 运行期 replay、audit、scheduler、checkpoint 和 recovery 都由 `WorkflowRuntime` 的 event log 投影，不再暴露平行 artifact catalog。
+5. 运行期 replay、audit、scheduler、checkpoint 和 recovery 都由 `WasmWorkflowRuntime`（wasm3 内嵌执行）的 event log 投影，不再暴露平行 artifact catalog。
 6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
 7. Public API artifact 通过 `emit public-api` / `emit public-api-docs` / `emit public-api-diff` 输出 visibility facts 驱动的 API snapshot、Markdown docs 和 API diff。
 8. `init --single-file` 是从 detached 裸文件迁移到正式 `ahfl.toml` package 的显式脚手架入口，不改变 detached mode 语义。

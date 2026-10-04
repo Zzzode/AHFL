@@ -17,7 +17,6 @@
   ],
   "capabilities": [],
   "engines": {
-    "evaluator": true,
     "wasm": {
       "eligible": "orchestration",
       "reason": "FB-4 least-privilege: the capability-free PureAgent compiled from a two-agent module must emit zero ahfl_cap imports; an identity agent on the orchestration lane"

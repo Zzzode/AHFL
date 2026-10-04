@@ -28,29 +28,13 @@ from pathlib import Path
 
 SKIP = 77
 
+# Frozen oracle (WH-9 B0, HEAD 620fadd8): the wasm-path initial_state_id.
+FROZEN_INITIAL_STATE_ID = 0
+
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
-
-
-def parse_observation(stdout: str) -> dict[str, object]:
-    match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
-        stdout,
-    )
-    if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
-    return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
-    }
 
 
 def parse_collection(stdout: str) -> dict[str, object]:
@@ -87,13 +71,13 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-fb2-node-") as td:
         td_path = Path(td)
         wasm = td_path / "fb2_bounded_recursion.wasm"
-        native = subprocess.run(
+        compile_run = subprocess.run(
             [str(producer), str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
-        if native.returncode != 0:
-            return fail(f"producer exited {native.returncode}: {native.stderr}")
-        layout = parse_collection(native.stdout)
+        if compile_run.returncode != 0:
+            return fail(f"producer exited {compile_run.returncode}: {compile_run.stderr}")
+        layout = parse_collection(compile_run.stdout)
         if len(layout["elements"]) != layout["capacity"]:
             return fail(f"element value count != capacity: {layout}")
         if not (0 < layout["len"] <= layout["capacity"]):
@@ -165,7 +149,7 @@ console.log(`FB-2 bounded recursion summed ${expectedTotal} via native wasm call
         executed = subprocess.run(
             [
                 node, str(host), json.dumps(layout), str(live_total),
-                str(parse_observation(native.stdout)["initial_state_id"]),
+                str(FROZEN_INITIAL_STATE_ID),
                 str(wasm),
             ],
             capture_output=True, text=True, timeout=60,

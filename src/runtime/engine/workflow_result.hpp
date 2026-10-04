@@ -1,21 +1,18 @@
 #pragma once
 
 // RFC 0026 KR6.8 WH-4 (Decision 2, Option Z) + WH-4 fix-forward D-E: the
-// evaluator-FREE neutral workflow result type. `WorkflowResult` +
-// `WorkflowStatus` were moved here from `runtime/engine/workflow_runtime.hpp`
-// so that BOTH the evaluator-backed `WorkflowRuntime` and the wasm3-backed
-// `WasmWorkflowRuntime` produce the same neutral type without either depending
-// on the other's implementation header. The renderer + projections consume
-// only these neutral fields.
+// neutral workflow result type. `WorkflowResult` + `WorkflowStatus` were moved
+// here from `runtime/engine/workflow_runtime.hpp` so that the wasm3-backed
+// `WasmWorkflowRuntime` produces the same neutral type without depending on
+// any other implementation header. The renderer + projections consume only
+// these neutral fields.
 //
-// The struct is a bag of evaluator-free fields (event store / metadata /
-// report / values / diagnostics / durable-resume snapshot); the evaluator
-// coupling lived only in `WorkflowRuntime::run`'s CONSTRUCTION, never in the
-// type. `WorkflowStatus::EvalError` stays in the enum: the wasm lane never
-// produces it (a wasm trap / host-abort / non-OK maps to `NodeFailed`), and it
-// is deleted at WH-9 together with its only producer (`WorkflowRuntime::run`'s
-// `EvaluationFailed` path). It is a documented WH-9 deletion, not hidden
-// coupling.
+// The struct is a bag of neutral fields (event store / metadata / report /
+// values / diagnostics / durable-resume snapshot). `WorkflowStatus::EvalError`
+// stays in the enum: the wasm lane produces it through fail-closed paths
+// (event-stream-invalid, output decode failure); see
+// `wasm_lifecycle.cpp` build_report and `workflow_session.cpp` run-failure
+// sites.
 //
 // Include note (D-E, 2026-09-30): this header is SRC-INTERNAL. It lived under
 // include/ahfl/runtime/ until the fix-forward moved it here, because it

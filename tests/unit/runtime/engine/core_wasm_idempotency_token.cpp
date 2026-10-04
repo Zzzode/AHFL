@@ -126,7 +126,7 @@ std::uint64_t load_u64_le(const IdempotencyToken &t, std::size_t off) {
 }
 
 // Byte-for-byte copy of the native process-local FNV-1a mix
-// (compute_idempotency_key in src/runtime/engine/workflow_runtime.cpp). Kept
+// (compute_idempotency_key in src/runtime/engine/workflow_recovery.cpp). Kept
 // here only to prove the two identities never coincide; the production
 // function is deliberately not reused.
 std::uint64_t native_fnv_idempotency_key(std::size_t workflow_index,

@@ -37,8 +37,6 @@
 #include "ahfl/compiler/ir/opt/opt_ir.hpp"
 #include "ahfl/compiler/backends/driver.hpp"
 #include "compiler/ir/opt/opt_lower.hpp"
-#include "runtime/evaluator/executor.hpp"
-#include "runtime/evaluator/runtime_fn_table.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 #include "tooling/formatter/formatter.hpp"
@@ -366,14 +364,13 @@ TEST_CASE("B-2 lambda param self shadows method receiver self") {
 
 namespace {
 
-// --- Runtime harness (mirrors evaluator_generics.cpp) ----------------------
+// --- Runtime harness (compile-to-IR for shape/backend assertions) -----------
 
 struct RuntimeProgram {
     ahfl::ParseResult parse_result;
     ahfl::ResolveResult resolve_result;
     ahfl::TypeCheckResult typecheck_result;
     ahfl::ir::Program program_ir;
-    ahfl::evaluator::RuntimeFunctionTable fn_table;
 };
 
 [[nodiscard]] std::optional<RuntimeProgram> compile_runtime(const std::string &filename,
@@ -410,14 +407,12 @@ struct RuntimeProgram {
 
     auto program_ir =
         ahfl::lower_program_ir(*parse_result.program, resolve_result, typecheck_result);
-    ahfl::evaluator::RuntimeFunctionTable fn_table(program_ir);
 
     return RuntimeProgram{
         std::move(parse_result),
         std::move(resolve_result),
         std::move(typecheck_result),
         std::move(program_ir),
-        std::move(fn_table),
     };
 }
 
@@ -438,33 +433,6 @@ struct RuntimeProgram {
         }
     }
     return nullptr;
-}
-
-[[nodiscard]] std::optional<ahfl::runtime::Value>
-run_caller(const RuntimeProgram &c, std::string_view caller_name = "caller") {
-    const ahfl::ir::Block *body = find_fn_body(c, caller_name);
-    if (body == nullptr) {
-        MESSAGE("could not locate body of fn '" << std::string(caller_name) << "'");
-        return std::nullopt;
-    }
-
-    ahfl::evaluator::ExecContext ctx;
-    ahfl::evaluator::RuntimeFnTrace trace_cfg;
-    c.fn_table.install(ctx, trace_cfg);
-
-    const ahfl::evaluator::ExecResult r = ahfl::evaluator::exec_block(*body, ctx);
-    if (r.has_errors()) {
-        for (const auto &entry : r.diagnostics.entries()) {
-            MESSAGE("exec diagnostic: " << entry.message);
-        }
-        return std::nullopt;
-    }
-    const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&r.outcome);
-    if (ret == nullptr) {
-        MESSAGE("caller body did not return a value");
-        return std::nullopt;
-    }
-    return ahfl::runtime::clone_value(ret->value);
 }
 
 // --- Opt-IR helpers (mirrors opt_ir.cpp) ------------------------------------
@@ -718,32 +686,6 @@ TEST_CASE("P3-gaps-B const X: Unit = {} evaluates without errors") {
 }
 
 // ============================================================================
-// Evaluator: unit literal at runtime
-// ============================================================================
-
-TEST_CASE("P3-gaps-B evaluator passes unit literal to function") {
-    const std::string source = R"AHFL(
-fn take_unit(u: Unit) -> Int effect Pure decreases 0 {
-    return 1;
-}
-
-fn caller() -> Int effect Pure decreases 0 {
-    return take_unit({});
-}
-)AHFL";
-
-    auto compiled = compile_runtime("unit_eval.ahfl", source);
-    REQUIRE(compiled.has_value());
-
-    auto result = run_caller(*compiled);
-    REQUIRE(result.has_value());
-
-    const auto *int_val = std::get_if<ahfl::runtime::IntValue>(&result->node);
-    REQUIRE(int_val != nullptr);
-    CHECK_EQ(int_val->value, 1);
-}
-
-// ============================================================================
 // Golden: AST printer
 // ============================================================================
 
@@ -946,57 +888,6 @@ TEST_CASE("P3-gaps-B structurally_equal on unit values") {
     const auto a = ahfl::runtime::make_unit();
     const auto b = ahfl::runtime::make_unit();
     CHECK(ahfl::runtime::structurally_equal(a, b));
-}
-
-// ============================================================================
-// B4/B5: wildcard let evaluates the initializer at runtime (effects)
-//
-// The executor must still evaluate the initializer expression even though the
-// result is discarded. This test installs a trace sink and proves the call
-// inside the wildcard let's initializer was actually dispatched.
-// ============================================================================
-
-TEST_CASE("P3-gaps-B wildcard let evaluates initializer at runtime") {
-    const std::string source = R"AHFL(
-fn id(x: Int) -> Int effect Pure decreases 0 {
-    return x;
-}
-
-fn caller() -> Int effect Pure decreases 0 {
-    let _ = id(42);
-    return 0;
-}
-)AHFL";
-
-    auto compiled = compile_runtime("wildcard_runtime_effects.ahfl", source);
-    REQUIRE(compiled.has_value());
-
-    const ahfl::ir::Block *body = find_fn_body(*compiled, "caller");
-    REQUIRE(body != nullptr);
-
-    // Install a trace sink so we can prove the initializer (id(42)) was
-    // actually dispatched — the wildcard discards the result but MUST still
-    // evaluate the expression for effects.
-    ahfl::evaluator::ExecContext ctx;
-    std::ostringstream trace_out;
-    ahfl::evaluator::RuntimeFnTrace trace_cfg;
-    trace_cfg.out = &trace_out;
-    compiled->fn_table.install(ctx, trace_cfg);
-
-    const ahfl::evaluator::ExecResult r = ahfl::evaluator::exec_block(*body, ctx);
-    REQUIRE_FALSE(r.has_errors());
-
-    const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&r.outcome);
-    REQUIRE(ret != nullptr);
-    const auto *int_val = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
-    REQUIRE(int_val != nullptr);
-    CHECK_EQ(int_val->value, 0);
-
-    // The trace must record the dispatch to `id` — proving the wildcard let's
-    // initializer was evaluated even though its result was discarded.
-    const std::string trace = trace_out.str();
-    CHECK_FALSE(trace.empty());
-    CHECK(trace.find("id") != std::string::npos);
 }
 
 // ============================================================================

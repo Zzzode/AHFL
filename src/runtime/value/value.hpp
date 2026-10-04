@@ -16,48 +16,6 @@ namespace ahfl::runtime {
 // Forward declaration for recursive variant
 struct Value;
 
-// Interpreter-only closure alternative. A first-class closure is an opaque
-// handle to storage OWNED by the tree-walking evaluator; this translation unit
-// never dereferences the descriptor, so it stays incomplete here and the host
-// wire layer keeps zero dependency on evaluator internals (no EvalContext, no
-// ir::Expr, no executor). The definition lives in the evaluator
-// (src/runtime/evaluator/evaluator.hpp) and is reachable only from there.
-//
-// It is carried in `Value` because the interpreter stores user bindings --
-// including closures passed as arguments to user-defined functions
-// (`apply(|\y| add_one(y), 41)`) and to higher-order stdlib wrappers
-// (`option.map(f)`, `collections.fold`) -- in the same `Value`-typed scope
-// maps as every other kind. A closure therefore has to be representable in
-// `ValueNode`; the alternative is a second, parallel scope type in the
-// evaluator.
-//
-// Identity is the monotonic `id`, assigned by `make_interpreter_closure`
-// (Principle 2: index/id identity, never a heap address). Equality and the
-// strict-weak ordering used for Set/Map canonicalization compare ONLY the id,
-// so they are stable for the whole process and cannot alias through address
-// reuse. The shared_ptr descriptor is pure lifetime management; it is never
-// the identity and is never dereferenced on this layer. The id is process-local
-// state and is intentionally NOT a wire value.
-//
-// Wire discipline: a closure is NOT a wire kind and never crosses the frame
-// boundary (RFC 0026 KR6.8). The trust boundary MUST call
-// `try_value_to_json` / the optional `hash_values`, which reject a closure
-// (including one nested anywhere inside a composite) instead of emitting
-// bytes. The plain `value_to_json` is observation-only (DAP, traces, tool
-// output) and renders the closure as a fixed opaque JSON object so that output
-// stays syntactically valid.
-struct InterpreterClosure;
-using InterpreterClosureRef = std::shared_ptr<const InterpreterClosure>;
-
-struct InterpreterClosureHandle {
-    std::uint64_t id{0};
-    InterpreterClosureRef descriptor;
-
-    [[nodiscard]] bool operator==(const InterpreterClosureHandle &other) const noexcept {
-        return id == other.id;
-    }
-};
-
 // ============================================================================
 // Value Variants
 // ============================================================================
@@ -210,7 +168,6 @@ using ValueNode = std::variant<NoneValue,
                                MapValue,
                                UuidValue,
                                TimestampValue,
-                               InterpreterClosureHandle,
                                UnitValue>;
 
 struct Value {
@@ -237,7 +194,6 @@ enum class ValueKind {
     Map,
     Uuid,
     Timestamp,
-    Callable,
     Unit,
 };
 
@@ -269,8 +225,7 @@ void print_value(const Value &v, std::ostream &out);
 
 /// Canonical strict-weak ordering: -1/0/1. Used by Set/Map canonicalization
 /// to give every value a deterministic order; it is NOT semantic `<`. Every
-/// kind — including the interpreter-only closure arm — has a stable
-/// comparator (closures order by monotonic id, never heap address).
+/// kind has a stable comparator.
 [[nodiscard]] int compare_values(const Value &lhs, const Value &rhs);
 
 // ============================================================================
@@ -411,10 +366,6 @@ make_enum(std::string enum_name,
 [[nodiscard]] inline Value make_option_none() {
     return make_enum("std::option::Option", "None");
 }
-
-/// Wrap an evaluator-owned closure handle in a Value. The handle is opaque
-/// here; only the evaluator layer constructs or unwraps it.
-[[nodiscard]] Value make_interpreter_closure(InterpreterClosureRef closure);
 
 [[nodiscard]] Value make_struct(std::string type_name,
                                 std::unordered_map<std::string, Value> fields);

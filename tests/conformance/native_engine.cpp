@@ -30,7 +30,7 @@ namespace wr = ahfl::runtime::wasm_runner;
 // Wraps the registry's contextual invoker so BOTH the canonical capability
 // name and the canonical wire argument envelope are recorded per call (the
 // differential comparator diffs the envelopes, not just the capability
-// order). Mirrors the evaluator engine's recording wrapper exactly.
+// order).
 [[nodiscard]] ahfl::runtime::ContextualCapabilityInvoker
 make_recording_invoker(CapabilityRegistry &registry,
                        std::vector<std::string> &capabilities,

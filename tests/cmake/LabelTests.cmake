@@ -181,46 +181,15 @@ ahfl_label_tests(
 
 
 ahfl_label_tests(
-    LABELS expression-evaluator
-    TESTS
-        ahfl.evaluator.eval_all
-)
-
-ahfl_label_tests(
-    LABELS ahfl-rfc-corelib rfc-corelib-p7-runtime
-    TESTS
-        ahfl.evaluator.p7_runtime_all
-)
-
-ahfl_label_tests(
     LABELS ahfl-rfc-corelib rfc-corelib-p2-fn-generics-closures
     TESTS
         ahfl.semantics.fn_generics_closures_all
-        ahfl.evaluator.generics_all
 )
 
 ahfl_label_tests(
     LABELS ahfl-rfc-corelib rfc-corelib-p3-trait-impl
     TESTS
         ahfl.semantics.trait_impl_all
-)
-
-ahfl_label_tests(
-    LABELS statement-executor
-    TESTS
-        ahfl.executor.exec_all
-)
-
-ahfl_label_tests(
-    LABELS agent-state-machine-runtime
-    TESTS
-        ahfl.runtime.agent_runtime_all
-)
-
-ahfl_label_tests(
-    LABELS workflow-integration
-    TESTS
-        ahfl.runtime.workflow_runtime_all
 )
 
 ahfl_label_tests(
@@ -237,39 +206,19 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS capability-embedding native-host-binding
-    TESTS
-        ahfl.runtime.native_host_binding_all
-)
-
-ahfl_label_tests(
     LABELS capability-embedding native-wasm-differential
     TESTS
         ahfl.runtime.native_wasm_differential
 )
 
-ahfl_label_tests(
-    LABELS e2e
-    TESTS
-        ahfl.runtime.e2e_workflow
-        ahfl.runtime.enum_variant_e2e
-        ahfl.runtime.if_let_e2e
-)
-
 # KR6.7 (RFC 0026 P7): engine-independent conformance. The manifest parser
-# unit test plus the evaluator-engine adapter lanes (blessed byte compare,
-# determinism, mutation gate), the WASM eligibility classifier, and the three
-# migrated e2e identities.
+# unit test is engine-neutral and always exists; every wasm conformance lane
+# exists only with the wasm backend, so its labels move with the same guard
+# that registers the tests (a WASM=OFF tree has no such TEST targets).
 ahfl_label_tests(
     LABELS conformance
     TESTS
         ahfl.conformance_case
-        ahfl.conformance.evaluator
-        ahfl.conformance.evaluator_determinism
-        ahfl.conformance.evaluator_mutation
-        ahfl.runtime.e2e_workflow
-        ahfl.runtime.enum_variant_e2e
-        ahfl.runtime.if_let_e2e
 )
 
 if(AHFL_ENABLE_BACKEND_WASM)
@@ -277,51 +226,58 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS conformance
         TESTS
             ahfl.conformance.wasm_eligibility
+            ahfl.conformance.wasm_node_differential
+            ahfl.conformance.wasm_node_mutation
+            ahfl.conformance.wasm_node_mutation_node_only
+            ahfl.conformance.wasm_native_differential
+            ahfl.conformance.wasm_native_determinism
+            ahfl.conformance.wasm_native_mutation
+            ahfl.conformance.wasm_native_mutation_node_only
     )
 endif()
 
+# Engine-neutral LLM provider unit coverage is always available; every
+# `ahflc run` provider test is an execution-verb test and moves with the
+# wasm backend (kr68 §12.7.1).
 ahfl_label_tests(
     LABELS llm-provider
     TESTS
         ahfl.llm_provider.all
-        ahflc.run.llm_config.fail_missing_api_key_secret
-        ahflc.run.llm_config.fail_invalid_budget
-        ahflc.run.llm_config.fail_missing_fallback_api_key_secret
-        ahflc.run.llm_config.fail_missing_vault_token_env
-        ahflc.run.llm_tools.fail_invalid_capability_mocks
-        ahflc.run.llm_provider_runtime.smoke
-        ahflc.run.llm_failure_matrix.smoke
-        ahflc.run.llm_secret_manager.smoke
-        ahflc.run.capability_bindings.smoke
-        ahflc.run.input_schema.fail_missing_field
-        ahflc.run.manifest.entry_workflow_default
-        ahflc.run.default_manifest.entry_workflow_default
 )
 
-# KR4.5 / RFC 0012 stabilized: real (non-stub) local LLM run evidence. Only
-# registered when a llama-server binary was discovered at configure time.
-if(AHFL_LLAMA_SERVER)
+if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_label_tests(
         LABELS llm-provider
         TESTS
-            ahflc.run.real_llm.evidence
+            ahflc.run.llm_config.fail_missing_api_key_secret
+            ahflc.run.llm_config.fail_invalid_budget
+            ahflc.run.llm_config.fail_missing_fallback_api_key_secret
+            ahflc.run.llm_config.fail_missing_vault_token_env
+            ahflc.run.llm_tools.fail_invalid_capability_mocks
+            ahflc.run.llm_provider_runtime.smoke
+            ahflc.run.llm_failure_matrix.smoke
+            ahflc.run.llm_secret_manager.smoke
+            ahflc.run.capability_bindings.smoke
+            ahflc.run.input_schema.fail_missing_field
+            ahflc.run.manifest.entry_workflow_default
+            ahflc.run.default_manifest.entry_workflow_default
     )
+
+    # KR4.5 / RFC 0012 stabilized: real (non-stub) local LLM run evidence. Only
+    # registered when a llama-server binary was discovered at configure time.
+    if(AHFL_LLAMA_SERVER)
+        ahfl_label_tests(
+            LABELS llm-provider
+            TESTS
+                ahflc.run.real_llm.evidence
+        )
+    endif()
 endif()
 
 ahfl_label_tests(
     LABELS http-transport
     TESTS
         ahfl.runtime.http_transport_all
-)
-
-# RFC 0026 Objective 6A: WASM toolchain preflight. All three always register;
-# the execution smoke surfaces a missing toolchain as an exit-77 ctest SKIP.
-ahfl_label_tests(
-    LABELS wasm
-    TESTS
-        ahfl.wasm.preflight_fixture_integrity
-        ahfl.wasm.preflight_decision_logic
-        ahfl.wasm.preflight_execution
 )
 
 ahfl_label_tests(
@@ -554,33 +510,50 @@ ahfl_label_tests(
         ahfl.product.controlled_pilot_gate_smoke
         ahfl.runtime.execution_otel_all
         ahfl.runtime.workflow_recovery_all
-        ahfl.reference_workflow.recovery_smoke
-        ahflc.run.llm_provider_runtime.smoke
-        ahfl.reference_workflow.production_matrix
-        ahfl.product.controlled_pilot_gate_ready
 )
+# KR6.8 WH-9: the run-verb provider smoke, the production matrix and its
+# ready gate run only on the embedded wasm3 runtime.
+if(AHFL_ENABLE_BACKEND_WASM)
+    ahfl_label_tests(
+        LABELS ahfl-controlled-pilot
+        TESTS
+            ahflc.run.llm_provider_runtime.smoke
+            ahfl.reference_workflow.production_matrix
+            ahfl.product.controlled_pilot_gate_ready
+    )
+endif()
 
 ahfl_label_tests(
     LABELS ahfl-beta-gate
     TESTS
         ahfl.product.beta_gate_contract
         ahfl.product.beta_gate_smoke
-        ahfl.product.runtime_evidence_smoke
         ahfl.product.formatter_evidence_smoke
         ahfl.product.stdlib_container_evidence_smoke
         ahfl.product.install_evidence_smoke
         ahfl.product.readme_capabilities_smoke
         ahfl.product.scope_freeze_smoke
         ahfl.product.beta_evidence_bundle_smoke
-        ahfl.product.beta_evidence_bundle_ready
 )
 
-set_tests_properties(
-    ahfl.product.beta_evidence_bundle_ready
-    PROPERTIES
-        DEPENDS
-            "ahfl.product.beta_gate_contract;ahfl.product.beta_gate_smoke;ahfl.product.runtime_evidence_smoke;ahfl.product.formatter_evidence_smoke;ahfl.product.stdlib_container_evidence_smoke;ahfl.product.install_evidence_smoke;ahfl.product.readme_capabilities_smoke;ahfl.product.scope_freeze_smoke;ahfl.product.beta_evidence_bundle_smoke"
-)
+# kr68 §12.7.1 (WH-9): runtime evidence and the real-bundle ready gate drive
+# `ahflc run`; both exist only with the embedded wasm engine. The DEPENDS
+# edge moves with them -- set_tests_properties hard-fails on a missing test.
+if(AHFL_ENABLE_BACKEND_WASM)
+    ahfl_label_tests(
+        LABELS ahfl-beta-gate
+        TESTS
+            ahfl.product.runtime_evidence_smoke
+            ahfl.product.beta_evidence_bundle_ready
+    )
+
+    set_tests_properties(
+        ahfl.product.beta_evidence_bundle_ready
+        PROPERTIES
+            DEPENDS
+                "ahfl.product.beta_gate_contract;ahfl.product.beta_gate_smoke;ahfl.product.runtime_evidence_smoke;ahfl.product.formatter_evidence_smoke;ahfl.product.stdlib_container_evidence_smoke;ahfl.product.install_evidence_smoke;ahfl.product.readme_capabilities_smoke;ahfl.product.scope_freeze_smoke;ahfl.product.beta_evidence_bundle_smoke"
+    )
+endif()
 
 ahfl_label_tests(
     LABELS ahfl-production-confidence-contract
@@ -588,8 +561,15 @@ ahfl_label_tests(
         ahfl.product.production_confidence_gate_contract
         ahfl.product.production_confidence_gate_smoke
         ahfl.product.production_confidence_ci_only_smoke
-        ahfl.reference_workflow.long_soak_smoke
 )
+# KR6.8 WH-9: the long-soak smoke runs the wasm3 reference workflow worker.
+if(AHFL_ENABLE_BACKEND_WASM)
+    ahfl_label_tests(
+        LABELS ahfl-production-confidence-contract
+        TESTS
+            ahfl.reference_workflow.long_soak_smoke
+    )
+endif()
 
 ahfl_label_tests(
     LABELS profiling

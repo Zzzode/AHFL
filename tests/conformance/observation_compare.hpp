@@ -1,12 +1,13 @@
 #pragma once
 
-// KR6.7 (RFC 0026 P7): differential comparator between the in-process evaluator
-// observation and the Node embedded-engine observation.
+// KR6.7 (RFC 0026 P7): differential comparator between a reference observation
+// (checked-in blessing or native wasm3 run) and a target observation (Node
+// embedded-engine or native wasm3 run).
 //
-// Both adapters emit a canonical observation document over the SAME case /
-// scenario. They use different schema tags and the Node document carries extra
-// execution internals (transition_count, workflow_completed_count), so this
-// comparator asserts equality on exactly the three KR6.7 differential
+// Both sides emit a canonical observation document over the SAME case /
+// scenario. They may use different schema tags and the target document may
+// carry extra execution internals (transition_count, workflow_completed_count),
+// so this comparator asserts equality on exactly the three KR6.7 differential
 // dimensions, plus run status:
 //
 //   1. state_sequence       ordered {agent,state} entries (declaration order);
@@ -36,7 +37,7 @@ namespace detail {
         return std::string{dimension} + " is not an array in one observation";
     }
     if (lhs.array_items.size() != rhs.array_items.size()) {
-        return std::string{dimension} + " length diverged (evaluator " +
+        return std::string{dimension} + " length diverged (reference " +
                std::to_string(lhs.array_items.size()) + ", node " +
                std::to_string(rhs.array_items.size()) + ")";
     }
@@ -58,7 +59,7 @@ namespace detail {
         return std::string{dimension} + " is not an array in one observation";
     }
     if (lhs.array_items.size() != rhs.array_items.size()) {
-        return std::string{dimension} + " length diverged (evaluator " +
+        return std::string{dimension} + " length diverged (reference " +
                std::to_string(lhs.array_items.size()) + ", node " +
                std::to_string(rhs.array_items.size()) + ")";
     }
@@ -86,7 +87,7 @@ namespace detail {
         }
         if (!as.has_value() || !bs.has_value() || *as != *bs) {
             return std::string{dimension} + "[" + std::to_string(i) +
-                   "].state diverged (evaluator '" + std::string{as.value_or("?")} + "', node '" +
+                   "].state diverged (reference '" + std::string{as.value_or("?")} + "', node '" +
                    std::string{bs.value_or("?")} + "')";
         }
     }
@@ -104,7 +105,7 @@ compare_argument_envelopes(const json::JsonValue &lhs, const json::JsonValue &rh
         return std::string{dimension} + " is not an array in one observation";
     }
     if (lhs.array_items.size() != rhs.array_items.size()) {
-        return std::string{dimension} + " length diverged (evaluator " +
+        return std::string{dimension} + " length diverged (reference " +
                std::to_string(lhs.array_items.size()) + ", node " +
                std::to_string(rhs.array_items.size()) + ")";
     }
@@ -118,7 +119,7 @@ compare_argument_envelopes(const json::JsonValue &lhs, const json::JsonValue &rh
         const std::string b_bytes = canonical_json(*b);
         if (a_bytes != b_bytes) {
             return std::string{dimension} + "[" + std::to_string(i) +
-                   "] diverged (evaluator " + a_bytes + ", node " + b_bytes + ")";
+                   "] diverged (reference " + a_bytes + ", node " + b_bytes + ")";
         }
     }
     return std::nullopt;
@@ -139,49 +140,49 @@ compare_argument_envelopes(const json::JsonValue &lhs, const json::JsonValue &rh
     const std::string a_bytes = canonical_json(*a);
     const std::string b_bytes = canonical_json(*b);
     if (a_bytes != b_bytes) {
-        return "output_json diverged:\n  evaluator: " + a_bytes + "\n  node:      " + b_bytes;
+        return "output_json diverged:\n  reference: " + a_bytes + "\n  node:      " + b_bytes;
     }
     return std::nullopt;
 }
 
 } // namespace detail
 
-/// Asserts an evaluator observation document and a Node embedded-engine
-/// observation document agree on status + the three KR6.7 differential
-/// dimensions. `expected_status` is the manifest's blessed terminal status so
-/// the comparison is independent of either engine's spelling.
+/// Asserts a reference observation document (checked-in blessing or native
+/// wasm3 run) and a target observation document (Node embedded-engine or
+/// native wasm3 run) agree on status + the three KR6.7 differential
+/// dimensions. The comparison is symmetric: either side may be the reference.
 [[nodiscard]] inline std::optional<std::string>
-observations_agree(std::string_view evaluator_observation_json,
+observations_agree(std::string_view reference_observation_json,
                    std::string_view node_observation_json) {
-    auto evaluator_dom = json::parse_json(evaluator_observation_json);
+    auto reference_dom = json::parse_json(reference_observation_json);
     auto node_dom = json::parse_json(node_observation_json);
-    if (!evaluator_dom.has_value() || !*evaluator_dom || !(*evaluator_dom)->is_object()) {
-        return "evaluator observation is not a JSON object";
+    if (!reference_dom.has_value() || !*reference_dom || !(*reference_dom)->is_object()) {
+        return "reference observation is not a JSON object";
     }
     if (!node_dom.has_value() || !*node_dom || !(*node_dom)->is_object()) {
         return "node observation is not a JSON object";
     }
-    const json::JsonValue &ev = **evaluator_dom;
-    const json::JsonValue &nd = **node_dom;
+    const json::JsonValue &ref_obs = **reference_dom;
+    const json::JsonValue &tgt_obs = **node_dom;
 
-    if (const auto *a = ev.get("status"); a == nullptr || a->as_string() == std::nullopt) {
-        return "evaluator observation has no status";
+    if (const auto *a = ref_obs.get("status"); a == nullptr || a->as_string() == std::nullopt) {
+        return "reference observation has no status";
     }
-    if (const auto *b = nd.get("status"); b == nullptr || b->as_string() == std::nullopt) {
+    if (const auto *b = tgt_obs.get("status"); b == nullptr || b->as_string() == std::nullopt) {
         return "node observation has no status";
     }
-    if (*ev.get("status")->as_string() != *nd.get("status")->as_string()) {
-        return "run status diverged (evaluator '" + std::string{*ev.get("status")->as_string()} +
-               "', node '" + std::string{*nd.get("status")->as_string()} + "')";
+    if (*ref_obs.get("status")->as_string() != *tgt_obs.get("status")->as_string()) {
+        return "run status diverged (reference '" + std::string{*ref_obs.get("status")->as_string()} +
+               "', node '" + std::string{*tgt_obs.get("status")->as_string()} + "')";
     }
 
     if (auto divergence =
-            detail::compare_state_sequence(*ev.get("state_sequence"), *nd.get("state_sequence"));
+            detail::compare_state_sequence(*ref_obs.get("state_sequence"), *tgt_obs.get("state_sequence"));
         divergence.has_value()) {
         return divergence;
     }
     if (auto divergence = detail::compare_string_array(
-            *ev.get("capability_sequence"), *nd.get("capability_sequence"), "capability_sequence");
+            *ref_obs.get("capability_sequence"), *tgt_obs.get("capability_sequence"), "capability_sequence");
         divergence.has_value()) {
         return divergence;
     }
@@ -190,27 +191,27 @@ observations_agree(std::string_view evaluator_observation_json,
     // the bridge lane records the SSOT envelope the host built from P4-D spans.
     // Both are required so a mis-marshaled / reordered argument frame cannot
     // agree on names and output alone.
-    if (ev.get("capability_arguments") == nullptr ||
-        nd.get("capability_arguments") == nullptr) {
+    if (ref_obs.get("capability_arguments") == nullptr ||
+        tgt_obs.get("capability_arguments") == nullptr) {
         return "one observation is missing the capability_arguments array";
     }
     if (auto divergence = detail::compare_argument_envelopes(
-            *ev.get("capability_arguments"), *nd.get("capability_arguments"));
+            *ref_obs.get("capability_arguments"), *tgt_obs.get("capability_arguments"));
         divergence.has_value()) {
         return divergence;
     }
-    if (auto divergence = detail::compare_output(ev, nd); divergence.has_value()) {
+    if (auto divergence = detail::compare_output(ref_obs, tgt_obs); divergence.has_value()) {
         return divergence;
     }
     return std::nullopt;
 }
 
-/// RFC 0026 FB-3b node-only lane: when no in-process evaluator reference exists
-/// (the surfaced pure-fn / first-class-closure construct awaits KR6.8), the
-/// Node embedded-engine observation is checked DIRECTLY against the manifest's
-/// blessed expectation: terminal run status, the declaration-order state
-/// sequence (state names only), the capability sequence, and the canonical
-/// output JSON. Returns an empty optional on agreement, else a reason.
+/// Expectation lane: when no checked-in blessing exists for a case (the
+/// closure constructs), the observation is checked DIRECTLY against the
+/// manifest's blessed expectation: terminal run status, the declaration-order
+/// state sequence (state names only), the capability sequence, and the
+/// canonical output JSON. Returns an empty optional on agreement, else a
+/// reason.
 [[nodiscard]] inline std::optional<std::string>
 node_observation_matches_expectation(const CaseExpectations &expect,
                                      std::string_view node_observation_json) {
@@ -218,7 +219,7 @@ node_observation_matches_expectation(const CaseExpectations &expect,
     if (!node_dom.has_value() || !*node_dom || !(*node_dom)->is_object()) {
         return "node observation is not a JSON object";
     }
-    const json::JsonValue &nd = **node_dom;
+    const json::JsonValue &tgt_obs = **node_dom;
 
     const char *expected_status = "completed";
     switch (expect.run_status) {
@@ -232,17 +233,17 @@ node_observation_matches_expectation(const CaseExpectations &expect,
         expected_status = "failed";
         break;
     }
-    if (const auto *b = nd.get("status"); b == nullptr || b->as_string() == std::nullopt) {
+    if (const auto *b = tgt_obs.get("status"); b == nullptr || b->as_string() == std::nullopt) {
         return "node observation has no status";
     }
-    if (*nd.get("status")->as_string() != expected_status) {
+    if (*tgt_obs.get("status")->as_string() != expected_status) {
         return "run status diverged (expected '" + std::string{expected_status} + "', node '" +
-               std::string{*nd.get("status")->as_string()} + "')";
+               std::string{*tgt_obs.get("status")->as_string()} + "')";
     }
 
     // state_sequence: the Node document is an array of {agent,state} objects;
     // compare the STATE names in order against the blessed declaration order.
-    const auto *node_states = nd.get("state_sequence");
+    const auto *node_states = tgt_obs.get("state_sequence");
     if (node_states == nullptr || !node_states->is_array()) {
         return "node observation has no state_sequence array";
     }
@@ -275,7 +276,7 @@ node_observation_matches_expectation(const CaseExpectations &expect,
             expected_caps.array_items.push_back(json::JsonValue::make_string(cap));
         }
         if (auto divergence = detail::compare_string_array(
-                expected_caps, *nd.get("capability_sequence"), "capability_sequence");
+                expected_caps, *tgt_obs.get("capability_sequence"), "capability_sequence");
             divergence.has_value()) {
             return divergence;
         }
@@ -287,7 +288,7 @@ node_observation_matches_expectation(const CaseExpectations &expect,
         if (!expected_dom.has_value() || !*expected_dom) {
             return "blessed output_json is not a JSON value";
         }
-        const auto *node_output = nd.get("output_json");
+        const auto *node_output = tgt_obs.get("output_json");
         if (node_output == nullptr) {
             return "node observation produced no output_json but one was expected";
         }
@@ -297,7 +298,7 @@ node_observation_matches_expectation(const CaseExpectations &expect,
             return "output_json diverged:\n  expected: " + expected_bytes +
                    "\n  node:     " + node_bytes;
         }
-    } else if (nd.get("output_json") != nullptr) {
+    } else if (tgt_obs.get("output_json") != nullptr) {
         return "node observation produced output_json but none was expected";
     }
     return std::nullopt;

@@ -104,13 +104,10 @@ def main() -> int:
                 str(build),
                 "--output-on-failure",
                 "-R",
-                (
-                    "^(ahflc\\.run\\.profile_and_output_contract\\.smoke|"
-                    "ahfl\\.reference_workflow\\.recovery_smoke)$"
-                ),
+                "^ahflc\\.run\\.profile_and_output_contract\\.smoke$",
             ],
             repo,
-            "reference workflow evidence tests",
+            "run profiles evidence tests",
         )
         run_checked(
             [
