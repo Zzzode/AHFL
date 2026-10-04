@@ -2071,12 +2071,50 @@ void push_keyword_completion(std::vector<CompletionItem> &items, std::string_vie
     items.push_back(std::move(item));
 }
 
-void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &symbol) {
+void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &symbol,
+                            std::optional<std::string> detail_override = std::nullopt) {
     CompletionItem item;
     item.label = symbol.local_name;
     item.kind = to_completion_kind(symbol.kind);
-    item.detail = symbol_detail(symbol.kind);
+    item.detail = detail_override.value_or(symbol_detail(symbol.kind));
     items.push_back(std::move(item));
+}
+
+// Enriches generic symbol completion `detail` with resolved type signatures
+// from Typed HIR. The resolver's symbol_table remains the authoritative source
+// for generic completion (it carries visibility / module / local_name and
+// survives typechecking failures), so this function only upgrades the `detail`
+// field when a TypedDecl is available. Returns nullopt when no enrichment is
+// possible (caller falls back to the kind label).
+[[nodiscard]] std::optional<std::string> typed_detail_for_symbol(
+    const std::unordered_map<std::size_t, const TypedDecl *> &decl_by_symbol,
+    const Symbol &symbol) {
+    const auto found = decl_by_symbol.find(symbol.id.value);
+    if (found == decl_by_symbol.end()) {
+        return std::nullopt;
+    }
+    const auto &decl = *found->second;
+    if (symbol.kind == SymbolKind::Const && decl.type != nullptr) {
+        return "const " + symbol.local_name + ": " + decl.type->describe();
+    }
+    if (symbol.kind == SymbolKind::Function) {
+        if (const auto *fn = std::get_if<FnTypeInfo>(&decl.payload)) {
+            std::string detail = "fn(";
+            for (std::size_t i = 0; i < fn->params.size(); ++i) {
+                if (i > 0) {
+                    detail += ", ";
+                }
+                detail += fn->params[i].name;
+                detail += ": ";
+                detail += fn->params[i].type ? fn->params[i].type->describe()
+                                             : std::string{"Any"};
+            }
+            detail += ") -> ";
+            detail += fn->return_type ? fn->return_type->describe() : std::string{"Any"};
+            return detail;
+        }
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] bool symbol_visible_for_completion(const LspAnalysisSnapshot &snapshot,
@@ -4340,11 +4378,24 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
         for (const auto keyword : kExpressionKeywords) {
             push_keyword_completion(items, keyword);
         }
+        // Build a SymbolId -> TypedDecl* map for type-enriched detail.
+        // symbol_table is the authoritative source for generic completion:
+        // it carries visibility / module / local_name and survives
+        // typechecking failures. typed_program.declarations only enriches
+        // the `detail` field with resolved type signatures.
+        std::unordered_map<std::size_t, const TypedDecl *> decl_by_symbol;
+        if (snapshot->type_check_result) {
+            for (const auto &decl :
+                 snapshot->type_check_result->typed_program.declarations) {
+                decl_by_symbol.emplace(decl.symbol.value, &decl);
+            }
+        }
         for (const auto &symbol : snapshot->resolve_result->symbol_table.symbols()) {
             if (!symbol_visible_for_completion(*snapshot, *source, symbol)) {
                 continue;
             }
-            push_symbol_completion(items, symbol);
+            push_symbol_completion(items, symbol,
+                                   typed_detail_for_symbol(decl_by_symbol, symbol));
         }
         if (snapshot->type_check_result) {
             push_enum_variant_completions(items, snapshot->type_check_result->environment);

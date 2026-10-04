@@ -8381,6 +8381,78 @@ void test_completion_struct_literal_field_not_type_position() {
           "completion.struct_literal_field_offers_functions");
 }
 
+/// Generic symbol completion enriches `detail` with resolved type signatures
+/// from Typed HIR. Functions show `fn(params) -> ReturnType`; consts show
+/// `const name: Type`. The resolver's symbol_table remains the authoritative
+/// source (visibility / module / broken-source resilience); Typed HIR only
+/// upgrades the detail field.
+void test_completion_typed_hir_detail_enrichment() {
+    const std::string source =
+        "const MAX_COUNT: Int = 42;\n"
+        "\n"
+        "fn greet(name: String, count: Int) -> String effect Pure decreases 0 {\n"
+        "    return name;\n"
+        "}\n"
+        "\n"
+        "fn helper() -> String effect Pure decreases 0 {\n"
+        "    let x = 1;\n"
+        "    return x;\n"
+        "}\n";
+
+    // Cursor at top of file (line 0, char 0) triggers generic expression
+    // completion: not after '.', not in a pattern, not in type position.
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":0,"character":0}})";
+    const auto output =
+        run_handler_request(source, "textDocument/completion", params);
+
+    // Function detail should show the resolved signature.
+    check(output.find("\"label\":\"greet\"") != std::string::npos,
+          "completion.typed_detail_contains_function");
+    check(output.find("fn(name: String, count: Int) -> String") != std::string::npos,
+          "completion.typed_detail_function_signature");
+
+    // Const detail should show the resolved type.
+    check(output.find("\"label\":\"MAX_COUNT\"") != std::string::npos,
+          "completion.typed_detail_contains_const");
+    check(output.find("const MAX_COUNT: Int") != std::string::npos,
+          "completion.typed_detail_const_type");
+}
+
+/// Generic symbol completion must survive typechecking failures. The resolver's
+/// symbol_table is the authoritative source for generic completion, so symbols
+/// that failed typechecking are still offered (without enriched detail).
+void test_completion_survives_typecheck_failure() {
+    // Type error: assigning String to Int field.
+    const std::string source =
+        "struct Msg {\n"
+        "    value: Int;\n"
+        "}\n"
+        "\n"
+        "fn make_msg() -> Msg effect Pure decreases 0 {\n"
+        "    let x = Msg { value: \"wrong type\" };\n"
+        "    return x;\n"
+        "}\n"
+        "\n"
+        "fn helper() -> String effect Pure decreases 0 {\n"
+        "    let y = 1;\n"
+        "    return y;\n"
+        "}\n";
+
+    // Cursor at top of file triggers generic expression completion.
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":0,"character":0}})";
+    const auto output =
+        run_handler_request(source, "textDocument/completion", params);
+
+    // The function symbol should still be offered even though typechecking failed.
+    check(output.find("\"label\":\"make_msg\"") != std::string::npos,
+          "completion.broken_source_offers_function_symbol");
+    // The struct symbol should still be offered.
+    check(output.find("\"label\":\"Msg\"") != std::string::npos,
+          "completion.broken_source_offers_struct_symbol");
+}
+
 /// Typed-HIR member completion: local struct with inherent impl methods.
 /// Verifies that member completion at `c.` offers both the struct's fields
 /// and the inherent impl's methods (not just the flow-scoped fallback).
@@ -11295,6 +11367,8 @@ int main() {
     test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_completion_struct_literal_field_not_type_position();
+    test_completion_typed_hir_detail_enrichment();
+    test_completion_survives_typecheck_failure();
     test_completion_local_struct_inherent_impl_methods();
     test_completion_generic_type_inherent_impl_methods();
     test_completion_field_access_chain_root_type();
