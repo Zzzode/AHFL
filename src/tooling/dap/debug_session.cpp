@@ -1076,13 +1076,11 @@ void DebugSession::on_capability_invoked(const runtime::AgentId agent,
 }
 
 void DebugSession::pause(std::string reason, std::string description) {
-    {
-        std::lock_guard lock(mutex_);
-        if (stopping_) {
-            return;
-        }
-        paused_ = true;
+    std::unique_lock lock(mutex_);
+    if (stopping_) {
+        return;
     }
+    paused_ = true;
 
     auto body = json::JsonValue::make_object();
     body->set("reason", json::JsonValue::make_string(std::move(reason)));
@@ -1091,9 +1089,12 @@ void DebugSession::pause(std::string reason, std::string description) {
     if (!description.empty()) {
         body->set("description", json::JsonValue::make_string(std::move(description)));
     }
+    // Hold mutex_ across the event send so that disconnect() cannot set
+    // stopping_ and emit "terminated" between the stopping_ check above and
+    // this send.  event_output_ acquires a separate output_mutex, so holding
+    // mutex_ here cannot deadlock with the main thread's response path.
     server_.send_event("stopped", std::move(body));
 
-    std::unique_lock lock(mutex_);
     resume_cv_.wait(lock, [this] { return !paused_ || stopping_; });
 }
 

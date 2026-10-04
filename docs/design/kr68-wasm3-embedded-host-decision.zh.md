@@ -5260,3 +5260,110 @@ pre-existing 的 WH-4b blessing-lane (3)/(4) 变异同样 vacuous。
 4. conformance label 62/62 通过;census 保持 native 73/0、node 69/4。
 5. 完整无标签 ctest 全绿(3 fail 为本机 pnpm 缺失的 beta-gate 级联,CI 不存在)。
 
+## 12.25 落地记录(2026-10-04,task #125):DAP pause()/disconnect stopped 事件竞态修复
+
+### 12.25.1 背景与问题
+
+`DebugSession::pause()`(`src/tooling/dap/debug_session.cpp`)在 worker 线程上被
+debug hook 调用,用于在断点/step 命中时发送 DAP `stopped` 事件。原始实现:
+
+```cpp
+void DebugSession::pause(std::string reason, std::string description) {
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) { return; }
+        paused_ = true;
+    }
+    // ^^^ 锁在此释放
+
+    // ... 构建事件 body ...
+
+    server_.send_event("stopped", std::move(body));  // 无锁发送
+
+    std::unique_lock lock(mutex_);
+    resume_cv_.wait(lock, [this] { return !paused_ || stopping_; });
+}
+```
+
+`disconnect()`(主线程)在 `mutex_` 下设置 `stopping_ = true` 并在 `worker_.join()`
+后发送 `terminated` 事件。竞态窗口:
+
+1. Worker:`pause()` 获取锁,检查 `stopping_`(false),设置 `paused_ = true`,释放锁。
+2. Main:`disconnect()` 获取锁,设置 `stopping_ = true`,`paused_ = false`,释放锁,
+   notify cv,`worker_.join()`。
+3. Worker:`send_event("stopped")` -- 在 `disconnect()` 已设置 `stopping_` 之后
+   发送 `stopped` 事件。
+4. Worker:`resume_cv_.wait()` -- 谓词为 true,立即返回。
+5. Main:`worker_.join()` 返回,`mark_terminated()` -> `emit_terminated()` 发送
+   `terminated`。
+
+客户端收到 `stopped`(针对一个正在终止的 session)后跟 `terminated`。虽然
+`stopped` 在 `terminated` 之前到达(不是协议违规),但客户端可能在收到 `stopped`
+后尝试发送 `stackTrace`/`scopes` 等请求,而 session 正在终止。WH-8 的 live hook
+增加了 `pause()` 的调用频率,扩大了竞态窗口。
+
+### 12.25.2 修复
+
+在 `send_event("stopped")` 调用期间持有 `mutex_`:
+
+```cpp
+void DebugSession::pause(std::string reason, std::string description) {
+    std::unique_lock lock(mutex_);
+    if (stopping_) { return; }
+    paused_ = true;
+
+    // ... 构建事件 body ...
+
+    // 持有锁跨 send_event,使 disconnect() 无法在检查和发送之间
+    // 设置 stopping_ 并发送 terminated。
+    server_.send_event("stopped", std::move(body));
+
+    resume_cv_.wait(lock, [this] { return !paused_ || stopping_; });
+}
+```
+
+`std::lock_guard` 改为 `std::unique_lock`(cv wait 需要)。锁从 `stopping_` 检查
+一直持有到 `send_event` 和 cv wait。
+
+### 12.25.3 无死锁论证
+
+`DapServer::send_event` 调用 `event_output_` sink,后者获取 `output_mutex`
+(独立于 `mutex_`)写入 stdout。主线程的响应路径在 `handle_request` 返回后
+才获取 `output_mutex`,而 `handle_request` 中的请求处理器可能获取 `mutex_`。
+锁序:
+
+- Worker:`mutex_` -> `output_mutex`(`pause()` -> `send_event`)
+- Main:请求处理器可能获取 `mutex_`,释放后再获取 `output_mutex`
+
+主线程从不持有 `output_mutex` 并尝试获取 `mutex_`,故无死锁。
+
+`send_event` 阻塞风险:stdout 管道满时 `send_event` 可能阻塞。但 DAP 客户端
+及时读取事件,且 `stopped` 事件仅几百字节,不会填满管道(典型 64KB)。
+
+### 12.25.4 对抗评审结论
+
+coordinator 自审(竞态修复范围小,fork 继承上下文风险大于收益):
+
+- **正确性**:修复后,`disconnect()` 无法在 `stopping_` 检查和 `stopped` 发送
+  之间设置 `stopping_`。若 `disconnect()` 在 `pause()` 之前调用,`stopping_`
+  为 true,`pause()` 立即返回不发送。若 `disconnect()` 在 `pause()` 持有锁
+  期间调用,`disconnect()` 阻塞在 `mutex_` 上,直到 `pause()` 的 cv wait
+  释放锁。所有情况下 `stopped` 不在 `terminated` 之后发送。
+- **无 P0/P1**。
+- **P2(不阻塞)**:
+  - `emit_output`(`debug_session.cpp:1114`)有类似的 check-then-act 模式
+    (`stopping_` 检查在锁下,`emit_output` 调用在锁外),但 `output` 事件是
+    诊断文本,在 `terminated` 之前发送(`disconnect()` 先 `worker_.join()`),
+    不构成协议违规。不修复。
+  - 竞态难以确定性测试(时序依赖),现有 DAP 测试(Test 8:disconnect while
+    paused)覆盖了基本功能。不添加竞态测试。
+
+### 12.25.5 验收标准
+
+1. dev fresh -Werror 构建零 warning。
+2. DAP 测试全绿(`ahfl.dap.basic_all` + `ahfl.dap.process_smoke`)。
+3. 完整无标签 ctest 全绿(3 fail 为本机 pnpm 缺失的 beta-gate 级联,CI 不存在)。
+4. ASan 全量单独运行零 ASan/LSan/UBSan 报告。
+5. WASM=OFF 冷构建 + 全套仅 3 个 pre-existing pnpm(#72/#75/#76)。
+6. release + install/export consumer 全绿。
+
