@@ -133,23 +133,29 @@ installed. See `scripts/install-githooks.sh` for details.
 
 ### Configure, build, test
 
+**Parallelism rule (non-negotiable): always saturate the machine. Pass an
+explicit `-j` equal to the full core count for BOTH builds and tests — never
+an artificial cap, never serial. A many-core box running a serial build or
+ctest is a defect, not caution.** (`$(nproc)` on Linux; `sysctl -n hw.ncpu`
+on macOS.)
+
 ```bash
 # Configure (dev preset)
 cmake --preset dev
 
-# Build
-cmake --build --preset build-dev
+# Build — all cores
+cmake --build --preset build-dev -j$(nproc)
 
-# Test all
-ctest --preset test-dev --output-on-failure
+# Test all — all cores
+ctest --preset test-dev -j$(nproc) --output-on-failure
 
 # Filter tests by label
-ctest --preset test-dev --output-on-failure -L <label>
+ctest --preset test-dev -j$(nproc) --output-on-failure -L <label>
 
 # ASan build & test
 cmake --preset asan
-cmake --build --preset build-asan
-ctest --preset test-asan --output-on-failure
+cmake --build --preset build-asan -j$(nproc)
+ctest --preset test-asan -j$(nproc) --output-on-failure
 ```
 
 ## Directory Conventions
