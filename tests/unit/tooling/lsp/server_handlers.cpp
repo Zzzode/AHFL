@@ -7943,6 +7943,73 @@ void test_signature_help_capability() {
           "signatureHelp.active_parameter_is_1");
 }
 
+void test_signature_help_nested_struct_literal_active_param() {
+    // Regression: text-based comma counting counted commas inside struct
+    // literal braces as argument separators, producing an inflated
+    // activeParameter. The Typed-HIR-based count understands nested brackets.
+    //
+    // Source: get_data(OrderInfo { order_id: "x", user_id: "y" }, |)
+    // The cursor is after the comma following the struct literal.
+    // activeParameter must be 1, not 3.
+    std::string source = "struct OrderInfo {\n"
+                         "    order_id: String;\n"
+                         "    user_id: String;\n"
+                         "}\n"
+                         "\n"
+                         "capability get_data(info: OrderInfo, count: Int) -> OrderInfo;\n"
+                         "\n"
+                         "agent TestAgent {\n"
+                         "    input: OrderInfo;\n"
+                         "    context: OrderInfo;\n"
+                         "    output: OrderInfo;\n"
+                         "    states: [Init, Done];\n"
+                         "    initial: Init;\n"
+                         "    final: [Done];\n"
+                         "    capabilities: [get_data];\n"
+                         "    transition Init -> Done;\n"
+                         "}\n"
+                         "\n"
+                         "flow for TestAgent {\n"
+                         "    state Init {\n"
+                         "        let x = get_data(OrderInfo { order_id: \"x\", user_id: \"y\" }, );\n"
+                         "        goto Done;\n"
+                         "    }\n"
+                         "}\n";
+
+    // Line 19 = "        let x = get_data(OrderInfo { order_id: \"x\", user_id: \"y\" }, );"
+    //                                                                                      ^ cursor here (after ", ")
+    // Find the position of the comma+space before the closing paren.
+    const auto line19_start = source.find("        let x = get_data(");
+    const auto comma_pos = source.find(", );", line19_start);
+    // Cursor is at the space between ", " and ")" — i.e., comma_pos + 2.
+    const auto cursor_offset = comma_pos + 2;
+    // Convert offset to line/character.
+    std::size_t line = 0;
+    std::size_t last_newline = 0;
+    for (std::size_t i = 0; i < cursor_offset && i < source.size(); ++i) {
+        if (source[i] == '\n') {
+            ++line;
+            last_newline = i + 1;
+        }
+    }
+    const auto character = cursor_offset - last_newline;
+
+    const std::string params =
+        "{\"textDocument\":{\"uri\":\"file:///test.ahfl\"},\"position\":{\"line\":" +
+        std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}";
+    const auto output = run_handler_request(source, "textDocument/signatureHelp", params);
+
+    check(output.find("get_data") != std::string::npos,
+          "signatureHelp.nested_struct.contains_callable_name");
+    // activeParameter must be 1 (after the first argument), NOT 3 (which the
+    // old text-based comma count would produce by counting the two commas
+    // inside the struct literal braces).
+    check(output.find("\"activeParameter\":1") != std::string::npos,
+          "signatureHelp.nested_struct_active_param_is_1");
+    check(output.find("\"activeParameter\":3") == std::string::npos,
+          "signatureHelp.nested_struct_active_param_not_3");
+}
+
 void test_signature_help_keyword_family() {
     // Build a minimal source where we can invoke each keyword inside a flow
     // block so the document parses cleanly and resolves to a type-checked
@@ -11190,6 +11257,7 @@ int main() {
     test_rename_returns_workspace_edit();
     test_prepare_rename_returns_range_or_null();
     test_signature_help_capability();
+    test_signature_help_nested_struct_literal_active_param();
     test_signature_help_keyword_family();
     test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
