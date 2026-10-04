@@ -1528,7 +1528,8 @@ void send_invalid_params(JsonRpcTransport &transport, const std::string &id, std
 }
 
 [[nodiscard]] std::string compute_document_result_id(const LspAnalysisSnapshot *snapshot,
-                                                     std::string_view uri) {
+                                                     std::string_view uri,
+                                                     std::uint64_t diagnostics_hash = 0) {
     if (snapshot == nullptr) {
         return std::string(uri) + "#v0";
     }
@@ -1538,7 +1539,41 @@ void send_invalid_params(JsonRpcTransport &transport, const std::string &id, std
                                            : snapshot->content_hash;
     return std::string(uri) + "#v" + std::to_string(snapshot->document_version) + "-" +
            std::to_string(snapshot->document_revision) + "-" +
-           std::to_string(snapshot->workspace_revision) + "-" + std::to_string(content_hash);
+           std::to_string(snapshot->workspace_revision) + "-" + std::to_string(content_hash) +
+           "-d" + std::to_string(diagnostics_hash);
+}
+
+// Computes a stable hash of the diagnostics vector. The result ID must change
+// whenever diagnostics change, including when a transitive import changes the
+// document's diagnostics without altering the document's own content.
+[[nodiscard]] std::uint64_t hash_diagnostics(const std::vector<LspDiagnostic> &diagnostics) {
+    std::uint64_t hash = 14695981039346656037ULL; // FNV-1a offset basis
+    auto mix = [&hash](std::uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ULL; // FNV-1a prime
+    };
+    auto mix_string = [&mix](std::string_view str) {
+        mix(static_cast<std::uint64_t>(str.size()));
+        for (char ch : str) {
+            mix(static_cast<unsigned char>(ch));
+        }
+    };
+    mix(static_cast<std::uint64_t>(diagnostics.size()));
+    for (const auto &diag : diagnostics) {
+        mix(static_cast<std::uint64_t>(diag.severity));
+        mix_string(diag.code);
+        mix_string(diag.message);
+        mix_string(diag.source);
+        mix(static_cast<std::uint64_t>(diag.range.start.line));
+        mix(static_cast<std::uint64_t>(diag.range.start.character));
+        mix(static_cast<std::uint64_t>(diag.range.end.line));
+        mix(static_cast<std::uint64_t>(diag.range.end.character));
+        mix(static_cast<std::uint64_t>(diag.related_information.size()));
+        for (const auto &rel : diag.related_information) {
+            mix_string(rel.message);
+        }
+    }
+    return hash;
 }
 
 [[nodiscard]] bool text_document_id(const json::JsonValue &params, std::string &uri) {
@@ -4904,7 +4939,8 @@ void LspServer::handle_text_document_diagnostic(const JsonRpcRequest &req) {
     const auto diagnostics =
         snapshot != nullptr ? snapshot->diagnostics_for_uri(uri) : std::vector<LspDiagnostic>{};
 
-    const std::string result_id = compute_document_result_id(snapshot, uri);
+    const std::string result_id =
+        compute_document_result_id(snapshot, uri, hash_diagnostics(diagnostics));
 
     // Check if client sent a previousResultId; if unchanged, we still send full for now
     // (incremental updates can be added later)
@@ -4961,7 +4997,8 @@ void LspServer::handle_workspace_diagnostic(const JsonRpcRequest &req) {
                 document != nullptr ? std::optional<int>(document->version) : std::nullopt;
 
             const auto diagnostics = snapshot->diagnostics_for_uri(source.uri);
-            const std::string result_id = compute_document_result_id(snapshot, source.uri);
+            const std::string result_id =
+                compute_document_result_id(snapshot, source.uri, hash_diagnostics(diagnostics));
 
             // If previous result ID matches, skip this document (no changes)
             auto it = previous_ids.find(source.uri);

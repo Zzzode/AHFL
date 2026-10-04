@@ -1959,6 +1959,97 @@ void test_workspace_diagnostic_previous_result_ids_filter() {
           "workspaceDiagnostic.prev.partial_excludes_unchanged");
 }
 
+/// When an imported source changes in a way that affects the importer's
+/// diagnostics, the importer must be re-emitted (not skipped by
+/// previousResultIds). This verifies source-graph-level fine-grained
+/// invalidation: the transitive importer closure triggers re-analysis, and
+/// the changed result ID causes re-emission.
+void test_workspace_diagnostic_transitive_importer_change() {
+    const auto root = make_temp_project("workspace_diagnostic_transitive");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-workspace-transitive", "app", "\"main\", \"types\"");
+
+    // main.ahfl uses types::Msg.value as a String (via a function that
+    // returns it). When types.ahfl changes value to Int, main.ahfl's
+    // diagnostics change.
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "fn get_value(msg: types::Msg) -> String effect Pure decreases 0 {\n"
+                                    "    return msg.value;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+
+    // First pass: get resultIds for both documents.
+    const auto first_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto first_response = response_body_for_id(first_output, 2);
+
+    auto find_result_id_for_uri = [](const std::string &response, const std::string &uri) {
+        const auto uri_pos = response.find("\"uri\":\"" + uri + "\"");
+        if (uri_pos == std::string::npos) {
+            return std::string{};
+        }
+        const auto key = std::string_view("\"resultId\":\"");
+        const auto id_pos = response.rfind(key, uri_pos);
+        if (id_pos == std::string::npos) {
+            return std::string{};
+        }
+        const auto start = id_pos + key.size();
+        const auto end = response.find('"', start);
+        if (end == std::string::npos) {
+            return std::string{};
+        }
+        return response.substr(start, end - start);
+    };
+
+    const auto main_result_id = find_result_id_for_uri(first_response, main_uri);
+    const auto types_result_id = find_result_id_for_uri(first_response, types_uri);
+    check(!main_result_id.empty(), "workspaceDiagnostic.transitive.main_result_id_found");
+    check(!types_result_id.empty(), "workspaceDiagnostic.transitive.types_result_id_found");
+
+    // Second pass: change types.ahfl (value: String -> Int). This changes
+    // main.ahfl's diagnostics (get_value returns String but msg.value is Int).
+    const std::string changed_types_source = "module app::types;\n"
+                                             "\n"
+                                             "struct Msg {\n"
+                                             "    value: Int;\n"
+                                             "}\n";
+    const auto prev_ids_json = "{\"" + main_uri + "\":\"" + main_result_id + "\",\"" + types_uri +
+                               "\":\"" + types_result_id + "\"}";
+    const auto second_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, changed_types_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" +
+            prev_ids_json + R"(}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto second_response = response_body_for_id(second_output, 2);
+
+    // Both should appear: types.ahfl changed directly, main.ahfl changed
+    // because its transitive import changed the type of msg.value.
+    check(second_response.find(types_uri) != std::string::npos,
+          "workspaceDiagnostic.transitive.types_re_emitted");
+    check(second_response.find(main_uri) != std::string::npos,
+          "workspaceDiagnostic.transitive.main_re_emitted_after_import_change");
+}
+
 void test_workspace_diagnostic_reports_unopened_project_sources() {
     const auto root = make_temp_project("workspace_diagnostic_project_sources");
     const auto main_path = root / "src" / "main.ahfl";
@@ -11389,6 +11480,7 @@ int main() {
     test_text_document_diagnostic_previous_result_id_unchanged();
     test_workspace_diagnostic_includes_result_ids();
     test_workspace_diagnostic_previous_result_ids_filter();
+    test_workspace_diagnostic_transitive_importer_change();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
