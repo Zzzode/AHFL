@@ -4634,7 +4634,7 @@ CMake:`ahfl_tooling_repl` 删除直接 `ahfl_runtime_evaluator` 边,显式 `ahfl
 
 - enum/struct/option 求值面收窄(§12.8.10.12 verdict A):detached REPL 不经 Project/discovery,无 prelude、零跨行状态;后援切片 "REPL session accumulation + prelude mode" 排在 post-WH-9,进入条件(std 嵌入或显式 sysroot 契约 + 会话累积 + module 前缀决议 + 错误恢复语义)见 §12.8.10.12 §4。
 - Float 算术、String 拼接等仍由 P6 codegen fail-closed 拒绝(后续 P6 opcode ladder slice,与 WH-7 无关)。
-- `long_soak_smoke` 的 peak_rss 趋势门在 ASan quarantine 下假阳性(12.18.2),backlog 独立处理。
+- `long_soak_smoke` 的 peak_rss 趋势门在 ASan quarantine 下假阳性(12.18.2);已由 §12.21 决议(2026-10-04)关闭,手动 quarantine 关闭做法同步退役。
 - evaluator 本体保留;WH-8(DAP cutover,§12.9 已决策)、WH-9(原子退役,§12.10)随后。
 
 ### 12.19 WH-8 落地记录(2026-10-04,base `1b8f9cfb`)
@@ -4816,7 +4816,85 @@ WH-9 的测试 / 门爆炸半径由独立只读决策代理裁决;coordinator �
   需变更,须显式重冻并评审。
 - Node runner 4 skipped 为真实 Node 宿主移植缺口(任务 #74 第 5 维 / Node port)。
 - 挂账:#74 conformance 第 5 维 + capability mutation 变体;#109 WH-5c.4 后续;
-  #119 REPL session/prelude;#120 long-soak RSS/ASan quarantine 门决议;
-  #125 DAP pause 竞态。
+  #119 REPL session/prelude;#125 DAP pause 竞态。(#120 long-soak RSS/ASan quarantine
+  门已由 §12.21 决议关闭。)
 - KR6.8(WH-0..WH-9)至此完成;RFC 0026 整体保持 implementing(KR6.6 计算层尾段、
   KR6.9 分层 IR-JSON 投影仍 ⬜)。
+
+## 12.21 决议记录(2026-10-04,task #120):long-soak peak_rss 趋势门在 ASan 下豁免,LeakSanitizer 接管泄漏检测
+
+### 12.21.1 背景与问题
+
+§12.18.2 记录的假阳性:`ahfl.reference_workflow.long_soak_smoke` 的 KR3.4
+稳态增长门(`tests/scripts/reference_workflow_long_soak.py:285-312`)对
+`allocator_in_use` 与 `peak_rss` 两个指标做末四分位均值减首四分位均值的趋势检查,
+超过 `max(首均值*5%, 1 MiB)` 即失败。ASan 插桩下 quarantine 保留已释放块不归还 OS,
+`peak_rss`(worker 经 `getrusage` 自报,`tests/integration/reference_workflow_soak_worker.cpp:117-125`)
+随运行单调爬升,默认 `ASAN_OPTIONS` 下稳定假阳性(首四分位均值 ~345MB、增长 ~36MB >
+容差 ~17MB)。此前的缓解是手动以
+`ASAN_OPTIONS="quarantine_size_mb=0:thread_local_quarantine_size_kb=0"` 跑 ASan 全量——
+quarantine 正是 ASan use-after-free 检测窗口,全局关闭等于为单个测试的假阳性削弱整套
+ASan 套件的 UAF 检测。
+
+### 12.21.2 决议(独立 decision agent,只读调研 + 本地探针实证)
+
+**选用方案 (a):soak worker 自报 ASan 插桩状态,harness 在 ASan 构建下跳过 KR3.4 的
+`peak_rss` 臂;ASan 构建的泄漏检测由 LeakSanitizer 在进程退出时承担。**
+
+- 机制:worker 以编译期宏自检,采用嵌套形式
+  (`#if defined(__SANITIZE_ADDRESS__) / #elif defined(__has_feature)` +
+  `__has_feature(address_sanitizer)`;`#if` 不短路且 GCC 不预定义 `__has_feature`,
+  单行 `&&` 形式会展开成 `0 (0)` 编译错误,嵌套形式为覆盖 GCC/Clang 的标准写法),
+  在 soak 报告 JSON 中新增可选布尔字段 `address_sanitizer`;
+  harness 以 `is True` 严格读取该字段,为真时 KR3.4 循环只遍历 `("allocator_in_use",)`。
+- 无 schema 版本升级:`address_sanitizer` 是 additive optional 字段;唯一校验器
+  `scripts/check-production-confidence-gate.py:98-135` 为 open-world(固定字段表 `.get()`,
+  从不拒绝多余字段),契约 `config/production-confidence-gate.json` 只命名 schema 不钉字段集;
+  小时级证据(生产 CI 用 dev 构建)恒为 `false`,语义不变。
+- 零 CMake / preset / CI / 依赖变更;手动 `quarantine_size_mb=0` 做法正式退役,
+  ASan 全量恢复全强度 quarantine(完整 UAF 检测窗口)。
+
+### 12.21.3 对备选方案的否定(含对任务简报的两处事实更正)
+
+- **对 (b) 以 `allocator_reserved` 替换 `peak_rss`:探针实证 ASan 拦截分配器后
+  `mallinfo2()` 完全失明(80MiB 存活+泄漏分配后 `uordblks=0 arena=0 hblkhd=0`),
+  `allocator_in_use` 与 `allocator_reserved` 两臂在 ASan 下本就恒零、永不触发;
+  换成它是把假阳性变成"看起来有覆盖"的假阴性。非 ASan 构建下三指标本就由小时级
+  校验器全量评估,`allocator_reserved` 不增加任何覆盖。**
+- **对 (c) ASan 专属容差:容差必须编码 quarantine 容量、线程本地 quarantine、排放速率、
+  shadow/redzone 开销等仓库不可控的 ASan 内部量,任何数字都是魔法常数,下次工具链升级
+  要么再破要么静默削弱门。主流实践(Rust CI / LLVM / Chromium)不在 ASan 下调 RSS 趋势断言,
+  而是豁免该断言、泄漏交给 LSan。**
+- **对现状(全局 quarantine=0):以多数测试的真实检测回退换单个测试的假阳性,且仅记录在
+  设计文档、仓库本身无任何痕迹,每个新贡献者都要重新踩一遍。**
+- 更正 1:仓库**没有**为 ASan ctest 设置 `ASAN_OPTIONS`——`asan`/`test-asan` preset 与
+  ci.yml 的 ASan job 均无 environment;仓库内唯一 `ASAN_OPTIONS` 在 fuzz-cron,且是
+  `detect_leaks=1`(开启检测)。被退役的是文档化的手动做法,不是仓库配置。
+- 更正 2:beta 证据流水线**不消费** `ahfl.production-confidence-soak.v2`;该 schema 的
+  消费者只有写入方、命名契约、校验器与两个 smoke 脚本。
+
+### 12.21.4 接受的边界与代价
+
+- LSan 只检测不可达内存(真泄漏);"可达但无界增长"(持续膨胀但仍被引用的缓存)在 ASan 下
+  对趋势臂同样不可见(`mallinfo2` 失明),该类只由非 ASan 构建覆盖——dev smoke 与小时级
+  生产门(生产 CI 用 dev 构建,从不在 ASan 下跑)。生产信心声明从不依赖 ASan 趋势检测;
+  ASan smoke 的职责是 sanitizer 找 bug,LSan 是正解。
+- 覆盖假设:LSan 以仓库默认(退出时 `detect_leaks=1`)运行;若 ctest 基础设施将来全局关闭
+  LSan,泄漏检测整套消失(非本门能单方面防御,worker 无从探测 `detect_leaks=0`)。
+-  worker 约 6 行(编译期常量 + 一个 `make_bool` 字段 + 退出前 `std::cout.flush()` 保全
+  LSan 失败时的报告取证);harness 约 4 行 + 注释。
+
+### 12.21.5 验收标准
+
+1. 全新 asan configure+build 后,不设任何 `ASAN_OPTIONS`,
+   `ctest --preset test-asan -R '^ahfl.reference_workflow.long_soak_smoke$'` 通过。
+2. dev smoke 不变:报告含 `"address_sanitizer": false`,两臂均激活。
+3. 小时级契约 `ctest -L '^ahfl-production-confidence-contract$'`(dev)通过,校验器不变。
+4. 变异——真泄漏(每迭代丢一个 4096B 分配):ASan 下 LSan 报告 + 非零退出 + 测试失败;
+   dev 下趋势臂失败。revert。
+5. 变异——可达增长(static 容器每迭代 +4096B):dev 趋势臂失败;ASan 下 LSan 不触发、
+   测试通过(已记录边界)。revert。
+6. 两种构建下 worker stdout 报告均含正确取值的 `address_sanitizer`;smoke 证据 JSON 记录之。
+7. ASan 全量:`long_soak_smoke` 从已知失败转为全强度 quarantine 下通过;无新增失败;
+   零 ASan/LSan/UBSan 报告。
+8. 本决议记录落地,§12.18.3 挂账 bullet 与 §12.20.4 挂账清单同步勾销。

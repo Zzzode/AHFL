@@ -40,6 +40,19 @@ namespace {
 
 using ahfl::json::JsonValue;
 
+// GCC spells ASan instrumentation as __SANITIZE_ADDRESS__; Clang also defines
+// that, and offers the __has_feature(address_sanitizer) spelling besides. The
+// branches are nested because #if does not short-circuit &&: when __has_feature
+// is undefined the token sequence __has_feature(address_sanitizer) would expand
+// to `0 (0)` and fail to compile.
+#if defined(__SANITIZE_ADDRESS__)
+constexpr bool kAddressSanitizer = true;
+#elif defined(__has_feature)
+constexpr bool kAddressSanitizer = __has_feature(address_sanitizer);
+#else
+constexpr bool kAddressSanitizer = false;
+#endif
+
 [[nodiscard]] std::optional<std::string> read_text(const std::filesystem::path &path) {
     std::ifstream input(path, std::ios::binary);
     if (!input.is_open()) {
@@ -426,7 +439,11 @@ int main(int argc, char **argv) {
         report->set("peak_rss", metric_summary(peak_rss));
         report->set("allocator_in_use", metric_summary(allocator_in_use));
         report->set("allocator_reserved", metric_summary(allocator_reserved));
+        report->set("address_sanitizer", JsonValue::make_bool(kAddressSanitizer));
         std::cout << ahfl::json::serialize_json(*report) << '\n';
+        // LeakSanitizer kills the process at exit without flushing stdio; flush
+        // the buffered JSON report so it survives for forensics.
+        std::cout.flush();
         return 0;
     }
 

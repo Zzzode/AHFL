@@ -252,6 +252,9 @@ def main() -> int:
         worker_report["process_model"] == "single-long-lived-worker",
         "long soak did not use one long-lived worker process",
     )
+    # `is True` (not bool()): a malformed stringy field must fall back to the
+    # strict both-arm path, not silently disable the peak_rss arm.
+    asan = worker_report.get("address_sanitizer") is True
     elapsed = float(worker_report["duration_seconds"])
     iteration = int(worker_report["iterations"])
     require(elapsed >= args.minimum_seconds, "long soak duration threshold not met")
@@ -289,7 +292,14 @@ def main() -> int:
     # a genuine per-iteration leak still trips the gate). Only meaningful once
     # there are enough iterations to form distinct quartiles.
     if iteration > 5:
-        for key in ("allocator_in_use", "peak_rss"):
+        # Under AddressSanitizer the OS-level peak_rss trends upward because the
+        # quarantine retains freed pages; skip that arm there and let LeakSanitizer
+        # own leak detection at process exit. See docs/design/
+        # kr68-wasm3-embedded-host-decision.zh.md section 12.21.
+        trend_metrics = (
+            ("allocator_in_use",) if asan else ("allocator_in_use", "peak_rss")
+        )
+        for key in trend_metrics:
             metric = worker_report[key]
             first_mean = float(metric["first_quartile_mean_bytes"])
             last_mean = float(metric["last_quartile_mean_bytes"])
@@ -313,6 +323,7 @@ def main() -> int:
                 "kind": args.contract_kind,
                 "execution_environment": execution_environment,
                 "process_model": "single-long-lived-worker",
+                "address_sanitizer": asan,
                 "reference_workflow": "examples/execution-demo",
                 "duration_seconds": elapsed,
                 "minimum_duration_seconds": args.minimum_seconds,
