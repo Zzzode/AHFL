@@ -1057,6 +1057,74 @@ int mode_mutation(const fs::path &repo_root,
         }
     }
 
+    // (3) Corrupt a capability_arguments envelope (a dimension other than
+    // status / state_sequence). Only runs when the case actually records a
+    // capability call; a capability-free case has nothing to tamper.
+    {
+        auto dom = ahfl::json::parse_json(*node_observation);
+        check(dom.has_value() && *dom && (*dom)->is_object(),
+              "node observation re-parses for capability_arguments tamper");
+        if (!dom.has_value() || !*dom || !(*dom)->is_object()) {
+            return 1;
+        }
+        auto *cap_args = (*dom)->get_mut("capability_arguments");
+        if (cap_args != nullptr && cap_args->is_array() &&
+            !cap_args->array_items.empty()) {
+            // Tamper the first envelope: re-serialize it with a spurious field
+            // so the canonical wire bytes change without touching the
+            // capability_sequence dimension.
+            auto &first_env = cap_args->array_items.front();
+            check(first_env != nullptr && first_env->is_object(),
+                  "capability_arguments[0] is an object envelope");
+            if (first_env == nullptr || !first_env->is_object()) {
+                return 1;
+            }
+            first_env->set("__mutation__",
+                           ahfl::json::JsonValue::make_string("mutated"));
+            const std::string mutated = ahfl::json::serialize_json(**dom);
+            const auto divergence =
+                ahfl::conformance::observations_agree(*blessing, mutated);
+            check(divergence.has_value(),
+                  "comparator FAILS on a deliberately mutated capability_arguments envelope");
+            if (divergence.has_value()) {
+                std::cout << "OK: comparator detected mutated expectation: " << *divergence
+                          << "\n";
+            }
+        }
+    }
+
+    // (4) Corrupt a capability_sequence element (the ordered canonical-name
+    // dimension). Guarded like (3): a capability-free case has no element to
+    // rename.
+    {
+        auto dom = ahfl::json::parse_json(*node_observation);
+        check(dom.has_value() && *dom && (*dom)->is_object(),
+              "node observation re-parses for capability_sequence tamper");
+        if (!dom.has_value() || !*dom || !(*dom)->is_object()) {
+            return 1;
+        }
+        auto *cap_seq = (*dom)->get_mut("capability_sequence");
+        if (cap_seq != nullptr && cap_seq->is_array() &&
+            !cap_seq->array_items.empty()) {
+            auto &first_name = cap_seq->array_items.front();
+            check(first_name != nullptr && first_name->as_string().has_value(),
+                  "capability_sequence[0] carries a canonical capability name");
+            if (first_name == nullptr || !first_name->as_string().has_value()) {
+                return 1;
+            }
+            first_name->string_val = "mutated::unexpected::capability";
+            const std::string mutated = ahfl::json::serialize_json(**dom);
+            const auto divergence =
+                ahfl::conformance::observations_agree(*blessing, mutated);
+            check(divergence.has_value(),
+                  "comparator FAILS on a deliberately mutated capability_sequence element");
+            if (divergence.has_value()) {
+                std::cout << "OK: comparator detected mutated expectation: " << *divergence
+                          << "\n";
+            }
+        }
+    }
+
     return g_failures == 0 ? 0 : 1;
 }
 

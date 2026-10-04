@@ -5089,3 +5089,72 @@ P2-A 的 manifest 编码断言、可达性逻辑、三个测试的 vacuousness�
 5. ASan 全量(单独运行,`-j$(nproc)`):零 ASan/LSan/UBSan 报告。
 6. WASM=OFF 冷重建 + release 构建 + install/export consumer 工程全绿。
 
+## 12.24 落地记录(2026-10-04,task #74):conformance 第 5 维度 + capability 变异变体
+
+### 12.24.1 背景与范围
+
+KR6.7 conformance harness 的 expectation-lane 比较器(`node_observation_matches_expectation`)
+只比较 4 个维度(status / state_sequence / capability_sequence / output_json),而 blessing-lane
+比较器(`observations_agree`)已经比较 5 个维度(含 `capability_arguments`)。本 task 将 expectation
+lane 提升到 5 维度,并为 native/node 两个 runner 的变异测试补充 capability 维度的变异变体。
+
+**关键发现**:7 个 closure stem(fb1_direct_call 等)不调用任何 capability(`capabilities: []`,
+`capability_sequence: []`),因此第 5 维度对它们是结构性的(空 vs 空)。变异变体在
+blessing-lane stem `e2_capability_agent`(有 1 个 capability 调用 + blessing observation)上
+才有意义。
+
+### 12.24.2 CaseExpectations 第 5 字段
+
+`CaseExpectations` 新增 `std::optional<std::string> capability_arguments`:canonical wire JSON
+数组字符串,每个元素是一次 capability 调用的参数 envelope(与 `capability_sequence` 一一对应)。
+
+- **解析**:`parse_capability_arguments` 接受可选的 `expect.capability_arguments` 键;必须是 JSON
+  数组;通过 `require_canonical_wire_json` 做 canonicality 门控(与 `output_json` 同一 SSOT)。
+- **跨字段校验**:当字段存在时,envelope 数量必须等于 `capability_sequence.size()`(一次调用一个
+  envelope,按序)。
+- **比较**:`node_observation_matches_expectation` 新增第 5 维度比较块;absent 默认为空数组,
+  因此 observation 记录了未被 bless 的参数 envelope 时会被捕获(长度发散)。委托给
+  `detail::compare_argument_envelopes`(与 blessing lane 同一函数)。
+- **7 个 closure stem manifest** 各加 `"capability_arguments": []`,使第 5 维度显式化。
+
+### 12.24.3 变异变体重连 + vacuous N4/N5 删除
+
+**对抗评审发现(P0)**:builder 在 expectation lane 加的 N4/N5 变异(capability_arguments tamper +
+capability_sequence rename)是 vacuous 死代码——ctest 连线的 stem(`fb3_higher_order`,
+expectation lane)和 `e1_identity_agent`(blessing lane)都是 capability-free,guard 永远为 false。
+pre-existing 的 WH-4b blessing-lane (3)/(4) 变异同样 vacuous。
+
+**Fix-forward**:
+1. **Blessing-lane 重连**:`ahfl.conformance.wasm_native_mutation` 和 `ahfl.conformance.wasm_node_mutation`
+   的 stem 从 `e1_identity_agent` 改为 `e2_capability_agent`(有 blessing + 1 个 capability 调用,
+   node-eligible)。4 个变异块全部在 CI 中触发(status / state_sequence / capability_arguments /
+   capability_sequence)。
+2. **Expectation-lane N4/N5 删除**:corpus 中不存在 capability-bearing 的 expectation-lane case
+   (8 个 capability-bearing case 全有 blessing;7 个 expectation-lane case 全 capability-free)。
+   按 Principle 1(禁止死代码)删除两个 runner 的 expectation-lane N4/N5,改为直接 comparator
+   单元测试覆盖。
+3. **新增 `observation_compare_test.cpp`**:`ahfl_observation_compare_tests` 可执行文件,11 个测试
+   覆盖 `node_observation_matches_expectation`(全匹配 / absent+空 obs 一致 / absent+非空 obs
+   发散 / tampered envelope 发散 / 长度不匹配发散 / 缺 key 发散)和 `observations_agree`
+   (一致 / tampered args 发散 / renamed cap 发散 / 缺 key 发散)。
+
+### 12.24.4 对抗评审结论
+
+- 比较器逻辑:无缺陷(edge case 全覆盖:null obs / 缺 key / 错类型 / 空默认)。
+- 解析器:无缺陷(非数组拒绝 / canonicality 门控 / 跨字段校验时机正确)。
+- 变异有效性:N4/(3) tamper 通过 `set("__mutation__", ...)` 改变 canonical bytes
+  (`compare_argument_envelopes` 重序列化所有字段,不忽略未知字段);N5/(4) rename 改变
+  `compare_string_array` 比较的字符串。均非 no-op。
+- P2 修复:doc comment "Absent when" → "Optional; absent or empty when";pre-existing
+  "three KR6.7 differential dimensions" → "four"(列了 4 项却写 three);单元测试补
+  present-but-empty `[]` + reverse length mismatch 两个 edge case。
+
+### 12.24.5 验收标准
+
+1. dev fresh -Werror 构建零 warning。
+2. `ahfl.observation_compare` 11/11 通过;`ahfl.conformance_case` 通过(含新 edge case)。
+3. 4 个变异测试全绿;`e2_capability_agent` 上 4 个 blessing-lane 变异块全部触发
+   (含 `capability_arguments[0] diverged` 和 `capability_sequence[0] diverged`)。
+4. conformance label 62/62 通过;census 保持 native 73/0、node 69/4。
+5. 完整无标签 ctest 全绿(3 fail 为本机 pnpm 缺失的 beta-gate 级联,CI 不存在)。
+

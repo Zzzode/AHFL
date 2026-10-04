@@ -428,6 +428,24 @@ target_compile_definitions(ahfl_conformance_case_tests
 )
 ahfl_apply_project_warnings(ahfl_conformance_case_tests)
 
+# KR6.7 (RFC 0026 P7): differential comparator unit tests. Pure test
+# infrastructure: links only the JSON DOM, never an execution engine.
+# Exercises both lanes (node_observation_matches_expectation and
+# observations_agree) on all five dimensions including capability_arguments.
+add_executable(ahfl_observation_compare_tests
+    unit/runtime/conformance/observation_compare_test.cpp
+)
+target_link_libraries(ahfl_observation_compare_tests
+    PRIVATE
+        ahfl_base_json
+)
+target_include_directories(ahfl_observation_compare_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+ahfl_apply_project_warnings(ahfl_observation_compare_tests)
+
 # KR6.7 (RFC 0026 P7): WASM eligibility classifier. Links the real compiler
 # wasm backend (so it can actually run lower -> layout -> emit) plus the
 # engine-independent manifest parser. Registered only when the executable

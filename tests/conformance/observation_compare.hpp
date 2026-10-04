@@ -7,7 +7,7 @@
 // Both sides emit a canonical observation document over the SAME case /
 // scenario. They may use different schema tags and the target document may
 // carry extra execution internals (transition_count, workflow_completed_count),
-// so this comparator asserts equality on exactly the three KR6.7 differential
+// so this comparator asserts equality on exactly the four KR6.7 differential
 // dimensions, plus run status:
 //
 //   1. state_sequence       ordered {agent,state} entries (declaration order);
@@ -208,10 +208,13 @@ observations_agree(std::string_view reference_observation_json,
 
 /// Expectation lane: when no checked-in blessing exists for a case (the
 /// closure constructs), the observation is checked DIRECTLY against the
-/// manifest's blessed expectation: terminal run status, the declaration-order
-/// state sequence (state names only), the capability sequence, and the
-/// canonical output JSON. Returns an empty optional on agreement, else a
-/// reason.
+/// manifest's blessed expectation on five dimensions: terminal run status,
+/// the declaration-order state sequence (state names only), the capability
+/// sequence, the per-call capability argument envelopes (one canonical wire
+/// envelope per capability call in order; an absent expectation defaults to
+/// an empty array, so a case that unexpectedly invokes capabilities is
+/// caught), and the canonical output JSON. Returns an empty optional on
+/// agreement, else a reason.
 [[nodiscard]] inline std::optional<std::string>
 node_observation_matches_expectation(const CaseExpectations &expect,
                                      std::string_view node_observation_json) {
@@ -277,6 +280,29 @@ node_observation_matches_expectation(const CaseExpectations &expect,
         }
         if (auto divergence = detail::compare_string_array(
                 expected_caps, *tgt_obs.get("capability_sequence"), "capability_sequence");
+            divergence.has_value()) {
+            return divergence;
+        }
+    }
+
+    // capability_arguments: one canonical wire argument envelope per
+    // capability call in order. An absent expectation defaults to an empty
+    // array, so a case that unexpectedly invokes capabilities is caught.
+    {
+        json::JsonValue expected_args;
+        expected_args.kind = json::Kind::Array;
+        if (expect.capability_arguments.has_value()) {
+            auto parsed = json::parse_json(*expect.capability_arguments);
+            if (!parsed.has_value() || !*parsed || !(*parsed)->is_array()) {
+                return "capability_arguments: expected a JSON array string";
+            }
+            expected_args = std::move(**parsed);
+        }
+        if (tgt_obs.get("capability_arguments") == nullptr) {
+            return "node observation is missing the capability_arguments array";
+        }
+        if (auto divergence = detail::compare_argument_envelopes(
+                expected_args, *tgt_obs.get("capability_arguments"));
             divergence.has_value()) {
             return divergence;
         }

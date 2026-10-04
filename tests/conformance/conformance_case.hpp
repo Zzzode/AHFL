@@ -17,8 +17,9 @@
 // names, node names, and canonical capability names. Numeric engine-internal
 // ids never appear in a case file (CLAUDE.md Principle 2).
 //
-// Wire JSON fragments (`input`, `expect.output_json`, capability
-// `result_json`) must be CANONICAL wire JSON: compact bytes matching the
+// Wire JSON fragments (`input`, `expect.output_json`,
+// `expect.capability_arguments`, capability `result_json`) must be CANONICAL
+// wire JSON: compact bytes matching the
 // `value_json` emission order (`_type`/`_enum` discriminators first, struct
 // fields lexicographically sorted, no insignificant whitespace). The parser
 // enforces byte equality against a canonical re-serialization of the parsed
@@ -97,6 +98,14 @@ struct CaseExpectations {
     std::vector<std::string> state_sequence;
     /// Canonical capability names in expected invocation order.
     std::vector<std::string> capability_sequence;
+    /// Canonical wire JSON array of the per-call capability argument
+    /// envelopes, one per `capability_sequence` entry in order ({} for zero
+    /// args, {"value":..} for one non-struct, the bare struct object for one
+    /// struct, {"args":[..]} for many). Optional; absent or empty when the
+    /// case invokes no capabilities. An absent expectation defaults to an
+    /// empty array in the comparator, so a case that unexpectedly invokes
+    /// capabilities is caught.
+    std::optional<std::string> capability_arguments;
     /// Canonical wire JSON of the run output; absent when the run produces no
     /// inspectable output.
     std::optional<std::string> output_json;
@@ -916,6 +925,7 @@ class ConformanceCaseReader {
         std::optional<ExpectedRunStatus> run_status;
         std::optional<std::vector<std::string>> state_sequence;
         std::optional<std::vector<std::string>> capability_sequence;
+        std::optional<std::string> capability_arguments;
         std::optional<std::string> output_json;
 
         for (const auto &[key, value] : object.object_fields) {
@@ -925,6 +935,8 @@ class ConformanceCaseReader {
                 state_sequence = parse_name_sequence(*value, "state_sequence");
             } else if (key == "capability_sequence") {
                 capability_sequence = parse_name_sequence(*value, "capability_sequence");
+            } else if (key == "capability_arguments") {
+                capability_arguments = parse_capability_arguments(*value);
             } else if (key == "output_json") {
                 output_json = require_canonical_wire_json(*value, "expect.output_json");
             } else {
@@ -959,6 +971,7 @@ class ConformanceCaseReader {
             .run_status = *run_status,
             .state_sequence = std::move(*state_sequence),
             .capability_sequence = std::move(*capability_sequence),
+            .capability_arguments = std::move(capability_arguments),
             .output_json = std::move(output_json),
         };
     }
@@ -1005,6 +1018,19 @@ class ConformanceCaseReader {
             names.emplace_back(*name);
         }
         return names;
+    }
+
+    /// Reads the optional `expect.capability_arguments` array: one canonical
+    /// wire argument envelope per capability call in order. The fragment is
+    /// canonicality-gated exactly like the other wire JSON fragments.
+    [[nodiscard]] std::optional<std::string>
+    parse_capability_arguments(const json::JsonValue &array) {
+        if (!array.is_array()) {
+            error("conformance case field 'expect.capability_arguments' must be an array",
+                  range_of(array));
+            return std::nullopt;
+        }
+        return require_canonical_wire_json(array, "expect.capability_arguments");
     }
 
     [[nodiscard]] std::optional<EngineMatrix> parse_engines(const json::JsonValue &object) {
@@ -1166,6 +1192,26 @@ class ConformanceCaseReader {
                 error("conformance case scenario '" + scenario.name +
                           "' 'expect.capability_sequence' invokes capability '" + invoked +
                           "' that has no entry in 'capabilities'",
+                      std::nullopt);
+            }
+        }
+
+        // When the case pins per-call argument envelopes, their count must
+        // match the capability call count: one envelope per call in order.
+        if (scenario.expect.capability_arguments.has_value()) {
+            auto parsed = json::parse_json(*scenario.expect.capability_arguments);
+            if (!parsed.has_value() || !*parsed || !(*parsed)->is_array()) {
+                error("conformance case scenario '" + scenario.name +
+                          "' 'expect.capability_arguments' must be a JSON array",
+                      std::nullopt);
+            } else if ((*parsed)->array_items.size() !=
+                       scenario.expect.capability_sequence.size()) {
+                error("conformance case scenario '" + scenario.name +
+                          "' 'expect.capability_arguments' must carry one envelope "
+                          "per 'capability_sequence' entry (" +
+                          std::to_string((*parsed)->array_items.size()) + " envelopes, " +
+                          std::to_string(scenario.expect.capability_sequence.size()) +
+                          " capability calls)",
                       std::nullopt);
             }
         }

@@ -11,7 +11,9 @@
 //       capability outcomes, and wasm eligibility metadata;
 //   (c) malformed manifests are rejected with precise diagnostics:
 //       missing entry, bad capability status enum, non-canonical
-//       expect.output_json, absent engines block, unknown field, plus
+//       expect.output_json / expect.capability_arguments, capability
+//       argument/sequence length mismatch, absent engines block, unknown
+//       field, plus
 //       format_version / kind / run_status / eligibility enum / pending+result
 //       / duplicate capability / unconfigured invoked capability / workflow
 //       state-sequence / source-path escapes / duplicate or anonymous
@@ -1624,6 +1626,138 @@ void test_capabilities_required() {
                     "missing required field 'capabilities'");
 }
 
+// The optional `expect.capability_arguments` field: one canonical wire
+// argument envelope per capability call in order. It is canonicality-gated
+// like the other wire JSON fragments and cross-checked against
+// `capability_sequence` length.
+void test_capability_arguments_field() {
+    // Builder for a one-scenario agent case over the e2 capability fixture,
+    // parameterized by the expect fragment and the capabilities table.
+    const auto case_with = [](std::string_view expect_fragment,
+                              std::string_view capabilities_fragment) {
+        return std::string{R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e2_capability_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e2_capability::CapabilityAgent",
+  "scenarios": [
+    {
+      "name": "echo",
+      "input": {"_type":"wasm::e2_capability::InputFrame","value":"input"},
+      "expect": )"} + std::string{expect_fragment} + R"(
+    }
+  ],
+  "capabilities": )" + std::string{capabilities_fragment} + R"(,
+  "engines": {
+    "wasm": {"eligible": "orchestration", "reason": "E2"}
+  }
+})";
+    };
+
+    constexpr std::string_view kEchoCapability =
+        R"([{"name":"wasm::e2_capability::Echo","status":"ok",)"
+        R"("result_json":{"_type":"wasm::e2_capability::OutputFrame","value":"echo"}}])";
+
+    // Present: the field is parsed and re-serialized to canonical compact
+    // bytes, and its length is cross-checked against capability_sequence.
+    {
+        auto result = parse_conformance_case_json(
+            case_with(
+                R"({"run_status":"completed","state_sequence":["Start","Done"],)"
+                R"("capability_sequence":["wasm::e2_capability::Echo"],)"
+                R"("capability_arguments":[{"value":42}],)"
+                R"("output_json":{"_type":"wasm::e2_capability::OutputFrame","value":"echo"}})",
+                kEchoCapability),
+            "cap-args-present");
+        check(!result.has_errors(), "capability_arguments present parses");
+        check(result.conformance_case.has_value(),
+              "capability_arguments present yields a case");
+        if (result.conformance_case.has_value()) {
+            const auto &expect = result.conformance_case->scenarios[0].expect;
+            check(expect.capability_arguments.has_value(),
+                  "capability_arguments field present after parse");
+            check(expect.capability_arguments.has_value() &&
+                      *expect.capability_arguments == R"([{"value":42}])",
+                  "capability_arguments canonicalized to compact bytes");
+        }
+    }
+
+    // Absent: a manifest without the field leaves the optional unset.
+    {
+        auto result = parse_conformance_case_json(kValidCase, "cap-args-absent");
+        check(!result.has_errors(), "manifest without capability_arguments parses");
+        check(result.conformance_case.has_value(),
+              "manifest without capability_arguments yields a case");
+        if (result.conformance_case.has_value()) {
+            check(!result.conformance_case->scenarios[0]
+                       .expect.capability_arguments.has_value(),
+                  "capability_arguments absent leaves nullopt");
+        }
+    }
+
+    // Wrong type: a non-array value is rejected.
+    expect_rejected("capability arguments not an array",
+                    case_with(
+                        R"({"run_status":"completed","state_sequence":["Start","Done"],)"
+                        R"("capability_sequence":[],"capability_arguments":"not-an-array"})",
+                        "[]"),
+                    "'expect.capability_arguments' must be an array");
+
+    // Length mismatch: one envelope for two capability calls is rejected.
+    expect_rejected("capability arguments length mismatch",
+                    case_with(
+                        R"({"run_status":"completed","state_sequence":["Start","Done"],)"
+                        R"("capability_sequence":["A","B"],)"
+                        R"("capability_arguments":[{"value":1}]})",
+                        R"([{"name":"A","status":"ok","result_json":{"value":1}},)"
+                        R"({"name":"B","status":"ok","result_json":{"value":2}}])"),
+                    "'expect.capability_arguments' must carry one envelope per");
+
+    // Non-canonical spelling: like the other wire JSON fragments, the field
+    // is canonicality-gated (the space after the colon is insignificant
+    // whitespace).
+    expect_rejected("capability arguments not canonical",
+                    case_with(
+                        R"({"run_status":"completed","state_sequence":["Start","Done"],)"
+                        R"("capability_sequence":["wasm::e2_capability::Echo"],)"
+                        R"("capability_arguments":[{"value": 42}]})",
+                        kEchoCapability),
+                    "'expect.capability_arguments' must be canonical compact wire JSON");
+
+    // Present-but-empty with an empty capability_sequence: the closure-stem
+    // shape (all 7 closure manifests carry "capability_arguments": []).
+    {
+        auto result = parse_conformance_case_json(
+            case_with(
+                R"({"run_status":"completed","state_sequence":["Start","Done"],)"
+                R"("capability_sequence":[],"capability_arguments":[]})",
+                "[]"),
+            "cap-args-empty");
+        check(!result.has_errors(),
+              "capability_arguments [] with empty capability_sequence parses");
+        check(result.conformance_case.has_value(),
+              "capability_arguments [] yields a case");
+        if (result.conformance_case.has_value()) {
+            const auto &expect = result.conformance_case->scenarios[0].expect;
+            check(expect.capability_arguments.has_value(),
+                  "capability_arguments [] is present (not nullopt) after parse");
+            check(expect.capability_arguments.has_value() &&
+                      *expect.capability_arguments == "[]",
+                  "capability_arguments [] canonicalized to empty array");
+        }
+    }
+
+    // Reverse length mismatch: two envelopes for one capability call is
+    // rejected (the cross-field check is symmetric).
+    expect_rejected("capability arguments reverse length mismatch",
+                    case_with(
+                        R"({"run_status":"completed","state_sequence":["Start","Done"],)"
+                        R"("capability_sequence":["A"],)"
+                        R"("capability_arguments":[{"value":1},{"value":2}]})",
+                        R"([{"name":"A","status":"ok","result_json":{"value":1}}])"),
+                    "'expect.capability_arguments' must carry one envelope per");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1640,6 +1774,7 @@ int main(int argc, char **argv) {
     test_float_canonicality_gate();
     test_enum_empty_payload_gate();
     test_capabilities_required();
+    test_capability_arguments_field();
     test_dangling_source_rejected(scratch_dir);
 
     if (g_failures != 0) {

@@ -1244,6 +1244,13 @@ add_test(NAME ahfl.conformance_case
             "${CMAKE_CURRENT_BINARY_DIR}/conformance-case"
 )
 
+add_test(NAME ahfl.observation_compare
+    COMMAND $<TARGET_FILE:ahfl_observation_compare_tests>
+)
+set_tests_properties(ahfl.observation_compare PROPERTIES
+    LABELS "conformance"
+)
+
 # KR6.7 (RFC 0026 P7): shared conformance case/observation directories.
 set(AHFL_CONFORMANCE_CASES_DIR "${AHFL_TESTS_DIR}/conformance/cases")
 set(AHFL_CONFORMANCE_OBSERVATIONS_DIR "${AHFL_TESTS_DIR}/conformance/observations")
@@ -1288,15 +1295,19 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
 
     # Mutation gate: the comparator must FAIL on a deliberately mutated Node
-    # observation (flipped terminal status). e1_identity_agent is the simplest
-    # orchestration-eligible case.
+    # observation (flipped terminal status, corrupted state_sequence, tampered
+    # capability_arguments envelope, renamed capability_sequence).
+    # e2_capability_agent is the simplest orchestration-eligible case that
+    # actually records a capability call, so all four blessing-lane mutation
+    # blocks fire (a capability-free stem would leave the capability
+    # mutations vacuous).
     add_test(NAME ahfl.conformance.wasm_node_mutation
         COMMAND $<TARGET_FILE:ahfl_conformance_wasm_node_runner>
                 mutation
                 "${PROJECT_SOURCE_DIR}"
                 "${AHFL_CONFORMANCE_CASES_DIR}"
                 "${AHFL_CONFORMANCE_WASM_SCRATCH_DIR}"
-                e1_identity_agent
+                e2_capability_agent
     )
     set_tests_properties(ahfl.conformance.wasm_node_mutation PROPERTIES
         SKIP_RETURN_CODE 77
@@ -1368,14 +1379,18 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
 
     # Mutation gate: the comparator must FAIL on a deliberately mutated native
-    # observation (flipped terminal status). e1_identity_agent is the simplest
-    # orchestration-eligible case.
+    # observation (flipped terminal status, corrupted state_sequence, tampered
+    # capability_arguments envelope, renamed capability_sequence).
+    # e2_capability_agent is the simplest orchestration-eligible case that
+    # actually records a capability call, so all four blessing-lane mutation
+    # blocks fire (a capability-free stem would leave the capability
+    # mutations vacuous).
     add_test(NAME ahfl.conformance.wasm_native_mutation
         COMMAND $<TARGET_FILE:ahfl_conformance_wasm_native_runner>
                 mutation
                 "${PROJECT_SOURCE_DIR}"
                 "${AHFL_CONFORMANCE_CASES_DIR}"
-                e1_identity_agent
+                e2_capability_agent
     )
     set_tests_properties(ahfl.conformance.wasm_native_mutation PROPERTIES
         PASS_REGULAR_EXPRESSION "comparator detected mutated expectation"

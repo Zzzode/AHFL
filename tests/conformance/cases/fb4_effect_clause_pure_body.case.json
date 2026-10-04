@@ -11,6 +11,7 @@
         "run_status": "completed",
         "state_sequence": ["Init", "Done"],
         "capability_sequence": [],
+        "capability_arguments": [],
         "output_json": {"_type":"wasm::fb4_effect_clause_pure_body::Frame","n":41}
       }
     }
