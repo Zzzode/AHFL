@@ -8348,6 +8348,39 @@ void test_completion_type_member_enum_state_and_workflow_contexts() {
           "completion.expression_contains_workflow_node");
 }
 
+void test_completion_struct_literal_field_not_type_position() {
+    // Regression: looks_like_type_position() treated ':' inside struct literal
+    // braces as a type annotation, offering only struct/enum/type-alias symbols
+    // when the user expects expression completions (variables, functions, etc.).
+    //
+    // Source: let x = Msg { value: |"test" };
+    // The cursor is after "value: " inside the struct literal braces.
+    // This is an expression position, NOT a type position.
+    const std::string source = "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n"
+                               "\n"
+                               "fn make_msg() -> Msg effect Pure decreases 0 {\n"
+                               "    let x = Msg { value: \"test\" };\n"
+                               "    return x;\n"
+                               "}\n";
+
+    // Line 6 = "    let x = Msg { value: \"test\" };"
+    //                              ^ cursor after "value: " (character 25)
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":6,"character":25}})";
+    const auto output =
+        run_handler_request(source, "textDocument/completion", params);
+
+    // The completion should NOT be filtered to only types.
+    // It should contain expression-oriented completions like keywords.
+    check(output.find("\"label\":\"true\"") != std::string::npos,
+          "completion.struct_literal_field_offers_expression_keywords");
+    // It should still offer the function symbol (generic completion path).
+    check(output.find("\"label\":\"make_msg\"") != std::string::npos,
+          "completion.struct_literal_field_offers_functions");
+}
+
 /// Typed-HIR member completion: local struct with inherent impl methods.
 /// Verifies that member completion at `c.` offers both the struct's fields
 /// and the inherent impl's methods (not just the flow-scoped fallback).
@@ -11261,6 +11294,7 @@ int main() {
     test_signature_help_keyword_family();
     test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
+    test_completion_struct_literal_field_not_type_position();
     test_completion_local_struct_inherent_impl_methods();
     test_completion_generic_type_inherent_impl_methods();
     test_completion_field_access_chain_root_type();

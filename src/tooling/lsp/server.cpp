@@ -2120,6 +2120,40 @@ void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &sy
         if (label == "return" || label == "safety" || label == "liveness") {
             return false;
         }
+        // Reject struct-literal field values: `Foo { field: | }`.
+        // A ':' inside '{}' is a type position only when the block is a
+        // struct *declaration* (`struct Foo { field: T; }`). Scan backwards
+        // to the enclosing '{' and check for the `struct` keyword.
+        int brace_depth = 0;
+        for (std::size_t i = offset - 1; i > 0; --i) {
+            if (text[i - 1] == '}') {
+                ++brace_depth;
+            } else if (text[i - 1] == '{') {
+                if (brace_depth == 0) {
+                    // Found the enclosing '{'. Check what precedes it.
+                    auto pre = i - 1;
+                    while (pre > 0 &&
+                           std::isspace(static_cast<unsigned char>(text[pre - 1])) != 0) {
+                        --pre;
+                    }
+                    auto pre_end = pre;
+                    while (pre > 0) {
+                        const auto ch = static_cast<unsigned char>(text[pre - 1]);
+                        if (std::isalnum(ch) == 0 && text[pre - 1] != '_') {
+                            break;
+                        }
+                        --pre;
+                    }
+                    const auto preceding =
+                        std::string_view{text}.substr(pre, pre_end - pre);
+                    if (preceding != "struct") {
+                        return false; // struct literal or map literal, not a type position
+                    }
+                    break; // struct declaration field — type position
+                }
+                --brace_depth;
+            }
+        }
         return true;
     }
     return offset >= 2 && text[offset - 2] == '-' && text[offset - 1] == '>';
