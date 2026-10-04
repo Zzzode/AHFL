@@ -8380,6 +8380,39 @@ void test_completion_field_access_chain_root_type() {
           "completion.field_chain_rejects_result_field");
 }
 
+/// Typed-HIR member completion: call-result root resolution.
+/// Verifies that completion at `make_item().` offers the returned type's
+/// (Item) members. The text-only member_root_before_cursor() heuristic
+/// cannot detect this case because ')' precedes the '.', not an identifier
+/// character. The Typed-HIR path (try_typed_member_completion) finds the
+/// Call expression and resolves its return type directly.
+void test_completion_call_result_root_type() {
+    const std::string source =
+        "struct Item {\n"
+        "    name: String;\n"
+        "    value: Int;\n"
+        "}\n"
+        "\n"
+        "fn make_item() -> Item effect Pure decreases 0 {\n"
+        "    return Item { name: \"test\", value: 42 };\n"
+        "}\n"
+        "\n"
+        "fn test() -> String effect Pure decreases 0 {\n"
+        "    let v = make_item().name;\n"
+        "    return v;\n"
+        "}\n";
+
+    // Cursor after "make_item()." in "let v = make_item().name;"
+    const auto cursor = position_after(position_of(source, "make_item().name"), "make_item().");
+    const auto output = run_handler_request(
+        source, "textDocument/completion", hover_params_at("file:///test.ahfl", cursor));
+
+    check(output.find("\"label\":\"name\"") != std::string::npos,
+          "completion.call_result_offers_field");
+    check(output.find("\"label\":\"value\"") != std::string::npos,
+          "completion.call_result_offers_field_2");
+}
+
 /// KR3.5: member completion consumes persisted flow-narrowing facts. Inside the
 /// then-branch of `if (opt != Option::None)`, completion at `opt.` must offer the
 /// UNWRAPPED inner struct's fields (the same narrowing hover surfaces), and it
@@ -11163,6 +11196,7 @@ int main() {
     test_completion_local_struct_inherent_impl_methods();
     test_completion_generic_type_inherent_impl_methods();
     test_completion_field_access_chain_root_type();
+    test_completion_call_result_root_type();
     test_completion_narrowed_option_offers_inner_members();
     test_completion_pattern_context_uses_typed_pattern_facts();
     test_completion_bool_pattern_context_uses_typed_pattern_facts();

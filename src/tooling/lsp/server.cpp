@@ -2347,6 +2347,130 @@ void push_struct_field_completions(std::vector<CompletionItem> &items,
     }
 }
 
+// Push struct fields, enum variants, and impl methods for a resolved root
+// type. Returns true if any completions were added. Shared by the
+// text-heuristic path (push_member_completions) and the Typed-HIR path
+// (try_typed_member_completion).
+[[nodiscard]] bool push_member_completions_for_type(
+    std::vector<CompletionItem> &items,
+    const TypeEnvironment &environment,
+    const TypePtr &root_type) {
+    bool added = false;
+
+    if (const auto struct_info = environment.get_struct(*root_type);
+        struct_info.has_value()) {
+        for (const auto &field : struct_info->get().fields) {
+            CompletionItem item;
+            item.label = field.name;
+            item.kind = CompletionItemKind::Field;
+            item.detail = field.type ? field.type->describe() : "field";
+            items.push_back(std::move(item));
+            added = true;
+        }
+    }
+
+    if (const auto enum_info = environment.get_enum(*root_type);
+        enum_info.has_value()) {
+        for (const auto &variant : enum_info->get().variants) {
+            CompletionItem item;
+            item.label = variant.name;
+            item.kind = CompletionItemKind::EnumMember;
+            item.detail = "enum variant";
+            items.push_back(std::move(item));
+            added = true;
+        }
+    }
+
+    // Enumerate methods from ALL impl blocks (inherent + trait) whose
+    // target type matches the receiver. Mirrors method_candidates in
+    // typecheck_expr.cpp: normalize_type_key equality for concrete impls,
+    // nominal-symbol fallback for generic impls (e.g. impl<T> Option<T>
+    // vs concrete Option<Int>). find_impls() is NOT used because it only
+    // returns non-inherent (trait) impls by design.
+    const auto receiver_key = TypeEnvironment::normalize_type_key(*root_type);
+    const auto receiver_nominal = nominal_symbol_of_type(*root_type);
+    for (const auto &[impl_index, impl] : environment.impls()) {
+        (void)impl_index;
+        if (impl.target_type == nullptr) {
+            continue;
+        }
+        const bool key_match =
+            TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
+        const bool nominal_match =
+            !key_match && receiver_nominal.has_value() && impl.target_symbol.has_value() &&
+            *receiver_nominal == *impl.target_symbol;
+        if (!key_match && !nominal_match) {
+            continue;
+        }
+        for (const auto &method : impl.methods) {
+            CompletionItem item;
+            item.label = method.name;
+            item.kind = CompletionItemKind::Method;
+            item.detail = callable_signature(method.name, method.params,
+                                             method.return_type);
+            items.push_back(std::move(item));
+            added = true;
+        }
+    }
+
+    return added;
+}
+
+// Try member completion using Typed HIR. Handles complex root expressions
+// (xs[i]., expr()., a.b.c.) that the text-only member_root_before_cursor()
+// heuristic cannot detect because it requires an identifier character
+// immediately before the '.'. Returns true if completions were pushed.
+[[nodiscard]] bool try_typed_member_completion(
+    std::vector<CompletionItem> &items,
+    const LspAnalysisSnapshot &snapshot,
+    const LspSourceSnapshot &source,
+    std::size_t offset) {
+    if (!snapshot.type_check_result) {
+        return false;
+    }
+    const auto *program = snapshot.typed_program();
+    if (program == nullptr) {
+        return false;
+    }
+
+    const auto &text = source.source->content;
+    if (offset > text.size()) {
+        offset = text.size();
+    }
+
+    // Skip trailing whitespace to find the '.'
+    while (offset > 0 && std::isspace(static_cast<unsigned char>(text[offset - 1])) != 0) {
+        --offset;
+    }
+
+    if (offset == 0 || text[offset - 1] != '.') {
+        return false;
+    }
+
+    // Find the expression just before the '.'
+    const auto dot_pos = offset - 1;
+    if (dot_pos == 0) {
+        return false;
+    }
+
+    const auto *expr = program->find_expr_containing(dot_pos - 1, source.source_id);
+    if (expr == nullptr || expr->type == nullptr) {
+        return false;
+    }
+
+    // Only accept if the expr's range does not extend past the '.'
+    // (i.e. it is the root expression, not a larger expression whose
+    // source range spans the '.' — the typechecker emits a single flat
+    // MemberAccess for chains, so the chain's own end_offset is the last
+    // member character, which is <= dot_pos).
+    if (expr->range.end_offset > dot_pos) {
+        return false;
+    }
+
+    const auto &environment = snapshot.type_check_result->environment;
+    return push_member_completions_for_type(items, environment, expr->type);
+}
+
 void push_member_completions(std::vector<CompletionItem> &items,
                              const LspAnalysisSnapshot &snapshot,
                              const LspSourceSnapshot &source,
@@ -2407,65 +2531,7 @@ void push_member_completions(std::vector<CompletionItem> &items,
             }
         }
 
-        bool added = false;
-
-        if (const auto struct_info = environment.get_struct(*root_type);
-            struct_info.has_value()) {
-            for (const auto &field : struct_info->get().fields) {
-                CompletionItem item;
-                item.label = field.name;
-                item.kind = CompletionItemKind::Field;
-                item.detail = field.type ? field.type->describe() : "field";
-                items.push_back(std::move(item));
-                added = true;
-            }
-        }
-
-        if (const auto enum_info = environment.get_enum(*root_type);
-            enum_info.has_value()) {
-            for (const auto &variant : enum_info->get().variants) {
-                CompletionItem item;
-                item.label = variant.name;
-                item.kind = CompletionItemKind::EnumMember;
-                item.detail = "enum variant";
-                items.push_back(std::move(item));
-                added = true;
-            }
-        }
-
-        // Enumerate methods from ALL impl blocks (inherent + trait) whose
-        // target type matches the receiver. Mirrors method_candidates in
-        // typecheck_expr.cpp: normalize_type_key equality for concrete impls,
-        // nominal-symbol fallback for generic impls (e.g. impl<T> Option<T>
-        // vs concrete Option<Int>). find_impls() is NOT used because it only
-        // returns non-inherent (trait) impls by design.
-        const auto receiver_key = TypeEnvironment::normalize_type_key(*root_type);
-        const auto receiver_nominal = nominal_symbol_of_type(*root_type);
-        for (const auto &[impl_index, impl] : environment.impls()) {
-            (void)impl_index;
-            if (impl.target_type == nullptr) {
-                continue;
-            }
-            const bool key_match =
-                TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
-            const bool nominal_match =
-                !key_match && receiver_nominal.has_value() && impl.target_symbol.has_value() &&
-                *receiver_nominal == *impl.target_symbol;
-            if (!key_match && !nominal_match) {
-                continue;
-            }
-            for (const auto &method : impl.methods) {
-                CompletionItem item;
-                item.label = method.name;
-                item.kind = CompletionItemKind::Method;
-                item.detail = callable_signature(method.name, method.params,
-                                                 method.return_type);
-                items.push_back(std::move(item));
-                added = true;
-            }
-        }
-
-        if (added) {
+        if (push_member_completions_for_type(items, environment, root_type)) {
             return;
         }
     }
@@ -4179,7 +4245,10 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
     const auto offset = offset_at(*source->source, position);
     std::vector<CompletionItem> items;
 
-    if (const auto root = member_root_before_cursor(*source->source, offset); root.has_value()) {
+    if (try_typed_member_completion(items, *snapshot, *source, offset)) {
+        // Typed-HIR-based member completion. Handles complex root expressions
+        // (xs[i]., expr()., a.b.c.) that the text heuristic cannot detect.
+    } else if (const auto root = member_root_before_cursor(*source->source, offset); root.has_value()) {
         push_member_completions(items, *snapshot, *source, offset, *root);
     } else if (push_pattern_context_completions(
                    items, *snapshot, *source, offset, completion_snippet_support_)) {
