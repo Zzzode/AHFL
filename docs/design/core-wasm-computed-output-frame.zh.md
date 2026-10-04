@@ -1,7 +1,9 @@
 # Core-Wasm Computed Output-Frame ABI (P6-7) -- Design
 
-> Status: **DESIGN GATE** (RFC 0026 P6-7 / KR6.7). Decisions only; no open
-> questions; no production code in this slice. This document IS the independent
+> Status: **LANDED** (RFC 0026 P6-7 / KR6.7). V1 rungs A-E landed
+> 2026-09-25..28; the v2 amendment (`core-wasm-frame-bridge-v2.zh.md`)
+> extended and superseded parts of this document, landing V2-A..V2-E on
+> 2026-09-28 (HEAD `2cd6dbf6`). This document IS the independent
 > review of the value-returning `run2`-class convention that KR6.5 E1
 > explicitly deferred and refused to pre-approve
 > (`docs/rfcs/0026-ir-tower-and-execution-model.zh.md` E1 entry: "值返回的

@@ -1,6 +1,7 @@
 # Core-Wasm Frame Bridge v2: 模块内 PtrLen 构造、能力帧桥接与工作流计算节点打包 -- Design
 
-> Status: **DESIGN GATE**(RFC 0026 P6-7 v2 amendment / KR6.7 收尾)。本文档是
+> Status: **LANDED**(RFC 0026 P6-7 v2 amendment / KR6.7 收尾)。V2-A..V2-E
+> 全部落地(2026-09-28,HEAD `2cd6dbf6`);落地记录见 §12。本文档是
 > `docs/design/core-wasm-computed-output-frame.zh.md`(v1,gate commit
 > `291ff564`,fix-forward revision `f9de588e`)的**正式修正案**:把 v1 第 11 节
 > 明确推迟的四件事--模块内 String/Decimal/Duration 构造、raw-P4-D 计算与
