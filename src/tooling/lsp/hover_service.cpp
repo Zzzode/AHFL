@@ -801,6 +801,147 @@ workflow_temporal_clause_payload(const LspAnalysisSnapshot &snapshot, const Hove
     return payload;
 }
 
+// Produce a short, human-readable description of a compile-time ConstValue
+// for hover display. Handles scalar kinds directly and recurses into
+// composite kinds (Some/Struct/List/Set/Map).
+[[nodiscard]] std::string describe_const_value(const ConstValue &value) {
+    switch (value.kind) {
+    case ConstValueKind::NoneLiteral:
+        return "none";
+    case ConstValueKind::Bool:
+    case ConstValueKind::Integer:
+    case ConstValueKind::Float:
+    case ConstValueKind::Decimal:
+    case ConstValueKind::String:
+    case ConstValueKind::Duration:
+        return value.scalar;
+    case ConstValueKind::Unit:
+        return "{}";
+    case ConstValueKind::EnumVariant:
+        return value.scalar;
+    case ConstValueKind::ConstReference:
+        return value.scalar;
+    case ConstValueKind::Some:
+        if (!value.children.empty()) {
+            return "some(" + describe_const_value(value.children[0]) + ")";
+        }
+        return "some(...)";
+    case ConstValueKind::Struct: {
+        std::string result = "{";
+        for (std::size_t i = 0; i < value.children.size(); ++i) {
+            if (i > 0) {
+                result += ", ";
+            }
+            if (i < value.child_names.size()) {
+                result += value.child_names[i] + ": ";
+            }
+            result += describe_const_value(value.children[i]);
+        }
+        result += "}";
+        return result;
+    }
+    case ConstValueKind::List: {
+        std::string result = "[";
+        for (std::size_t i = 0; i < value.children.size(); ++i) {
+            if (i > 0) {
+                result += ", ";
+            }
+            result += describe_const_value(value.children[i]);
+        }
+        result += "]";
+        return result;
+    }
+    case ConstValueKind::Set: {
+        std::string result = "{";
+        for (std::size_t i = 0; i < value.children.size(); ++i) {
+            if (i > 0) {
+                result += ", ";
+            }
+            result += describe_const_value(value.children[i]);
+        }
+        result += "}";
+        return result;
+    }
+    case ConstValueKind::Map: {
+        std::string result = "{";
+        for (std::size_t i = 0; i + 1 < value.children.size(); i += 2) {
+            if (i > 0) {
+                result += ", ";
+            }
+            result += describe_const_value(value.children[i]);
+            result += ": ";
+            result += describe_const_value(value.children[i + 1]);
+        }
+        result += "}";
+        return result;
+    }
+    case ConstValueKind::Unary: {
+        if (!value.children.empty()) {
+            return value.scalar + describe_const_value(value.children[0]);
+        }
+        return value.scalar;
+    }
+    case ConstValueKind::Binary: {
+        if (value.children.size() >= 2) {
+            return describe_const_value(value.children[0]) + " " + value.scalar + " " +
+                   describe_const_value(value.children[1]);
+        }
+        return value.scalar;
+    }
+    case ConstValueKind::MemberAccess: {
+        if (!value.children.empty()) {
+            return describe_const_value(value.children[0]) + "." + value.scalar;
+        }
+        return value.scalar;
+    }
+    case ConstValueKind::IndexAccess: {
+        if (value.children.size() >= 2) {
+            return describe_const_value(value.children[0]) + "[" +
+                   describe_const_value(value.children[1]) + "]";
+        }
+        return value.scalar;
+    }
+    }
+    return value.scalar;
+}
+
+// Surface Typed-HIR facts that enrich the expression hover beyond the
+// resolved type: effect/purity, compile-time const value, method dispatch
+// target, and enum-variant construction facts.
+void add_expression_typed_facts(HoverPayload &payload, const TypedExpr &expr) {
+    // Effect: only surface non-pure effects (pure is the default).
+    if (expr.effect != ExprEffect::Pure) {
+        add_secondary_fact(payload, "Effect", inline_code(to_string(expr.effect)));
+    }
+
+    // Compile-time constant value.
+    if (expr.const_value.has_value()) {
+        add_primary_fact(
+            payload, "Const value", inline_code(describe_const_value(*expr.const_value)));
+    }
+
+    // Method dispatch target (for MethodCall expressions).  The
+    // dispatch_target is set directly on the MethodCall expression.
+    if (expr.dispatch_target.has_value()) {
+        const auto &dt = *expr.dispatch_target;
+        const auto label = dt.is_inherent ? "inherent" : "trait";
+        add_secondary_fact(
+            payload, "Dispatch", inline_code(dt.method_name) + " (" + label + " impl)");
+    }
+
+    // Enum-variant construction facts (struct-payload variant literals
+    // in function bodies, where the Expression target wins because the
+    // AST-based StructLiteral target is only registered for const-decl
+    // expressions).
+    if (expr.enum_variant_owner.has_value()) {
+        const auto &owner = !expr.enum_variant_owner_name.empty()
+                                ? expr.enum_variant_owner_name
+                                : std::string{"?"};
+        add_primary_fact(
+            payload, "Variant", inline_code(owner + "::" + expr.enum_variant_name));
+    }
+}
+
 [[nodiscard]] std::optional<HoverPayload>
 expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &target, bool member) {
     const auto *typed = snapshot.typed_program();
@@ -833,6 +974,8 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
     // KR3.5: surface flow-narrowing facts this expression establishes (populated
     // for if-conditions during type checking).
     add_narrowing_facts(payload, expr);
+    // Typed-HIR enrichment: effect, const value, dispatch target, variant facts.
+    add_expression_typed_facts(payload, expr);
     return payload;
 }
 
@@ -946,6 +1089,20 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
                                      inline_code(type_description(field.type)) +
                                          (field.has_default ? " (default)" : ""));
                 }
+            }
+        }
+        // Enum-variant construction fact: when the struct literal constructs
+        // a struct-payload enum variant, surface the owner::variant name.
+        if (const auto *typed = snapshot.typed_program(); typed != nullptr) {
+            if (const auto *expr =
+                    typed->find_expr_containing(target.token_range.begin_offset,
+                                                target.source_id);
+                expr != nullptr && expr->enum_variant_owner.has_value()) {
+                const auto &owner = !expr->enum_variant_owner_name.empty()
+                                        ? expr->enum_variant_owner_name
+                                        : std::string{"?"};
+                add_primary_fact(
+                    payload, "Variant", inline_code(owner + "::" + expr->enum_variant_name));
             }
         }
         return payload;
@@ -1139,6 +1296,10 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
     if (!expr->semantic_name.empty()) {
         add_secondary_fact(payload, "", expr->semantic_name);
     }
+    // KR3.5: surface flow-narrowing facts this expression establishes.
+    add_narrowing_facts(payload, *expr);
+    // Typed-HIR enrichment: effect, const value, dispatch target, variant facts.
+    add_expression_typed_facts(payload, *expr);
     return payload;
 }
 

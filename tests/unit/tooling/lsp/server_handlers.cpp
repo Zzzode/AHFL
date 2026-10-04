@@ -11759,6 +11759,108 @@ void test_manifest_deletion_falls_back_to_detached() {
           "manifestDeletion.refresh_count");
 }
 
+// ---------------------------------------------------------------------------
+// Typed-HIR hover enrichment: const value, effect, dispatch, variant facts.
+// ---------------------------------------------------------------------------
+
+void test_hover_const_value_fact() {
+    const std::string source =
+        "const answer: Int = 42;\n"
+        "\n"
+        "fn test() -> Int effect Pure decreases 0 {\n"
+        "    return answer;\n"
+        "}\n";
+
+    // Hover over the literal `42` in the const initializer — the
+    // Expression target fires (no ConstEval target for literals) and
+    // surfaces the compile-time value populated by ConstSema.
+    const auto hover = run_hover_request(source, "42");
+    check(hover.find("Const value") != std::string::npos,
+          "hoverConstValue.fact_label");
+    check(hover.find("`42`") != std::string::npos,
+          "hoverConstValue.fact_value");
+}
+
+void test_hover_effect_fact() {
+    const std::string source =
+        "fn nondet_fn() -> Int effect Nondet decreases 0 {\n"
+        "    return 42;\n"
+        "}\n"
+        "\n"
+        "fn test() -> Int effect Nondet decreases 0 {\n"
+        "    return nondet_fn() + 1;\n"
+        "}\n";
+
+    // Secondary facts are Debug-only; use debug detail level.
+    // Hover over the `+ 1` binary operation — the Expression target wins
+    // here (no higher-priority target for the operator) and the joined
+    // effect is Nondet (from the nondet_fn call operand).
+    const std::string debug_init =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"initializationOptions":{"hover":{"detailLevel":"debug"}}}})";
+    const auto hover = run_hover_request_with_init(source, "+ 1", debug_init);
+    check(hover.find("Effect") != std::string::npos,
+          "hoverEffect.fact_label");
+    check(hover.find("`nondet`") != std::string::npos,
+          "hoverEffect.fact_value");
+}
+
+void test_hover_dispatch_target_fact() {
+    const std::string source =
+        "struct Counter {\n"
+        "    value: Int;\n"
+        "}\n"
+        "\n"
+        "impl Counter {\n"
+        "    fn inc(self: Counter) -> Int effect Nondet {\n"
+        "        return self.value;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "fn test() -> Int effect Nondet decreases 0 {\n"
+        "    let c: Counter = Counter { value: 0 };\n"
+        "    return c.inc();\n"
+        "}\n";
+
+    // Secondary facts are Debug-only; use debug detail level.
+    // Hover over `inc()` (after the `c.` receiver) so the Expression
+    // target for the MethodCallExpr wins — the LocalBinding target for
+    // `c` only covers the receiver identifier range.
+    const std::string debug_init =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"initializationOptions":{"hover":{"detailLevel":"debug"}}}})";
+    const auto hover = run_hover_request_with_init(source, "inc()", debug_init);
+    check(hover.find("Dispatch") != std::string::npos,
+          "hoverDispatch.fact_label");
+    check(hover.find("`inc`") != std::string::npos,
+          "hoverDispatch.fact_value");
+    check(hover.find("inherent") != std::string::npos,
+          "hoverDispatch.inherent_impl");
+}
+
+void test_hover_variant_construction_fact() {
+    const std::string source =
+        "enum Maybe {\n"
+        "    Some { value: Int },\n"
+        "    None,\n"
+        "}\n"
+        "\n"
+        "fn test() -> Maybe effect Pure decreases 0 {\n"
+        "    return Maybe::Some { value: 42 };\n"
+        "}\n";
+
+    // In function bodies the AST-based StructLiteral target is not
+    // registered (add_ast_targets only processes const-decl expressions),
+    // so the Expression target (priority 20) wins and surfaces the
+    // enum-variant construction fact via add_expression_typed_facts.
+    // Hover at the opening brace — the TypeReference target for `Maybe`
+    // (narrower range) only covers the enum name.
+    const auto hover = run_hover_request(source, "{ value: 42 }");
+    const auto hover_body = response_body_for_id(hover, 2);
+    check(hover_body.find("Variant") != std::string::npos,
+          "hoverVariant.fact_label");
+    check(hover_body.find("`Maybe::Some`") != std::string::npos,
+          "hoverVariant.fact_value");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -11931,6 +12033,12 @@ int main() {
     test_malformed_manifest_toml_reports_diagnostic();
     test_manifest_references_nonexistent_export_module();
     test_manifest_deletion_falls_back_to_detached();
+
+    // Typed-HIR hover enrichment: const value, effect, dispatch, variant facts.
+    test_hover_const_value_fact();
+    test_hover_effect_fact();
+    test_hover_dispatch_target_fact();
+    test_hover_variant_construction_fact();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
