@@ -1,7 +1,7 @@
 # Core-IR P9: Layered IR-JSON Projection for the Execution Layer -- Design
 
-> Status: **APPROVED** (RFC 0026 P9 / KR6.9). Design gate for the KR6.9 slice ladder
-> (§10 B1–B4). This document is the tracked design decision that
+> Status: **LANDED** (RFC 0026 P9 / KR6.9; B1–B4 landed 2026-09-21..22, see §12).
+> Originally the design gate for the KR6.9 slice ladder (§10 B1–B4). This document is the tracked design decision that
 > `docs/reference/rfc-process.zh.md` §设计原则.1 requires for a new stable
 > artifact: RFC 0026 calls the layered IR-JSON projection a **new format**
 > (`docs/rfcs/0026-ir-tower-and-execution-model.zh.md` L262-263, Open Question Q5
@@ -650,3 +650,91 @@ flag: the layered projection is purely additive.
 | Re-run the full Core verifier inside the reader | The reader is an admission boundary for a document's shape, not a substitute for verification; conflating them makes round-trip failures ambiguous |
 | Delete the single-layer projection | It is the AHFL-IR layer's permanent projection (KR6.3 alias-first); the three-layer tower keeps one inspection projection per layer (§8, amended) |
 | Pretty-print with `null` for absent optionals | Diverges from the single-layer writer and makes "absent" and "present-but-null" two encodings of one state. NOTE: this rejects `null` as the encoding for an ABSENT FIELD only. `field_nominal_types` (§4) has no absent state — the slot exists and the array length is pinned — so it uses `null` for `kInvalid`, which is the ONE sanctioned `null` in the document |
+
+## 12. Landing record (2026-09-21..22, retroactive 2026-10-04)
+
+All four slices landed in a single 2026-09-21..22 window with no design-gate
+rework. The implementation matches this document; the deviations below are
+fix-forwards that tightened the fail-closed contract, not design changes.
+
+### 12.1 B1 — X-macro kind tables (`7a18d69b`, 2026-09-21)
+
+Core node JSON kind tables are derived from X-lists
+(`CORE_EXPR_KINDS` / `CORE_STMT_KINDS` / `CORE_PATTERN_KINDS` /
+`CORE_TYPE_KINDS` / …). One X-macro drives the C++ enum, the JSON string
+table, and the visitor dispatch, eliminating the hand-written kind↔string
+mapping as a second source of truth (Principle 3).
+
+### 12.2 B2/B3 — Layered Core-IR JSON codec (`218b2d3a`, 2026-09-21)
+
+`src/compiler/ir/core_json.cpp` (5066 lines) implements the full
+writer/reader pair specified in §4–§7:
+
+- Envelope `ahfl.core.v1`; fixed table order (§4–§5 normative copy).
+- Hash-consed `value_types` arena rebuild on read (§6.1).
+- Identity-remap assert: every `CoreValueTypeId` indexing
+  `CoreProgram::value_types` is rewritten on read (§6.2, with the owning-site
+  list completed by the B0 fix-forward).
+- `core_program_equal` structural equality (§7 R2).
+- R1 byte-exact + R2 structural round-trip.
+- Reader is an untrusted-input admission boundary with typed
+  `CoreJsonDiagnostic{code,message,SourceRangeOpt}` and the §7-pinned
+  signature `CoreJsonParseResult parse_core_ir_json(std::string_view)`.
+
+### 12.3 B3 fix-forwards
+
+| Commit | Date | What |
+|---|---|---|
+| `de768479` | 2026-09-21 | Renamed entry points from `*_program_json` to the design-pinned `parse_core_ir_json` / `print_core_ir_json` spelling (§7). No behavior change. |
+| `79042a47` | 2026-09-21 | Added the negative test pinning the reader's region-nesting depth bound (`core.json.REGION_TOO_DEEP`); a body nesting region trees past the bound is rejected rather than overflowing the native stack. |
+| `4b086671` | 2026-09-21 | Closed four fail-closed holes: (P0) the writer's `kInvalid` gate left malformed JSON for required-id positions no audit entry covered — now latches `failed_` and publishes the whole document into a scratch buffer only when nothing failed, so the caller receives NO artifact rather than a malformed one; (P1) the unknown-field gate was not applied inside nested objects (`symbol_ref`, `source_range`, bounds/length_bounds); (P1) `kMaxRegionNestingDepth` was defeated by the shared JSON parser's unbounded recursion; (P1) reader depth bound completed. |
+
+### 12.4 B4 — CLI surface (`971b6a1e`, 2026-09-21)
+
+- `CommandKind::EmitCoreIrJson` + `BackendKind::CoreIrJson`, registered as
+  `emit core-ir-json` (artifact id `core-ir-json`) and routed to the core
+  backend path (`lower_ahfl_to_core` → `print_core_ir_json`, layout-free).
+- `config/product-scope-freeze.json` records the new CommandKind /
+  BackendKind / artifact id.
+- CLI golden fleet `ahflc.emit_core_ir_json.*` (3 cases:
+  `fail_unlowered_statement`, `flow_workflow_semantics`,
+  `workflow_value_flow`), anchored on the same package fixtures as the
+  single-layer `emit ir-json` goldens.
+- The single-layer `ir-json` / `text ir` projections were marked
+  deprecated in `--help` and the reference docs (mark-deprecate only;
+  removal was bound to KR6.8).
+- `ahfl_add_command_fail_test` learned to split a multi-token subcommand so
+  `emit core-ir-json` is passed as two argv entries.
+
+### 12.5 B4 fix-forward (`fce3e91a`, 2026-09-22)
+
+`resolve_project_input`'s pure `ProjectInputModel` snapshot regressed two
+filesystem shapes the pre-model direct pipeline handled: (P0) the freeze walk
+used `recursive_directory_iterator` without `follow_directory_symlink`, so a
+source reachable only through a symlinked directory was never collected;
+(P1) `skip_permission_denied` made the walk silently skip a mode-0111
+directory the process can traverse but not list, so the model-only existence
+gate read "absent" as "does not exist". Fixed by an explicit recursive walk
+with a `(device, inode)` visited set (via `stat(2)`) and a fallback
+`std::filesystem::exists` probe whenever the frozen snapshot cannot answer.
+
+### 12.6 Deprecation revocation (`c9b1ae0e`, 2026-09-29)
+
+The §8 Q5 decision to mark the single-layer projection deprecated was
+revoked. The KR6.8 WH-S survival-line extraction (2026-09-29) proved the
+single-layer projection is the AHFL-IR layer's permanent projection
+(KR6.3 alias-first): the three-layer tower keeps one inspection projection
+per layer, and deprecating a live layer's projection was wrong. §8 was amended
+in place to "permanent per-layer projections, no deprecation". This is a
+docs-only change; no code was removed.
+
+### 12.7 Test evidence
+
+| Test | What it pins |
+|---|---|
+| `ahfl.ir.core_json_round_trip` (15 TEST_CASEs) | R1 byte-exact + R2 structural round-trip; full 64-bit numeric domain; closure / fn captures; reader negative diagnostics (malformed input, unknown fields, `kInvalid` required ids, out-of-range ids, region depth); writer fail-closed (NO artifact on failure); real-sysroot std-nominal corpus; discovered corpus pinned set |
+| `ahflc.emit_core_ir_json.fail_unlowered_statement` | `core.UNLOWERED_STATEMENT` as a user-facing diagnostic, not an internal error |
+| `ahflc.emit_core_ir_json.flow_workflow_semantics` | Flow / workflow semantics round-trip through the CLI |
+| `ahflc.emit_core_ir_json.workflow_value_flow` | Workflow value-flow round-trip through the CLI |
+
+**KR6.9 is closed.**
