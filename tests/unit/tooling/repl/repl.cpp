@@ -1,5 +1,7 @@
 #include "tooling/repl/repl.hpp"
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 static int test_count = 0;
@@ -293,6 +295,167 @@ int main() {
         check(!r.success, "WASM=OFF eval refuses");
         check(r.output.find("requires the embedded wasm engine") != std::string::npos,
               "WASM=OFF refusal message");
+    }
+#endif
+
+    // --- Session accumulation tests (kr68 §12.8.11) ---
+
+    // Test 22: :clear command.
+    {
+        ahfl::repl::Repl repl;
+        (void)repl.process_input("struct Temp { v: Int; }");
+        check(repl.session_declarations() > 0, "session: declaration accumulated");
+        auto r = repl.process_input(":clear");
+        check(r.success && r.output == "Session cleared.", ":clear succeeds");
+        check(repl.session_declarations() == 0, "session: cleared");
+    }
+
+    // Test 23: Bad line does not pollute the session (kr68 §12.8.11.4).
+    {
+        ahfl::repl::Repl repl;
+        (void)repl.process_input("struct Good { v: Int; }");
+        auto bad = repl.process_input("const bad: Int = \"not an int\";");
+        check(!bad.success, "session: bad declaration fails");
+        check(repl.session_declarations() == 1, "session: bad line not accumulated");
+        // The good declaration is still visible via :type.
+        auto r = repl.process_input(":type Good { v: 1 }");
+        check(r.success, "session: good declaration still visible after bad line");
+    }
+
+    // Test 24: :type with session prologue (kr68 §12.8.11.1).
+    {
+        ahfl::repl::Repl repl;
+        (void)repl.process_input("struct MyType { v: Int; }");
+        auto r = repl.process_input(":type MyType { v: 42 }");
+        check(r.success, "session :type succeeds");
+        check(r.output.find("MyType") != std::string::npos, "session :type returns MyType");
+    }
+
+    // Test 25: :load with a self-contained file (kr68 §12.8.11.2).
+    {
+        const auto path = std::filesystem::temp_directory_path() / "ahfl_repl_test_load.ahfl";
+        {
+            std::ofstream f(path);
+            f << "struct Loaded { v: Int; }\n";
+        }
+        ahfl::repl::Repl repl;
+        auto r = repl.process_input(":load " + path.string());
+        check(r.success, ":load succeeds");
+        check(r.output.find("Loaded") != std::string::npos, ":load reports loaded count");
+        check(repl.session_declarations() > 0, ":load accumulates into session");
+        // The loaded type is visible.
+        auto t = repl.process_input(":type Loaded { v: 1 }");
+        check(t.success, ":load type visible via :type");
+        std::filesystem::remove(path);
+    }
+
+    // Test 26: :load rejects module declarations (kr68 §12.8.11.3).
+    {
+        const auto path = std::filesystem::temp_directory_path() / "ahfl_repl_test_mod.ahfl";
+        {
+            std::ofstream f(path);
+            f << "module forbidden;\nstruct X { v: Int; }\n";
+        }
+        ahfl::repl::Repl repl;
+        auto r = repl.process_input(":load " + path.string());
+        check(!r.success, ":load rejects module declaration");
+        check(r.output.find("not supported") != std::string::npos,
+              ":load honest error for module");
+        check(repl.session_declarations() == 0, ":load rejected file not accumulated");
+        std::filesystem::remove(path);
+    }
+
+    // Test 27: :load rejects a missing file.
+    {
+        ahfl::repl::Repl repl;
+        auto r = repl.process_input(":load /nonexistent/path/file.ahfl");
+        check(!r.success, ":load missing file fails");
+        check(r.output.find("cannot load file") != std::string::npos,
+              ":load honest error for missing file");
+    }
+
+    // Test 27b: :load rejects import and pub use (kr68 §12.8.11.3).
+    {
+        const auto dir = std::filesystem::temp_directory_path();
+        {
+            const auto path = dir / "ahfl_repl_test_import.ahfl";
+            {
+                std::ofstream f(path);
+                f << "import std::prelude;\nstruct Y { v: Int; }\n";
+            }
+            ahfl::repl::Repl repl;
+            auto r = repl.process_input(":load " + path.string());
+            check(!r.success, ":load rejects import");
+            check(r.output.find("not supported") != std::string::npos,
+                  ":load honest error for import");
+            std::filesystem::remove(path);
+        }
+        {
+            const auto path = dir / "ahfl_repl_test_pubuse.ahfl";
+            {
+                std::ofstream f(path);
+                f << "pub use something;\nstruct Z { v: Int; }\n";
+            }
+            ahfl::repl::Repl repl;
+            auto r = repl.process_input(":load " + path.string());
+            check(!r.success, ":load rejects pub use");
+            check(r.output.find("not supported") != std::string::npos,
+                  ":load honest error for pub use");
+            std::filesystem::remove(path);
+        }
+    }
+
+    // Test 27c: :load with empty path (kr68 §12.8.11.2).
+    {
+        ahfl::repl::Repl repl;
+        auto r = repl.process_input(":load ");
+        check(!r.success, ":load empty path fails");
+        check(r.output.find("requires a file path") != std::string::npos,
+              ":load honest error for empty path");
+    }
+
+    // Test 28: execute_command remains stateless (kr68 §12.8.11.5).
+    {
+        auto r1 = ahfl::repl::execute_command("struct S { v: Int; }");
+        check(r1.success, "stateless: declaration succeeds");
+        // A second call has no session — S is not visible.
+        auto r2 = ahfl::repl::execute_command(":type S { v: 1 }");
+        check(!r2.success, "stateless: declaration not visible in next call");
+    }
+
+    // Test 29: :simulate can reference session types (kr68 §12.8.11.5).
+    {
+        ahfl::repl::Repl repl;
+        (void)repl.process_input("struct Req { value: String; }");
+        const std::string agent =
+            "agent Sa { input: Req; context: Unit; output: Req; "
+            "states: [Init, Done]; initial: Init; final: [Done]; "
+            "capabilities: []; transition Init -> Done; }";
+        auto r = repl.process_input(":simulate " + agent);
+        check(r.success, "session :simulate succeeds");
+        check(r.output.find("Init -> Done") != std::string::npos,
+              "session :simulate reports transition");
+    }
+
+#ifdef AHFL_ENABLE_BACKEND_WASM
+    // Test 30: Session accumulation — struct declared on one line is visible
+    // on the next (kr68 §12.8.11.6 criterion 1).
+    {
+        ahfl::repl::Repl repl;
+        auto r1 = repl.process_input("struct Point { x: Int; y: Int; }");
+        check(r1.success, "session: struct declaration succeeds");
+        auto r2 = repl.process_input("Point { x: 1, y: 2 }");
+        check(r2.success, "session: struct visible on next line");
+    }
+
+    // Test 31: :clear makes previous declarations invisible (kr68
+    // §12.8.11.6 criterion 3).
+    {
+        ahfl::repl::Repl repl;
+        (void)repl.process_input("struct Temp2 { v: Int; }");
+        (void)repl.process_input(":clear");
+        auto r = repl.process_input("Temp2 { v: 1 }");
+        check(!r.success, "session: struct invisible after :clear");
     }
 #endif
 

@@ -1716,6 +1716,108 @@ eval 路径机制:stage-1 `infer_repl_type` 先失败(resolve 报 UNKNOWN_CALLAB
 
 **切片名:REPL session accumulation + prelude mode(post-WH-9)。** 进入条件:(a) std 嵌入二进制,或显式 REPL sysroot 契约(不静默依赖 env/CWD/构建树);(b) 会话累积(逐行重跑累积源码,或增量 typechecker 架构)——用户自声明 enum/struct 跨行可见;(c) 合成 agent 的 module 声明 / 前缀污染决议(§12.8.10.3 第 3 条重开);(d) `:clear`/`:reset` + 坏行不污染会话的错误恢复语义;(e) `:verify`/`:simulate` 与 eval 的 prelude 模式一致性。主流参考:evcxr(会话累积 + 重声明)、GHCi(`it` 绑定 + `:load`)。
 
+### 12.8.11 Post-WH-9 REPL session accumulation + prelude mode 决策(2026-10-04,coordinator 设计,no human gate)
+
+WH-9 落地后,§12.8.10.12 §4 的后援切片进入条件全部满足。本节是该切片的书面决策;builder 按 §12.8.11.1..§12.8.11.5 实现。
+
+**复核事实(vs HEAD `75e33f6a`):**
+
+1. **REPL 管线仍是 detached 单源单元。** `run_pipeline`(`repl.cpp:49-89`)= `Frontend::parse_text("repl", source)` + `Resolver::resolve` + `TypeChecker::check`,单个 `ast::Program`,无 ProjectInput / SourceGraph / package graph。prelude 注入只存在于 Project 模型层(`project.cpp:23` `kStdPreludeModule`、`:771-782` 隐式 `import std::prelude`)。
+2. **零跨行状态(实证)。** `Repl` 类(`repl.hpp:37-59`)只持有 `config_` / `history_` / 四个 handler `std::function`;`history_` 是 append-only 的原始输入向量,从不回灌编译。默认 handler 是匿名命名空间内的自由函数(`default_eval_handler` `repl.cpp:399` 等),不捕获任何状态。
+3. **std prelude 不可直接加载。** `std/prelude.ahfl` 以 `module std::prelude;` 开头,import 六个 std 子模块(`std::cmp` / `std::collections` / `std::fmt` / `std::option` / `std::result` / `std::string`),并使用 `pub use` 再导出。detached 管线不支持 import / 多模块 / `pub use`——直接加载会在 parse/resolve 阶段失败。
+4. **合成 agent 的 prologue 为空。** `default_eval_handler`(`repl.cpp:440-442`)注释:"The prologue is empty: the REPL takes one expression per line"。stage-1 probe fn(`repl.cpp:119-120`)同样无 prologue。
+5. **`execute_command` 自由函数与 `Repl::process_input` 命令分发逻辑重复。** 两者都处理 `:quit` / `:help` / `:type` / `:verify` / `:simulate` / eval;区别仅在于 `execute_command` 用默认自由函数 handler,`Repl::process_input` 用注入的 handler。
+
+#### 12.8.11.1 D1 — 会话累积机制:逐行重跑累积源码(选择 line-by-line rerun,不建增量 typechecker)
+
+**决策:** `Repl` 类持有 `std::string session_source_`,累积所有**已接受**的声明。每次 eval / `:type` / `:verify` / `:simulate` 把 `session_source_` 作为 prologue 拼接到用户输入前面,走完整 `run_pipeline`。
+
+**为何 line-by-line rerun 击败增量 typechecker:**
+- 增量 typechecker 是架构级变更(持久 SymbolTable / 增量 resolve / 增量 typecheck),远超 REPL 会话累积的范围;REPL 不是性能关键路径,56 核机器上单次 parse+resolve+typecheck 在毫秒级。
+- evcxr(Rust REPL)的主流做法也是重编译累积 crate,不是增量 typechecker。
+- line-by-line rerun 是诚实的:每次 eval 都看到完整的会话源码,不存在增量状态不一致。
+
+**累积规则:**
+- **声明(const / struct / enum / fn / agent / flow 等)走 declaration fallback 路径:** stage-1 probe fn 失败(Parse/Resolve)→ 对 `session_source_ + input` 跑 `run_pipeline` → 成功则把 `input` 追加到 `session_source_`(追加 `\n` 分隔),返回 IR dump;失败则返回错误,**不追加**(坏行不污染会话)。
+- **表达式走 stage-2 wasm 路径:** stage-1 probe fn 成功 → 合成 agent 的 prologue 从空改为 `session_source_` → 编译运行。表达式结果**不累积**(只有声明累积;这匹配 evcxr/GHCi 语义——表达式求值但不绑定变量,除非用户显式声明 `const`)。
+- **`:type` 的 probe fn 同样拼接 `session_source_` 作为 prologue。**
+
+#### 12.8.11.2 D2 — Prelude 模式:显式 `:load <path>` + `--prelude <path>` flag(不嵌入 std,不静默依赖 env/CWD/构建树)
+
+**决策:** 两条显式加载路径:
+1. **`:load <path>` REPL 命令:** 运行时加载自包含 AHFL 文件到会话。
+2. **`--prelude <path>` 命令行 flag:** 启动时加载,等效于第一行自动 `:load <path>`。
+
+**为何不嵌入 std:**
+- std prelude 有 `module` 声明 + 6 个 import + `pub use`(事实 3),detached 管线无法处理。嵌入 std 需要先解决 detached 管线的 import / 多模块支持,这是独立的大项目。
+- 嵌入 std 会增加二进制体积,且 std 变更需要重新嵌入。
+- 显式 `:load` / `--prelude` 是诚实的契约:用户明确指定文件,不静默依赖 env / CWD / 构建树。
+
+**加载的文件必须自包含:** 无 `module` 声明(避免前缀污染,见 D3)、无 `import`(detached 管线不支持)、无 `pub use`。违反时返回诚实错误。
+
+**prelude 加载失败不阻止 REPL 启动:** 如果 `--prelude` 文件不存在或编译失败,REPL 打印警告并以空会话启动(不 crash)。这匹配 GHCi 的 `:load` 失败语义。
+
+#### 12.8.11.3 D3 — Module 声明 / 前缀污染:保持无 module 声明(不重开 §12.8.10.3 第 3 条)
+
+**决策:** 会话源码和合成 agent 继续**无 module 声明**。所有声明在默认匿名模块中,nominal 类型不带 `repl::` 前缀。
+
+**为何不重开 §12.8.10.3 第 3 条:**
+- §12.8.10.3 第 3 条已实证 settle:module 声明给全部 nominal 类型加 `repl::` 前缀,污染 `print_value` 输出。
+- 会话累积不需要 module 声明——所有声明在同一匿名模块中,互相可见。
+- `:load` 的文件如果有 module 声明,返回诚实错误("module declarations are not supported in the REPL session")。
+
+#### 12.8.11.4 D4 — `:clear` 命令 + 错误恢复语义
+
+**决策:** 新增 `:clear` 命令(无别名,保持简短)。清空 `session_source_`,返回 "Session cleared."。
+
+**错误恢复语义:**
+- 坏行(parse / resolve / typecheck 失败)**不追加**到 `session_source_`。
+- 声明 fallback 路径:对 `session_source_ + input` 跑 pipeline,成功才追加。
+- 表达式路径:stage-2 编译/运行失败不影响 `session_source_`(表达式本来就不累积)。
+- `:load` 失败不污染会话。
+
+#### 12.8.11.5 D5 — `:verify` / `:simulate` 一致性 + `execute_command` 重构
+
+**决策:** `:verify` 和 `:simulate` 的输入拼接 `session_source_` 作为 prologue,与 eval / `:type` 一致。
+
+**`execute_command` 重构:** 消除与 `Repl::process_input` 的重复命令分发逻辑。`execute_command` 变为创建临时 `Repl`(默认 config,无 prelude)并调用 `process_input` 的薄包装。所有命令分发逻辑收口到 `Repl::process_input`。
+
+**handler 架构:** 默认 handler 从匿名命名空间自由函数改为 `Repl` 成员函数。`Repl` 构造函数把成员函数包装为捕获 `this` 的 `std::function` 闭包。handler 注入签名不变(`std::function<std::string(const std::string &)>`),测试注入的 mock handler 不受影响。`Repl` 删除 copy/move 构造(闭包捕获 `this`,拷贝会悬空)。
+
+#### 12.8.11.6 验收标准
+
+1. WASM=ON:声明 `struct Point { x: Int; y: Int; }` → 下一行 `Point { x: 1, y: 2 }` 求值成功(wasm3 车道)。
+2. WASM=ON:声明 `enum Color { Green, Red }` → 下一行 `Color::Green` 求值成功。
+3. `:clear` 清空会话;清空后 `Point { x: 1, y: 2 }` 失败(声明不可见)。
+4. 坏行(如 `const x: Int = "not an int";`)不污染会话;下一行合法声明仍可见。
+5. `:type Point { x: 1, y: 2 }` 在声明 `Point` 后返回正确类型。
+6. `:load <path>` 加载自包含文件;文件有 module 声明时返回诚实错误。
+7. `--prelude <path>` 启动时加载;文件不存在时打印警告并以空会话启动。
+8. `:verify` / `:simulate` 的 agent 声明可引用会话累积的类型。
+9. WASM=OFF:eval 拒绝消息不变;声明 fallback / `:type` / `:clear` / `:load` 仍可用。
+10. 既有 21 个 REPL 单测全部通过(无回归)。
+
+#### 12.8.11.7 对抗性评审 + fix-forward(2026-10-04,coordinator 自审)
+
+builder 实现后,coordinator 直接读 diff 做对抗性评审(fork 继承 coordinator 上下文导致 reviewer 未产出 findings,coordinator 自审)。发现 6 个 P2,无 P0/P1:
+
+| # | 严重度 | 发现 | 修复 |
+|---|--------|------|------|
+| P2-1 | P2 | `has_module_or_import` 用 `starts_with("module ")` 精确匹配,tab 分隔(`module\tfoo;`)漏检 | 改为 tokenize 首词后比较 `module`/`import`/`pub` |
+| P2-2 | P2 | `:load` 路径 trim 用 `erase(begin())` 循环,O(n²) | 改为 `find_first_not_of` + `substr` |
+| P2-3 | P2 | `:load` 路径不 trim trailing whitespace,`:load /tmp/f ` 尾部空格进路径 | 同时 trim 首尾 |
+| P2-4 | P2 | `default_load` 成功消息用 `session_declarations()`(全会话计数),已有 3 条 + 加载 2 条报 "Loaded 5" | 改为 `std::count(content, '\n')` 只计本次加载 |
+| P2-5 | P2 | 缺 `import`/`pub use` 拒绝测试(只测了 `module`) | 新增 Test 27b |
+| P2-6 | P2 | 缺 `:load ` 空路径测试 | 新增 Test 27c |
+
+fix-forward 后 REPL 测试 94/94 checks 通过(5 test targets)。
+
+**验证矩阵(全绿)**:
+- dev 全套(-j56):仅 3 个 pre-existing pnpm 失败(#72/#75/#76),零回归
+- ASan 全套 ALONE(-j56):仅 3 个 pre-existing pnpm,零 ASan/LSan finding
+- WASM=OFF 冷构建 + 全套:仅 1 个 pre-existing pnpm(#20),零回归
+- release + install/export consumer:consumer 找到 AHFL、链接、运行成功
+
 ## 12.9 WH-8 decisions (2026-09-30, dedicated decision agent, no human gate)
 
 本节是 WH-8(DAP 从 evaluator `WorkflowRuntime` 切换到 `WasmWorkflowRuntime` facade)的书面决策。决策代理只读地对照 HEAD `9bca5507` 复核了源码,未运行构建/测试。**继承不重议**:WASM=OFF 策略(launch/execute 拒绝、非执行功能可用、gate 只在 composition edge)、facade config hooks/cancellation/monotonic_clock 在 WH-8 引入、facade ctor 编译失败语义 = `run()` 时以 DiagnosticBag 浮现(§12.7.8)、link-edge flip(§12.7.3 表 WH-8 行:`ahfl_tooling_dap` 翻到 `WasmWorkflowRuntime`;`ahfl_runtime_engine` 的 evaluator edge 在 DAP 成为最后一个外部生产 includer 后 PUBLIC→PRIVATE)。

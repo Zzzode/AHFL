@@ -7,14 +7,23 @@ Modes:
   wasm      WASM=ON: eval 1+2 -> 3, "hello" -> "hello" (quoted), {} -> {}.
   wasm-off  WASM=OFF: eval refuses with the actionable diagnostic; :type and
             the Unit short-circuit still work.
+  session   WASM=ON: session accumulation — struct declared on one line is
+            visible on the next; :clear resets the session.
+  prelude   WASM=ON: --prelude flag loads a file at startup; its types are
+            visible in the session.
 """
+import os
 import subprocess
 import sys
+import tempfile
 
 
-def run_repl(repl, inp):
+def run_repl(repl, inp, extra_args=None):
+    cmd = [repl]
+    if extra_args:
+        cmd.extend(extra_args)
     result = subprocess.run(
-        [repl],
+        cmd,
         input=inp,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -34,7 +43,7 @@ def assert_contains(haystack, needle, label):
 
 def main():
     if len(sys.argv) < 2:
-        raise SystemExit("usage: repl_smoke.py <ahfl-repl> [baseline|wasm|wasm-off]")
+        raise SystemExit("usage: repl_smoke.py <ahfl-repl> [baseline|wasm|wasm-off|session|prelude]")
 
     repl = sys.argv[1]
     mode = sys.argv[2] if len(sys.argv) > 2 else "baseline"
@@ -52,6 +61,31 @@ def main():
         assert_contains(stdout, "requires the embedded wasm engine", "WASM=OFF refusal")
         assert_contains(stdout, "{}", "Unit short-circuit")
         assert_contains(stdout, "Int", ":type 1 + 2 -> Int")
+    elif mode == "session":
+        stdout, stderr = run_repl(
+            repl,
+            b"struct SmokePoint { x: Int; y: Int; }\n"
+            b"SmokePoint { x: 1, y: 2 }\n"
+            b":clear\n"
+            b":quit\n",
+        )
+        assert_contains(stdout, "SmokePoint", "session: struct declared and used")
+        assert_contains(stdout, "Session cleared.", ":clear works")
+    elif mode == "prelude":
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ahfl", delete=False, prefix="ahfl_prelude_"
+        ) as f:
+            f.write("struct PreludePoint { x: Int; y: Int; }\n")
+            prelude_path = f.name
+        try:
+            stdout, stderr = run_repl(
+                repl,
+                b"PreludePoint { x: 10, y: 20 }\n:quit\n",
+                ["--prelude", prelude_path],
+            )
+            assert_contains(stdout, "PreludePoint", "prelude: type visible from prelude file")
+        finally:
+            os.unlink(prelude_path)
     else:
         stdout, stderr = run_repl(repl, b":help\n{}\n:quit\n")
         assert_contains(stdout, "AHFL REPL Commands:", "help header")

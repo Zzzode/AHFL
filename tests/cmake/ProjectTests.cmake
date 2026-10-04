@@ -1855,6 +1855,13 @@ if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.repl.process_smoke_wasm
         COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl> wasm
     )
+    # kr68 §12.8.11: session accumulation + prelude mode smoke tests.
+    add_test(NAME ahfl.repl.process_smoke_session
+        COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl> session
+    )
+    add_test(NAME ahfl.repl.process_smoke_prelude
+        COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl> prelude
+    )
 endif()
 
 # WH-7: WASM=OFF eval refusal smoke. Registered only when the backend is

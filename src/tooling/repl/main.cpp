@@ -25,7 +25,7 @@ bool has_trailing_newline(const std::string &text) {
 }
 
 void print_usage(std::ostream &out) {
-    out << "Usage: ahfl-repl [--help]\n\n"
+    out << "Usage: ahfl-repl [--prelude <path>] [--help]\n\n"
         << "Starts the AHFL interactive REPL. Commands can also be piped on stdin.\n\n"
         << ahfl::repl::get_help_text();
 }
@@ -33,22 +33,25 @@ void print_usage(std::ostream &out) {
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc > 2) {
-        print_usage(std::cerr);
-        return 2;
-    }
-    if (argc == 2) {
-        const std::string arg = argv[1];
+    std::string prelude_path;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
             print_usage(std::cout);
             return 0;
+        }
+        if (arg == "--prelude" && i + 1 < argc) {
+            prelude_path = argv[++i];
+            continue;
         }
         std::cerr << "unknown option: " << arg << '\n';
         print_usage(std::cerr);
         return 2;
     }
 
-    ahfl::repl::Repl repl;
+    ahfl::repl::ReplConfig config;
+    config.prelude_path = prelude_path;
+    ahfl::repl::Repl repl(std::move(config));
     const bool interactive = is_interactive_stdin();
     std::string line;
 
