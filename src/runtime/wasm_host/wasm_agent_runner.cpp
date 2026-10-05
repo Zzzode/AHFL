@@ -83,6 +83,14 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
                                    site.result_payload_capacity});
         }
     }
+    // KR6.6: String concatenation result payloads live in the runtime bump
+    // heap [construct_heap_base, 65536). The base is zero on a module without
+    // String concat (the construct heap is disabled).
+    if (section.construct_heap_base != 0) {
+        regions.push_back(
+            {section.construct_heap_base,
+             irc::kCoreWasmFixedLinearMemoryCapacityBytes});
+    }
     return regions;
 }
 

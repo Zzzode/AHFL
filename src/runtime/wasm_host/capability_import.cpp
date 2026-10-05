@@ -168,6 +168,14 @@ build_bridge_string_regions(const ir::core::CoreFrameLayoutSection &section,
             regions.push_back({site.result_payload_base, *end});
         }
     }
+    // KR6.6: String concatenation result payloads live in the runtime bump
+    // heap [construct_heap_base, 65536). The base is zero on a module without
+    // String concat (the construct heap is disabled).
+    if (section.construct_heap_base != 0) {
+        regions.push_back(
+            {section.construct_heap_base,
+             ir::core::kCoreWasmFixedLinearMemoryCapacityBytes});
+    }
     return regions;
 }
 

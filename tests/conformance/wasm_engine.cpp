@@ -472,6 +472,9 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
         layouts->push(jlayout(section.table, irc::CoreLayoutId{i}));
     }
     node->set("layouts", std::move(layouts));
+    // KR6.6: the runtime construct-heap base (String concat result region).
+    // Zero on a module without String concat.
+    node->set("construct_heap_base", juint(lane.construct_heap_base));
     return node;
 }
 

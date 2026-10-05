@@ -198,7 +198,13 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // fb3_f64_capture: F64 env store/load + f64 functype params) agree on the
 // Node embedded engine without any rich-wire-type skip (the f64 is internal
 // to the module, not in the frame I/O): 69/8 -> 71/8.
-constexpr int kExpectedAgreed = 71;
+// KR6.6 String concatenation: three scenarios across one case
+// (kr66_string_concat: short/empty/longer prefix + literal suffix;
+// the concat result payload is bump-allocated in the construct heap
+// and copied with memory.copy; the Node host authorizes the construct-heap
+// region via the frame-layout v4 construct_heap_base extension):
+// 71/8 -> 74/8.
+constexpr int kExpectedAgreed = 74;
 constexpr int kExpectedSkipped = 8;
 
 // Pinned STEM SET of cases allowed to declare

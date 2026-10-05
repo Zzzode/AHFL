@@ -875,7 +875,9 @@ function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = 
       // v2 V2-B, the fixed read-only rodata span [rodata_base, +extent) the
       // module's Data section initialized. A V2-C bridge result span is added
       // later; anything else (scratch/heap pointer, wrap-around) fails closed
-      // without echoing bytes.
+      // without echoing bytes. KR6.6: the runtime construct-heap span
+      // [construct_heap_base, 65536) is also authorized (String concat
+      // result payloads).
       const arenaLo = Number(lane.payload_arena_base);
       const arenaHi = arenaLo + Number(lane.payload_arena_capacity);
       const inArena = ptr >= arenaLo && len <= arenaHi - ptr;
@@ -883,11 +885,15 @@ function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = 
       const rodataHi = rodataLo + Number(lane.rodata_extent || 0);
       const inRodata =
         rodataLo !== 0 && ptr >= rodataLo && len <= rodataHi - ptr;
+      const heapLo = Number(lane.construct_heap_base || 0);
+      const inHeap =
+        heapLo !== 0 && ptr >= heapLo && len <= 65536 - ptr;
       const inExtra = extraStringRegions.some(
         (r) => ptr >= Number(r.lo) && len <= Number(r.hi) - ptr);
-      if (!inArena && !inRodata && !inExtra) {
+      if (!inArena && !inRodata && !inHeap && !inExtra) {
         frameFail("frame string payload lies outside an authorized region " +
-                  "(input-payload arena, rodata, or a bridge result placement)");
+                  "(input-payload arena, rodata, construct heap, or a bridge " +
+                  "result placement)");
       }
       return new TextDecoder().decode(readRaw(e, ptr, len));
     }
@@ -1305,7 +1311,9 @@ async function runWorkflowP6(compiled) {
     }
     // Encode the workflow output slot against the workflow output root. String
     // payloads are authorized in rodata, the entry payload arena, or any bridge
-    // call site's disjoint result placement (V2-D emission half 2).
+    // call site's disjoint result placement (V2-D emission half 2). KR6.6: the
+    // runtime construct-heap span [construct_heap_base, 65536) is also
+    // authorized (String concat result payloads).
     const stringRegions = [];
     if (frameLane.rodata_extent > 0) {
       stringRegions.push({lo: frameLane.rodata_base,
@@ -1321,6 +1329,9 @@ async function runWorkflowP6(compiled) {
                             hi: Number(site.result_payload_base) +
                                 Number(site.result_payload_capacity)});
       }
+    }
+    if (Number(frameLane.construct_heap_base || 0) !== 0) {
+      stringRegions.push({lo: Number(frameLane.construct_heap_base), hi: 65536});
     }
     const output = readValue(e, frameLane, W, L, roots.output,
                              frameLane.output_layout, tuple[1], backing,

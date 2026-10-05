@@ -248,14 +248,10 @@ int main() {
         check(r.success && r.output == "4.0", "1.5 + 2.5 -> 4.0");
     }
     {
+        // KR6.6: String concatenation is supported on the P6 frame lane.
+        // String values print quoted (same as a String literal).
         auto r = ahfl::repl::execute_command("\"a\" + \"b\"");
-        check(!r.success, "\"a\" + \"b\" fails");
-        check(r.output.find("binary arithmetic/comparison is defined for Int/Bool") !=
-                  std::string::npos,
-              "\"a\" + \"b\" codegen diagnostic");
-        check(r.output.find("trap") == std::string::npos &&
-                  r.output.find("m3_") == std::string::npos,
-              "\"a\" + \"b\" has no trap text");
+        check(r.success && r.output == "\"ab\"", "\"a\" + \"b\" -> \"ab\"");
     }
 
     // Test 19: trailing line comment survives the wasm eval lane (P1-1). The

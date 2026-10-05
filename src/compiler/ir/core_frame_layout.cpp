@@ -39,7 +39,11 @@ constexpr std::array<std::uint8_t, 6> kMagic{'A', 'H', 'F', 'L', 'C', 'L'};
 // per-site record, so an embedded host can region-membership-test every
 // spilled descriptor against the site's own declared window (design 4.3/5).
 // v2 records stay decodable with zero spill windows.
-constexpr std::uint8_t kVersion = 3;
+// KR6.6: payload format v4 appends the construct-heap base (the runtime bump
+// heap's aligned start address) as a presence-gated trailing block, so the
+// host can authorize [construct_heap_base, 65536) for String concat result
+// payloads. v3 payloads stay decodable with a zero construct_heap_base.
+constexpr std::uint8_t kVersion = 4;
 constexpr std::uint8_t kMinVersion = 1;
 constexpr std::uint8_t kTargetWasm32 = 0;
 
@@ -91,7 +95,8 @@ class Encoder {
              section.transcode_payload_base != 0 ||
              section.transcode_payload_capacity != 0 ||
              section.transcode_entry_shadow_base != 0 ||
-             section.transcode_entry_shadow_extent != 0)) {
+             section.transcode_entry_shadow_extent != 0 ||
+             section.construct_heap_base != 0)) {
             diagnostics_.push_back(
                 fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
             return std::nullopt;
@@ -234,6 +239,14 @@ class Encoder {
                         u32(site.param_ordinal);
                     }
                 }
+            }
+            // KR6.6: the presence-gated construct-heap base extension. A
+            // module without String concat carries a zero base and keeps its
+            // exact v3 bytes; a module with String concat encodes the base so
+            // the host can authorize the bump-heap region for output reads.
+            if (section.construct_heap_base != 0) {
+                u8(1);
+                u32(section.construct_heap_base);
             }
         }
         return std::move(bytes_);
@@ -655,6 +668,25 @@ class Decoder {
                         section.transcode_sites.push_back(std::move(site));
                     }
                 }
+            }
+            // KR6.6: the optional presence-gated construct-heap base
+            // extension (String concat result region). A v3 payload ends
+            // exactly here; a v4 payload with String concat carries the
+            // trailing tag + base.
+            if (!cursor_.at_end()) {
+                const auto present = cursor_.u8();
+                if (!present.has_value() || *present != 1) {
+                    result.diagnostics.push_back(
+                        fail("frame-layout construct-heap tag is malformed"));
+                    return result;
+                }
+                const auto heap_base = cursor_.u32();
+                if (!heap_base.has_value() || *heap_base == 0) {
+                    result.diagnostics.push_back(
+                        fail("frame-layout construct-heap base is malformed"));
+                    return result;
+                }
+                section.construct_heap_base = *heap_base;
             }
             if (!cursor_.at_end()) {
                 result.diagnostics.push_back(

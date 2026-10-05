@@ -309,6 +309,14 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"fb3_byvalue_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_string_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_f64_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // KR6.6 String concatenation: the concat result payload is
+        // bump-allocated in the construct heap and copied with memory.copy;
+        // a p6-frame module with the v4 construct_heap_base extension.
+        {"kr66_string_concat.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         {"fb3_nested_activation.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_lambda_flow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7 corpus widening (FB-5) slice E: the FB-4 effect-classification

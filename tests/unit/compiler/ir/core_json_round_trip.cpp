@@ -770,6 +770,9 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/p6_map_bool_key.ahfl",
         "wasm/p6_map_bool_value.ahfl",
         "wasm/p6_map_get.ahfl",
+        // KR6.6: String concatenation computed final (construct heap +
+        // memory.copy bump-alloc path).
+        "wasm/kr66_string_concat.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

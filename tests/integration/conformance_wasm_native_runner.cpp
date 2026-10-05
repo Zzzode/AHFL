@@ -92,7 +92,11 @@ using ahfl::conformance::run_native_scenario;
 // (fb3_string_capture: String PtrLen + Int env-layout coupling;
 // fb3_f64_capture: F64 env store/load + f64 functype params):
 // 77/0 -> 79/0.
-constexpr int kExpectedNativeAgreed = 79;
+// KR6.6 String concatenation: three scenarios across one case
+// (kr66_string_concat: short/empty/longer prefix + literal suffix;
+// the concat result payload is bump-allocated in the construct heap
+// and copied with memory.copy): 79/0 -> 82/0.
+constexpr int kExpectedNativeAgreed = 82;
 constexpr int kExpectedNativeSkipped = 0;
 
 int g_failures = 0;

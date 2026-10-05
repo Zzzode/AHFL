@@ -68,6 +68,9 @@ FRAME_FIXTURES = frozenset(
         "v2c_route_then_bridge",
         "v2c_single_arg_bridge",
         "v2c_single_enum_bridge",
+        # KR6.6: String concatenation computed final (construct-heap region
+        # authorized via the v4 presence-gated construct_heap_base extension).
+        "kr66_string_concat",
     }
 )
 
@@ -82,6 +85,7 @@ DATA_SECTION_FIXTURES = frozenset(
         "v2b_bounded_string",
         "v2b_enum_string",
         "fb3_string_capture",
+        "kr66_string_concat",
     }
 )
 DATA_SECTION_ID = 11

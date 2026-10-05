@@ -8,6 +8,7 @@
 #include "runtime/value/value.hpp"
 
 #include "ahfl/runtime/ahfl_host.h"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "base/json/json_value.hpp"
 
 #include <cstdint>
@@ -53,6 +54,14 @@ build_transcode_string_regions(const irc::CoreFrameLayoutSection &section) {
         regions.push_back({section.transcode_payload_base,
                            section.transcode_payload_base +
                                section.transcode_payload_capacity});
+    }
+    // KR6.6: String concatenation result payloads live in the runtime bump
+    // heap [construct_heap_base, 65536). The base is zero on a module without
+    // String concat (the construct heap is disabled).
+    if (section.construct_heap_base != 0) {
+        regions.push_back(
+            {section.construct_heap_base,
+             irc::kCoreWasmFixedLinearMemoryCapacityBytes});
     }
     return regions;
 }

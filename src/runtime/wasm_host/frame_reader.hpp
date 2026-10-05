@@ -12,9 +12,10 @@
 //     placement extent, string len within the schema bounds);
 //   * String region authorization is EXACTLY the JS oracle's: accepted String
 //     bytes must lie in the union of the input payload-arena span, the rodata
-//     [rodata_base,+rodata_extent) span, and the declared bridge-result
-//     placements; anything else (scratch, heap gaps, OOB, arena-outside,
-//     rodata-outside) fails closed;
+//     [rodata_base,+rodata_extent) span, the declared bridge-result
+//     placements, and the runtime construct-heap span [construct_heap_base,
+//     65536) (KR6.6 String concat result payloads); anything else (scratch,
+//     heap gaps, OOB, arena-outside, rodata-outside) fails closed;
 //   * runv root authorization: a computed final's value_ptr must equal the
 //     output base (12288), an identity final's the input base (1024); the
 //     module-kind discriminator comes from the admitted descriptor/frame

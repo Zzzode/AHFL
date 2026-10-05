@@ -82,8 +82,9 @@ read_bytes(std::span<const std::uint8_t> page, std::uint32_t offset,
 // (shared with the capability-import bridge executor).
 
 // Build the authorized String regions for an output-frame walk: the input
-// payload-arena span, the rodata span (when present), and every bridge
-// result-placement payload arena with a positive capacity.
+// payload-arena span, the rodata span (when present), every bridge
+// result-placement payload arena with a positive capacity, and the runtime
+// construct-heap span (KR6.6 String concat result payloads).
 std::vector<StringRegion>
 build_output_string_regions(const ir::core::CoreFrameLayoutSection &section) {
     std::vector<StringRegion> regions;
@@ -111,6 +112,14 @@ build_output_string_regions(const ir::core::CoreFrameLayoutSection &section) {
         if (end.has_value()) {
             regions.push_back({site.result_payload_base, *end});
         }
+    }
+    // KR6.6: String concatenation result payloads live in the runtime bump
+    // heap [construct_heap_base, 65536). The base is zero on a module without
+    // String concat (the construct heap is disabled).
+    if (section.construct_heap_base != 0) {
+        regions.push_back(
+            {section.construct_heap_base,
+             ir::core::kCoreWasmFixedLinearMemoryCapacityBytes});
     }
     return regions;
 }

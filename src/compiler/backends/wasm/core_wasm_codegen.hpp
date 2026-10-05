@@ -210,6 +210,10 @@ struct CoreWasmFrameLane {
     std::uint32_t bridge_spill_base{0};
     std::uint32_t bridge_spill_extent{0};
     std::vector<CoreWasmBridgeCallSite> bridge_call_sites;
+    /// KR6.6: the runtime bump-heap base (String concat result region). Zero
+    /// on a module without String concat; the host authorizes
+    /// [construct_heap_base, 65536) for output String reads when present.
+    std::uint32_t construct_heap_base{0};
 };
 
 /// The input/output frame contract an embedded host must honor.

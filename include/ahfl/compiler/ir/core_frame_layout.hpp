@@ -229,6 +229,17 @@ struct CoreFrameLayoutSection {
     std::uint32_t transcode_entry_shadow_base{0};
     std::uint32_t transcode_entry_shadow_extent{0};
 
+    // ------------------------------------------------------------------
+    // KR6.6 String-concatenation extension. The runtime bump heap's base
+    // address (aligned backing high-water). String concat result payloads
+    // live in [construct_heap_base, 65536); the host authorizes this region
+    // for output String reads. Zero on a module with no String concat (the
+    // construct heap is disabled, so the region is empty). Encoded as a
+    // trailing presence-gated block inside a format-version-4 payload, so a
+    // module without String concat keeps its exact bytes.
+    // ------------------------------------------------------------------
+    std::uint32_t construct_heap_base{0};
+
     [[nodiscard]] friend bool operator==(const CoreFrameLayoutSection &,
                                          const CoreFrameLayoutSection &) noexcept = default;
 };

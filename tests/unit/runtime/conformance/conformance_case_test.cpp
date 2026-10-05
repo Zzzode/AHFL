@@ -518,6 +518,17 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration,
             WasmNodeObservationSkip::None,
         },
+        // RFC 0026 KR6.6: String concatenation computed final. The concat
+        // result payload is bump-allocated in the construct heap and copied
+        // with memory.copy; the host authorizes the construct-heap region.
+        {
+            "kr66_string_concat.case.json",
+            "tests/golden/wasm/kr66_string_concat.ahfl",
+            CaseKind::Agent,
+            "wasm::kr66::string_concat::StringConcatAgent",
+            0, 3, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
+        },
         // RFC 0026 FB-3b: higher-order lambda / call_indirect. Emits on the
         // orchestration lane with the funcref table; the closure constructs
         // have no checked-in blessing (expectation-lane comparison).

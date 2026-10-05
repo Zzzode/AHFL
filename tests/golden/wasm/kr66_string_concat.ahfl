@@ -1,0 +1,43 @@
+// RFC 0026 KR6.6: String CONCATENATION computed final.
+//
+// The final region concatenates a String input with a String literal and
+// constructs the output aggregate. The concat result payload is bump-allocated
+// at runtime in the construct heap [construct_heap_base, 65536) and copied
+// with memory.copy; the result PtrLen (heap ptr, total byte len) is copied
+// verbatim into the output frame. The host authorizes the construct-heap
+// region for output String reads (frame-layout section v4 presence-gated
+// extension), so runv returns canonical bytes agreeing with the evaluator.
+module wasm::kr66::string_concat;
+
+pub struct In {
+    prefix: String;
+}
+
+pub struct Out {
+    label: String;
+    value: Int;
+}
+
+agent StringConcatAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for StringConcatAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            label: input.prefix + "-suffix",
+            value: 42,
+        };
+    }
+}

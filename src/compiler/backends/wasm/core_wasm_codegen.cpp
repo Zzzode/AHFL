@@ -303,6 +303,11 @@ constexpr std::uint8_t kOpI64ExtendI32S = 0xac;
 // (the plan proved `capacity` fits the i32 ladder, and the bounds compare rejects
 // any index outside `[0, capacity)` — so no live index bit is discarded).
 constexpr std::uint8_t kOpI32WrapI64 = 0xa7;
+// KR6.6: memory.copy for String concatenation payload copies. The instruction
+// is encoded as the 0xFC prefix byte, sub-opcode 0x0A, then dst memidx and
+// src memidx (both 0x00 for the single default linear memory).
+constexpr std::uint8_t kPrefixFc = 0xfc;
+constexpr std::uint8_t kSubOpMemoryCopy = 0x0a;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
 constexpr std::uint32_t kGlobalTransitionCount = 1;
@@ -2846,6 +2851,14 @@ class P6ComputationHandlerBuilder {
         return closure_env_bytes_;
     }
 
+    // RFC 0026 KR6.6 P6 String concatenation: true when this handler plans at
+    // least one String `+` (CoreBinaryOp::Add on two String operands). The
+    // module driver reads this to enable the per-activation construct heap
+    // (the concat result bytes are bumped from it).
+    [[nodiscard]] bool string_concat_needed() const noexcept {
+        return string_concat_needed_;
+    }
+
     // FB-3b: install the finalized funcref-table slots and call_indirect type
     // indices. Called after every reachable body was planned and before
     // emit().
@@ -2909,10 +2922,13 @@ class P6ComputationHandlerBuilder {
         // Runtime checked-bump temporaries (fresh base + advanced heap pointer).
         // They are needed by fn-mode aggregate constructs AND by capturing
         // closure construction in EITHER mode (closure envs are module-arena
-        // memory that must outlive the creating activation). They are the LAST
-        // two i32 locals so the SSA/scratch pool indices are unchanged.
+        // memory that must outlive the creating activation) AND by String
+        // concatenation (the result payload is bump-allocated at runtime).
+        // They are the LAST two i32 locals so the SSA/scratch pool indices
+        // are unchanged.
         const bool dynamic =
-            (fn_mode_ && has_dynamic_construct()) || closure_env_bytes_ > 0;
+            (fn_mode_ && has_dynamic_construct()) || closure_env_bytes_ > 0 ||
+            string_concat_needed_;
         // FB-4: an outlined fn body with an in-fn capability call needs three
         // more trailing i32 scratch locals (status, ptr, len) for the
         // multi-value import result. They share the second i32 local group
@@ -2936,8 +2952,13 @@ class P6ComputationHandlerBuilder {
         // (status, result_root_ptr) for the (i32)->(i32,i32) import result.
         const std::uint32_t bridge_count =
             (!fn_mode_ && bridge_scratch_needed_) ? 2u : 0u;
+        // KR6.6: String concatenation needs four trailing i32 scratch locals
+        // (ptr_a, len_a, ptr_b, len_b) to save the two operand PtrLen words
+        // across the runtime bump alloc + memory.copy sequence.
+        const std::uint32_t string_concat_count = string_concat_needed_ ? 4u : 0u;
         if (temp_count != 0 || keyget_count != 0 || final_count != 0 ||
-            ctx_store_count != 0 || ptrlen_read_count != 0 || bridge_count != 0) {
+            ctx_store_count != 0 || ptrlen_read_count != 0 || bridge_count != 0 ||
+            string_concat_count != 0) {
             // The bump temporaries are placed AFTER the f64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64/f64
             // pool indices pool_local derives from i32_group_size(). Fn
@@ -2982,6 +3003,15 @@ class P6ComputationHandlerBuilder {
                     ctx_store_count + ptrlen_read_count;
                 bridge_status_local_ = base;
                 bridge_ptr_local_ = base + 1u;
+            }
+            if (string_concat_count != 0) {
+                const std::uint32_t base =
+                    after_groups + temp_count + keyget_count + final_count +
+                    ctx_store_count + ptrlen_read_count + bridge_count;
+                string_concat_ptr_a_local_ = base;
+                string_concat_len_a_local_ = base + 1u;
+                string_concat_ptr_b_local_ = base + 2u;
+                string_concat_len_b_local_ = base + 3u;
             }
         }
         // Handler mode, aggregate/closure heap enabled: reset the per-activation
@@ -3048,7 +3078,7 @@ class P6ComputationHandlerBuilder {
         // joins that trailing i32 group (it exists in either body mode).
         const std::uint32_t temp_i32 =
             temp_count + keyget_count + final_count + ctx_store_count +
-            ptrlen_read_count + bridge_count;
+            ptrlen_read_count + bridge_count + string_concat_count;
         if (temp_i32 != 0) {
             ++local_groups;
         }
@@ -3284,6 +3314,22 @@ class P6ComputationHandlerBuilder {
     bool bridge_scratch_needed_{false};
     std::uint32_t bridge_status_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t bridge_ptr_local_{std::numeric_limits<std::uint32_t>::max()};
+
+    // RFC 0026 KR6.6 P6 String concatenation: a String `+` (CoreBinaryOp::Add
+    // on two String operands) bumps the per-activation construct heap for the
+    // result bytes and copies the two payloads with memory.copy. The result is
+    // a two-word PtrLen (payload_ptr, byte_len). emit() reserves four trailing
+    // i32 scratch locals holding the two operand PtrLen pairs while the bump
+    // allocator runs; the alloc itself reuses alloc_temp_local_ /
+    // alloc_new_local_ (the `dynamic` flag below is extended so they are
+    // assigned on a String-concat handler too). Set during plan; read by the
+    // module driver to enable the construct heap (a handler-only bump, unlike
+    // fn dynamic constructs / closure envs).
+    bool string_concat_needed_{false};
+    std::uint32_t string_concat_ptr_a_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t string_concat_len_a_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t string_concat_ptr_b_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t string_concat_len_b_local_{std::numeric_limits<std::uint32_t>::max()};
 
     // --- RFC 0026 FB-3b closures ---
     //
@@ -4340,7 +4386,30 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreUnaryExpr &u) { return plan_expr(u.operand); },
-                [&](const CoreBinaryExpr &b) { return plan_expr(b.lhs) && plan_expr(b.rhs); },
+                [&](const CoreBinaryExpr &b) {
+                    if (!plan_expr(b.lhs) || !plan_expr(b.rhs)) {
+                        return false;
+                    }
+                    // KR6.6: String concatenation (Add on two String operands)
+                    // is the ONLY String binary op on the P6 frame lane. It
+                    // needs the runtime bump alloc + memory.copy sequence, so
+                    // mark the builder for the construct heap and temp locals.
+                    const auto lhs_kind =
+                        scalar_kind(storage_.exprs[b.lhs.value].result_type);
+                    const auto rhs_kind =
+                        scalar_kind(storage_.exprs[b.rhs.value].result_type);
+                    if (lhs_kind == P6ScalarKind::String &&
+                        rhs_kind == P6ScalarKind::String) {
+                        if (b.op != CoreBinaryOp::Add) {
+                            return reject(
+                                "String binary operators: only concatenation (+) is "
+                                "defined on the P6 frame lane",
+                                expr.source_range);
+                        }
+                        string_concat_needed_ = true;
+                    }
+                    return true;
+                },
                 [&](const CorePathExpr &p) { return plan_path(p, expr.source_range); },
                 [&](const CoreQualifiedExpr &q) {
                     return plan_qualified(id, q, expr.source_range);
@@ -8589,6 +8658,86 @@ class P6ComputationHandlerBuilder {
         if (lhs_kind == std::nullopt || rhs_kind == std::nullopt || *lhs_kind != *rhs_kind) {
             return reject("binary operands must share one scalar type", std::move(range));
         }
+        // KR6.6: String concatenation (Add on two String PtrLen operands).
+        // The result payload is bump-allocated at runtime and copied with
+        // memory.copy; the two operand PtrLen words are saved to scratch
+        // locals across the alloc + copy sequence.
+        if (*lhs_kind == P6ScalarKind::String && b.op == CoreBinaryOp::Add) {
+            if (!emit_expr(b.lhs) || !emit_expr(b.rhs)) {
+                return false;
+            }
+            // Stack: ptr_a, len_a, ptr_b, len_b — save all four words.
+            body_.byte(kOpLocalSet);
+            body_.u32(string_concat_len_b_local_);
+            body_.byte(kOpLocalSet);
+            body_.u32(string_concat_ptr_b_local_);
+            body_.byte(kOpLocalSet);
+            body_.u32(string_concat_len_a_local_);
+            body_.byte(kOpLocalSet);
+            body_.u32(string_concat_ptr_a_local_);
+            // Runtime bump alloc(total_len = len_a + len_b). The fresh base
+            // is held in alloc_temp_local_; the advanced cursor in
+            // alloc_new_local_. Bumping past the linear-memory capacity traps
+            // (RESOURCE fail-closed); the compile-time construct-heap budget
+            // makes the trap a defensive guard only.
+            body_.byte(kOpGlobalGet);
+            body_.u32(handler_heap_next_global());
+            body_.byte(kOpLocalTee);
+            body_.u32(alloc_temp_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_a_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_b_local_);
+            body_.byte(kOpI32Add);
+            body_.byte(kOpI32Add);
+            body_.byte(kOpLocalTee);
+            body_.u32(alloc_new_local_);
+            emit_const_i32(static_cast<std::int32_t>(
+                kCoreWasmFixedLinearMemoryCapacityBytes));
+            body_.byte(kOpI32GtU);
+            body_.byte(kOpIf);
+            body_.byte(kEmptyBlock);
+            body_.byte(kOpUnreachable);
+            body_.byte(kOpEnd);
+            body_.byte(kOpLocalGet);
+            body_.u32(alloc_new_local_);
+            body_.byte(kOpGlobalSet);
+            body_.u32(handler_heap_next_global());
+            // memory.copy(result_ptr, ptr_a, len_a) — stack: d, s, n.
+            body_.byte(kOpLocalGet);
+            body_.u32(alloc_temp_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_ptr_a_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_a_local_);
+            body_.byte(kPrefixFc);
+            body_.byte(kSubOpMemoryCopy);
+            body_.u32(0); // dst memidx
+            body_.u32(0); // src memidx
+            // memory.copy(result_ptr + len_a, ptr_b, len_b).
+            body_.byte(kOpLocalGet);
+            body_.u32(alloc_temp_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_a_local_);
+            body_.byte(kOpI32Add);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_ptr_b_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_b_local_);
+            body_.byte(kPrefixFc);
+            body_.byte(kSubOpMemoryCopy);
+            body_.u32(0); // dst memidx
+            body_.u32(0); // src memidx
+            // Push the result PtrLen (result_ptr, total_len).
+            body_.byte(kOpLocalGet);
+            body_.u32(alloc_temp_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_a_local_);
+            body_.byte(kOpLocalGet);
+            body_.u32(string_concat_len_b_local_);
+            body_.byte(kOpI32Add);
+            return true;
+        }
         // A String PtrLen pair never participates in integer/comparison ops
         // (its equality/order is byte semantics on the payload, a later rung),
         // and a Decimal/Duration i64 word is a literal constant, not an
@@ -10228,6 +10377,10 @@ struct FrameSectionPlan {
     std::uint32_t bridge_spill_base{0};
     std::uint32_t bridge_spill_extent{0};
     std::vector<ir::core::CoreFrameBridgeCallSite> bridge_call_sites;
+    /// KR6.6: the runtime bump-heap base (String concat result region). Zero
+    /// on a module without String concat; the host authorizes
+    /// [construct_heap_base, 65536) for output String reads when present.
+    std::uint32_t construct_heap_base{0};
     /// The self-contained boundary table: exactly the layouts reachable from
     /// the two roots, with all edges remapped into this dense table.
     ir::core::CoreLayoutTable table;
@@ -10246,7 +10399,9 @@ frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
 frame_section_to_layout_section(const FrameSectionPlan &plan) {
     ir::core::CoreFrameLayoutSection section;
     // v3: per-call-site private spill windows (frame-bridge v2 fix-forward).
-    section.format_version = 3;
+    // v4: the construct-heap base (KR6.6 String concat); a module without
+    // String concat keeps v3 bytes exactly (presence-gated extension).
+    section.format_version = plan.construct_heap_base != 0 ? 4u : 3u;
     section.table = plan.table;
     section.input_layout = plan.input_layout;
     section.output_layout = plan.output_layout;
@@ -10261,6 +10416,7 @@ frame_section_to_layout_section(const FrameSectionPlan &plan) {
     section.bridge_spill_base = plan.bridge_spill_base;
     section.bridge_spill_extent = plan.bridge_spill_extent;
     section.bridge_call_sites = plan.bridge_call_sites;
+    section.construct_heap_base = plan.construct_heap_base;
     return section;
 }
 
@@ -10814,7 +10970,7 @@ build_frame_section_plan(const CoreProgram &program,
     std::optional<CoreTypeId> frame_input_nominal,
     const std::vector<CoreCapabilityId> *imports = nullptr) {
     construct_heap_enabled_out = false;
-    construct_heap_base_out = ir::core::kNodeEventLogBase;
+    construct_heap_base_out = 0;
     closure_table_out.clear();
     closure_signatures_out.clear();
     entry_closure_env_bytes_out = 0;
@@ -10911,9 +11067,12 @@ build_frame_section_plan(const CoreProgram &program,
     std::sort(reachable.begin(), reachable.end(), [](CoreFnId a, CoreFnId b) {
         return a.value < b.value;
     });
-    if (reachable.empty()) {
-        return true;
-    }
+    // KR6.6: the early `reachable.empty() -> return true` was REMOVED. The
+    // closure-table/signature finalization, the entry-closure-env byte
+    // accounting, and the construct-heap enable check below all inspect the
+    // ENTRY builders, not just the planned fns. A zero-fn agent can still
+    // need the construct heap (String concat bump-allocates its result
+    // payload), so the function must fall through to those sections.
 
     // RFC 0026 FB-2 (design §8.1-6c / §5.4): the recursion depth lattice sealed
     // the static call depth of every recursive fn group from bounded-container
@@ -11178,7 +11337,18 @@ build_frame_section_plan(const CoreProgram &program,
     if (entry_closure_env_bytes_out != 0) {
         construct_heap_enabled = true;
     }
-    std::uint32_t construct_heap_base = ir::core::kNodeEventLogBase;
+    // KR6.6: String concatenation bump-allocates its result payload at
+    // runtime, so any entry builder that planned a String Add needs the
+    // construct heap (and its per-activation reset).
+    if (!construct_heap_enabled) {
+        for (const P6ComputationHandlerBuilder *entry_builder : entry_builders) {
+            if (entry_builder != nullptr && entry_builder->string_concat_needed()) {
+                construct_heap_enabled = true;
+                break;
+            }
+        }
+    }
+    std::uint32_t construct_heap_base = 0;
     if (construct_heap_enabled) {
         // Design section 6.2: the heap base must also clear the packed input
         // containers' DISJOINT per-edge backing placements and the frame-payload
@@ -12545,6 +12715,10 @@ build_frame_section_plan(const CoreProgram &program,
                 }
             }
             if (projection_ok && physical_ok && consistent) {
+                // KR6.6: carry the construct-heap base into the frame-layout
+                // section so the host can authorize the bump-heap String
+                // concat result region.
+                frame_section->construct_heap_base = plan.construct_heap_base;
                 plan.frame_section =
                     std::make_unique<FrameSectionPlan>(std::move(*frame_section));
                 plan.frame_wire_table = std::move(*projection.table);
@@ -19423,6 +19597,7 @@ runner_last_cap_walk_index(const CoreProgram &program,
             bridge.spill_extent = site.spill_extent;
             lane.bridge_call_sites.push_back(std::move(bridge));
         }
+        lane.construct_heap_base = frame_plan->construct_heap_base;
         descriptor.frame = std::move(lane);
         // Carry the exact boundary tables the sections encode so a generic host
         // can pack/encode without a second projection. Both are the same values

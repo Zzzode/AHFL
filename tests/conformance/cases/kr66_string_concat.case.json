@@ -1,0 +1,45 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/kr66_string_concat.ahfl",
+  "kind": "agent",
+  "entry": "wasm::kr66::string_concat::StringConcatAgent",
+  "scenarios": [
+    {
+      "name": "short",
+      "input": {"_type":"wasm::kr66::string_concat::In","prefix":"abc"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::kr66::string_concat::Out","label":"abc-suffix","value":42}
+      }
+    },
+    {
+      "name": "empty",
+      "input": {"_type":"wasm::kr66::string_concat::In","prefix":""},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::kr66::string_concat::Out","label":"-suffix","value":42}
+      }
+    },
+    {
+      "name": "longer",
+      "input": {"_type":"wasm::kr66::string_concat::In","prefix":"hello-world-from-ahfl"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::kr66::string_concat::Out","label":"hello-world-from-ahfl-suffix","value":42}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "KR6.6 String concatenation computed final; the concat result payload is bump-allocated in the construct heap and copied with memory.copy; p6-frame module on the orchestration lane"
+    }
+  }
+}
