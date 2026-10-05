@@ -22,6 +22,9 @@ add_executable(ahflc
     pipeline_core_commands.cpp
     pipeline_runner.cpp
     public_api_artifact.cpp
+    visualize.cpp
+    visualize_html.cpp
+    visualize_layout.cpp
     workflow_run.cpp
 )
 

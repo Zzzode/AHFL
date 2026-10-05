@@ -25,6 +25,7 @@
 #include "tooling/cli/cli_analysis_helpers.hpp"
 #include "tooling/cli/option_table.hpp"
 #include "tooling/cli/pipeline_runner.hpp"
+#include "tooling/cli/visualize.hpp"
 #include "tooling/cli/workflow_run.hpp"
 #include "tooling/formatter/format_config.hpp"
 #include "tooling/formatter/formatter.hpp"
@@ -1899,6 +1900,31 @@ void export_cli_memory_report(const CommandLineOptions &options,
 // ---------------------------------------------------------------------------
 
 ExitCode CliDriver::run(std::span<const std::string_view> arguments) {
+    // ahflc visualize <input.json> [-o output.html] [--title <text>]
+    // A post-processing tool that generates an interactive HTML canvas
+    // from an execution-plan JSON file. Does not require the compiler pipeline.
+    if (!arguments.empty() && arguments[0] == "visualize") {
+        std::string_view input_path;
+        std::string_view output_path = "trace.html";
+        std::string_view title;
+        for (std::size_t i = 1; i < arguments.size(); ++i) {
+            if (arguments[i] == "-o" && i + 1 < arguments.size()) {
+                output_path = arguments[++i];
+            } else if (arguments[i] == "--title" && i + 1 < arguments.size()) {
+                title = arguments[++i];
+            } else if (arguments[i][0] != '-') {
+                input_path = arguments[i];
+            }
+        }
+        if (input_path.empty()) {
+            std::cerr << "usage: ahflc visualize <execution-plan.json> [-o output.html] "
+                         "[--title <text>]\n";
+            return ExitCode::UsageError;
+        }
+        return static_cast<ExitCode>(
+            ahfl::visualize::run_visualize(input_path, output_path, title));
+    }
+
     if (auto status = parse_command_line(arguments); status.has_value()) {
         return *status;
     }
