@@ -112,6 +112,18 @@ IR_SSOT_FAMILIES = (
         "HANDLE_CORE_PATTERN_NODE",
     ),
     ("ahfl/compiler/ir/core_ir.hpp", "CoreStmtNode", "core_stmt_nodes.def", "HANDLE_CORE_STMT_NODE"),
+    (
+        "ahfl/compiler/ir/core_ir.hpp",
+        "CoreInstancePayload",
+        "core_instance_payload.def",
+        "HANDLE_CORE_INSTANCE_PAYLOAD",
+    ),
+    (
+        "ahfl/compiler/ir/core_ir.hpp",
+        "CoreValueTypeNode",
+        "core_value_types.def",
+        "HANDLE_CORE_VT",
+    ),
 )
 TYPECHECK_INTERNAL_HEADER = SRC / "compiler" / "semantics" / "typecheck_internal.hpp"
 TYPECHECK_DECLS_SOURCE = SRC / "compiler" / "semantics" / "typecheck_decls.cpp"
