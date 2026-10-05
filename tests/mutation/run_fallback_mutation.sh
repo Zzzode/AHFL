@@ -17,11 +17,12 @@
 # (literal match/replace pairs), the human description, and the *expected*
 # outcome (killed|survived), plus the committed score floor for the target.
 #
-# Two targets ship today:
+# Three targets ship today:
 #   arithmetic/         - integer arithmetic/predicate operators (target 1)
 #   structured_writer/  - a canonical JSON-ish writer (target 2)
+#   state_machine/      - agent-style state machine transitions (target 3)
 # Each has exactly one deliberate, expected survivor, so the reported score is
-# an honest sub-100% in both cases, never a rigged 100%.
+# an honest sub-100% in all three cases, never a rigged 100%.
 #
 # Output
 # ------

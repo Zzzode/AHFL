@@ -31,15 +31,16 @@ target's source:
 - the **expected** outcome (`expect`: `killed` | `survived`), and
 - the committed `score_floor` for the target.
 
-Two representative targets ship:
+Three representative targets ship:
 
 | Target | What it covers |
 |--------|----------------|
 | `arithmetic/` | integer arithmetic/predicate operators |
 | `structured_writer/` | a canonical JSON-ish writer (field separators, string escaping, object punctuation) |
+| `state_machine/` | agent-style state machine (transition table lookup, guard conditions, terminal checks, sentinel returns) |
 
 Each target has exactly **one deliberate, expected survivor** (an intentionally
-untested code path), so both report an honest sub-100% score, never a rigged
+untested code path), so all three report an honest sub-100% score, never a rigged
 100%. `fallback/targets.json` is the signed-off set of targets and each
 target's mutant count; it is what makes a deleted target directory fail the
 gate instead of silently shrinking it.
@@ -106,10 +107,10 @@ pins them by index.
   "runner": "fallback",
   "status": "ok",                 // or "tool_unavailable"
   "compiler": "g++",              // present when status == ok
-  "mutants_total": 16,
-  "mutants_evaluated": 16,
-  "killed": 14,
-  "survived": 2,
+  "mutants_total": 24,
+  "mutants_evaluated": 24,
+  "killed": 21,
+  "survived": 3,
   "mutation_score": 0.8750,       // killed/evaluated; null when unavailable
   "targets": [
     {

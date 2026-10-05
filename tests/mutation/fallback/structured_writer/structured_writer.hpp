@@ -1,6 +1,6 @@
 // Self-contained mutation-testing target: a tiny canonical structured writer.
 //
-// This is target 2 of 2 for the fallback mutation runner (see
+// This is target 2 of 3 for the fallback mutation runner (see
 // arithmetic/arithmetic.hpp for target 1). Like that one it is deliberately
 // small and dependency-free so run_fallback_mutation.sh can rebuild it in
 // isolation. It models the class of helper the compiler relies on for stable

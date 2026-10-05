@@ -7,6 +7,10 @@
       "mutants": 9
     },
     {
+      "target": "state_machine",
+      "mutants": 8
+    },
+    {
       "target": "structured_writer",
       "mutants": 7
     }

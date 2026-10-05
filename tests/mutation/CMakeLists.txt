@@ -26,9 +26,9 @@ set_tests_properties(ahfl.mutation.config_report PROPERTIES
 )
 
 # Self-contained fallback mutation runner: applies a fixed, deterministic set
-# of source mutants to COPIES of two tiny representative targets (integer
-# arithmetic + a canonical structured writer) and records a real
-# killed/survived score, with NO dependency on mull.
+# of source mutants to COPIES of three tiny representative targets (integer
+# arithmetic, a canonical structured writer, and an agent-style state machine)
+# and records a real killed/survived score, with NO dependency on mull.
 #
 # The gate is release-blocking, not merely structural: it pins every mutant's
 # outcome to the `expect` recorded in the target's committed spec

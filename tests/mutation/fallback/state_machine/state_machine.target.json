@@ -1,0 +1,65 @@
+{
+  "schema": "ahfl.mutation.target.v1",
+  "target": "state_machine",
+  "source": "state_machine.cpp",
+  "test": "state_machine_test.cpp",
+  "score_floor": 0.85,
+  "mutants": [
+    {
+      "id": "table_index_swap",
+      "description": "transition table index swap [s][e] -> [e][s] in next_state()",
+      "match": "kTable[static_cast<int>(s)][static_cast<int>(e)]",
+      "replace": "kTable[static_cast<int>(e)][static_cast<int>(s)]",
+      "expect": "killed"
+    },
+    {
+      "id": "final_eq_ne",
+      "description": "terminal state check == -> != in is_final()",
+      "match": "return s == State::Done;",
+      "replace": "return s != State::Done;",
+      "expect": "killed"
+    },
+    {
+      "id": "can_fire_ge_gt",
+      "description": "valid-transition check >= -> > in can_fire()",
+      "match": "return next_state(s, e) >= 0;",
+      "replace": "return next_state(s, e) > 0;",
+      "expect": "killed"
+    },
+    {
+      "id": "guard_connective",
+      "description": "guard boolean connective && -> || in guarded_next()",
+      "match": "&& e == Event::Submit &&",
+      "replace": "|| e == Event::Submit ||",
+      "expect": "killed"
+    },
+    {
+      "id": "unary_negation",
+      "description": "guard negation removal !allow_fast_track -> allow_fast_track",
+      "match": "!allow_fast_track",
+      "replace": "allow_fast_track",
+      "expect": "killed"
+    },
+    {
+      "id": "outgoing_ge_gt",
+      "description": "outgoing count check >= -> > in outgoing()",
+      "match": "kTable[static_cast<int>(s)][e] >= 0",
+      "replace": "kTable[static_cast<int>(s)][e] > 0",
+      "expect": "killed"
+    },
+    {
+      "id": "const_replace",
+      "description": "initial state constant 0 -> 1 in initial_state()",
+      "match": "return 0;",
+      "replace": "return 1;",
+      "expect": "killed"
+    },
+    {
+      "id": "survivor_arith",
+      "description": "arithmetic operator * -> + in state_name_len() (untested; expected survivor)",
+      "match": "return static_cast<int>(s) * 2;",
+      "replace": "return static_cast<int>(s) + 2;",
+      "expect": "survived"
+    }
+  ]
+}
