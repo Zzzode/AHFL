@@ -75,6 +75,10 @@ int main(int argc, char **argv) {
          .let_count = 320,
          .branch_count = 96,
          .max_duration = std::chrono::milliseconds{6000}},
+        {.name = "xlarge_module",
+         .let_count = 640,
+         .branch_count = 192,
+         .max_duration = std::chrono::milliseconds{12000}},
     };
 
     std::vector<CompileMeasurement> measurements;
@@ -101,11 +105,15 @@ int main(int argc, char **argv) {
               "medium module stays within compile budget");
         check(measurements[2].metric.duration <= measurements[2].max_duration,
               "large module stays within compile budget");
+        check(measurements[3].metric.duration <= measurements[3].max_duration,
+              "xlarge module stays within compile budget");
     }
     check(measurements[1].metric.typed_exprs > measurements[0].metric.typed_exprs,
           "medium module has more typed expressions than small");
     check(measurements[2].metric.typed_exprs > measurements[1].metric.typed_exprs,
           "large module has more typed expressions than medium");
+    check(measurements[3].metric.typed_exprs > measurements[2].metric.typed_exprs,
+          "xlarge module has more typed expressions than large");
 
     std::printf("\nResults:\n");
     for (const auto &measurement : measurements) {

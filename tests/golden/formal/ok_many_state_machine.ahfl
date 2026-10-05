@@ -1,0 +1,111 @@
+module formal::many_state_machine;
+
+// Many-state-machine fixture for the SMV-size trend gate.
+//
+// The existing formal fixtures top out at 4 states (ok_flow_workflow_semantics).
+// This fixture exercises a 9-state approval pipeline with branching and
+// merging transitions (Validate -> Triage -> Review/Escalate -> Approve/Reject
+// -> Notify -> Done), giving the trend gate a state-space-heavy sample that
+// the 2-state fixtures cannot provide.
+
+struct Request {
+    amount: Int;
+    priority: Bool;
+    is_valid: Bool;
+}
+
+struct Context {
+    tag: String = "seed";
+}
+
+struct Response {
+    status: String;
+    approved: Bool;
+}
+
+agent ApprovalAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Validate, Triage, Review, Escalate, Approve, Reject, Notify, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Validate;
+    transition Validate -> Triage;
+    transition Validate -> Reject;
+    transition Triage -> Review;
+    transition Triage -> Escalate;
+    transition Review -> Approve;
+    transition Review -> Reject;
+    transition Escalate -> Approve;
+    transition Escalate -> Reject;
+    transition Approve -> Notify;
+    transition Reject -> Notify;
+    transition Notify -> Done;
+}
+
+flow for ApprovalAgent {
+    state Init {
+        goto Validate;
+    }
+
+    state Validate {
+        if input.is_valid {
+            goto Triage;
+        } else {
+            goto Reject;
+        }
+    }
+
+    state Triage {
+        if input.priority {
+            goto Escalate;
+        } else {
+            goto Review;
+        }
+    }
+
+    state Review {
+        if input.amount < 1000 {
+            goto Approve;
+        } else {
+            goto Reject;
+        }
+    }
+
+    state Escalate {
+        goto Approve;
+    }
+
+    state Approve {
+        goto Notify;
+    }
+
+    state Reject {
+        goto Notify;
+    }
+
+    state Notify {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            status: ctx.tag,
+            approved: true,
+        };
+    }
+}
+
+workflow ApprovalWorkflow {
+    input: Request;
+    output: Response;
+
+    node approval: ApprovalAgent(input);
+
+    safety: always (not running(approval) or eventually completed(approval));
+    liveness: eventually completed(approval, Done);
+
+    return: approval;
+}

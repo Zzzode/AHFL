@@ -29,8 +29,18 @@
         "typed_exprs": 59,
         "typed_statements": 57
       }
+    },
+    "xlarge_module": {
+      "metrics": {
+        "ir_decls": 6,
+        "ir_exprs": 1219,
+        "proxy_bytes": 977751,
+        "source_bytes": 39991,
+        "typed_exprs": 1219,
+        "typed_statements": 1217
+      }
     }
   },
-  "description": "KR7.3 compile-time / memory-proxy trend baseline. Records the shared bench metrics for the three deterministic fixture budgets so tests/scripts/benchmark_trend_gate.py can block on structural drift (source_bytes / typed_exprs / typed_statements / ir_decls / ir_exprs, guarded exactly) and on memory-proxy growth beyond a relative tolerance (proxy_bytes, 10%). duration_us is deliberately NOT stored: it is wall-clock and machine-dependent, so the trend report records it but the binaries' own static max_duration ceilings remain the wall-clock bound. Regenerate intentionally with `benchmark_trend_gate.py <compile_time-bin> <memory_usage-bin> config/benchmark-baseline.json <report> --update` after a reviewed change.",
+  "description": "KR7.3 compile-time / memory-proxy trend baseline. Records the shared bench metrics for the four deterministic fixture budgets so tests/scripts/benchmark_trend_gate.py can block on structural drift (source_bytes / typed_exprs / typed_statements / ir_decls / ir_exprs, guarded exactly) and on memory-proxy growth beyond a relative tolerance (proxy_bytes, 10%). duration_us is deliberately NOT stored: it is wall-clock and machine-dependent, so the trend report records it but the binaries' own static max_duration ceilings remain the wall-clock bound. Regenerate intentionally with `benchmark_trend_gate.py <compile_time-bin> <memory_usage-bin> config/benchmark-baseline.json <report> --update` after a reviewed change.",
   "schema": "ahfl.benchmark-baseline.v1"
 }

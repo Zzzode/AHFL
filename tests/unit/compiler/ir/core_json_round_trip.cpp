@@ -541,6 +541,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "formal/fail_smt_bmc_refuted.ahfl",
         "formal/ok_bounded_data_semantics.ahfl",
         "formal/ok_flow_workflow_semantics.ahfl",
+        "formal/ok_many_state_machine.ahfl",
         "formal/ok_real_smv_control.ahfl",
         "formal/ok_smt_encoding.ahfl",
         "formal/warn_not_in_verified_subset.ahfl",

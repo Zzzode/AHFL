@@ -1,5 +1,5 @@
 {
-  "description": "KR2.7/KR7.3 SMV-size trend baseline. Records emit-smv sizes for the five representative fixtures (two formal-semantics + three productization) so tests/scripts/smv_size_trend_gate.py can block release on regression beyond a relative tolerance (10%) or on any change to the -O pass order. The optional per-fixture `pass_order` field was added additively, so this stays schema ahfl.smv-size-baseline.v1: a consumer that ignores the field parses the document unchanged, and the version string is reserved for a real shape break. Regenerate intentionally with `smv_size_trend_gate.py <ahflc> config/smv-size-baseline.json <report> --update` after a reviewed size change.",
+  "description": "KR2.7/KR7.3 SMV-size trend baseline. Records emit-smv sizes for seven representative fixtures (three formal-semantics + three productization + one multi-agent example) so tests/scripts/smv_size_trend_gate.py can block release on regression beyond a relative tolerance (10%) or on any change to the -O pass order. The optional per-fixture `pass_order` field was added additively, so this stays schema ahfl.smv-size-baseline.v1: a consumer that ignores the field parses the document unchanged, and the version string is reserved for a real shape break. Regenerate intentionally with `smv_size_trend_gate.py <ahflc> config/smv-size-baseline.json <report> --update` after a reviewed size change.",
   "fixtures": {
     "bounded_data_semantics": {
       "metrics": {
@@ -15,6 +15,20 @@
       ],
       "source": "tests/golden/formal/ok_bounded_data_semantics.ahfl"
     },
+    "execution_demo": {
+      "metrics": {
+        "bytes": 32548,
+        "lines": 196,
+        "ltlspec": 23
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "examples/execution-demo/src/main.ahfl"
+    },
     "flow_workflow_semantics": {
       "metrics": {
         "bytes": 18013,
@@ -28,6 +42,20 @@
         "temporal-simplification"
       ],
       "source": "tests/golden/formal/ok_flow_workflow_semantics.ahfl"
+    },
+    "many_state_machine": {
+      "metrics": {
+        "bytes": 10348,
+        "lines": 70,
+        "ltlspec": 6
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "tests/golden/formal/ok_many_state_machine.ahfl"
     },
     "pass_productization": {
       "metrics": {

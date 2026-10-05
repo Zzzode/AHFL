@@ -52,6 +52,10 @@ int main(int argc, char **argv) {
          .let_count = 320,
          .branch_count = 96,
          .max_proxy_bytes = 1024 * 1024},
+        {.name = "xlarge_module",
+         .let_count = 640,
+         .branch_count = 192,
+         .max_proxy_bytes = 2048 * 1024},
     };
 
     std::vector<MemoryMeasurement> measurements;
@@ -66,10 +70,14 @@ int main(int argc, char **argv) {
           "medium module stays within proxy budget");
     check(measurements[2].metric.proxy_bytes <= measurements[2].max_proxy_bytes,
           "large module stays within proxy budget");
+    check(measurements[3].metric.proxy_bytes <= measurements[3].max_proxy_bytes,
+          "xlarge module stays within proxy budget");
     check(measurements[1].metric.proxy_bytes > measurements[0].metric.proxy_bytes,
           "medium module proxy is larger than small");
     check(measurements[2].metric.proxy_bytes > measurements[1].metric.proxy_bytes,
           "large module proxy is larger than medium");
+    check(measurements[3].metric.proxy_bytes > measurements[2].metric.proxy_bytes,
+          "xlarge module proxy is larger than large");
 
     std::printf("\nResults:\n");
     for (const auto &measurement : measurements) {

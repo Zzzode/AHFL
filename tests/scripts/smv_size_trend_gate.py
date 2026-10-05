@@ -62,8 +62,10 @@ GROWTH_TOLERANCE = 0.10
 REQUIRED_FIXTURES = (
     "bounded_data_semantics",
     "flow_workflow_semantics",
+    "many_state_machine",
     "pass_productization",
     "refund_audit",
+    "execution_demo",
     "workflow_simplification",
 )
 
