@@ -271,6 +271,73 @@ void test_reject_propagates_through_operator() {
           "rejection propagates from a nested operand");
 }
 
+// A non-scalar leaf type (String / Decimal / Struct / …) has no SMT sort
+// mapping. The encoder must reject with UnsupportedType so the caller
+// abstracts the clause with NOT_IN_VERIFIED_SUBSET — not silently skip the
+// symbol declaration and emit a term referencing an undeclared symbol (which
+// Z3 would error on but still return `sat`, misread as a refutation).
+void test_reject_non_scalar_leaf_type() {
+    ir::ExprArena arena;
+
+    // String leaf: output.application_id : String(1,64)
+    {
+        ir::Path p;
+        p.root_kind = ir::PathRootKind::Identifier;
+        p.root_name = "output";
+        p.members = {"application_id"};
+        ir::TypeRef string_type;
+        string_type.kind = ir::TypeRefKind::BoundedString;
+        const auto ref = arena.make(ir::PathExpr{.path = std::move(p)}, std::nullopt,
+                                    std::move(string_type));
+        auto r = encode_predicate(ref);
+        check(!r.ok() && r.rejection == SmtEncodeRejection::UnsupportedType,
+              "String leaf type rejected as unsupported");
+    }
+
+    // Decimal leaf: input.requested_amount : Decimal(2)
+    {
+        ir::Path p;
+        p.root_kind = ir::PathRootKind::Identifier;
+        p.root_name = "input";
+        p.members = {"requested_amount"};
+        ir::TypeRef decimal_type;
+        decimal_type.kind = ir::TypeRefKind::Decimal;
+        const auto ref = arena.make(ir::PathExpr{.path = std::move(p)}, std::nullopt,
+                                    std::move(decimal_type));
+        auto r = encode_predicate(ref);
+        check(!r.ok() && r.rejection == SmtEncodeRejection::UnsupportedType,
+              "Decimal leaf type rejected as unsupported");
+    }
+
+    // Int leaf (regression guard): input.x : Int — must still encode.
+    {
+        ir::Path p;
+        p.root_kind = ir::PathRootKind::Identifier;
+        p.root_name = "input";
+        p.members = {"x"};
+        ir::TypeRef int_type;
+        int_type.kind = ir::TypeRefKind::Int;
+        const auto ref = arena.make(ir::PathExpr{.path = std::move(p)}, std::nullopt,
+                                    std::move(int_type));
+        auto r = encode_predicate(ref);
+        check(r.ok() && r.term == "input__x", "Int leaf type still encodes");
+    }
+
+    // Bare struct root (no members): output : Response — skipped, not rejected,
+    // because it is a namespace prefix for member access, not a standalone term.
+    {
+        ir::Path p;
+        p.root_kind = ir::PathRootKind::Identifier;
+        p.root_name = "output";
+        ir::TypeRef struct_type;
+        struct_type.kind = ir::TypeRefKind::Struct;
+        const auto ref = arena.make(ir::PathExpr{.path = std::move(p)}, std::nullopt,
+                                    std::move(struct_type));
+        auto r = encode_predicate(ref);
+        check(r.ok() && r.term == "output", "bare struct root skipped without rejection");
+    }
+}
+
 void test_describe_rejection_nonempty() {
     bool all_nonempty = true;
     for (auto reason : {SmtEncodeRejection::UnsupportedNode, SmtEncodeRejection::UnsupportedOperator,
@@ -409,6 +476,7 @@ int main() {
     test_reject_unsupported_node();
     test_reject_null_expr();
     test_reject_propagates_through_operator();
+    test_reject_non_scalar_leaf_type();
     test_describe_rejection_nonempty();
 
     test_quantifier_forall_unrolls_to_and();

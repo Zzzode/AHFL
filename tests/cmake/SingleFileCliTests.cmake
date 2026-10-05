@@ -31,6 +31,40 @@ set_tests_properties(ahflc.dump_types.example PROPERTIES
     PASS_REGULAR_EXPRESSION "workflow refund::audit::RefundAuditWorkflow"
 )
 
+# Loan-origination showcase: a 6-module manifest package. The check test runs
+# the full frontend over all modules; the verify test uses the fake pass
+# checker (no NuSMV dependency) so it proves the SMV backend processes the
+# specs without a real solver; the dump-types test asserts the workflow type
+# is registered in the type environment.
+set(AHFL_LOAN_ORIGINATION_MANIFEST "${AHFL_EXAMPLES_DIR}/loan-origination/ahfl.toml")
+
+add_test(NAME ahflc.check.loan_origination
+    COMMAND $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_LOAN_ORIGINATION_MANIFEST}"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME ahflc.verify_formal.loan_origination
+    COMMAND $<TARGET_FILE:ahflc> verify
+            --manifest "${AHFL_LOAN_ORIGINATION_MANIFEST}"
+            --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
+            --formal-model-out
+            "${CMAKE_CURRENT_BINARY_DIR}/formal/loan_origination.verify.smv"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.verify_formal.loan_origination PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+)
+
+add_test(NAME ahflc.dump_types.loan_origination
+    COMMAND $<TARGET_FILE:ahflc> dump types
+            --manifest "${AHFL_LOAN_ORIGINATION_MANIFEST}"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.dump_types.loan_origination PROPERTIES
+    PASS_REGULAR_EXPRESSION "workflow loan_origination::main::LoanOriginationWorkflow"
+)
+
 add_test(NAME ahflc.fmt.formats_file_with_config
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

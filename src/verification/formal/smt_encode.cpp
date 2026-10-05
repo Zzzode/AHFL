@@ -60,6 +60,13 @@ struct Encoder {
     // declaration wins; a later reference with the same name is ignored
     // (identical spelling ⇒ identical symbol). Deterministic first-encounter
     // order is preserved for byte-identical artifacts.
+    //
+    // A non-scalar *leaf* type (String / Decimal / Struct / Enum / …) has no
+    // SMT sort mapping: the clause is outside the verifiable subset. Rejecting
+    // here (rather than silently skipping) ensures the caller abstracts the
+    // clause with NOT_IN_VERIFIED_SUBSET instead of emitting a term that
+    // references an undeclared symbol — which Z3 would error on but still
+    // return `sat` with an empty model, misread as a genuine refutation.
     void note_symbol(const std::string &name, const ir::TypeRef &type,
                      const ir::SourceRangeOpt &source_range = std::nullopt) {
         SmtSort sort{SmtSort::Int};
@@ -71,8 +78,15 @@ struct Encoder {
         case ir::TypeRefKind::BoundedInt:
             sort = SmtSort::Int;
             break;
+        case ir::TypeRefKind::Unresolved:
+            // Type not resolved (test-only / edge case) — skip without
+            // declaring or rejecting. In production the type checker always
+            // resolves types before the SMT encoder runs.
+            return;
         default:
-            // Non-scalar (struct/enum/unresolved/string/...) — not a leaf term.
+            // Non-scalar leaf (String/Decimal/Struct/Enum/…) — no SMT sort
+            // mapping in the verifiable subset.
+            reject(SmtEncodeRejection::UnsupportedType);
             return;
         }
         for (auto &existing : symbols) {
@@ -263,7 +277,19 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                     }
                 }
                 auto symbol = path_symbol(e.path);
-                note_symbol(symbol, ref.ptr->resolved_type, ref.ptr->source_range);
+                // A bare non-scalar root (e.g. a struct base for member
+                // access) is just a namespace prefix, never a standalone SMT
+                // term — skip declaration. The leaf type is checked by
+                // note_symbol when the path has members.
+                const bool bare_non_scalar_root =
+                    e.path.members.empty() &&
+                    ref.ptr->resolved_type.kind != ir::TypeRefKind::Bool &&
+                    ref.ptr->resolved_type.kind != ir::TypeRefKind::Int &&
+                    ref.ptr->resolved_type.kind != ir::TypeRefKind::BoundedInt &&
+                    ref.ptr->resolved_type.kind != ir::TypeRefKind::Unresolved;
+                if (!bare_non_scalar_root) {
+                    note_symbol(symbol, ref.ptr->resolved_type, ref.ptr->source_range);
+                }
                 return symbol;
             },
             [&](const ir::MemberAccessExpr &e) -> std::optional<std::string> {
@@ -401,7 +427,10 @@ SmtEncodeResult encode_predicate(const ir::ExprRef &expr, const SmtEncodeOptions
     Encoder encoder{options, {}, {}, std::nullopt, {}};
     auto term = encoder.encode(expr);
     SmtEncodeResult result;
-    if (!term.has_value()) {
+    // A rejection can be set by note_symbol (non-scalar leaf type) even when
+    // encode returns a non-nullopt term — the term text is built but the
+    // clause is outside the verifiable subset.
+    if (!term.has_value() || encoder.rejection.has_value()) {
         result.rejection = encoder.rejection.value_or(SmtEncodeRejection::UnsupportedNode);
         return result;
     }
