@@ -1,0 +1,138 @@
+module loan_origination::screening;
+
+import loan_origination::types as types;
+
+// ---------------------------------------------------------------------------
+// Read-only capabilities (effect: read — the lowest rung of the effect ladder)
+// ---------------------------------------------------------------------------
+
+capability PullCreditReport(application_id: String(1, 64)) -> types::CreditProfile {
+    effect: read;
+    domain: credit_bureau;
+    receipt: none;
+    retry: safe;
+    timeout: 10s;
+}
+
+capability ScreenFraud(application_id: String(1, 64)) -> types::FraudVerdict {
+    effect: read;
+    domain: fraud_detection;
+    receipt: none;
+    retry: safe;
+    timeout: 15s;
+}
+
+capability WatchlistCheck(application_id: String(1, 64)) -> Bool {
+    effect: read;
+    domain: aml_compliance;
+    receipt: none;
+    retry: safe;
+    timeout: 15s;
+}
+
+// ---------------------------------------------------------------------------
+// CreditCheckAgent — parallel branch A of the screening fan-out
+// ---------------------------------------------------------------------------
+
+pub agent CreditCheckAgent {
+    input: types::NormalizedApplication;
+    context: types::CreditCheckContext;
+    output: types::CreditProfile;
+    states: [Init, Pull, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [PullCreditReport];
+    quota: {
+        max_tool_calls: 3;
+        max_execution_time: 15s;
+    }
+
+    transition Init -> Pull;
+    transition Pull -> Done;
+}
+
+contract for CreditCheckAgent {
+    requires: input.requested_amount > 0.00d;
+    ensures: output.application_id == input.application_id;
+    invariant: in_state(Done) => called(PullCreditReport);
+}
+
+flow for CreditCheckAgent {
+    state Init {
+        goto Pull;
+    }
+
+    state Pull with {
+        retry: 2;
+        retry_on: [BureauTimeout, NetworkError];
+        timeout: 10s;
+    } {
+        let profile = PullCreditReport(input.application_id);
+        ctx.report_pulled = true;
+        goto Done;
+    }
+
+    state Done {
+        return types::CreditProfile {
+            application_id: input.application_id,
+            // The host fills in the real score; the refinement Int(300, 850)
+            // is enforced at the trust boundary.
+            score: 720,
+        };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FraudScreenAgent — parallel branch B of the screening fan-out
+// ---------------------------------------------------------------------------
+
+pub agent FraudScreenAgent {
+    input: types::NormalizedApplication;
+    context: types::FraudScreenContext;
+    output: types::FraudVerdict;
+    states: [Init, Screen, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [ScreenFraud, WatchlistCheck];
+    quota: {
+        max_tool_calls: 4;
+        max_execution_time: 20s;
+    }
+
+    transition Init -> Screen;
+    transition Screen -> Done;
+}
+
+contract for FraudScreenAgent {
+    requires: input.requested_amount > 0.00d;
+    ensures: output.application_id == input.application_id;
+    ensures: output.risk_level == types::FraudRiskLevel::High =>
+    (output.watchlist_hit or output.rules_triggered >= 3);
+    invariant: in_state(Done) => (called(ScreenFraud) and called(WatchlistCheck));
+}
+
+flow for FraudScreenAgent {
+    state Init {
+        goto Screen;
+    }
+
+    state Screen with {
+        retry: 2;
+        retry_on: [TimeoutError, NetworkError];
+        timeout: 15s;
+    } {
+        let verdict = ScreenFraud(input.application_id);
+        let watchlist_hit = WatchlistCheck(input.application_id);
+        ctx.screened = true;
+        goto Done;
+    }
+
+    state Done {
+        return types::FraudVerdict {
+            application_id: input.application_id,
+            risk_level: types::FraudRiskLevel::Low,
+            rules_triggered: 0,
+            watchlist_hit: false,
+        };
+    }
+}

@@ -1,0 +1,56 @@
+module loan_origination::main;
+
+import loan_origination::disbursement as disbursement;
+import loan_origination::intake as intake;
+import loan_origination::screening as screening;
+import loan_origination::types as types;
+import loan_origination::underwriting as underwriting;
+
+pub workflow LoanOriginationWorkflow {
+    input: types::LoanApplication;
+    output: types::LoanOutcome;
+
+    // Fan-out: intake normalizes, then credit and fraud screen in parallel.
+    node intake: intake::IntakeAgent(input);
+    node credit: screening::CreditCheckAgent(intake) after [intake];
+    node fraud: screening::FraudScreenAgent(intake) after [intake];
+
+    // Join: underwriting evaluates both screening results plus the
+    // normalized application and routes to one of three final states.
+    node underwrite: underwriting::UnderwritingAgent(types::UnderwritingInput {
+            application: intake,
+            credit: credit,
+            fraud: fraud,
+    }) after [intake, credit, fraud];
+
+    // Fulfillment: disburse (durable financial_write) or skip.
+    node fulfill: disbursement::DisbursementAgent(types::FulfillmentInput {
+            application: intake,
+            decision: underwrite,
+    }) after [intake, underwrite];
+
+    // Branch integrity: neither screening branch starts before intake.
+    safety: always (not running(credit) or completed(intake));
+    safety: always (not running(fraud) or completed(intake));
+
+    // The join: underwriting never starts before BOTH branches complete.
+    safety: always (not running(underwrite) or (completed(credit) and completed(fraud)));
+
+    // Sequencing: fulfillment never starts before the decision is rendered.
+    safety: always (not running(fulfill) or completed(underwrite));
+
+    // The money invariant: funds are disbursed only when underwriting
+    // reached its Approved final state.
+    safety: always (not completed(fulfill, Disbursed)
+        or completed(underwrite, Approved));
+
+    // Progress: every application reaches a terminal fulfillment outcome.
+    liveness: eventually completed(fulfill);
+
+    // Decision: a decision is always rendered, never stuck in Evaluate.
+    liveness: eventually (completed(underwrite, Approved)
+        or completed(underwrite, Rejected)
+        or completed(underwrite, Escalated));
+
+    return: fulfill;
+}

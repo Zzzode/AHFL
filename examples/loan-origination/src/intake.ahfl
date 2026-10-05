@@ -1,0 +1,62 @@
+module loan_origination::intake;
+
+import loan_origination::types as types;
+
+// Host-implemented pure business rules (declared, not defined — the host
+// provides the implementation at runtime).
+predicate application_complete(application: types::LoanApplication) -> Bool;
+predicate valid_loan_amount(amount: Decimal(2)) -> Bool;
+
+pub agent IntakeAgent {
+    input: types::LoanApplication;
+    context: types::IntakeContext;
+    output: types::NormalizedApplication;
+    states: [Init, Normalize, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    quota: {
+        max_tool_calls: 0;
+        max_execution_time: 5s;
+    }
+
+    transition Init -> Normalize;
+    transition Normalize -> Done;
+}
+
+contract for IntakeAgent {
+    requires: application_complete(input);
+    requires: valid_loan_amount(input.requested_amount);    ensures: output.application_id == input.application_id;
+    ensures: output.requested_amount == input.requested_amount;
+}
+
+flow for IntakeAgent {
+    state Init {
+        goto Normalize;
+    }
+
+    state Normalize {
+        // Derive the loan tier from the requested amount.
+        if input.requested_amount < 100000.00d {
+            ctx.tier = types::LoanTier::Standard;
+        } else {
+            if input.requested_amount < 500000.00d {
+                ctx.tier = types::LoanTier::Preferred;
+            } else {
+                ctx.tier = types::LoanTier::Jumbo;
+            }
+        }
+        goto Done;
+    }
+
+    state Done {
+        return types::NormalizedApplication {
+            application_id: input.application_id,
+            applicant_name: input.applicant_name,
+            requested_amount: input.requested_amount,
+            term_months: input.term_months,
+            annual_income: input.annual_income,
+            tier: ctx.tier,
+        };
+    }
+}

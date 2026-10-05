@@ -1,0 +1,156 @@
+module loan_origination::types;
+
+import std::option as option;
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+pub enum LoanTier {
+    Standard,
+    Preferred,
+    Jumbo,
+}
+
+pub enum FraudRiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+pub enum Decision {
+    Approved,
+    Rejected,
+    Escalated,
+}
+
+pub enum FulfillmentStatus {
+    Disbursed,
+    Skipped,
+}
+
+pub enum NotificationChannel {
+    Email,
+    Sms,
+}
+
+// ---------------------------------------------------------------------------
+// Workflow input — refinement types at the trust boundary
+// ---------------------------------------------------------------------------
+
+pub struct LoanApplication {
+    application_id: String(1, 64);
+    applicant_name: String(1, 128);
+    ssn_hash: String(64, 64);
+    requested_amount: Decimal(2);
+    term_months: Int(12, 360);
+    annual_income: Decimal(2);
+}
+
+// ---------------------------------------------------------------------------
+// Intake output — adds the derived loan tier
+// ---------------------------------------------------------------------------
+
+pub struct NormalizedApplication {
+    application_id: String(1, 64);
+    applicant_name: String(1, 128);
+    requested_amount: Decimal(2);
+    term_months: Int(12, 360);
+    annual_income: Decimal(2);
+    tier: LoanTier;
+}
+
+// ---------------------------------------------------------------------------
+// Screening outputs
+// ---------------------------------------------------------------------------
+
+pub struct CreditProfile {
+    application_id: String(1, 64);
+    score: Int(300, 850);
+}
+
+pub struct FraudVerdict {
+    application_id: String(1, 64);
+    risk_level: FraudRiskLevel;
+    rules_triggered: Int(0, 100);
+    watchlist_hit: Bool;
+}
+
+// ---------------------------------------------------------------------------
+// Underwriting
+// ---------------------------------------------------------------------------
+
+pub struct UnderwritingInput {
+    application: NormalizedApplication;
+    credit: CreditProfile;
+    fraud: FraudVerdict;
+}
+
+pub struct UnderwritingDecision {
+    verdict: Decision;
+    reason: String;
+    approved_rate: Decimal(4);
+}
+
+// ---------------------------------------------------------------------------
+// Disbursement
+// ---------------------------------------------------------------------------
+
+pub struct DisbursementRequest {
+    application_id: String(1, 64);
+    amount: Decimal(2);
+    decision: UnderwritingDecision;
+}
+
+pub struct DisbursementReceipt {
+    application_id: String(1, 64);
+    transaction_id: String(1, 128);
+    amount: Decimal(2);
+}
+
+pub struct FulfillmentInput {
+    application: NormalizedApplication;
+    decision: UnderwritingDecision;
+}
+
+pub struct NotificationAck {
+    sent: Bool;
+    channel: NotificationChannel;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow output
+// ---------------------------------------------------------------------------
+
+pub struct LoanOutcome {
+    application_id: String(1, 64);
+    status: FulfillmentStatus;
+    disbursement_receipt: option::Option<DisbursementReceipt>;
+}
+
+// ---------------------------------------------------------------------------
+// Agent contexts (every field defaulted)
+// ---------------------------------------------------------------------------
+
+pub struct IntakeContext {
+    tier: LoanTier = LoanTier::Standard;
+}
+
+pub struct CreditCheckContext {
+    report_pulled: Bool = false;
+}
+
+pub struct FraudScreenContext {
+    screened: Bool = false;
+}
+
+pub struct UnderwritingContext {
+    verdict: Decision = Decision::Escalated;
+    reason: String = "pending";
+    approved_rate: Decimal(4) = 0.0000d;
+}
+
+pub struct DisbursementContext {
+    status: FulfillmentStatus = FulfillmentStatus::Skipped;
+    disbursement_receipt: option::Option<DisbursementReceipt> = option::Option::None;
+}

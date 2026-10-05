@@ -1,0 +1,41 @@
+manifest_version = 1
+
+[package]
+name = "loan-origination"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "loan_origination"
+root = "src"
+
+[exports]
+modules = ["main", "types", "intake", "screening", "underwriting", "disbursement"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "loan_origination::main::LoanOriginationWorkflow"
+exports = [
+  { kind = "workflow", name = "loan_origination::main::LoanOriginationWorkflow" },
+  { kind = "agent", name = "loan_origination::intake::IntakeAgent" },
+  { kind = "agent", name = "loan_origination::screening::CreditCheckAgent" },
+  { kind = "agent", name = "loan_origination::screening::FraudScreenAgent" },
+  { kind = "agent", name = "loan_origination::underwriting::UnderwritingAgent" },
+  { kind = "agent", name = "loan_origination::disbursement::DisbursementAgent" },
+]
+
+[run]
+target = "workflow"
+input = "inputs/preferred.json"
+output_format = "human"
+verbosity = "normal"
+
+[run.profiles.jumbo]
+input = "inputs/jumbo.json"
+
+[run.profiles.rejected]
+input = "inputs/rejected.json"
+
+[dependencies]
+std = { source = "sysroot" }

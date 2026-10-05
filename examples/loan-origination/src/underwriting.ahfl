@@ -1,0 +1,96 @@
+module loan_origination::underwriting;
+
+import loan_origination::types as types;
+
+// Host-implemented pure business rules used in the contract.
+predicate credit_score_adequate(credit: types::CreditProfile) -> Bool;
+predicate fraud_screen_clean(fraud: types::FraudVerdict) -> Bool;
+predicate dti_within_limit(application: types::NormalizedApplication) -> Bool;
+
+pub agent UnderwritingAgent {
+    input: types::UnderwritingInput;
+    context: types::UnderwritingContext;
+    output: types::UnderwritingDecision;
+    states: [Init, Evaluate, Approved, Rejected, Escalated];
+    initial: Init;
+    final: [Approved, Rejected, Escalated];
+    capabilities: [];
+    quota: {
+        max_tool_calls: 0;
+        max_execution_time: 10s;
+    }
+
+    transition Init -> Evaluate;
+    transition Evaluate -> Approved;
+    transition Evaluate -> Rejected;
+    transition Evaluate -> Escalated;
+}
+
+contract for UnderwritingAgent {
+    requires: input.application.requested_amount > 0.00d;
+    ensures: (output.verdict == types::Decision::Approved) =>
+    (credit_score_adequate(input.credit) and fraud_screen_clean(input.fraud)
+        and dti_within_limit(input.application));
+    ensures: (output.verdict == types::Decision::Rejected) =>
+    (not credit_score_adequate(input.credit) or not fraud_screen_clean(input.fraud));
+    forbid: always (in_state(Approved) and not fraud_screen_clean(input.fraud));
+}
+
+flow for UnderwritingAgent {
+    state Init {
+        goto Evaluate;
+    }
+
+    state Evaluate {
+        // Routing: Approved only when credit is strong AND fraud is clean AND
+        // the amount is within the jumbo threshold. Rejected for hard fails
+        // (low score or high fraud). Everything else escalates to manual
+        // review — the three-way routing that gives the workflow its
+        // completed(node, FinalState) money invariant.
+        if input.credit.score >= 680
+        and input.fraud.risk_level == types::FraudRiskLevel::Low
+        and input.application.requested_amount <= 500000.00d {
+            ctx.verdict = types::Decision::Approved;
+            ctx.reason = "approved: credit, fraud, and amount checks passed";
+            ctx.approved_rate = 0.0525d;
+            goto Approved;
+        } else {
+            if input.credit.score < 600
+            or input.fraud.risk_level == types::FraudRiskLevel::High {
+                ctx.verdict = types::Decision::Rejected;
+                ctx.reason = "rejected: credit score or fraud risk";
+                ctx.approved_rate = 0.0000d;
+                goto Rejected;
+            } else {
+                ctx.verdict = types::Decision::Escalated;
+                ctx.reason = "escalated: manual review required";
+                ctx.approved_rate = 0.0000d;
+                goto Escalated;
+            }
+        }
+    }
+
+    state Approved {
+        return types::UnderwritingDecision {
+            verdict: ctx.verdict,
+            reason: ctx.reason,
+            approved_rate: ctx.approved_rate,
+        };
+    }
+
+    state Rejected {
+        return types::UnderwritingDecision {
+            verdict: ctx.verdict,
+            reason: ctx.reason,
+            approved_rate: ctx.approved_rate,
+        };
+    }
+
+    state Escalated {
+        return types::UnderwritingDecision {
+            verdict: ctx.verdict,
+            reason: ctx.reason,
+            approved_rate: ctx.approved_rate,
+        };
+    }
+}

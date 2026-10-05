@@ -1,0 +1,124 @@
+module loan_origination::disbursement;
+
+import loan_origination::types as types;
+import std::option as option;
+
+// ---------------------------------------------------------------------------
+// Capabilities — the top of the effect ladder
+// ---------------------------------------------------------------------------
+
+// Durable financial effect: exactly-once via idempotency key, required
+// receipt, saga compensation, and approval policy.
+capability DisburseFunds(request: types::DisbursementRequest) -> types::DisbursementReceipt {
+    effect: financial_write;
+    domain: disbursement;
+    idempotency: request.application_id;
+    receipt: required;
+    retry: safe_if_idempotent;
+    timeout: 30s;
+    compensation: ReverseDisbursement;
+    policy: [loan_origination::approval_required, loan_origination::audit_event];
+}
+
+// Saga compensation for DisburseFunds (durable_write, not financial —
+// the money already moved; this is the clawback).
+capability ReverseDisbursement(disb_receipt: types::DisbursementReceipt) -> Unit {
+    effect: durable_write;
+    domain: disbursement;
+    idempotency: disb_receipt.transaction_id;
+    receipt: required;
+    retry: safe_if_idempotent;
+    timeout: 30s;
+}
+
+// Notification side effect (external, not durable).
+capability SendNotification(application_id: String(1, 64), channel: types::NotificationChannel)
+    -> types::NotificationAck {
+    effect: external_side_effect;
+    domain: notification;
+    receipt: optional;
+    retry: unsafe;
+    timeout: 10s;
+}
+
+// ---------------------------------------------------------------------------
+// DisbursementAgent — fulfillment: disburse or skip
+// ---------------------------------------------------------------------------
+
+pub agent DisbursementAgent {
+    input: types::FulfillmentInput;
+    context: types::DisbursementContext;
+    output: types::LoanOutcome;
+    states: [Init, Fulfill, Disbursed, Skipped];
+    initial: Init;
+    final: [Disbursed, Skipped];
+    capabilities: [DisburseFunds, ReverseDisbursement, SendNotification];
+    quota: {
+        max_tool_calls: 5;
+        max_execution_time: 30s;
+    }
+
+    transition Init -> Fulfill;
+    transition Fulfill -> Disbursed;
+    transition Fulfill -> Skipped;
+}
+
+contract for DisbursementAgent {
+    requires: input.application.requested_amount > 0.00d;
+    ensures: (output.status == types::FulfillmentStatus::Disbursed) =>
+    (input.decision.verdict == types::Decision::Approved);
+    ensures: (output.status == types::FulfillmentStatus::Skipped) =>
+    (input.decision.verdict != types::Decision::Approved);
+    invariant: in_state(Disbursed) => called(DisburseFunds);
+    invariant: in_state(Skipped) => not called(DisburseFunds);
+    forbid: always (called(DisburseFunds)
+        and not (input.decision.verdict == types::Decision::Approved));
+}
+
+flow for DisbursementAgent {
+    state Init {
+        goto Fulfill;
+    }
+
+    state Fulfill with {
+        retry: 2;
+        retry_on: [TimeoutError, NetworkError];
+        timeout: 30s;
+    } {
+        if input.decision.verdict == types::Decision::Approved {
+            let request = types::DisbursementRequest {
+                application_id: input.application.application_id,
+                amount: input.application.requested_amount,
+                decision: input.decision,
+            };
+            let disb_receipt = DisburseFunds(request);
+            let ack = SendNotification(
+                input.application.application_id, types::NotificationChannel::Email);
+            ctx.disbursement_receipt = option::Option::Some(disb_receipt);
+            ctx.status = types::FulfillmentStatus::Disbursed;
+            goto Disbursed;
+        } else {
+            let ack = SendNotification(
+                input.application.application_id, types::NotificationChannel::Email);
+            ctx.disbursement_receipt = option::Option::None;
+            ctx.status = types::FulfillmentStatus::Skipped;
+            goto Skipped;
+        }
+    }
+
+    state Disbursed {
+        return types::LoanOutcome {
+            application_id: input.application.application_id,
+            status: ctx.status,
+            disbursement_receipt: ctx.disbursement_receipt,
+        };
+    }
+
+    state Skipped {
+        return types::LoanOutcome {
+            application_id: input.application.application_id,
+            status: ctx.status,
+            disbursement_receipt: ctx.disbursement_receipt,
+        };
+    }
+}

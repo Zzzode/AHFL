@@ -1,0 +1,9 @@
+{
+  "_type": "loan_origination::types::LoanApplication",
+  "application_id": "APP-2024-001",
+  "applicant_name": "Jane Smith",
+  "ssn_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+  "requested_amount": "250000.00",
+  "term_months": 360,
+  "annual_income": "120000.00"
+}
