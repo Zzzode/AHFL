@@ -20,7 +20,7 @@
     "wasm": {
       "eligible": "orchestration",
       "node_observation_skip": "node_host_awaits_rich_wire_types",
-      "reason": "single-agent echo workflow with the 9-shape rich wire-type matrix (Int/String/Decimal(2)/Duration/Set<Int>(8)/Map<String,Int>(8)/Option<Int>/Unit/Float); the P6 frame packer/reader round-trip every shape across the wire boundary and the computed-final + workflow-level materializers copy each field verbatim (WH-5c.7). The Node oracle host's P6 frame packer/reader does not implement Map/Decimal/Duration/Float (outside the JS host's rung-E frame subset), so the Node observation is withheld until the JS host ports the rich wire-type matrix."
+      "reason": "single-agent echo workflow with the 9-shape rich wire-type matrix (Int/String/Decimal(2)/Duration/Set<Int>(8)/Map<String,Int>(8)/Option<Int>/Unit/Float); the P6 frame packer/reader round-trip every shape across the wire boundary and the computed-final + workflow-level materializers copy each field verbatim (WH-5c.7). The Node oracle host's P6 frame packer/reader does not implement Map/Decimal/Duration (outside the JS host's rung-E frame subset); Float is supported (KR6.6 f64 ladder). The Node observation is withheld until the JS host ports the remaining rich wire-type matrix."
     }
   }
 }

@@ -32,7 +32,9 @@ HOST = Path("tests/conformance/node_embedded_host.mjs")
 # Joint case headers serve the frame-walk rejection sites: packValue (input),
 # readValue (output), and the V2-C fix-forward bridge-argument classifier. The
 # V2-B decision requires the pack/read pair; V2-C adds the bridge site.
-SUBSET_REJECTION = 'case "float":\n    case "decimal":\n    case "duration":'
+# Float is supported (KR6.6 f64 ladder + Node host Float port); the rejection
+# pattern pins only Decimal/Duration as host-unobservable.
+SUBSET_REJECTION = 'case "decimal":\n    case "duration":'
 EXPECTED_REJECTION_SITES = 3
 
 

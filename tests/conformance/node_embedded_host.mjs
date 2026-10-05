@@ -168,7 +168,7 @@ const kScratchArenaEnd = 12288;
 // scalar / tag-only enum / String PtrLen is spilled into the call site's
 // private 8-byte slots; a struct / tuple / option / payload-bearing enum stays
 // at its aggregate root address. This mirrors the C++ planning classification
-// in plan_capability_call (p6_scalar_kind: PtrLen/Index/Bool/Int spill,
+// in plan_capability_call (p6_scalar_kind: PtrLen/Index/Bool/Int/F64 spill,
 // Ptr roots keep their address).
 function bridgeParamKind(W, wireId) {
   const w = W[wireId];
@@ -178,6 +178,7 @@ function bridgeParamKind(W, wireId) {
     case "int":
     case "unit":
     case "string":
+    case "float":
       return "spill";
     case "struct":
     case "option":
@@ -187,7 +188,6 @@ function bridgeParamKind(W, wireId) {
       const tagOnly = w.variants.every((v) => v.kind === "unit");
       return tagOnly ? "spill" : "root";
     }
-    case "float":
     case "decimal":
     case "duration":
     case "timestamp":
@@ -620,6 +620,14 @@ function readI64(e, addr) {
   checkRange(addr, 8);
   return dataView(e).getBigInt64(addr, true);
 }
+function writeF64(e, addr, value) {
+  checkRange(addr, 8);
+  dataView(e).setFloat64(addr, value, true);
+}
+function readF64(e, addr) {
+  checkRange(addr, 8);
+  return dataView(e).getFloat64(addr, true);
+}
 function writeRaw(e, addr, bytes) {
   checkRange(addr, bytes.length);
   new Uint8Array(e.memory.buffer, addr, bytes.length).set(bytes);
@@ -684,7 +692,19 @@ function packValue(e, lane, W, L, value, wId, lId, addr, backing, arena) {
       if (wideInt) writeI64(e, addr, value);
       else writeI32(e, addr, value);
       return;
-    case "float":
+    case "float": {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        frameFail("float slot got a non-finite or non-number value");
+      }
+      // The wire shape and the dense layout must agree on the physical repr
+      // (mirrors the C++ packer's ShapeMismatch gate): a Float wire node is
+      // one 8-byte f64 word, never a narrower scalar or an aggregate.
+      if (l.t !== "scalar" || l.repr !== "f64") {
+        frameFail("float wire shape maps to a non-f64 scalar layout");
+      }
+      writeF64(e, addr, value);
+      return;
+    }
     case "decimal":
     case "duration":
     case "timestamp":
@@ -851,7 +871,14 @@ function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = 
       }
       return word;
     }
-    case "float":
+    case "float": {
+      // Mirror the C++ reader's ShapeMismatch gate: a Float wire node must
+      // land on an f64 scalar layout, never a narrower word or an aggregate.
+      if (l.t !== "scalar" || l.repr !== "f64") {
+        frameFail("float wire shape maps to a non-f64 scalar layout");
+      }
+      return readF64(e, addr);
+    }
     case "decimal":
     case "duration":
     case "timestamp":

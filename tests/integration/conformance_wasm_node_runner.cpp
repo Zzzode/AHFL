@@ -209,8 +209,14 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // F64 scalar kind on the P6 frame lane) withholds the Node observation
 // under the rich-wire-types reason (Float outside the JS host's rung-E
 // frame subset): 74/8 -> 74/9.
-constexpr int kExpectedAgreed = 74;
-constexpr int kExpectedSkipped = 9;
+// KR6.6 Node host Float port: the JS host's P6 frame packer/reader now
+// implements Float (f64 LE word), so the three f64 cases (p6_f64_arith,
+// p6_f64_compare, p6_f64_collection) move from skipped to agreed. They
+// carry 5 scenarios total (2+2+1): 74/9 -> 79/4. The
+// wh5c7_rich_input_matrix case stays skipped (it needs Map / Decimal /
+// Duration, not just Float).
+constexpr int kExpectedAgreed = 79;
+constexpr int kExpectedSkipped = 4;
 
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip='host_transcode_awaits_node_port'. The wasm
@@ -244,14 +250,12 @@ constexpr std::array<std::string_view, 1> kExpectedMultiNodeStashStems{
 // 'node_host_awaits_rich_wire_types'. The module emits and the native
 // wasm3 lane agrees with the blessing, but the Node oracle host's P6
 // frame packer/reader does not implement the rich wire-type matrix
-// (Map / Decimal / Duration / Float are outside the JS host's rung-E
-// frame subset). The C++ host supports them (WH-5c.7); the Node
-// observation is withheld until the JS host ports the rich wire-type
-// matrix. Keep sorted.
-constexpr std::array<std::string_view, 4> kExpectedRichWireTypesStems{
-    "p6_f64_arith",
-    "p6_f64_collection",
-    "p6_f64_compare",
+// (Map / Decimal / Duration are outside the JS host's rung-E frame
+// subset). The C++ host supports them (WH-5c.7); the Node observation
+// is withheld until the JS host ports the rich wire-type matrix.
+// Float is supported (KR6.6 f64 ladder + Node host Float port); the
+// three f64 cases moved to agreed. Keep sorted.
+constexpr std::array<std::string_view, 1> kExpectedRichWireTypesStems{
     "wh5c7_rich_input_matrix",
 };
 
@@ -582,9 +586,9 @@ int run_one(const CaseEntry &entry,
     //    join, so the observation is withheld.
     //  - the rich wire-type lane (NodeHostAwaitsRichWireTypes): the module
     //    emits and the native wasm3 lane agrees, but the Node host's P6 frame
-    //    packer/reader does not implement Map / Decimal / Duration / Float
+    //    packer/reader does not implement Map / Decimal / Duration
     //    (outside the JS host's rung-E frame subset), so the observation is
-    //    withheld.
+    //    withheld. Float is supported (KR6.6 f64 ladder).
     const bool host_transcode_skip =
         declared_skip == WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
     const bool multinode_stash_skip =
@@ -632,15 +636,17 @@ int run_one(const CaseEntry &entry,
 
     // The WH-5c.7 rich wire-type lane: the module emits and the native wasm3
     // lane agrees with the blessing, but the Node oracle host's P6 frame
-    // packer/reader does not implement Map / Decimal / Duration / Float
+    // packer/reader does not implement Map / Decimal / Duration
     // (they are outside the JS host's rung-E frame subset). Withhold the
     // Node observation until the JS host ports the rich wire-type matrix.
+    // Float is supported (KR6.6 f64 ladder); the remaining gap is
+    // Map / Decimal / Duration.
     if (rich_wire_types_skip) {
         ++g_skipped;
         g_rich_wire_types_stems.push_back(stem);
         std::cout << "SKIP[77] " << label
                   << ": Node embedded host lacks the WH-5c.7 rich wire-type "
-                     "matrix (Map / Decimal / Duration / Float outside the "
+                     "matrix (Map / Decimal / Duration outside the "
                      "JS host's rung-E frame subset)\n";
         return 77;
     }
