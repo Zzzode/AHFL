@@ -446,10 +446,6 @@ inline constexpr ErrorCode<DiagnosticCategory::Runtime> LLMCostBudgetExceeded{
     "LLM_COST_BUDGET_EXCEEDED"};
 } // namespace runtime
 
-namespace backend {
-inline constexpr ErrorCode<DiagnosticCategory::Backend> ExecutionError{"EXECUTION_ERROR"};
-} // namespace backend
-
 // ============================================================================
 // Wave-19 g-4 M7: Lint-family error codes
 // ============================================================================

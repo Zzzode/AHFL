@@ -953,7 +953,7 @@ set_tests_properties(ahflc.dump_types.alias_schema PROPERTIES
 ahfl_add_check_fail_test(
     ahflc.fail.duplicate_type
     "${AHFL_TESTS_DIR}/golden/resolver/duplicate_top_level_type.ahfl"
-    "duplicate type"
+    "resolve.DUPLICATE_SYMBOL"
 )
 
 ahfl_add_check_fail_test(
@@ -965,20 +965,20 @@ ahfl_add_check_fail_test(
 ahfl_add_check_fail_test(
     ahflc.fail.type_alias_cycle
     "${AHFL_TESTS_DIR}/golden/resolver/type_alias_cycle.ahfl"
-    "type alias cycle detected"
+    "resolve.CYCLIC_TYPE_ALIAS"
 )
 
 ahfl_add_manifest_check_fail_test(
     ahflc.fail.duplicate_import_alias
     "${AHFL_IMPORT_ALIAS_MANIFEST}"
     duplicate
-    "duplicate import alias"
+    "resolve.DUPLICATE_IMPORT"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.ambiguous_callable
     "${AHFL_TESTS_DIR}/golden/resolver/ambiguous_callable.ahfl"
-    "ambiguous callable"
+    "resolve.AMBIGUOUS_CALLABLE"
 )
 
 ahfl_add_check_fail_test(
