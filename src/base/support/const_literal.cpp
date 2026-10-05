@@ -4,7 +4,6 @@
 #include <charconv>
 #include <limits>
 #include <system_error>
-
 namespace ahfl::support {
 
 namespace {
@@ -95,6 +94,20 @@ std::optional<DecimalConstLiteral> parse_decimal_literal(std::string_view text) 
         .units = units,
         .scale = static_cast<std::int64_t>(text.size() - dot - 1),
     };
+}
+
+std::optional<double> parse_float_literal(std::string_view text) {
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    double value = 0.0;
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return std::nullopt;
+    }
+    return value;
 }
 
 } // namespace ahfl::support

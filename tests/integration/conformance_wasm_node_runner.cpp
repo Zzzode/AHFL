@@ -187,8 +187,14 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // (they are outside the JS host's rung-E frame subset). The C++ host
 // supports them (WH-5c.7); the Node observation is withheld until the JS
 // host ports the rich wire-type matrix: 69/3 -> 69/4.
+// KR6.6 P6 f64 arithmetic ladder: the f64 arithmetic and comparison cases
+// (p6_f64_arith, p6_f64_compare) carry Float frame fields the Node oracle
+// host's P6 frame packer/reader does not implement (outside the JS host's
+// rung-E frame subset). The wasm3 lane agrees with the blessed expectation
+// via the dedicated F64 scalar kind; the Node observation is withheld under
+// the same rich-wire-types reason: 69/4 -> 69/8.
 constexpr int kExpectedAgreed = 69;
-constexpr int kExpectedSkipped = 4;
+constexpr int kExpectedSkipped = 8;
 
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip='host_transcode_awaits_node_port'. The wasm
@@ -226,7 +232,9 @@ constexpr std::array<std::string_view, 1> kExpectedMultiNodeStashStems{
 // frame subset). The C++ host supports them (WH-5c.7); the Node
 // observation is withheld until the JS host ports the rich wire-type
 // matrix. Keep sorted.
-constexpr std::array<std::string_view, 1> kExpectedRichWireTypesStems{
+constexpr std::array<std::string_view, 3> kExpectedRichWireTypesStems{
+    "p6_f64_arith",
+    "p6_f64_compare",
     "wh5c7_rich_input_matrix",
 };
 

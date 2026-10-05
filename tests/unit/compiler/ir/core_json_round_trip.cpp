@@ -759,6 +759,9 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/wh5c9_string_carry.ahfl",
         "wasm/wh5c9_string_edge.ahfl",
         "wasm/wh5c9_string_construct_fail_closed.ahfl",
+        // KR6.6 P6: f64 arithmetic ladder fixture (f64.const/add/sub/mul/div/
+        // neg + f64.gt comparison through the dedicated F64 scalar kind).
+        "wasm/p6_f64_arith.ahfl",
         // WH-5c.7: P6 builtin/map fixtures that use the repo-std marker and
         // lower to verifier-clean Core.
         "wasm/p6_builtins.ahfl",

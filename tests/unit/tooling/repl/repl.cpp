@@ -240,14 +240,12 @@ int main() {
 
     // Test 15: unsupported expressions surface actionable codegen diagnostics
     // (kr68 §12.8.10.4), never wasm3 trap text, never a silent fallback.
+    // f64 arithmetic is now supported (KR6.6 P6 f64 ladder), so 1.5 + 2.5
+    // evaluates to 4.0 instead of rejecting with the old "f64 opcode ladder"
+    // diagnostic.
     {
         auto r = ahfl::repl::execute_command("1.5 + 2.5");
-        check(!r.success, "1.5 + 2.5 fails");
-        check(r.output.find("float literals need the f64 opcode ladder") != std::string::npos,
-              "1.5 + 2.5 codegen diagnostic");
-        check(r.output.find("trap") == std::string::npos &&
-                  r.output.find("m3_") == std::string::npos,
-              "1.5 + 2.5 has no trap text");
+        check(r.success && r.output == "4.0", "1.5 + 2.5 -> 4.0");
     }
     {
         auto r = ahfl::repl::execute_command("\"a\" + \"b\"");

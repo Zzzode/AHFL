@@ -135,6 +135,7 @@ using ir::core::kP6RodataCapacity;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kI64 = 0x7e;
+constexpr std::uint8_t kF64 = 0x7c;
 constexpr std::uint8_t kEmptyBlock = 0x40;
 constexpr std::uint8_t kFuncType = 0x60;
 
@@ -223,15 +224,19 @@ constexpr std::uint8_t kOpGlobalGet = 0x23;
 constexpr std::uint8_t kOpGlobalSet = 0x24;
 constexpr std::uint8_t kOpI32Load = 0x28;
 constexpr std::uint8_t kOpI64Load = 0x29;
+constexpr std::uint8_t kOpF64Load = 0x2b;
 constexpr std::uint8_t kOpI32Store = 0x36;
 constexpr std::uint8_t kOpI64Store = 0x37;
+constexpr std::uint8_t kOpF64Store = 0x39;
 // RFC 0026 P6-4: the natural-alignment exponents a `memarg` carries for the two
 // scalar widths P6 loads/stores. Wasm takes log2(alignment); a value at its
 // natural alignment lets the engine use the widest access.
 constexpr std::uint32_t kAlignI32 = 2;
 constexpr std::uint32_t kAlignI64 = 3;
+constexpr std::uint32_t kAlignF64 = 3; // log2(8), same natural alignment as i64
 constexpr std::uint8_t kOpI32Const = 0x41;
 constexpr std::uint8_t kOpI64Const = 0x42;
+constexpr std::uint8_t kOpF64Const = 0x44;
 constexpr std::uint8_t kOpI32Eqz = 0x45;
 constexpr std::uint8_t kOpI32Eq = 0x46;
 // RFC 0026 P6 (KR6.6): the scalar ladder opcode set. The wasm numeric
@@ -259,6 +264,16 @@ constexpr std::uint8_t kOpI64LeS = 0x57;
 [[maybe_unused]] constexpr std::uint8_t kOpI64LeU = 0x58;
 constexpr std::uint8_t kOpI64GeS = 0x59;
 [[maybe_unused]] constexpr std::uint8_t kOpI64GeU = 0x5a;
+// RFC 0026 P6 f64 arithmetic ladder: f64 comparisons produce an i32 result,
+// exactly like the integer comparisons. f64.eq/ne are unordered (NaN is
+// false for eq, true for ne), matching the IEEE 754 total-order semantics
+// the P6 scalar contract documents.
+constexpr std::uint8_t kOpF64Eq = 0x61;
+constexpr std::uint8_t kOpF64Ne = 0x62;
+constexpr std::uint8_t kOpF64Lt = 0x63;
+constexpr std::uint8_t kOpF64Le = 0x64;
+constexpr std::uint8_t kOpF64Gt = 0x65;
+constexpr std::uint8_t kOpF64Ge = 0x66;
 constexpr std::uint8_t kOpI32Add = 0x6a;
 constexpr std::uint8_t kOpI32Sub = 0x6b;
 constexpr std::uint8_t kOpI32Mul = 0x6c;
@@ -271,6 +286,14 @@ constexpr std::uint8_t kOpI64Sub = 0x7d;
 constexpr std::uint8_t kOpI64Mul = 0x7e;
 constexpr std::uint8_t kOpI64DivS = 0x7f;
 constexpr std::uint8_t kOpI64RemS = 0x81;
+// RFC 0026 P6 f64 arithmetic ladder: the four IEEE 754 binary64 arithmetic
+// ops and unary negation. f64.div by zero yields +/-infinity or NaN (no
+// trap), matching the documented P6 float contract.
+constexpr std::uint8_t kOpF64Neg = 0x9a;
+constexpr std::uint8_t kOpF64Add = 0xa0;
+constexpr std::uint8_t kOpF64Sub = 0xa1;
+constexpr std::uint8_t kOpF64Mul = 0xa2;
+constexpr std::uint8_t kOpF64Div = 0xa3;
 // RFC 0026 P6-6: the integer-width widening. i64.extend_i32_s decodes an i32 in
 // the low lane and SIGN-extends it to i64, which is the exact physical effect of
 // a `BoundedInt <: Int` widening whose bounded side is the i32 scalar repr.
@@ -1903,6 +1926,13 @@ enum class P6ScalarKind {
     Bool,
     IntI32,
     IntI64,
+    // RFC 0026 P6 f64 arithmetic ladder: an IEEE 754 binary64 scalar. Its
+    // whole runtime representation is one 8-byte f64 word, distinct from
+    // IntI64 so that integer and float arithmetic can never be confused.
+    // f64.const, f64 arithmetic (add/sub/mul/div/neg), f64 comparisons
+    // (eq/ne/lt/le/gt/ge, producing i32), and f64.load/f64.store are the
+    // opcode set; f64 never participates in bitwise or collection ops.
+    F64,
     Index,
     // RFC 0026 P6-4: an AGGREGATE value (a struct, or an enum with a payload)
     // whose whole runtime representation is an i32 linear-memory ADDRESS of its
@@ -1940,6 +1970,27 @@ enum class P6ScalarKind {
     String,
     Closure
 };
+
+// RFC 0026 P6 f64 arithmetic ladder: select the width-exact load/store opcode
+// and natural alignment for a scalar kind. F64 uses f64.load/f64.store (the
+// IEEE 754 binary64 access path), IntI64 uses i64.load/i64.store, and every
+// other one-word kind (Bool, IntI32, Index) uses i32.load/i32.store.
+[[nodiscard]] constexpr std::uint8_t scalar_load_op(P6ScalarKind kind) {
+    if (kind == P6ScalarKind::F64) {
+        return kOpF64Load;
+    }
+    return kind == P6ScalarKind::IntI64 ? kOpI64Load : kOpI32Load;
+}
+[[nodiscard]] constexpr std::uint8_t scalar_store_op(P6ScalarKind kind) {
+    if (kind == P6ScalarKind::F64) {
+        return kOpF64Store;
+    }
+    return kind == P6ScalarKind::IntI64 ? kOpI64Store : kOpI32Store;
+}
+[[nodiscard]] constexpr std::uint32_t scalar_align(P6ScalarKind kind) {
+    return (kind == P6ScalarKind::IntI64 || kind == P6ScalarKind::F64) ? kAlignI64
+                                                                       : kAlignI32;
+}
 
 // The location in the scrutinee a pattern is tested at (RFC 0026 P6-4). The root
 // site is the scrutinee itself — a scalar in a local (`in_memory == false`), or
@@ -2325,14 +2376,14 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
             return std::nullopt;
         }
     }
-    // WH-5c.7 mechanism (a): an f64 value rides the IntI64 kind as an 8-byte
-    // word (bit-identical copy). The copy path emits i64.load / i64.store —
-    // never f64.const or f64 arithmetic. f64 arithmetic is rejected by
-    // emit_binary / emit_unary with a ranged diagnostic (the f64 opcode ladder
-    // is a deferred slice).
+    // RFC 0026 P6 f64 arithmetic ladder: an f64 value is its own kind, no
+    // longer riding the IntI64 kind as a bit-identical copy (WH-5c.7). The
+    // f64 opcode ladder (f64.const, f64 arithmetic, f64 comparisons,
+    // f64.load/f64.store) is the representation; f64 never participates in
+    // integer or bitwise ops.
     if (std::holds_alternative<CoreVtFloat>(node)) {
         return scalar->repr == ir::core::CoreScalarRepr::F64
-                   ? std::optional{P6ScalarKind::IntI64}
+                   ? std::optional{P6ScalarKind::F64}
                    : std::nullopt;
     }
     // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a Decimal / Duration literal
@@ -2450,7 +2501,7 @@ p6_coercion_effect(const CoreProgram &program,
         if (same_bytes && source_kind != std::nullopt && result_kind != std::nullopt) {
             // The operand's own P6 word IS a valid P6 word of the result type;
             // a projection that lands on a shape P6 has no local for (Index /
-            // aggregate / f64 / a 2-word String) is rejected by the caller's
+            // aggregate / a 2-word String) is rejected by the caller's
             // result-kind check, so this branch stays a true no-op.
             return P6CoercionEffect::None;
         }
@@ -2764,6 +2815,8 @@ class P6ComputationHandlerBuilder {
         info.kind = kind;
         if (kind == P6ScalarKind::IntI64) {
             info.slot = i64_count_++;
+        } else if (kind == P6ScalarKind::F64) {
+            info.slot = f64_count_++;
         } else {
             info.slot = i32_count_++;
             if (kind == P6ScalarKind::Closure) {
@@ -2774,7 +2827,7 @@ class P6ComputationHandlerBuilder {
         EnvBindingInit init;
         init.value = value;
         init.offset = offset;
-        init.wide = kind == P6ScalarKind::IntI64;
+        init.kind = kind;
         init.pair = kind == P6ScalarKind::Closure;
         env_binding_inits_.push_back(init);
         used_values_[value.value] = true;
@@ -2830,18 +2883,18 @@ class P6ComputationHandlerBuilder {
     // Emit the complete body.
     //
     // Handler mode: the body of this handler's own `() -> i32` wasm function:
-    // the local declarations (its OWN i32 group then i64 group), a
-    // `block (result i32)` that every goto path leaves with `br`, the lowered
-    // region, and the closing `end`s. The block is the structured early-exit
-    // target RFC 0026 Q2 mandates: no relooper, no arbitrary jump.
+    // the local declarations (its OWN i32 group, then i64 group, then f64
+    // group), a `block (result i32)` that every goto path leaves with `br`,
+    // the lowered region, and the closing `end`s. The block is the structured
+    // early-exit target RFC 0026 Q2 mandates: no relooper, no arbitrary jump.
     //
     // Fn mode (FB-1 §6.3): an `(i32 env, args...) -> ret` function. The leading
     // `env` parameter is wasm local 0; the concrete args occupy locals
-    // 1..param_count in DECLARATION order (their words may mix i32/i64 — the
-    // functype carries the mixed order, so params do not go through the
+    // 1..param_count in DECLARATION order (their words may mix i32/i64/f64 —
+    // the functype carries the mixed order, so params do not go through the
     // i32-first SSA pool). Non-param SSA + scratch locals follow, grouped
-    // i32-word then i64-word. The body completes with an explicit value
-    // `return`; there is no result-i32 block.
+    // i32-word, then i64-word, then f64-word. The body completes with an
+    // explicit value `return`; there is no result-i32 block.
     [[nodiscard]] std::optional<std::vector<std::uint8_t>>
     emit(std::span<const P6ScalarKind> param_words) {
         // The pool base EVERY non-param local lookup adds is 1 (env) + the
@@ -2884,15 +2937,16 @@ class P6ComputationHandlerBuilder {
             (!fn_mode_ && bridge_scratch_needed_) ? 2u : 0u;
         if (temp_count != 0 || keyget_count != 0 || final_count != 0 ||
             ctx_store_count != 0 || ptrlen_read_count != 0 || bridge_count != 0) {
-            // The bump temporaries are placed AFTER the i64 group (a second
-            // i32 local group) so they do not shift the SSA/scratch i64 pool
-            // indices pool_local derives from i32_group_size(). Fn bodies have
-            // the leading env local plus the flat param words; handlers have no
-            // parameters, so their pool begins at local 0.
+            // The bump temporaries are placed AFTER the f64 group (a second
+            // i32 local group) so they do not shift the SSA/scratch i64/f64
+            // pool indices pool_local derives from i32_group_size(). Fn
+            // bodies have the leading env local plus the flat param words;
+            // handlers have no parameters, so their pool begins at local 0.
             const std::uint32_t pool_base = fn_mode_ ? 1u + fn_param_count_ : 0u;
             const std::uint32_t after_groups =
                 pool_base + i32_count_ + scratch_i32_count_ +
-                i64_count_ + scratch_i64_count_;
+                i64_count_ + scratch_i64_count_ +
+                f64_count_ + scratch_f64_count_;
             if (dynamic) {
                 alloc_temp_local_ = after_groups;
                 alloc_new_local_ = after_groups + 1u;
@@ -2961,8 +3015,8 @@ class P6ComputationHandlerBuilder {
                     body_.byte(kOpLocalSet);
                     body_.u32(first + 1u);
                 } else {
-                    body_.byte(init.wide ? kOpI64Load : kOpI32Load);
-                    body_.u32(init.wide ? kAlignI64 : kAlignI32);
+                    body_.byte(scalar_load_op(init.kind));
+                    body_.u32(scalar_align(init.kind));
                     body_.u32(init.offset);
                     body_.byte(kOpLocalSet);
                     body_.u32(pool_local(locals_[init.value.value], false));
@@ -2977,11 +3031,15 @@ class P6ComputationHandlerBuilder {
         // not appear in the local-declaration group.
         const std::uint32_t pool_i32 = i32_count_ + scratch_i32_count_;
         const std::uint32_t pool_i64 = i64_count_ + scratch_i64_count_;
+        const std::uint32_t pool_f64 = f64_count_ + scratch_f64_count_;
         std::uint32_t local_groups = 0;
         if (pool_i32 != 0) {
             ++local_groups;
         }
         if (pool_i64 != 0) {
+            ++local_groups;
+        }
+        if (pool_f64 != 0) {
             ++local_groups;
         }
         // The fn-mode bump temporaries form a SECOND i32 group after the i64
@@ -3001,6 +3059,10 @@ class P6ComputationHandlerBuilder {
         if (pool_i64 != 0) {
             function.u32(pool_i64);
             function.byte(kI64);
+        }
+        if (pool_f64 != 0) {
+            function.u32(pool_f64);
+            function.byte(kF64);
         }
         if (temp_i32 != 0) {
             function.u32(temp_i32);
@@ -3061,6 +3123,7 @@ class P6ComputationHandlerBuilder {
     std::vector<LocalInfo> locals_; // CoreValueId -> pool slot
     std::uint32_t i32_count_{0};
     std::uint32_t i64_count_{0};
+    std::uint32_t f64_count_{0};
     // FB-1 fn mode: number of pre-bound parameters (== functype arg count, env
     // excluded). Set in emit(); pool_local adds the 1 + this offset.
     std::uint32_t fn_param_count_{0};
@@ -3096,9 +3159,10 @@ class P6ComputationHandlerBuilder {
     //
     // Slots are indexed within a kind's pool (one pool per physical repr).
     // `pool_local` derives every pool's base from the single
-    // `[ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ]` grouping, so a slot
-    // index is never constructed from one pool's size alone — the emitted local
-    // declaration order and the index space cannot diverge.
+    // `[ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ][ SSA f64 ][ scratch f64 ]`
+    // grouping, so a slot index is never constructed from one pool's size
+    // alone — the emitted local declaration order and the index space cannot
+    // diverge.
     //
     // All three tables are keyed by CoreValueId, the SAME domain the emit pass
     // reads: the plan pass resolves a pattern's `CorePatternBindingId` (arm-local
@@ -3109,6 +3173,7 @@ class P6ComputationHandlerBuilder {
     std::vector<LocalInfo> match_result_locals_;
     std::uint32_t scratch_i32_count_{0};
     std::uint32_t scratch_i64_count_{0};
+    std::uint32_t scratch_f64_count_{0};
 
     // CORE-GAPS: set when a Map KeyGet scan is planned. The keyed-scan codegen
     // needs three trailing module-level i32 scratch locals (cursor, found flag,
@@ -3126,7 +3191,7 @@ class P6ComputationHandlerBuilder {
     // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String ctx store needs the
     // walked slot address twice (the PtrLen is two i32 stores), so it is teed
     // into ONE trailing i32 temp local. Allocated only when such a store is
-    // planned; lives in the second i32 group after the i64 group.
+    // planned; lives in the second i32 group after the f64 group.
     bool ptrlen_ctx_store_needed_{false};
     std::uint32_t ctx_store_addr_local_{std::numeric_limits<std::uint32_t>::max()};
     // V2-B: one temp holding the walked slot address while reading a String
@@ -3251,7 +3316,7 @@ class P6ComputationHandlerBuilder {
     struct EnvBindingInit {
         CoreValueId value{};
         std::uint32_t offset{0};
-        bool wide{false}; // i64 slot
+        P6ScalarKind kind{P6ScalarKind::IntI32}; // scalar slot kind
         bool pair{false}; // nested-closure (two i32 words)
     };
     std::vector<EnvBindingInit> env_binding_inits_;
@@ -3571,17 +3636,23 @@ class P6ComputationHandlerBuilder {
     // The declared size of the i32 group in the emitted local index space: every
     // SSA i32 local followed by every scratch i32 local. The handler function has
     // no parameters, so local 0 begins the i32 group, and a real wasm function
-    // declares its locals as one i32 group followed by one i64 group (wider types
-    // cannot share an index). EVERY kind's pool is carved from that single
-    // grouping:
+    // declares its locals as one i32 group followed by one i64 group followed by
+    // one f64 group (wider types cannot share an index). EVERY kind's pool is
+    // carved from that single grouping:
     //
-    //     [ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ]
+    //     [ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ][ SSA f64 ][ scratch f64 ]
     //
-    // So the i64 group begins at THIS offset. This is the ONE definition of that
-    // boundary; `pool_local` derives both groups from it, which is what keeps the
-    // SSA pool and the match scratch pool from disagreeing on where i64 starts.
+    // So the i64 group begins at the i32 group size and the f64 group begins at
+    // the i32 + i64 group sizes. This is the ONE definition of those boundaries;
+    // `pool_local` derives all groups from them, which is what keeps the SSA
+    // pool and the match scratch pool from disagreeing on where each kind
+    // starts.
     [[nodiscard]] std::uint32_t i32_group_size() const {
         return i32_count_ + scratch_i32_count_;
+    }
+
+    [[nodiscard]] std::uint32_t i64_group_size() const {
+        return i64_count_ + scratch_i64_count_;
     }
 
     // The wasm local index of a pool slot. `scratch_pool` selects the monotone
@@ -3591,15 +3662,20 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] std::uint32_t pool_local(const LocalInfo &info, bool scratch_pool) const {
         if (info.is_param) {
             // local 0 is env; parameter ordinal i (declaration order, mixed
-            // i32/i64 words) is wasm local 1 + i.
+            // i32/i64/f64 words) is wasm local 1 + i.
             return 1u + info.slot;
         }
         // Non-param SSA + scratch declared locals begin at local
         // 1 + param_count (fn mode) or local 0 (handler mode). They are grouped
-        // i32-word then i64-word; the i64 pool is offset by the i32 group size.
+        // i32-word, then i64-word, then f64-word; each pool is offset by the
+        // preceding groups' sizes.
         const std::uint32_t base = fn_mode_ ? 1u + fn_param_count_ : 0u;
         if (info.kind == P6ScalarKind::IntI64) {
             return base + i32_group_size() + (scratch_pool ? i64_count_ : 0) + info.slot;
+        }
+        if (info.kind == P6ScalarKind::F64) {
+            return base + i32_group_size() + i64_group_size() +
+                   (scratch_pool ? f64_count_ : 0) + info.slot;
         }
         return base + (scratch_pool ? i32_count_ : 0) + info.slot;
     }
@@ -3804,13 +3880,12 @@ class P6ComputationHandlerBuilder {
             body_.u32(static_cast<std::uint32_t>(offset + 4u));
             return true;
         }
-        const bool wide = *kind == P6ScalarKind::IntI64;
         emit_local_get(base_local);
         if (!emit_value_read(value, range)) {
             return false;
         }
-        body_.byte(wide ? kOpI64Store : kOpI32Store);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_store_op(*kind));
+        body_.u32(scalar_align(*kind));
         body_.u32(static_cast<std::uint32_t>(offset));
         return true;
     }
@@ -3946,7 +4021,7 @@ class P6ComputationHandlerBuilder {
     // `(func_index, env_ptr)` word pair), but NO P6 value model — P6 has no
     // function-table index value, no env field walk, and no `call_indirect`, so a
     // closure is NOT a single-word P6 value. It falls into the same "not a P6
-    // value" arm as a PtrLen / bytes / f64 leaf: `place_is_scalar_leaf` and
+    // value" arm as a PtrLen / bytes leaf: `place_is_scalar_leaf` and
     // `place_is_aggregate_leaf` both return false for it, so every consumer fails
     // closed rather than reading its first word. The two-word size is deliberately
     // NOT papered over by a scalar mapping — that would let a projection read half
@@ -3994,9 +4069,9 @@ class P6ComputationHandlerBuilder {
                 case ir::core::CoreScalarRepr::I64:
                     return P6ScalarKind::IntI64;
                 case ir::core::CoreScalarRepr::F64:
-                    // WH-5c.7 mechanism (a): f64 rides IntI64 (8-byte word
-                    // bit-identical copy).
-                    return P6ScalarKind::IntI64;
+                    // RFC 0026 P6 f64 arithmetic ladder: f64 is its own kind,
+                    // with f64.load/f64.store as the frame-slot access path.
+                    return P6ScalarKind::F64;
                 }
             }
             if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
@@ -4017,14 +4092,14 @@ class P6ComputationHandlerBuilder {
     }
 
     // Whether a P4-D layout edge is a leaf the P6 memory model can load/store as
-    // ONE word: an i32 / i64 scalar, or a tag-only enum (an i32 discriminant).
-    // Everything else — a PtrLen String, bytes, f64, or a nested aggregate /
-    // collection — is not a single-word field, so a leaf read/store of it
-    // fails closed.
+    // ONE word: an i32 / i64 / f64 scalar, or a tag-only enum (an i32
+    // discriminant). Everything else — a PtrLen String, bytes, or a nested
+    // aggregate / collection — is not a single-word field, so a leaf
+    // read/store of it fails closed.
     [[nodiscard]] bool place_is_scalar_leaf(CoreLayoutId layout_id) const {
         const P6ScalarKind kind = place_kind_of_layout(layout_id);
         return kind == P6ScalarKind::IntI32 || kind == P6ScalarKind::IntI64 ||
-               kind == P6ScalarKind::Index;
+               kind == P6ScalarKind::F64 || kind == P6ScalarKind::Index;
     }
 
     // Whether a P4-D layout edge is an ADDRESS-SHAPED leaf: a struct, a
@@ -4074,7 +4149,7 @@ class P6ComputationHandlerBuilder {
     // the ONE constructor of a payload sub-site, shared by the plan pass
     // (`plan_variant_pattern_site`) and the emit pass (`emit_variant_test`), so
     // the two can never disagree about which slots are addressable. A slot whose
-    // P4-D edge is NOT a single-word P6 value — a PtrLen String / bytes / f64, or
+    // P4-D edge is NOT a single-word P6 value — a PtrLen String / bytes, or
     // a D2 closure (RFC 0026 P6-8a; two words with no P6 representation) — fails
     // closed here rather than latching / loading only its first word. The
     // projection / store / collection leaf paths already reject exactly these
@@ -4175,7 +4250,10 @@ class P6ComputationHandlerBuilder {
             ++scratch_i32_count_; // byte_len word
             return true;
         }
-        info.slot = kind == P6ScalarKind::IntI64 ? scratch_i64_count_++ : scratch_i32_count_++;
+        info.slot = kind == P6ScalarKind::IntI64
+                        ? scratch_i64_count_++
+                    : kind == P6ScalarKind::F64 ? scratch_f64_count_++
+                                                : scratch_i32_count_++;
         return true;
     }
 
@@ -4193,6 +4271,8 @@ class P6ComputationHandlerBuilder {
         info.kind = kind;
         if (kind == P6ScalarKind::IntI64) {
             info.slot = i64_count_++;
+        } else if (kind == P6ScalarKind::F64) {
+            info.slot = f64_count_++;
         } else {
             info.slot = i32_count_++;
             if (is_two_word_kind(kind)) {
@@ -4241,7 +4321,7 @@ class P6ComputationHandlerBuilder {
             if (is_zero_sized_value_type(expr.result_type)) {
                 return true;
             }
-            return reject("scalar expression has a non-scalar or f64 result type",
+            return reject("scalar expression has a non-scalar result type",
                           expr.source_range);
         }
         return std::visit(
@@ -4282,8 +4362,8 @@ class P6ComputationHandlerBuilder {
     // FB-1 §6.1/§6.3: plan a statically-resolved direct call. The callee must
     // resolve to a body-bearing Fn instance whose wasm ordinal the reachability
     // pass assigned; every argument and the result must be a single P6 word
-    // (i32/i64 scalar, aggregate i32 address, bounded-collection i32 handle —
-    // String/PtrLen/f64 are exactly the words p6_scalar_kind rejects, so the
+    // (i32/i64/f64 scalar, aggregate i32 address, bounded-collection i32 handle —
+    // String/PtrLen/bytes are exactly the words p6_scalar_kind rejects, so the
     // multi-word cross-boundary FN_CROSS_BOUNDARY_TYPE gate is shared with the
     // P6 scalar gate rather than reimplemented).
     [[nodiscard]] bool plan_direct_call(const CoreCallExpr &c, const CoreExpr &expr) {
@@ -4348,7 +4428,7 @@ class P6ComputationHandlerBuilder {
     // Int (IntI32) and tag-only enum (Index) all cross as one i32 word. An
     // unbounded Int (IntI64) and f64 do NOT (64-bit), and a closure is a
     // two-word pair — those fail the ABI rather than emitting an invalid
-    // module. A non-P6 type (nullopt: String PtrLen / bytes / f64) fails too.
+    // module. A non-P6 type (nullopt: String PtrLen / bytes) fails too.
     [[nodiscard]] static bool
     capability_abi_word_kind(std::optional<P6ScalarKind> kind) {
         if (kind == std::nullopt) {
@@ -4362,6 +4442,7 @@ class P6ComputationHandlerBuilder {
         case P6ScalarKind::Collection:
             return true;
         case P6ScalarKind::IntI64:
+        case P6ScalarKind::F64:
         case P6ScalarKind::Closure:
         case P6ScalarKind::String:
             return false;
@@ -4488,7 +4569,7 @@ class P6ComputationHandlerBuilder {
             }
             const auto arg_kind = p6_scalar_kind(program_, layouts_, arg_type);
             if (arg_kind == std::nullopt || *arg_kind == P6ScalarKind::Closure ||
-                *arg_kind == P6ScalarKind::Collection) {
+                *arg_kind == P6ScalarKind::Collection || *arg_kind == P6ScalarKind::F64) {
                 return reject_with_code(
                     core_wasm_diag::kUnsupportedCapabilityFrame,
                     "a bridge capability argument is not a frame-walkable P6 value in this rung "
@@ -4518,7 +4599,7 @@ class P6ComputationHandlerBuilder {
         }
         const auto result_kind = p6_scalar_kind(program_, layouts_, result_type);
         if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure ||
-            *result_kind == P6ScalarKind::Collection) {
+            *result_kind == P6ScalarKind::Collection || *result_kind == P6ScalarKind::F64) {
             return reject_with_code(
                 core_wasm_diag::kUnsupportedCapabilityFrame,
                 "a bridge capability result is not a frame-walkable P6 value in this rung (a "
@@ -4541,7 +4622,7 @@ class P6ComputationHandlerBuilder {
 
     // Shared callee-link / single-word boundary validation for a direct fn call
     // (CoreCallExpr or CoreCallStmt): records the callee instance for the
-    // reachability fixed point and rejects String/f64/multi-word
+    // reachability fixed point and rejects String/multi-word
     // arguments/results and a closure RESULT (one-word functype limit).
     [[nodiscard]] bool plan_call_operands(CoreInstanceId callee,
                                           const std::vector<CoreValueId> &args,
@@ -4561,10 +4642,10 @@ class P6ComputationHandlerBuilder {
             // its two (func_index, env_ptr) words. A String is also two words
             // but is NOT part of the fn-boundary calling convention in any
             // rung (its by-address PtrLen marshaling arrives with the frame
-            // bridge), so it crosses no boundary; f64/bytes stay non-P6.
+            // bridge), so it crosses no boundary; bytes stay non-P6.
             if (arg_kind == std::nullopt || *arg_kind == P6ScalarKind::String) {
                 return reject("call argument is not a representable P6 boundary value "
-                              "(String / f64 / multi-word types cannot cross an fn boundary)",
+                              "(String / multi-word types cannot cross an fn boundary)",
                               range);
             }
         }
@@ -4572,7 +4653,7 @@ class P6ComputationHandlerBuilder {
         if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure ||
             *result_kind == P6ScalarKind::String) {
             return reject("call result is not a single-word P6 value "
-                          "(a closure / String / f64 / multi-word result cannot cross an fn "
+                          "(a closure / String / multi-word result cannot cross an fn "
                           "boundary in this slice)",
                           range);
         }
@@ -4581,9 +4662,9 @@ class P6ComputationHandlerBuilder {
 
     // FB-3b: number of flat wasm parameter WORDS a boundary value occupies, and
     // the corresponding type bytes. A scalar / aggregate-address / collection
-    // handle is one i32 (or i64) word; a Closure callable is the two-word
-    // (func_index, env_ptr) pair. A non-P6 type (String PtrLen / bytes / f64)
-    // has no representation and rejects.
+    // handle is one i32 (or i64 / f64) word; a Closure callable is the two-word
+    // (func_index, env_ptr) pair. A non-P6 type (String PtrLen / bytes) has no
+    // representation and rejects.
     [[nodiscard]] static std::uint32_t boundary_word_count(P6ScalarKind kind) {
         return kind == P6ScalarKind::Closure ? 2u : 1u;
     }
@@ -4591,6 +4672,8 @@ class P6ComputationHandlerBuilder {
         if (kind == P6ScalarKind::Closure) {
             out.push_back(kI32);
             out.push_back(kI32);
+        } else if (kind == P6ScalarKind::F64) {
+            out.push_back(kF64);
         } else {
             out.push_back(kind == P6ScalarKind::IntI64 ? kI64 : kI32);
         }
@@ -4602,6 +4685,9 @@ class P6ComputationHandlerBuilder {
         if (kind == std::nullopt || *kind == P6ScalarKind::Closure ||
             *kind == P6ScalarKind::String) {
             return std::nullopt;
+        }
+        if (*kind == P6ScalarKind::F64) {
+            return kF64;
         }
         return *kind == P6ScalarKind::IntI64 ? kI64 : kI32;
     }
@@ -4747,7 +4833,7 @@ class P6ComputationHandlerBuilder {
         const auto result_byte = boundary_result_byte(result_kind);
         if (result_byte == std::nullopt) {
             return reject("indirect call result is not a single-word P6 value "
-                          "(a closure / String / f64 result cannot cross in this slice)",
+                          "(a closure / String result cannot cross in this slice)",
                           expr.source_range);
         }
         descriptor.result = *result_byte;
@@ -4769,7 +4855,7 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] bool plan_literal(const CoreExpr &expr) {
         const auto kind = scalar_kind(expr.result_type);
         if (kind == std::nullopt) {
-            return reject("scalar literal has a non-scalar or f64 result type", expr.source_range);
+            return reject("scalar literal has a non-scalar result type", expr.source_range);
         }
         const auto &lit = std::get<CoreLiteralExpr>(expr.node);
         switch (lit.kind) {
@@ -4877,8 +4963,12 @@ class P6ComputationHandlerBuilder {
             return reject("a Unit literal has no single-word wasm representation in this slice",
                           expr.source_range);
         case CoreLiteralKind::Float:
-            return reject("float literals need the f64 opcode ladder, a later P6 slice",
-                          expr.source_range);
+            // RFC 0026 P6 f64 arithmetic ladder: a Float literal is an f64
+            // constant; the emitter parses the spelling and emits f64.const.
+            if (*kind != P6ScalarKind::F64) {
+                return reject("float literal has a non-F64 scalar type", expr.source_range);
+            }
+            return true;
         }
         return reject("literal kind is outside the P6 scalar subset", expr.source_range);
     }
@@ -5172,9 +5262,9 @@ class P6ComputationHandlerBuilder {
     }
 
     // Validate ONE constructor operand against its P4-D SLOT edge: a scalar slot
-    // takes an i32/i64 operand of the same width, an addressable-aggregate slot
-    // takes a `Ptr` operand, a String PtrLen slot (V2-B) takes the two-word
-    // String operand, and any other slot (bytes / f64 / an inline tag-only enum
+    // takes an i32/i64/f64 operand of the same width, an addressable-aggregate
+    // slot takes a `Ptr` operand, a String PtrLen slot (V2-B) takes the two-word
+    // String operand, and any other slot (bytes / an inline tag-only enum
     // the P6 model cannot address) fails closed.
     [[nodiscard]] bool
     plan_construct_operand(CoreValueId value, CoreLayoutId slot, ir::SourceRangeOpt range) {
@@ -5237,10 +5327,11 @@ class P6ComputationHandlerBuilder {
             // A scalar slot takes a scalar of the same PHYSICAL width. A tag-only
             // enum discriminant is an i32 and matches a narrow-Int slot; a Bool
             // and a narrow Int share the i32 repr. A `Ptr` operand into a scalar
-            // slot (or vice versa) is a shape error.
-            const bool slot_wide = place_kind_of_layout(slot) == P6ScalarKind::IntI64;
-            const bool operand_wide = *kind == P6ScalarKind::IntI64;
-            if (*kind == P6ScalarKind::Ptr || slot_wide != operand_wide) {
+            // slot (or vice versa) is a shape error. `same_word_width` is
+            // kind-exact, so an f64 operand into an i32/i64 slot (or vice versa)
+            // is rejected here rather than emitting mismatched opcodes.
+            if (*kind == P6ScalarKind::Ptr ||
+                !same_word_width(*kind, place_kind_of_layout(slot))) {
                 return reject("constructor operand width does not match its slot", range);
             }
             return true;
@@ -5262,7 +5353,7 @@ class P6ComputationHandlerBuilder {
     //
     // The RESULT's own P6 kind is not re-checked here: the `plan_expr` entry guard
     // already rejected a result with no `p6_scalar_kind` (a 2-word String, a
-    // collection handle, an f64, a closure), so a coercion whose result P6 cannot
+    // collection handle, a closure), so a coercion whose result P6 cannot
     // hold has failed closed one frame up. The enclosing `let` binds the result
     // id to a local of that same kind (`bind_value` reads the result type), so a
     // repr-growing widening lands in an i64 local.
@@ -5283,7 +5374,7 @@ class P6ComputationHandlerBuilder {
         }
         // Every op must name a physical action the P6 value model can perform.
         // (The result's own P6 kind is already checked by the `plan_expr` entry
-        // guard before this visitor runs, so a 2-word String / collection / f64
+        // guard before this visitor runs, so a 2-word String / collection
         // coercion result has failed closed one frame up.)
         for (const CoreCoercionOp &op : root.ops) {
             std::string why;
@@ -5339,17 +5430,6 @@ class P6ComputationHandlerBuilder {
         const auto *literal = std::get_if<CoreLiteralExpr>(&expr.node);
         return literal != nullptr && (literal->kind == CoreLiteralKind::Decimal ||
                                       literal->kind == CoreLiteralKind::Duration);
-    }
-
-    // WH-5c.7 mechanism (a): true iff a value type is f64. f64 rides the IntI64
-    // kind as a copy-only 8-byte word; arithmetic on it is a deferred slice and
-    // is rejected with a ranged diagnostic by emit_binary / emit_unary.
-    [[nodiscard]] bool is_float_value_type(CoreValueTypeId type) const {
-        if (type.value >= program_.value_types.size()) {
-            return false;
-        }
-        return std::holds_alternative<CoreVtFloat>(
-            program_.value_types[type.value].node);
     }
 
     // WH-5c.7 mechanism (b): true iff a value type has a zero-sized P4-D layout
@@ -5924,7 +6004,7 @@ class P6ComputationHandlerBuilder {
             const auto key_kind = readable_kind(collection.index);
             if (key_kind == std::nullopt || *key_kind == P6ScalarKind::Ptr ||
                 *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure ||
-                *key_kind == P6ScalarKind::String) {
+                *key_kind == P6ScalarKind::String || *key_kind == P6ScalarKind::F64) {
                 return reject("keyed scan key is not a scalar Int/Bool/enum value", range);
             }
             if (!same_word_width(*key_kind, place_kind_of_layout(container->element))) {
@@ -5934,7 +6014,8 @@ class P6ComputationHandlerBuilder {
                 const auto value_kind_opt = scalar_kind(storage_.exprs[id.value].result_type);
                 if (value_kind_opt == std::nullopt || *value_kind_opt == P6ScalarKind::Ptr ||
                     *value_kind_opt == P6ScalarKind::Collection ||
-                    *value_kind_opt == P6ScalarKind::String) {
+                    *value_kind_opt == P6ScalarKind::String ||
+                    *value_kind_opt == P6ScalarKind::F64) {
                     return reject("Map keyed lookup result is not a scalar P6 value", range);
                 }
                 if (!same_word_width(*value_kind_opt,
@@ -5962,7 +6043,7 @@ class P6ComputationHandlerBuilder {
         // scalar, a tag-only enum, or an address-shaped leaf (the element's own
         // layout edge decides which, exactly like an aggregate field). Without
         // this the single-word `load` / `store` below would silently truncate a
-        // wider element (a PtrLen String / bytes / f64, a nested aggregate, or a
+        // wider element (a PtrLen String / bytes, a nested aggregate, or a
         // collection handle). The typed entry point already gates the element's
         // LOGICAL value type upstream, so for a lowered program this is the
         // layout-edge restatement — but the POSITIVE forms it decides (an
@@ -5971,6 +6052,13 @@ class P6ComputationHandlerBuilder {
         // one-word rule is enforced for the store path too.
         if (!place_is_p6_value(container->element)) {
             return reject("collection element is not a single-word P6 value", range);
+        }
+        // f64 collection elements are not on this ladder: the emit path's
+        // width classification is IntI64-exact, so an f64 element would
+        // silently truncate to i32. Fail closed until the f64 collection
+        // ladder lands.
+        if (place_kind_of_layout(container->element) == P6ScalarKind::F64) {
+            return reject("f64 collection elements await the f64 collection ladder", range);
         }
         const auto index_kind = readable_kind(collection.index);
         if (index_kind == std::nullopt ||
@@ -6149,7 +6237,7 @@ class P6ComputationHandlerBuilder {
                 }
                 const auto binding_kind = scalar_kind(storage_.value_types[binding.value.value]);
                 if (binding_kind == std::nullopt || *binding_kind == P6ScalarKind::Index) {
-                    return reject("match arm binding has a non-scalar or f64 type", range);
+                    return reject("match arm binding has a non-scalar type", range);
                 }
                 if (!bind_scratch(binding.value, *binding_kind, binding_locals_)) {
                     return reject("match arm binding scratch local could not be allocated", range);
@@ -6420,7 +6508,8 @@ class P6ComputationHandlerBuilder {
             return scrutinee_kind == P6ScalarKind::Bool ||
                    reject("bool pattern requires a Bool scrutinee", range);
         case CoreLiteralKind::Integer:
-            if (scrutinee_kind == P6ScalarKind::Bool || scrutinee_kind == P6ScalarKind::Index) {
+            if (scrutinee_kind == P6ScalarKind::Bool || scrutinee_kind == P6ScalarKind::Index ||
+                scrutinee_kind == P6ScalarKind::F64) {
                 return reject("integer pattern requires an Int scrutinee", range);
             }
             return parse_unsigned_spelling(lit.spelling).has_value() ||
@@ -6459,7 +6548,7 @@ class P6ComputationHandlerBuilder {
                                 "(f64, bytes or a zero-sized aggregate cannot cross the bridge)",
                                 statement.source_range);
                         }
-                        return reject("let value has a non-scalar or f64 type",
+                        return reject("let value has a non-scalar type",
                                       statement.source_range);
                     }
                     if (!bind_value(s.result, *kind)) {
@@ -6545,6 +6634,10 @@ class P6ComputationHandlerBuilder {
     void emit_const_i64(std::int64_t value) {
         body_.byte(kOpI64Const);
         body_.s64(value);
+    }
+    void emit_const_f64(double value) {
+        body_.byte(kOpF64Const);
+        body_.f64(value);
     }
     void emit_local_get(std::uint32_t local) {
         body_.byte(kOpLocalGet);
@@ -6646,6 +6739,20 @@ class P6ComputationHandlerBuilder {
             emit_const_i64(*milliseconds);
             return true;
         }
+        if (lit.kind == CoreLiteralKind::Float) {
+            // RFC 0026 P6 f64 arithmetic ladder: parse the spelling and emit
+            // f64.const with the IEEE 754 binary64 bit pattern.
+            if (kind != P6ScalarKind::F64) {
+                return reject("float literal has a non-F64 type", std::move(range));
+            }
+            const auto parsed = ahfl::support::parse_float_literal(lit.spelling);
+            if (!parsed.has_value()) {
+                return reject("float literal spelling does not parse or overflows binary64",
+                              std::move(range));
+            }
+            emit_const_f64(*parsed);
+            return true;
+        }
         if (lit.kind != CoreLiteralKind::Integer ||
             (kind != P6ScalarKind::IntI32 && kind != P6ScalarKind::IntI64)) {
             return reject("literal kind is outside the P6 scalar subset",
@@ -6702,7 +6809,7 @@ class P6ComputationHandlerBuilder {
             if (is_zero_sized_value_type(expr.result_type)) {
                 return true;
             }
-            return reject("scalar expression has a non-scalar or f64 result type",
+            return reject("scalar expression has a non-scalar result type",
                           expr.source_range);
         }
         bool ok = std::visit(
@@ -7091,6 +7198,14 @@ class P6ComputationHandlerBuilder {
             // Scalar / PtrLen: spill the physical word(s) into the private
             // slot, then name (spill_address, physical_width).
             const std::uint32_t spill_addr = spill_cursor;
+            if (*kind == P6ScalarKind::F64) {
+                // f64 across a capability bridge stays rejected (the
+                // wh5c7_f64_bridge_fail_closed pin): the bridge spill window
+                // is an 8-byte i64 word, and an f64 value would need its own
+                // f64.store path. A later bridge rung can add it.
+                return reject("an f64 value cannot cross a capability bridge in this slice",
+                              range);
+            }
             if (*kind == P6ScalarKind::String) {
                 // A String value binds TWO adjacent i32 locals (payload ptr,
                 // byte len). Copy both into the spill slot: [addr,value] stack
@@ -7216,6 +7331,12 @@ class P6ComputationHandlerBuilder {
             body_.u32(*local + 1u);
             return true;
         }
+        if (*result_kind == P6ScalarKind::F64) {
+            // f64 across a capability bridge stays rejected (the
+            // wh5c7_f64_bridge_fail_closed pin).
+            return reject("an f64 value cannot cross a capability bridge in this slice",
+                          range);
+        }
         body_.byte(kOpLocalGet);
         body_.u32(bridge_ptr_local_);
         if (*result_kind == P6ScalarKind::IntI64) {
@@ -7335,10 +7456,9 @@ class P6ComputationHandlerBuilder {
         // An aggregate field's slot HOLDS the child's address (the ONE
         // representation rule), so both forms are read as one i32, then the
         // aggregate form is left as the pointer it read. A scalar field is
-        // loaded at its own physical width.
-        const bool wide = kind == P6ScalarKind::IntI64;
-        body_.byte(wide ? kOpI64Load : kOpI32Load);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        // loaded at its own physical width (i32 / i64 / f64).
+        body_.byte(scalar_load_op(kind));
+        body_.u32(scalar_align(kind));
         body_.u32(slot->offset);
         return true;
     }
@@ -7650,7 +7770,7 @@ class P6ComputationHandlerBuilder {
             body_.u32(static_cast<std::uint32_t>(offset));
             return true;
         }
-        const bool wide = place_kind_of_layout(slot_layout) == P6ScalarKind::IntI64;
+        const P6ScalarKind slot_kind = place_kind_of_layout(slot_layout);
         // Stack order: [address][value] for a store, so push the address first.
         if (dynamic_address) {
             emit_local_get(alloc_temp_local_);
@@ -7658,8 +7778,8 @@ class P6ComputationHandlerBuilder {
             emit_const_i32(static_cast<std::int32_t>(static_address));
         }
         emit_local_get(*local);
-        body_.byte(wide ? kOpI64Store : kOpI32Store);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_store_op(slot_kind));
+        body_.u32(scalar_align(slot_kind));
         body_.u32(static_cast<std::uint32_t>(offset));
         return true;
     }
@@ -7694,7 +7814,7 @@ class P6ComputationHandlerBuilder {
         // resets to zero in every handler), so a later handler's first constructor
         // reuses that byte range and silently clobbers the value the context slot
         // still points at. P6 has no lifetime rule for a value that outlives its
-        // handler yet, so this fails closed exactly like the bytes / f64 leaf
+        // handler yet, so this fails closed exactly like the bytes leaf
         // rather than emit a dangling pointer.
         const auto slot =
             resolve_projection_slot(store.place.projection, store.place.root_type, range);
@@ -7777,7 +7897,7 @@ class P6ComputationHandlerBuilder {
         }
         // A store leaf must be a single-word P6 value (a scalar or an
         // addressable aggregate) OR the eight-byte inline String PtrLen pair
-        // (V2-B). A bytes / f64 leaf still fails closed.
+        // (V2-B). A bytes leaf still fails closed.
         const bool slot_ptr_len = edge_is_ptr_len(slot->edge);
         if (!place_is_p6_value(slot->edge) && !slot_ptr_len) {
             return reject("store destination is not a P6 frame value", std::move(range));
@@ -7837,10 +7957,9 @@ class P6ComputationHandlerBuilder {
             return reject("store value kind does not match its destination field",
                           std::move(range));
         }
-        const bool wide = place_kind == P6ScalarKind::IntI64;
         emit_local_get(*local);
-        body_.byte(wide ? kOpI64Store : kOpI32Store);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_store_op(place_kind));
+        body_.u32(scalar_align(place_kind));
         body_.u32(slot->offset);
         return true;
     }
@@ -7949,6 +8068,7 @@ class P6ComputationHandlerBuilder {
         case P6ScalarKind::Bool:
         case P6ScalarKind::IntI32:
         case P6ScalarKind::IntI64:
+        case P6ScalarKind::F64:
         case P6ScalarKind::Index:
             return true;
         case P6ScalarKind::Closure:
@@ -7992,8 +8112,10 @@ class P6ComputationHandlerBuilder {
 
     // Emit one width-exact word copy: [dst_base + dst_off] := *(src_local +
     // src_off). All offsets are compile-time constants of a frame whose size is
-    // page-gated.
-    void emit_copy_word(bool wide,
+    // page-gated. The kind selects the load/store opcode: F64 uses
+    // f64.load/f64.store, IntI64 (and collection headers, copied bit-identically)
+    // uses i64.load/i64.store, and every one-word i32 kind uses i32.load/i32.store.
+    void emit_copy_word(P6ScalarKind kind,
                         std::uint32_t src_local,
                         std::uint64_t src_off,
                         std::uint32_t dst_base,
@@ -8004,11 +8126,11 @@ class P6ComputationHandlerBuilder {
             emit_const_i32(static_cast<std::int32_t>(src_off));
             body_.byte(kOpI32Add);
         }
-        body_.byte(wide ? kOpI64Load : kOpI32Load);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_load_op(kind));
+        body_.u32(scalar_align(kind));
         body_.u32(0);
-        body_.byte(wide ? kOpI64Store : kOpI32Store);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_store_op(kind));
+        body_.u32(scalar_align(kind));
         body_.u32(0);
     }
 
@@ -8059,17 +8181,22 @@ class P6ComputationHandlerBuilder {
             }
             const ir::core::CoreLayout &field = layouts_.layouts[edge.value];
             if (final_leaf_is_word(field)) {
-                // WH-5c.7 mechanism (a)/(c): f64 and collection headers are
-                // 8-byte words copied bit-identically via i64.load/i64.store
-                // (wide), alongside I64.
-                const bool wide =
-                    (std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
-                     (std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
-                          ir::core::CoreScalarRepr::I64 ||
-                      std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
-                          ir::core::CoreScalarRepr::F64)) ||
-                    std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape);
-                emit_copy_word(wide, final_src_local_ + level, src_off + off,
+                // A scalar leaf copies at its own physical width (i32 / i64 /
+                // f64); a collection header is an 8-byte (ptr,len) pair copied
+                // bit-identically via i64.load/i64.store.
+                P6ScalarKind word_kind = P6ScalarKind::IntI32;
+                if (const auto *scalar =
+                        std::get_if<ir::core::CoreLayoutScalar>(&field.shape)) {
+                    word_kind = scalar->repr == ir::core::CoreScalarRepr::F64
+                                    ? P6ScalarKind::F64
+                                : scalar->repr == ir::core::CoreScalarRepr::I64
+                                    ? P6ScalarKind::IntI64
+                                    : P6ScalarKind::IntI32;
+                } else if (std::holds_alternative<ir::core::CoreLayoutContainer>(
+                               field.shape)) {
+                    word_kind = P6ScalarKind::IntI64;
+                }
+                emit_copy_word(word_kind, final_src_local_ + level, src_off + off,
                               dst_base, dst_off + off);
                 continue;
             }
@@ -8078,9 +8205,9 @@ class P6ComputationHandlerBuilder {
                 // source aggregate slot straight into the output frame slot.
                 // The payload pointer is preserved verbatim (rodata / input
                 // arena); the payload bytes themselves are never copied.
-                emit_copy_word(false, final_src_local_ + level, src_off + off,
+                emit_copy_word(P6ScalarKind::IntI32, final_src_local_ + level, src_off + off,
                               dst_base, dst_off + off);
-                emit_copy_word(false, final_src_local_ + level, src_off + off + 4u,
+                emit_copy_word(P6ScalarKind::IntI32, final_src_local_ + level, src_off + off + 4u,
                               dst_base, dst_off + off + 4u);
                 continue;
             }
@@ -8099,7 +8226,7 @@ class P6ComputationHandlerBuilder {
                 for (std::uint64_t word_off = 0; word_off < aligned_size;
                      word_off += 8u) {
                     emit_copy_word(
-                        true, final_src_local_ + level,
+                        P6ScalarKind::IntI64, final_src_local_ + level,
                         static_cast<std::uint32_t>(src_off + off + word_off),
                         dst_base,
                         static_cast<std::uint32_t>(dst_off + off + word_off));
@@ -8155,7 +8282,7 @@ class P6ComputationHandlerBuilder {
         }
         if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
             // Discriminant at offset 0 of the enum.
-            emit_copy_word(false, final_src_local_ + level, 0, dst_base, dst_off);
+            emit_copy_word(P6ScalarKind::IntI32, final_src_local_ + level, 0, dst_base, dst_off);
             // Copy ONLY the ACTIVE variant's payload. Every variant shares the
             // one payload union at `payload_offset`, and the variants' layouts
             // may place different field KINDS at the same union offset (an
@@ -8220,8 +8347,8 @@ class P6ComputationHandlerBuilder {
         if (std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
             // The inline (ptr,len) header only; the backing placement is shared
             // and its elements are never copied.
-            emit_copy_word(false, final_src_local_ + level, 0, dst_base, dst_off);
-            emit_copy_word(false, final_src_local_ + level, 4, dst_base, dst_off + 4);
+            emit_copy_word(P6ScalarKind::IntI32, final_src_local_ + level, 0, dst_base, dst_off);
+            emit_copy_word(P6ScalarKind::IntI32, final_src_local_ + level, 4, dst_base, dst_off + 4);
             return true;
         }
         return reject("computed final copy reaches a non-aggregate frame shape", range);
@@ -8297,6 +8424,15 @@ class P6ComputationHandlerBuilder {
             body_.u32(kAlignI64);
             body_.u32(0);
             break;
+        case P6ScalarKind::F64:
+            emit_const_i32(static_cast<std::int32_t>(output_base()));
+            if (!emit_value_read(s.value, range)) {
+                return false;
+            }
+            body_.byte(kOpF64Store);
+            body_.u32(kAlignF64);
+            body_.u32(0);
+            break;
         case P6ScalarKind::Closure:
         case P6ScalarKind::String:
             return reject("a closure or bare String value cannot be the computed-final frame root",
@@ -8308,8 +8444,8 @@ class P6ComputationHandlerBuilder {
             }
             body_.byte(kOpLocalSet);
             body_.u32(final_src_local_);
-            emit_copy_word(false, final_src_local_, 0, output_base(), 0);
-            emit_copy_word(false, final_src_local_, 4, output_base(), 4);
+            emit_copy_word(P6ScalarKind::IntI32, final_src_local_, 0, output_base(), 0);
+            emit_copy_word(P6ScalarKind::IntI32, final_src_local_, 4, output_base(), 4);
             break;
         }
         case P6ScalarKind::Ptr: {
@@ -8391,15 +8527,14 @@ class P6ComputationHandlerBuilder {
         }
         const auto operand_kind = scalar_kind(storage_.exprs[u.operand.value].result_type);
         if (operand_kind == std::nullopt) {
-            return reject("unary operand has a non-scalar or f64 result type", std::move(range));
+            return reject("unary operand has a non-scalar result type", std::move(range));
         }
         // A Decimal/Duration i64 word rides the constant lane only; it has no
-        // integer arithmetic opcode on the P6 frame model. An f64 word is
-        // copy-only (WH-5c.7 mechanism (a)); its arithmetic is a deferred slice.
+        // integer arithmetic opcode on the P6 frame model.
         if (*operand_kind == P6ScalarKind::String ||
-            is_decimal_duration_expr(storage_.exprs[u.operand.value]) ||
-            is_float_value_type(storage_.exprs[u.operand.value].result_type)) {
-            return reject("unary arithmetic is defined for Int and Bool only on the P6 frame lane",
+            is_decimal_duration_expr(storage_.exprs[u.operand.value])) {
+            return reject("unary arithmetic is defined for Int, Bool, and Float only on the P6 "
+                          "frame lane",
                           std::move(range));
         }
         switch (u.op) {
@@ -8414,7 +8549,16 @@ class P6ComputationHandlerBuilder {
             return true;
         case CoreUnaryOp::Neg:
             if (*operand_kind == P6ScalarKind::Bool) {
-                return reject("arithmetic negation requires an Int operand", std::move(range));
+                return reject("arithmetic negation requires an Int or Float operand",
+                              std::move(range));
+            }
+            if (*operand_kind == P6ScalarKind::F64) {
+                // f64.neg is a dedicated opcode (no 0-x subtraction needed).
+                if (!emit_expr(u.operand)) {
+                    return false;
+                }
+                body_.byte(kOpF64Neg);
+                return true;
             }
             // 0 - x; wasm wrap semantics (negating INT_MIN wraps), matching the
             // documented P6 integer contract.
@@ -8444,80 +8588,83 @@ class P6ComputationHandlerBuilder {
         // A String PtrLen pair never participates in integer/comparison ops
         // (its equality/order is byte semantics on the payload, a later rung),
         // and a Decimal/Duration i64 word is a literal constant, not an
-        // arithmetic operand on the P6 frame model. An f64 word is copy-only
-        // (WH-5c.7 mechanism (a)); its arithmetic is a deferred slice.
+        // arithmetic operand on the P6 frame model.
         if (*lhs_kind == P6ScalarKind::String ||
             is_decimal_duration_expr(storage_.exprs[b.lhs.value]) ||
-            is_decimal_duration_expr(storage_.exprs[b.rhs.value]) ||
-            is_float_value_type(storage_.exprs[b.lhs.value].result_type) ||
-            is_float_value_type(storage_.exprs[b.rhs.value].result_type)) {
-            return reject("binary arithmetic/comparison is defined for Int/Bool only on the P6 "
-                          "frame lane",
+            is_decimal_duration_expr(storage_.exprs[b.rhs.value])) {
+            return reject("binary arithmetic/comparison is defined for Int/Bool/Float only on the "
+                          "P6 frame lane",
                           std::move(range));
         }
         const P6ScalarKind kind = *lhs_kind;
         const bool wide = kind == P6ScalarKind::IntI64;
         const bool bool_operands = kind == P6ScalarKind::Bool;
+        const bool float_operands = kind == P6ScalarKind::F64;
 
         struct Opcode {
             std::uint8_t i32;
             std::uint8_t i64;
+            std::uint8_t f64;
         };
         std::optional<Opcode> opcode;
         bool is_comparison = false;
         switch (b.op) {
         case CoreBinaryOp::Add:
-            opcode = {kOpI32Add, kOpI64Add};
+            opcode = {kOpI32Add, kOpI64Add, kOpF64Add};
             break;
         case CoreBinaryOp::Sub:
-            opcode = {kOpI32Sub, kOpI64Sub};
+            opcode = {kOpI32Sub, kOpI64Sub, kOpF64Sub};
             break;
         case CoreBinaryOp::Mul:
-            opcode = {kOpI32Mul, kOpI64Mul};
+            opcode = {kOpI32Mul, kOpI64Mul, kOpF64Mul};
             break;
         // Signed division / remainder: a zero divisor traps at runtime, which
-        // is the deliberately documented P6 integer semantics.
+        // is the deliberately documented P6 integer semantics. f64.div by
+        // zero yields +/-infinity or NaN (no trap).
         case CoreBinaryOp::Div:
-            opcode = {kOpI32DivS, kOpI64DivS};
+            opcode = {kOpI32DivS, kOpI64DivS, kOpF64Div};
             break;
         case CoreBinaryOp::Mod:
-            opcode = {kOpI32RemS, kOpI64RemS};
+            if (float_operands) {
+                return reject("float modulo is outside the P6 f64 subset", std::move(range));
+            }
+            opcode = {kOpI32RemS, kOpI64RemS, 0};
             break;
         case CoreBinaryOp::Eq:
-            opcode = {kOpI32Eq, kOpI64Eq};
+            opcode = {kOpI32Eq, kOpI64Eq, kOpF64Eq};
             is_comparison = true;
             break;
         case CoreBinaryOp::Ne:
-            opcode = {kOpI32Ne, kOpI64Ne};
+            opcode = {kOpI32Ne, kOpI64Ne, kOpF64Ne};
             is_comparison = true;
             break;
         case CoreBinaryOp::Lt:
-            opcode = {kOpI32LtS, kOpI64LtS};
+            opcode = {kOpI32LtS, kOpI64LtS, kOpF64Lt};
             is_comparison = true;
             break;
         case CoreBinaryOp::Le:
-            opcode = {kOpI32LeS, kOpI64LeS};
+            opcode = {kOpI32LeS, kOpI64LeS, kOpF64Le};
             is_comparison = true;
             break;
         case CoreBinaryOp::Gt:
-            opcode = {kOpI32GtS, kOpI64GtS};
+            opcode = {kOpI32GtS, kOpI64GtS, kOpF64Gt};
             is_comparison = true;
             break;
         case CoreBinaryOp::Ge:
-            opcode = {kOpI32GeS, kOpI64GeS};
+            opcode = {kOpI32GeS, kOpI64GeS, kOpF64Ge};
             is_comparison = true;
             break;
         case CoreBinaryOp::And:
             if (!bool_operands) {
                 return reject("logical and requires Bool operands", std::move(range));
             }
-            opcode = {kOpI32And, kOpI32And};
+            opcode = {kOpI32And, kOpI32And, 0};
             break;
         case CoreBinaryOp::Or:
             if (!bool_operands) {
                 return reject("logical or requires Bool operands", std::move(range));
             }
-            opcode = {kOpI32Or, kOpI32Or};
+            opcode = {kOpI32Or, kOpI32Or, 0};
             break;
         }
         if (!opcode.has_value()) {
@@ -8533,7 +8680,11 @@ class P6ComputationHandlerBuilder {
         if (!emit_expr(b.lhs) || !emit_expr(b.rhs)) {
             return false;
         }
-        body_.byte(wide ? opcode->i64 : opcode->i32);
+        if (float_operands) {
+            body_.byte(opcode->f64);
+        } else {
+            body_.byte(wide ? opcode->i64 : opcode->i32);
+        }
         return true;
     }
 
@@ -8666,9 +8817,8 @@ class P6ComputationHandlerBuilder {
                           std::move(range));
         }
         emit_local_get(scrutinee_local);
-        const bool wide = site.kind == P6ScalarKind::IntI64;
-        body_.byte(wide ? kOpI64Load : kOpI32Load);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_load_op(site.kind));
+        body_.u32(scalar_align(site.kind));
         body_.u32(static_cast<std::uint32_t>(site.offset));
         return true;
     }

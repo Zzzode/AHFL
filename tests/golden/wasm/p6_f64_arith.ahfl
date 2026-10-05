@@ -1,0 +1,75 @@
+module wasm::p6_f64_arith;
+
+// RFC 0026 P6 (KR6.6) f64 arithmetic ladder conformance fixture. Exercises the
+// dedicated F64 scalar kind end-to-end: f64.const literals, f64.add/sub/mul/div,
+// f64.neg, and f64 comparisons driving a computed goto. The agent's
+// computed-final materializer copies the Float result through the P6 frame.
+pub struct Frame {
+    value: Float;
+}
+
+pub agent F64ArithAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Compute];
+    initial: Compute;
+    final: [Done];
+    capabilities: [];
+    transition Compute -> Done;
+}
+
+flow for F64ArithAgent {
+    state Compute {
+        goto Done;
+    }
+
+    state Done {
+        // ((value + 1.5) * 2.0 - 0.5) / 2.0, then negated.
+        // For value=3.0: ((4.5)*2.0-0.5)/2.0 = 4.25, negated = -4.25.
+        let a = input.value + 1.5;
+        let b = a * 2.0;
+        let c = b - 0.5;
+        let d = c / 2.0;
+        let e = -d;
+        return Frame { value: e };
+    }
+}
+
+pub agent F64CompareAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for F64CompareAgent {
+    state Decide {
+        let v = input.value;
+        let zero = 0.0;
+        if (v > zero) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

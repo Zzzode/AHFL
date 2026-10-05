@@ -7,6 +7,7 @@
 // duplicate copy of the encoder.
 
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <span>
@@ -91,6 +92,16 @@ class ByteBuffer {
     }
     void s64(std::int64_t value) {
         append_signed(value);
+    }
+    // Write a double's IEEE 754 binary64 bit pattern as eight raw little-endian
+    // bytes (the f64.const immediate encoding). NOT LEB128.
+    void f64(double value) {
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        for (int i = 0; i < 8; ++i) {
+            byte(static_cast<std::uint8_t>(bits & 0xffu));
+            bits >>= 8u;
+        }
     }
 
     [[nodiscard]] bool name(std::string_view value) {

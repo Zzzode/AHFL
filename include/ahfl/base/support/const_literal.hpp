@@ -41,4 +41,10 @@ parse_decimal_literal(std::string_view text);
 [[nodiscard]] std::optional<std::int64_t>
 parse_duration_literal_milliseconds(std::string_view text);
 
+/// Parse `DIGITS+ "." DIGITS+ EXPONENT?` (the AHFL FLOAT_LITERAL token) into a
+/// double. Returns nullopt on a malformed spelling or a value that does not
+/// fit the IEEE 754 binary64 range.
+[[nodiscard]] std::optional<double>
+parse_float_literal(std::string_view text);
+
 } // namespace ahfl::support

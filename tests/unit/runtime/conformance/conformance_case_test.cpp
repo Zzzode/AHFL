@@ -293,6 +293,22 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration,
         },
         {
+            "p6_f64_arith.case.json",
+            "tests/golden/wasm/p6_f64_arith.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_f64_arith::F64ArithAgent",
+            0, 2, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
+        },
+        {
+            "p6_f64_compare.case.json",
+            "tests/golden/wasm/p6_f64_arith.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_f64_arith::F64CompareAgent",
+            0, 2, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
+        },
+        {
             "p6_implies.case.json",
             "tests/golden/wasm/p6_implies.ahfl",
             CaseKind::Agent,

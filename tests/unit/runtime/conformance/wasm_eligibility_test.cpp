@@ -204,6 +204,20 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"p6_cascade_high.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_elseless_fallthrough.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_elseless_taken.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // KR6.6 P6 f64 arithmetic ladder: f64.const/add/sub/mul/div/neg and
+        // f64.gt comparison through the dedicated F64 scalar kind, with the
+        // computed-final materializer copying the Float result through the
+        // P6 frame.
+        {"p6_f64_arith.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"p6_f64_compare.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         {"p6_implies.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_match_binding_payload.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_match_expr.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},

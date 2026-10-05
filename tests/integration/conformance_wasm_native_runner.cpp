@@ -85,7 +85,10 @@ using ahfl::conformance::run_native_scenario;
 // WH-5c.7: the 9-shape rich wire-type matrix (Int/String/Decimal/Duration/
 // Set/Map/Option/Unit/Float) round-trips through the P6 frame packer/reader
 // and the computed-final + workflow-level materializers: 72/0 -> 73/0.
-constexpr int kExpectedNativeAgreed = 73;
+// KR6.6 P6 f64 arithmetic ladder: four scenarios across two cases
+// (p6_f64_arith: add/sub/mul/div/neg; p6_f64_compare: f64.gt goto):
+// 73/0 -> 77/0.
+constexpr int kExpectedNativeAgreed = 77;
 constexpr int kExpectedNativeSkipped = 0;
 
 int g_failures = 0;
