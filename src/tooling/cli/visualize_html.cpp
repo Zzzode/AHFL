@@ -367,6 +367,43 @@ main {
   max-width: 80px;
 }
 
+/* ── State machine path (Phase 3) ─────────────────────── */
+.state-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.state-node {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: var(--mono);
+  background: #3c3c3c;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.state-node.initial {
+  background: rgba(66,165,245,0.15);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.state-node.final {
+  background: rgba(102,187,106,0.15);
+  border-color: var(--green);
+  color: var(--green);
+}
+.state-arrow {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
 /* ── Ports ───────────────────────────────────────────── */
 .port {
   position: absolute;
@@ -872,6 +909,34 @@ main {
     let execSection = '';
     if (hasTrace() && node.exec) {
       const st = node.exec;
+      // State machine path.
+      let stateMachineHtml = '';
+      if (st.state_transitions && st.state_transitions.length > 0) {
+        const path = st.state_transitions.map(function(tr, i) {
+          const label = 'S' + tr.state_id;
+          const time = formatDuration(tr.entered_at_ns);
+          return '<span class="state-node" title="state_id=' + tr.state_id + ' at ' + time + '">' +
+            label + '</span>' + (i < st.state_transitions.length - 1 ? '<span class="state-arrow">→</span>' : '');
+        }).join('');
+        stateMachineHtml =
+          '<div class="section">' +
+            '<div class="section-title">State Machine Path</div>' +
+            '<div class="state-path">' +
+              (st.initial_state ? '<span class="state-node initial" title="Initial state">' + escapeHtml(st.initial_state) + '</span><span class="state-arrow">→</span>' : '') +
+              path +
+              (st.final_states && st.final_states.length > 0 ? '<span class="state-arrow">→</span><span class="state-node final" title="Final state">' + escapeHtml(st.final_states.join(', ')) + '</span>' : '') +
+            '</div>' +
+          '</div>';
+      } else if (st.initial_state) {
+        stateMachineHtml =
+          '<div class="section">' +
+            '<div class="section-title">State Machine</div>' +
+            '<div class="kv"><span class="key">Initial</span><span class="val">' + escapeHtml(st.initial_state) + '</span></div>' +
+            (st.final_states && st.final_states.length > 0 ?
+              '<div class="kv"><span class="key">Final</span><span class="val">' + escapeHtml(st.final_states.join(', ')) + '</span></div>' : '') +
+          '</div>';
+      }
+
       execSection =
         '<div class="section">' +
           '<div class="section-title">Execution</div>' +
@@ -888,7 +953,8 @@ main {
                 (c.total_tokens > 0 ? ' ' + c.total_tokens + 'tok' : '') +
                 '</span></div>';
             }).join('') : '') +
-        '</div>';
+        '</div>' +
+        stateMachineHtml;
     }
 
     panelBody.innerHTML =

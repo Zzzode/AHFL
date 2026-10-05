@@ -16,6 +16,8 @@ struct GraphNode {
     std::string output_type;  // Workflow-level output type
     std::vector<std::string> capabilities;  // Capability binding names
     std::vector<std::string> after;         // DAG dependencies
+    std::string initial_state;              // Agent initial state
+    std::vector<std::string> final_states;  // Agent final states
 };
 
 /// An edge in the visualization graph.
@@ -60,6 +62,12 @@ struct CapabilityCall {
     double total_cost_usd{0.0};
 };
 
+/// A single state transition recorded in the trace.
+struct StateTransition {
+    std::int64_t state_id{0};       // Numeric state ID from agent_state_entered
+    std::uint64_t entered_at_ns{0};
+};
+
 /// Per-node execution state, replayed from run-event JSONL.
 struct NodeExecutionState {
     std::string status;  // "pending" | "scheduled" | "running" | "completed" | "failed" | "skipped"
@@ -67,6 +75,9 @@ struct NodeExecutionState {
     std::uint64_t completed_at_ns{0};
     std::uint64_t duration_ns{0};
     std::vector<CapabilityCall> capability_calls;
+    std::vector<StateTransition> state_transitions;  // Agent state machine path
+    std::string initial_state;   // From execution plan lifecycle
+    std::vector<std::string> final_states;  // From execution plan lifecycle
 };
 
 /// Aggregated execution trace (all nodes + run-level summary).

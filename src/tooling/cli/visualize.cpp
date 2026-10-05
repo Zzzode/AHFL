@@ -160,6 +160,23 @@ parse_execution_plan(std::string_view json_text) {
                 }
             }
 
+            // Parse lifecycle (initial/final states).
+            const auto *lifecycle = node->get("lifecycle");
+            if (lifecycle != nullptr) {
+                gn.initial_state = json_string(lifecycle, "target_initial_state");
+                const auto *finals = lifecycle->get("target_final_states");
+                if (finals != nullptr && finals->kind == json::Kind::Array) {
+                    for (const auto &fs : finals->array_items) {
+                        if (fs) {
+                            auto s = fs->as_string();
+                            if (s) {
+                                gn.final_states.push_back(std::string(*s));
+                            }
+                        }
+                    }
+                }
+            }
+
             if (!gn.name.empty()) {
                 plan.nodes.push_back(std::move(gn));
             }
@@ -171,15 +188,19 @@ parse_execution_plan(std::string_view json_text) {
 
 /// Parse a run-event JSONL trace and replay events to compute per-node state.
 /// @param jsonl_text  The full JSONL file content.
-/// @param node_count  Number of nodes in the execution plan (for sizing).
-/// @param node_names  Node names indexed by plan order (for capability lookup).
+/// @param nodes       Graph nodes from the execution plan (for lifecycle info).
 [[nodiscard]] std::optional<ExecutionTrace>
 parse_run_events(std::string_view jsonl_text,
-                 std::size_t node_count,
-                 const std::vector<std::string> &node_names) {
+                 const std::vector<GraphNode> &nodes) {
     ExecutionTrace trace;
-    trace.node_states.resize(node_count);
+    trace.node_states.resize(nodes.size());
     trace.has_trace = true;
+
+    // Seed lifecycle info from the plan.
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        trace.node_states[i].initial_state = nodes[i].initial_state;
+        trace.node_states[i].final_states = nodes[i].final_states;
+    }
 
     // Track in-flight capability invocations: invocation_id → node index.
     struct PendingCap {
@@ -226,7 +247,7 @@ parse_run_events(std::string_view jsonl_text,
         if (type == "node_scheduled") {
             const auto node_id = static_cast<std::size_t>(
                 json_int(payload, "node_id", -1));
-            if (node_id < node_count) {
+            if (node_id < nodes.size()) {
                 auto &st = trace.node_states[node_id];
                 if (st.status.empty() || st.status == "pending") {
                     st.status = "scheduled";
@@ -238,7 +259,7 @@ parse_run_events(std::string_view jsonl_text,
         if (type == "node_started") {
             const auto node_id = static_cast<std::size_t>(
                 json_int(payload, "node_id", -1));
-            if (node_id < node_count) {
+            if (node_id < nodes.size()) {
                 auto &st = trace.node_states[node_id];
                 st.status = "running";
                 st.started_at_ns = offset_ns;
@@ -246,10 +267,23 @@ parse_run_events(std::string_view jsonl_text,
             continue;
         }
 
+        if (type == "agent_state_entered") {
+            const auto node_id = static_cast<std::size_t>(
+                json_int(payload, "node_id", -1));
+            if (node_id < nodes.size()) {
+                auto &st = trace.node_states[node_id];
+                StateTransition tr;
+                tr.state_id = json_int(payload, "state_id");
+                tr.entered_at_ns = offset_ns;
+                st.state_transitions.push_back(std::move(tr));
+            }
+            continue;
+        }
+
         if (type == "node_completed") {
             const auto node_id = static_cast<std::size_t>(
                 json_int(payload, "node_id", -1));
-            if (node_id < node_count) {
+            if (node_id < nodes.size()) {
                 auto &st = trace.node_states[node_id];
                 st.status = "completed";
                 st.completed_at_ns = offset_ns;
@@ -263,7 +297,7 @@ parse_run_events(std::string_view jsonl_text,
         if (type == "node_failed") {
             const auto node_id = static_cast<std::size_t>(
                 json_int(payload, "node_id", -1));
-            if (node_id < node_count) {
+            if (node_id < nodes.size()) {
                 auto &st = trace.node_states[node_id];
                 st.status = "failed";
                 st.completed_at_ns = offset_ns;
@@ -277,7 +311,7 @@ parse_run_events(std::string_view jsonl_text,
         if (type == "node_skipped") {
             const auto node_id = static_cast<std::size_t>(
                 json_int(payload, "node_id", -1));
-            if (node_id < node_count) {
+            if (node_id < nodes.size()) {
                 trace.node_states[node_id].status = "skipped";
             }
             continue;
@@ -287,7 +321,7 @@ parse_run_events(std::string_view jsonl_text,
             const auto inv_id = json_int(payload, "invocation_id");
             const auto node_id = static_cast<std::size_t>(
                 json_int(payload, "node_id", -1));
-            if (node_id < node_count) {
+            if (node_id < nodes.size()) {
                 pending_caps[inv_id] = {node_id, offset_ns};
             }
             continue;
@@ -305,8 +339,8 @@ parse_run_events(std::string_view jsonl_text,
 
                 auto &st = trace.node_states[node_idx];
                 CapabilityCall call;
-                call.capability_name = node_idx < node_names.size()
-                    ? node_names[node_idx] : "";
+                call.capability_name = node_idx < nodes.size()
+                    ? nodes[node_idx].name : "";
                 call.started_at_ns = started;
                 call.completed_at_ns = offset_ns;
                 call.duration_ns = offset_ns - started;
@@ -396,6 +430,27 @@ parse_run_events(std::string_view jsonl_text,
             out << "\"started_at_ns\":" << st.started_at_ns << ",";
             out << "\"completed_at_ns\":" << st.completed_at_ns << ",";
             out << "\"duration_ns\":" << st.duration_ns;
+            if (!st.initial_state.empty()) {
+                out << ",\"initial_state\":\"" << st.initial_state << "\"";
+            }
+            if (!st.final_states.empty()) {
+                out << ",\"final_states\":[";
+                for (std::size_t j = 0; j < st.final_states.size(); ++j) {
+                    if (j > 0) out << ",";
+                    out << "\"" << st.final_states[j] << "\"";
+                }
+                out << "]";
+            }
+            if (!st.state_transitions.empty()) {
+                out << ",\"state_transitions\":[";
+                for (std::size_t j = 0; j < st.state_transitions.size(); ++j) {
+                    if (j > 0) out << ",";
+                    const auto &tr = st.state_transitions[j];
+                    out << "{\"state_id\":" << tr.state_id
+                        << ",\"entered_at_ns\":" << tr.entered_at_ns << "}";
+                }
+                out << "]";
+            }
             if (!st.capability_calls.empty()) {
                 out << ",\"capability_calls\":[";
                 for (std::size_t j = 0; j < st.capability_calls.size(); ++j) {
@@ -458,13 +513,6 @@ int run_visualize(std::string_view input_path,
         return 1;
     }
 
-    // Collect node names for trace correlation.
-    std::vector<std::string> node_names;
-    node_names.reserve(plan->nodes.size());
-    for (const auto &n : plan->nodes) {
-        node_names.push_back(n.name);
-    }
-
     // Optionally parse run-event trace.
     std::optional<ExecutionTrace> trace;
     if (!trace_path.empty()) {
@@ -476,7 +524,7 @@ int run_visualize(std::string_view input_path,
         }
         std::ostringstream trace_buf;
         trace_buf << trace_input.rdbuf();
-        trace = parse_run_events(trace_buf.str(), plan->nodes.size(), node_names);
+        trace = parse_run_events(trace_buf.str(), plan->nodes);
         if (!trace.has_value()) {
             std::cerr << "error: failed to parse run-event JSONL: " << trace_path << "\n";
             return 1;

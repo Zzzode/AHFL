@@ -1,6 +1,6 @@
 # AHFL Workflow Canvas — Card+Connection-Line Visualization Design
 
-**Status**: Phase 1 + Phase 2 landed (2026-10-05)
+**Status**: Phase 1 + Phase 2 + Phase 3 landed (2026-10-05)
 **Date**: 2026-10-05
 **Author**: Coordinator (autonomous)
 
@@ -365,10 +365,11 @@ src/tooling/cli/
 - Toolbar summary: run status, total duration, capability calls, tokens, cost
 - Detail panel extended with execution section (status, duration, capability calls)
 
-### Phase 3: Agent State Machine
-- State machine diagram in detail panel
-- Executed path highlighted
-- State transition replay (play button)
+### Phase 3: Agent State Machine — LANDED 2026-10-05
+- State machine path in detail panel (from `agent_state_entered` events)
+- Initial/final state names from execution plan lifecycle
+- Executed path highlighted as S0 → S1 → S2 → ... → Done
+- Hover tooltips with state_id and entry time
 
 ### Phase 4: Polish
 - Minimap
