@@ -1622,3 +1622,17 @@ ahfl_add_manifest_check_fail_test(
     option-neg-unknown
     "UNKNOWN_CALLABLE"
 )
+
+# Visualize command gate: HTML/DOT/Mermaid output from a golden execution-plan,
+# plus trace-driven execution overlay (status badges, timeline, state machine path).
+add_test(NAME ahflc.visualize.gate
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/visualize_gate.py"
+            $<TARGET_FILE:ahflc>
+            "${AHFL_TESTS_DIR}"
+)
+set_tests_properties(ahflc.visualize.gate PROPERTIES
+    PASS_REGULAR_EXPRESSION "all visualize gates passed"
+    FAIL_REGULAR_EXPRESSION "FAIL:|AssertionError"
+    LABELS "cli;visualize"
+)
