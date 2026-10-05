@@ -4652,12 +4652,12 @@ class P6ComputationHandlerBuilder {
             }
             const auto arg_kind = p6_scalar_kind(program_, layouts_, arg_type);
             if (arg_kind == std::nullopt || *arg_kind == P6ScalarKind::Closure ||
-                *arg_kind == P6ScalarKind::Collection || *arg_kind == P6ScalarKind::F64) {
+                *arg_kind == P6ScalarKind::Collection) {
                 return reject_with_code(
                     core_wasm_diag::kUnsupportedCapabilityFrame,
                     "a bridge capability argument is not a frame-walkable P6 value in this rung "
                     "(a bounded collection crosses the frame bridge only with its own backing "
-                    "placement on a later ladder; an unbounded Int, f64, bytes or closure is "
+                    "placement on a later ladder; an unbounded Int, bytes or closure is "
                     "rejected outright)",
                     range);
             }
@@ -4682,12 +4682,12 @@ class P6ComputationHandlerBuilder {
         }
         const auto result_kind = p6_scalar_kind(program_, layouts_, result_type);
         if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure ||
-            *result_kind == P6ScalarKind::Collection || *result_kind == P6ScalarKind::F64) {
+            *result_kind == P6ScalarKind::Collection) {
             return reject_with_code(
                 core_wasm_diag::kUnsupportedCapabilityFrame,
                 "a bridge capability result is not a frame-walkable P6 value in this rung (a "
                 "bounded collection result needs its own backing placement on a later ladder; an "
-                "unbounded Int, f64, bytes or closure is rejected outright)",
+                "unbounded Int, bytes or closure is rejected outright)",
                 range);
         }
         if (!bind_value(s.result, *result_kind)) {
@@ -4900,7 +4900,7 @@ class P6ComputationHandlerBuilder {
                 p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
             if (arg_kind == std::nullopt) {
                 return reject("indirect call argument is not a representable P6 boundary value "
-                              "(String / f64 cross no boundary in this slice)",
+                              "(String crosses no boundary in this slice)",
                               expr.source_range);
             }
             const auto param_kind =
@@ -6624,7 +6624,7 @@ class P6ComputationHandlerBuilder {
                             return reject_with_code(
                                 core_wasm_diag::kUnsupportedCapabilityFrame,
                                 "a frame-bridge let value is not a frame-walkable P6 value "
-                                "(f64, bytes or a zero-sized aggregate cannot cross the bridge)",
+                                "(bytes or a zero-sized aggregate cannot cross the bridge)",
                                 statement.source_range);
                         }
                         return reject("let value has a non-scalar type",
@@ -7277,14 +7277,6 @@ class P6ComputationHandlerBuilder {
             // Scalar / PtrLen: spill the physical word(s) into the private
             // slot, then name (spill_address, physical_width).
             const std::uint32_t spill_addr = spill_cursor;
-            if (*kind == P6ScalarKind::F64) {
-                // f64 across a capability bridge stays rejected (the
-                // wh5c7_f64_bridge_fail_closed pin): the bridge spill window
-                // is an 8-byte i64 word, and an f64 value would need its own
-                // f64.store path. A later bridge rung can add it.
-                return reject("an f64 value cannot cross a capability bridge in this slice",
-                              range);
-            }
             if (*kind == P6ScalarKind::String) {
                 // A String value binds TWO adjacent i32 locals (payload ptr,
                 // byte len). Copy both into the spill slot: [addr,value] stack
@@ -7314,6 +7306,16 @@ class P6ComputationHandlerBuilder {
                     return false;
                 }
                 body_.byte(kOpI64Store);
+                body_.u32(kAlignI64);
+                body_.u32(0);
+            } else if (*kind == P6ScalarKind::F64) {
+                // f64 spills into the same 8-byte slot as i64; the host reads
+                // it as f64 via the wire schema's Float node.
+                emit_const_i32(static_cast<std::int32_t>(spill_addr));
+                if (!emit_value_read(arg, range)) {
+                    return false;
+                }
+                body_.byte(kOpF64Store);
                 body_.u32(kAlignI64);
                 body_.u32(0);
             } else {
@@ -7410,16 +7412,16 @@ class P6ComputationHandlerBuilder {
             body_.u32(*local + 1u);
             return true;
         }
-        if (*result_kind == P6ScalarKind::F64) {
-            // f64 across a capability bridge stays rejected (the
-            // wh5c7_f64_bridge_fail_closed pin).
-            return reject("an f64 value cannot cross a capability bridge in this slice",
-                          range);
-        }
         body_.byte(kOpLocalGet);
         body_.u32(bridge_ptr_local_);
         if (*result_kind == P6ScalarKind::IntI64) {
             body_.byte(kOpI64Load);
+            body_.u32(kAlignI64);
+            body_.u32(0);
+        } else if (*result_kind == P6ScalarKind::F64) {
+            // f64 result: the host packs it into the result placement as an
+            // 8-byte f64 word; load it with f64.load into the f64 local.
+            body_.byte(kOpF64Load);
             body_.u32(kAlignI64);
             body_.u32(0);
         } else {

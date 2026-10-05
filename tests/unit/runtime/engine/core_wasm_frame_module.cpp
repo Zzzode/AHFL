@@ -720,8 +720,8 @@ int main() {
         }
 
         // The frame-WALK wire subset: a param whose (consistent) wire shape is
-        // f64 cannot cross the bridge even though the P4-D layout represents it,
-        // because the host pack/read walkers deliberately reject f64.
+        // f64 crosses the bridge because the host pack/read walkers support
+        // f64 (frame_reader Float leaf + frame_packer Float leaf).
         {
             auto f64_pair = canonical;
             f64_pair.section.table.layouts.push_back(
@@ -740,9 +740,9 @@ int main() {
                       {f64_wire})
                           .empty(),
                   "f64 scalar is a structurally consistent layout/wire pair");
-            check(!irc::verify_frame_bridge_sites(f64_pair.section, f64_pair.wire)
+            check(irc::verify_frame_bridge_sites(f64_pair.section, f64_pair.wire)
                           .empty(),
-                  "an f64 bridge argument outside the frame-walk subset fails closed");
+                  "an f64 bridge argument inside the frame-walk subset is admitted");
         }
 
         // v3: the per-site private spill windows must exactly partition the

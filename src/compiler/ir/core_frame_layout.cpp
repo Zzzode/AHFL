@@ -2097,11 +2097,11 @@ verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
         return {};
     }
     // Frame-bridge v2 D4 rung V2-C: every capability argument/result root must
-    // lie inside the frame-WALK wire subset — Unit/Bool/Int/String, struct,
-    // enum, option, tuple, bounded sequence. map / f64 / decimal / duration /
-    // timestamp / uuid stay fail-closed HERE (compile + admission), so the host
-    // walkers never meet a shape they cannot pack/read across the bridge. The
-    // predicate is node-local (no path dependence), so a flat visited set is a
+    // lie inside the frame-WALK wire subset — Unit/Bool/Int/Float/String,
+    // struct, enum, option, tuple, bounded sequence. map / decimal / duration
+    // / timestamp / uuid stay fail-closed HERE (compile + admission), so the
+    // host walkers never meet a shape they cannot pack/read across the bridge.
+    // The predicate is node-local (no path dependence), so a flat visited set is a
     // complete cycle-safe traversal of the hash-consed graph.
     const auto within_frame_walk_subset = [&](CoreWireSchemaNodeId root) {
         std::vector<std::uint32_t> worklist{root.value};
@@ -2118,7 +2118,7 @@ verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
             visited[id] = 1;
             const bool rejected = std::visit(
                 Overloaded{
-                    [](const CoreWireSchemaFloat &) { return true; },
+                    [](const CoreWireSchemaFloat &) { return false; },
                     [](const CoreWireSchemaDecimal &) { return true; },
                     [](const CoreWireSchemaDuration &) { return true; },
                     [](const CoreWireSchemaTimestamp &) { return true; },

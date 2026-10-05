@@ -742,6 +742,11 @@ lower_golden_file(const std::filesystem::path &path) {
         // verifier-clean Core; the f64-across-capability-bridge rejection is
         // at wasm codegen (kUnsupportedCapabilityFrame), not Core lowering.
         "wasm/wh5c7_f64_bridge_fail_closed.ahfl",
+        // WH-5c.7: the f64-bridge positive pin. A Float argument spills into
+        // the 8-byte spill slot (f64.store) and the f64 result is loaded from
+        // the result placement area (f64.load); the fixture lowers to
+        // verifier-clean Core.
+        "wasm/wh5c7_f64_bridge.ahfl",
         // WH-5c.7 P1-2: Decimal/Duration bridge fail-closed pins. The
         // fixtures lower to verifier-clean Core; the rich-type-across-
         // capability-bridge rejection is at wasm codegen

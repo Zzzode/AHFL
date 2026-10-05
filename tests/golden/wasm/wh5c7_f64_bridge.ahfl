@@ -1,0 +1,59 @@
+// WH-5c.7 f64-bridge positive pin.
+//
+// The P6 frame packer/reader round-trips Float (f64) through the P6 frame,
+// and f64 across a CAPABILITY bridge is now ADMITTED: the bridge argument
+// spills into the 8-byte spill slot (f64.store), the host reads it as f64
+// via the wire schema's Float leaf, and the f64 result is loaded from the
+// result placement area (f64.load). The capability call is in a STATEMENT
+// position (`let reply = Echo(input.ratio)`) so
+// region_contains_capability detects it and the bridge registry is populated,
+// keeping the module on the P6 lane. The echoed f64 is carried through the
+// context so the Done state can materialize it in the output.
+
+module wasm::wh5c7_f64_bridge;
+
+pub struct Frame {
+    ratio: Float;
+}
+
+pub struct Context {
+    echoed: Float = 0.0;
+}
+
+pub struct Output {
+    echoed: Float;
+}
+
+capability Echo(ratio: Float) -> Float;
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Context;
+    output: Output;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Start {
+        let reply = Echo(input.ratio);
+        ctx.echoed = reply;
+        goto Done;
+    }
+
+    state Done {
+        return Output { echoed: ctx.echoed };
+    }
+}
+
+pub workflow F64Bridge {
+    input: Frame;
+    output: Output;
+
+    node echo: EchoAgent(input);
+
+    return: echo;
+}

@@ -2557,6 +2557,100 @@ void test_f64_bridge_fail_closed(const std::filesystem::path &repo_root) {
           "f64_fc.node_failed");
 }
 
+// ==== WH-5c.7 f64-bridge positive pin ====
+//
+// The f64 bridge ladder: a Float argument spills into the 8-byte spill slot
+// (f64.store), the host reads it as f64 via the wire schema's Float leaf, and
+// the f64 result is loaded from the result placement area (f64.load). The
+// capability call is in a STATEMENT position (`let reply = Echo(input.ratio)`)
+// so region_contains_capability detects it, the bridge registry is populated,
+// and the module stays on the P6 lane. The echoed f64 is carried through the
+// context so the Done state can materialize it in the output.
+void test_f64_bridge(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5c7_f64_bridge.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "f64_bridge.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // The capability call is in statement position, so the bridge registry
+    // is populated and the module stays on the P6 lane (not the WireJson
+    // fallback that the return-position fail-closed fixture exercises).
+    check(wf->descriptor.frame_contract ==
+              ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "f64_bridge.p6_lane");
+    check(wf->descriptor.frame_section.has_value(),
+          "f64_bridge.has_frame_section");
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::wh5c7_f64_bridge::Frame","ratio":1.5})");
+    check(input.has_value(), "f64_bridge.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        // Echo the f64 argument back as the f64 result. The host packs it
+        // into the result placement area; the guest loads it with f64.load.
+        // Value is non-copyable (FieldMap holds unique_ptr), so extract the
+        // double and construct a fresh FloatValue.
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        double echoed = 1.5;
+        if (!args.empty()) {
+            if (const auto *fv = std::get_if<ahfl::runtime::FloatValue>(
+                    &args.front().node)) {
+                echoed = fv->value;
+            }
+        }
+        r.value = ahfl::runtime::make_float(echoed);
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "f64_bridge.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+    // The f64 value crossed the bridge (argument spill + result load) and the
+    // workflow completes successfully.
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "f64_bridge.completed");
+
+    // The output carries the echoed f64 value through the context.
+    const auto *output = result->result.output();
+    check(output != nullptr, "f64_bridge.has_output");
+    if (output != nullptr) {
+        const auto *sv =
+            std::get_if<ahfl::runtime::StructValue>(&output->node);
+        check(sv != nullptr, "f64_bridge.output_is_struct");
+        if (sv != nullptr) {
+            const auto &echoed_field = sv->fields.get("echoed");
+            check(echoed_field != nullptr, "f64_bridge.has_echoed_field");
+            if (echoed_field != nullptr) {
+                const auto *fv = std::get_if<ahfl::runtime::FloatValue>(
+                    &echoed_field->node);
+                check(fv != nullptr, "f64_bridge.echoed_is_float");
+                if (fv != nullptr) {
+                    // The echoed f64 must be exactly 1.5 (bit-identical round
+                    // trip through the spill slot and result placement).
+                    check(fv->value == 1.5, "f64_bridge.echoed_value");
+                }
+            }
+        }
+    }
+}
+
 // ==== WH-5c.7 P1-2: rich-type bridge-rejection pins ====
 //
 // Four dedicated pins for Decimal/Duration/Set/Map across a capability
@@ -4547,6 +4641,7 @@ int main() {
     // WH-5b.3 fail-closed pin).
     test_hybrid_decimal_round_trip(repo_root);
     test_f64_bridge_fail_closed(repo_root);
+    test_f64_bridge(repo_root);
     // WH-5c.7 P1-2: rich-type bridge-rejection pins.
     test_decimal_bridge_fail_closed(repo_root);
     test_duration_bridge_fail_closed(repo_root);

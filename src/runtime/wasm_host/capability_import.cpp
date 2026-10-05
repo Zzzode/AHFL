@@ -76,6 +76,7 @@ bridge_param_kind(const ir::core::CoreWireSchemaNode &node) noexcept {
             using T = std::decay_t<decltype(shape)>;
             if constexpr (std::is_same_v<T, ir::core::CoreWireSchemaBool> ||
                           std::is_same_v<T, ir::core::CoreWireSchemaInt> ||
+                          std::is_same_v<T, ir::core::CoreWireSchemaFloat> ||
                           std::is_same_v<T, ir::core::CoreWireSchemaUnit> ||
                           std::is_same_v<T, ir::core::CoreWireSchemaString>) {
                 return BridgeParamKind::Spill;
