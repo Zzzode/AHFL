@@ -490,11 +490,47 @@ parse_run_events(std::string_view jsonl_text,
 
 } // namespace
 
+/// Generate a DOT (Graphviz) graph from the layout.
+[[nodiscard]] std::string generate_dot(const LayoutResult &layout) {
+    std::ostringstream out;
+    out << "digraph " << layout.workflow_name << " {\n";
+    out << "  rankdir=LR;\n";
+    out << "  node [shape=box, style=\"rounded,filled\", fillcolor=\"#2d2d2d\", "
+           "fontcolor=\"#d4d4d4\", fontname=\"sans-serif\"];\n";
+    out << "  edge [color=\"#555\", penwidth=1.5];\n\n";
+
+    for (const auto &n : layout.nodes) {
+        const auto short_target = n.target.empty() ? "" : n.target.substr(n.target.find_last_of(':') + 1);
+        out << "  \"" << n.name << "\" [label=\"" << n.name << "\\n" << short_target << "\"];\n";
+    }
+    out << "\n";
+    for (const auto &e : layout.edges) {
+        out << "  \"" << e.from << "\" -> \"" << e.to << "\";\n";
+    }
+    out << "}\n";
+    return out.str();
+}
+
+/// Generate a Mermaid graph from the layout.
+[[nodiscard]] std::string generate_mermaid(const LayoutResult &layout) {
+    std::ostringstream out;
+    out << "graph LR\n";
+    for (const auto &n : layout.nodes) {
+        const auto short_target = n.target.empty() ? "" : n.target.substr(n.target.find_last_of(':') + 1);
+        out << "  " << n.name << "[\"" << n.name << "<br/>" << short_target << "\"]\n";
+    }
+    for (const auto &e : layout.edges) {
+        out << "  " << e.from << " --> " << e.to << "\n";
+    }
+    return out.str();
+}
+
 /// Run the visualize command. Returns exit code (0 = success).
 int run_visualize(std::string_view input_path,
                   std::string_view output_path,
                   std::string_view title,
-                  std::string_view trace_path) {
+                  std::string_view trace_path,
+                  std::string_view format) {
     // Read input file.
     const std::string in_path(input_path);
     std::ifstream input{in_path};
@@ -513,9 +549,9 @@ int run_visualize(std::string_view input_path,
         return 1;
     }
 
-    // Optionally parse run-event trace.
+    // Optionally parse run-event trace (HTML format only).
     std::optional<ExecutionTrace> trace;
-    if (!trace_path.empty()) {
+    if (!trace_path.empty() && format == "html") {
         const std::string trace_file(trace_path);
         std::ifstream trace_input{trace_file};
         if (!trace_input) {
@@ -540,16 +576,27 @@ int run_visualize(std::string_view input_path,
         std::move(plan->output_type)
     );
 
-    // Generate HTML.
-    const std::string json = layout_to_json(layout, trace.has_value() ? &*trace : nullptr);
-    const std::string page_title = title.empty()
-        ? std::string("AHFL — ") + layout.workflow_name
-        : std::string(title);
-    const std::string html = generate_canvas_html(json, page_title);
+    // Generate output in the requested format.
+    std::string output;
+    if (format == "dot") {
+        output = generate_dot(layout);
+    } else if (format == "mermaid") {
+        output = generate_mermaid(layout);
+    } else if (format == "html") {
+        const std::string json = layout_to_json(layout, trace.has_value() ? &*trace : nullptr);
+        const std::string page_title = title.empty()
+            ? std::string("AHFL — ") + layout.workflow_name
+            : std::string(title);
+        output = generate_canvas_html(json, page_title);
+    } else {
+        std::cerr << "error: unknown format '" << format
+                  << "' (expected html, dot, or mermaid)\n";
+        return 1;
+    }
 
     // Write output.
     if (output_path.empty() || output_path == "-") {
-        std::cout << html;
+        std::cout << output;
     } else {
         const std::string out_path(output_path);
         std::ofstream out_file{out_path};
@@ -557,7 +604,7 @@ int run_visualize(std::string_view input_path,
             std::cerr << "error: cannot open output file: " << output_path << "\n";
             return 1;
         }
-        out_file << html;
+        out_file << output;
         std::cerr << "Generated: " << output_path << "\n";
     }
 

@@ -116,11 +116,13 @@ inline constexpr int kMargin = 60;
 namespace ahfl::visualize {
 /// Run the visualize command. Returns exit code (0 = success).
 /// @param input_path   Path to the execution-plan JSON file.
-/// @param output_path  Path to the output HTML file ("-" for stdout).
+/// @param output_path  Path to the output file ("-" for stdout).
 /// @param title        Optional page title.
 /// @param trace_path   Optional path to a run-event JSONL trace file.
+/// @param format       Output format: "html" (default), "dot", or "mermaid".
 int run_visualize(std::string_view input_path,
                   std::string_view output_path,
                   std::string_view title,
-                  std::string_view trace_path = "");
+                  std::string_view trace_path = "",
+                  std::string_view format = "html");
 } // namespace ahfl::visualize

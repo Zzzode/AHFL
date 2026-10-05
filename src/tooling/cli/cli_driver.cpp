@@ -1901,20 +1901,25 @@ void export_cli_memory_report(const CommandLineOptions &options,
 
 ExitCode CliDriver::run(std::span<const std::string_view> arguments) {
     // ahflc visualize <plan.json> [trace.jsonl] [-o output.html] [--title <text>]
+    //                        [--format html|dot|mermaid]
     // A post-processing tool that generates an interactive HTML canvas
     // from an execution-plan JSON file. If a run-event JSONL trace is
     // provided, the canvas shows execution state (status, duration, tokens).
+    // --format dot/mermaid produces static graph export for documentation.
     if (!arguments.empty() && arguments[0] == "visualize") {
         std::string_view input_path;
         std::string_view trace_path;
         std::string_view output_path = "trace.html";
         std::string_view title;
+        std::string_view format = "html";
         bool got_input = false;
         for (std::size_t i = 1; i < arguments.size(); ++i) {
             if (arguments[i] == "-o" && i + 1 < arguments.size()) {
                 output_path = arguments[++i];
             } else if (arguments[i] == "--title" && i + 1 < arguments.size()) {
                 title = arguments[++i];
+            } else if (arguments[i] == "--format" && i + 1 < arguments.size()) {
+                format = arguments[++i];
             } else if (arguments[i][0] != '-') {
                 if (!got_input) {
                     input_path = arguments[i];
@@ -1924,13 +1929,21 @@ ExitCode CliDriver::run(std::span<const std::string_view> arguments) {
                 }
             }
         }
+        // Default output filename based on format.
+        std::string default_output = "trace.html";
+        if (format == "dot") default_output = "workflow.dot";
+        else if (format == "mermaid") default_output = "workflow.mmd";
+        if (output_path == "trace.html") {
+            output_path = default_output;
+        }
         if (input_path.empty()) {
             std::cerr << "usage: ahflc visualize <execution-plan.json> [trace.jsonl] "
-                         "[-o output.html] [--title <text>]\n";
+                         "[-o output.html] [--title <text>] [--format html|dot|mermaid]\n";
             return ExitCode::UsageError;
         }
         return static_cast<ExitCode>(
-            ahfl::visualize::run_visualize(input_path, output_path, title, trace_path));
+            ahfl::visualize::run_visualize(input_path, output_path, title,
+                                           trace_path, format));
     }
 
     if (auto status = parse_command_line(arguments); status.has_value()) {

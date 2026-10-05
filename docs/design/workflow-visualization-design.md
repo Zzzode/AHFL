@@ -1,6 +1,6 @@
 # AHFL Workflow Canvas — Card+Connection-Line Visualization Design
 
-**Status**: Phase 1 + Phase 2 + Phase 3 landed (2026-10-05)
+**Status**: Phase 1 + 2 + 3 + 5 landed (2026-10-05)
 **Date**: 2026-10-05
 **Author**: Coordinator (autonomous)
 
@@ -377,6 +377,8 @@ src/tooling/cli/
 - Capability call badges with token/cost
 - Export SVG/PNG
 
-### Phase 5: Static DOT/Mermaid (still useful for docs)
-- `ahflc emit dot` / `ahflc emit mermaid`
+### Phase 5: Static DOT/Mermaid — LANDED 2026-10-05
+- `ahflc visualize plan.json --format dot` → Graphviz DOT
+- `ahflc visualize plan.json --format mermaid` → Mermaid graph
 - For README, Markdown docs, code review comments
+- Default output: `workflow.dot` / `workflow.mmd`
