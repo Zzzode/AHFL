@@ -407,6 +407,36 @@ ahflc emit core-ir-json examples/refund/audit.ahfl
 3. JSON envelope 只携带逻辑身份，不携带 target data-layout fact（物理布局是独立的 target-specific artifact）。
 4. 完整 schema / 规范化 / round-trip 契约见设计文档 `docs/design/core-ir-p9-layered-json.zh.md`；既有单层投影的弃用边界见 [ir-format.zh.md](./ir-format.zh.md) 的「分层投影与弃用边界」。
 
+## Workflow Canvas 可视化
+
+`ahflc visualize` 从 execution-plan JSON 生成交互式 HTML canvas（卡片 + 贝塞尔连接线），支持可选的 run-event JSONL trace 叠加执行状态。
+
+```bash
+# 静态 canvas（无执行状态）
+ahflc visualize plan.json -o canvas.html
+
+# 执行回放（叠加状态、耗时、token）
+ahflc visualize plan.json trace.jsonl -o canvas.html
+
+# 静态图导出（文档用）
+ahflc visualize plan.json --format dot -o graph.dot
+ahflc visualize plan.json --format mermaid -o graph.mmd
+```
+
+| 选项 | 用途 |
+|------|------|
+| `-o <file>` | 输出路径（默认 `trace.html` / `workflow.dot` / `workflow.mmd`，`-` 为 stdout） |
+| `--title <text>` | 页面标题 |
+| `--format html\|dot\|mermaid` | 输出格式（默认 `html`） |
+
+HTML canvas 功能：
+- 自动分层 DAG 布局（Kahn 拓扑排序 + 最长路径分层 + barycenter 交叉消除）
+- 拖拽平移、滚轮缩放、Fit 自适应
+- 点击节点查看详情（agent 类型、输入输出类型、capability、依赖）
+- 加载 trace 后：状态徽章（pending/scheduled/running/completed/failed/skipped）、耗时显示、流动虚线动画、时间线、agent 状态机路径
+
+trace 文件由 `ahflc run --format jsonl` 生成（`ahfl.run-event.v1` JSONL）。
+
 ## Optimization IR Artifact
 
 `emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR_V1` JSON artifact。二者都会在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 Semantic IR lowering 之后，把 `ir::Program` 降到 `ir::opt::OptProgram`。artifact 包含 OptFunction、local、basic block、statement、terminator、source range，以及无法降为 pure expression fragment 的 temporal atom `skipped_temporal` 记录。

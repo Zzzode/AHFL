@@ -244,6 +244,37 @@ run_completed
 一条。失败事件会 materialize `DiagnosticId` 对应的 code、message、range、position 和
 related notes。
 
+### 可视化 workflow canvas
+
+`ahflc visualize` 从 execution-plan JSON 生成交互式 HTML canvas，支持叠加 run-event
+JSONL trace 回放执行状态。
+
+```bash
+# 生成 execution-plan JSON
+ahflc emit execution-plan examples/loan-origination/src/main.ahfl -o plan.json
+
+# 静态 canvas
+ahflc visualize plan.json -o canvas.html
+
+# 执行回放（需要先运行并保存 JSONL trace）
+ahflc run --format jsonl examples/loan-origination/src/main.ahfl > trace.jsonl
+ahflc visualize plan.json trace.jsonl -o canvas.html
+```
+
+加载 trace 后，canvas 显示：
+- 每个节点的状态徽章（pending / scheduled / running / completed / failed / skipped）
+- 节点耗时和 capability 调用次数
+- 已完成路径上的流动虚线动画
+- 底部时间线（每个节点的执行区间）
+- 点击节点查看 agent 状态机路径（`agent_state_entered` 事件序列）
+
+也可以导出静态图用于文档：
+
+```bash
+ahflc visualize plan.json --format dot -o graph.dot      # Graphviz
+ahflc visualize plan.json --format mermaid -o graph.mmd   # Mermaid
+```
+
 ## 真实 LLM 执行
 
 `ahflc run` 使用 OpenAI-compatible LLM Provider 执行 workflow。它需要：
