@@ -2543,9 +2543,7 @@ class ExpressionChecker final {
         if (!context_.try_allowed) {
             services_.typecheck_error_here(
                 error_codes::typecheck::TryNotInLetBinding,
-                "the '?' operator is only allowed as the direct initializer "
-                "of a let binding in this slice (e.g. `let x = e?;`); "
-                "arbitrary expression positions are not yet supported",
+                messages::typecheck::TryNotInLetBinding.format_with(),
                 expr.range);
         }
 
@@ -2554,9 +2552,7 @@ class ExpressionChecker final {
         if (context_.enclosing_closure_inferred_return) {
             services_.typecheck_error_here(
                 error_codes::typecheck::TryInClosureWithoutReturnType,
-                "the '?' operator cannot be used in a closure without a "
-                "determinable return type; annotate the closure's return "
-                "type or use it in a context that provides one",
+                messages::typecheck::TryInClosureWithoutReturnType.format_with(),
                 expr.range);
         }
 
@@ -2570,11 +2566,7 @@ class ExpressionChecker final {
             is_error_type(**context_.enclosing_return_type)) {
             services_.typecheck_error_here(
                 error_codes::typecheck::TryOutsideFunction,
-                "the '?' operator is only allowed inside a function or "
-                "closure body with a declared return type; it cannot be "
-                "used in flow handlers, workflow nodes, contract "
-                "formulas, predicates, or functions without a return "
-                "type annotation",
+                messages::typecheck::TryOutsideFunction.format_with(),
                 expr.range);
         }
 
@@ -2623,13 +2615,13 @@ class ExpressionChecker final {
         if (!is_option && !is_result) {
             std::vector<Diagnostic::Related> notes;
             notes.push_back(Diagnostic::Related{
-                .message = std::string("actual type: ") + operand.type->describe(),
+                .message = messages::typecheck::TryActualType.format_with(
+                    operand.type->describe()),
                 .range = try_node.operand->range,
             });
             services_.typecheck_error_here(
                 error_codes::typecheck::TryRequiresOptionOrResult,
-                "the '?' operator requires an operand of type Option<T> or "
-                "Result<T, E>",
+                messages::typecheck::TryRequiresOptionOrResult.format_with(),
                 expr.range,
                 std::move(notes));
             return values_.error_typed_effect(operand.effect);
@@ -2687,14 +2679,15 @@ class ExpressionChecker final {
                             stdlib_bridge::StdContainerKind::Option) {
                         std::vector<Diagnostic::Related> notes;
                         notes.push_back(Diagnostic::Related{
-                            .message = std::string("enclosing return type: ") +
-                                       enclosing->describe(),
+                            .message = messages::typecheck::TryEnclosingReturnType.format_with(
+                                enclosing->describe()),
                             .range = expr.range,
                         });
                         services_.typecheck_error_here(
                             error_codes::typecheck::TryIncompatibleReturnType,
-                            "the '?' operator on an Option<T> requires the "
-                            "enclosing function to return Option<_>",
+                            messages::typecheck::TryIncompatibleReturnType.format_with(
+                                "an Option<T>",
+                                "the enclosing function to return Option<_>"),
                             expr.range,
                             std::move(notes));
                     }
@@ -2708,14 +2701,15 @@ class ExpressionChecker final {
                         enm->type_args.size() < 2 || enm->type_args[1] == nullptr) {
                         std::vector<Diagnostic::Related> notes;
                         notes.push_back(Diagnostic::Related{
-                            .message = std::string("enclosing return type: ") +
-                                       enclosing->describe(),
+                            .message = messages::typecheck::TryEnclosingReturnType.format_with(
+                                enclosing->describe()),
                             .range = expr.range,
                         });
                         services_.typecheck_error_here(
                             error_codes::typecheck::TryIncompatibleReturnType,
-                            "the '?' operator on a Result<T, E> requires the "
-                            "enclosing function to return Result<_, F>",
+                            messages::typecheck::TryIncompatibleReturnType.format_with(
+                                "a Result<T, E>",
+                                "the enclosing function to return Result<_, F>"),
                             expr.range,
                             std::move(notes));
                     } else if (error_type != nullptr && !is_error_type(*error_type) &&
@@ -2728,21 +2722,22 @@ class ExpressionChecker final {
                                                     services_.relations())) {
                             std::vector<Diagnostic::Related> notes;
                             notes.push_back(Diagnostic::Related{
-                                .message = std::string("operand error type: ") +
-                                           error_type->describe(),
+                                .message = messages::typecheck::TryOperandErrorType.format_with(
+                                    error_type->describe()),
                                 .range = try_node.operand->range,
                             });
                             notes.push_back(Diagnostic::Related{
-                                .message = std::string(
-                                               "enclosing return error type: ") +
-                                           enm->type_args[1]->describe(),
+                                .message =
+                                    messages::typecheck::TryEnclosingReturnErrorType.format_with(
+                                        enm->type_args[1]->describe()),
                                 .range = expr.range,
                             });
                             services_.typecheck_error_here(
                                 error_codes::typecheck::TryIncompatibleReturnType,
-                                "the '?' operator on a Result<T, E> requires "
-                                "the enclosing function's error type to be "
-                                "compatible with the operand's error type",
+                                messages::typecheck::TryIncompatibleReturnType.format_with(
+                                    "a Result<T, E>",
+                                    "the enclosing function's error type to be "
+                                    "compatible with the operand's error type"),
                                 expr.range,
                                 std::move(notes));
                         }

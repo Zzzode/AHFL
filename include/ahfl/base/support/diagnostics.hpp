@@ -786,6 +786,33 @@ inline constexpr MessageTemplate CoercionWitnessCycle{
     "cannot construct a finite coercion witness for recursive type relation"};
 inline constexpr MessageTemplate UnsupportedCoercionWitness{
     "accepted type relation has no supported coercion witness"};
+// RFC 0014: try-operator (`?`) diagnostic family.
+inline constexpr MessageTemplate TryNotInLetBinding{
+    "the '?' operator is only allowed as the direct initializer "
+    "of a let binding in this slice (e.g. `let x = e?;`); "
+    "arbitrary expression positions are not yet supported"};
+inline constexpr MessageTemplate TryInClosureWithoutReturnType{
+    "the '?' operator cannot be used in a closure without a "
+    "determinable return type; annotate the closure's return "
+    "type or use it in a context that provides one"};
+inline constexpr MessageTemplate TryOutsideFunction{
+    "the '?' operator is only allowed inside a function or "
+    "closure body with a declared return type; it cannot be "
+    "used in flow handlers, workflow nodes, contract "
+    "formulas, predicates, or functions without a return "
+    "type annotation"};
+inline constexpr MessageTemplate TryRequiresOptionOrResult{
+    "the '?' operator requires an operand of type Option<T> or "
+    "Result<T, E>"};
+// {0} = operand kind ("an Option<T>" | "a Result<T, E>"),
+// {1} = the specific enclosing-return-type requirement.
+inline constexpr MessageTemplate TryIncompatibleReturnType{
+    "the '?' operator on {} requires {}"};
+// Paired notes for the try-operator family.
+inline constexpr MessageTemplate TryActualType{"actual type: {}"};
+inline constexpr MessageTemplate TryEnclosingReturnType{"enclosing return type: {}"};
+inline constexpr MessageTemplate TryOperandErrorType{"operand error type: {}"};
+inline constexpr MessageTemplate TryEnclosingReturnErrorType{"enclosing return error type: {}"};
 } // namespace typecheck
 
 namespace validation {
