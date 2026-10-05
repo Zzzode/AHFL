@@ -32,6 +32,7 @@ constexpr std::string_view kTemplate = R"HTML(<!DOCTYPE html>
   --green: #66bb6a;
   --red: #ef5350;
   --yellow: #ffee58;
+  --orange: #ffa726;
   --purple: #ab47bc;
   --blue: #42a5f5;
   --gray: #666;
@@ -244,6 +245,128 @@ main {
   justify-content: space-between;
 }
 
+/* ── Status badges (execution overlay) ────────────────── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.status-badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.status-badge.completed { background: rgba(102,187,106,0.15); color: var(--green); }
+.status-badge.completed .dot { background: var(--green); }
+.status-badge.running { background: rgba(66,165,245,0.15); color: var(--blue); }
+.status-badge.running .dot { background: var(--blue); animation: pulse 1.5s infinite; }
+.status-badge.failed { background: rgba(239,83,80,0.15); color: var(--red); }
+.status-badge.failed .dot { background: var(--red); }
+.status-badge.skipped { background: rgba(255,167,38,0.15); color: var(--orange); }
+.status-badge.skipped .dot { background: var(--orange); }
+.status-badge.scheduled { background: rgba(255,238,88,0.1); color: var(--yellow); }
+.status-badge.scheduled .dot { background: var(--yellow); }
+.status-badge.pending { background: rgba(102,102,102,0.15); color: var(--gray); }
+.status-badge.pending .dot { background: var(--gray); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Card status border accents */
+.card.exec-completed { border-left: 3px solid var(--green); }
+.card.exec-running { border-left: 3px solid var(--blue); }
+.card.exec-failed { border-left: 3px solid var(--red); }
+.card.exec-skipped { border-left: 3px solid var(--orange); }
+.card.exec-scheduled { border-left: 3px solid var(--yellow); }
+
+/* Duration display in card footer */
+.card-footer .duration {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+/* ── Flowing edges (execution overlay) ────────────────── */
+.edge.flowing {
+  stroke: var(--green);
+  stroke-width: 2.5;
+  stroke-dasharray: 8 4;
+  animation: flow 0.8s linear infinite;
+}
+.edge.flowing-failed {
+  stroke: var(--red);
+  stroke-width: 2.5;
+}
+@keyframes flow {
+  to { stroke-dashoffset: -12; }
+}
+
+/* ── Timeline (execution overlay) ─────────────────────── */
+#timeline-bar {
+  display: none;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  padding: 8px 16px;
+  height: 80px;
+  z-index: 50;
+}
+#timeline-bar.visible { display: block; }
+#timeline-bar .timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+#timeline-bar .timeline-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+#timeline-bar .timeline-summary {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+#timeline-bar .timeline-track {
+  position: relative;
+  height: 24px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+#timeline-bar .timeline-block {
+  position: absolute;
+  top: 2px;
+  height: 20px;
+  border-radius: 3px;
+  min-width: 4px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+#timeline-bar .timeline-block:hover { opacity: 0.8; }
+#timeline-bar .timeline-block.completed { background: var(--green); }
+#timeline-bar .timeline-block.running { background: var(--blue); }
+#timeline-bar .timeline-block.failed { background: var(--red); }
+#timeline-bar .timeline-block.skipped { background: var(--orange); }
+#timeline-bar .timeline-label {
+  position: absolute;
+  top: -1px;
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+}
+
 /* ── Ports ───────────────────────────────────────────── */
 .port {
   position: absolute;
@@ -346,6 +469,7 @@ main {
     <span class="workflow-name">/*__TITLE__*/</span>
   </div>
   <div class="controls">
+    <span id="exec-summary" style="font-size:11px;color:var(--text-dim);margin-right:12px;"></span>
     <button id="btn-zoom-out" title="Zoom out">−</button>
     <span class="zoom-level" id="zoom-level">100%</span>
     <button id="btn-zoom-in" title="Zoom in">+</button>
@@ -369,6 +493,14 @@ main {
   </aside>
 </main>
 
+<div id="timeline-bar">
+  <div class="timeline-header">
+    <span class="timeline-title">Execution Timeline</span>
+    <span class="timeline-summary" id="timeline-summary"></span>
+  </div>
+  <div class="timeline-track" id="timeline-track"></div>
+</div>
+
 <script>
 (function() {
   'use strict';
@@ -379,6 +511,13 @@ main {
   // ── State ──────────────────────────────────────────
   let viewX = 0, viewY = 0, viewScale = 1;
   let selectedNode = null;
+  // Build name → execution status map (if trace present).
+  const nodeStatus = {};
+  if (DATA.trace !== undefined) {
+    for (const node of DATA.nodes) {
+      nodeStatus[node.name] = node.exec ? node.exec.status : 'pending';
+    }
+  }
 
   const container = document.getElementById('canvas-container');
   const viewport = document.getElementById('viewport');
@@ -393,7 +532,25 @@ main {
   function render() {
     renderCards();
     renderConnections();
+    renderTimeline();
     updateTransform();
+  }
+
+  function hasTrace() {
+    return DATA.trace !== undefined;
+  }
+
+  function formatDuration(ns) {
+    if (!ns || ns === 0) return '—';
+    if (ns < 1000) return ns + 'ns';
+    if (ns < 1000000) return (ns / 1000).toFixed(1) + 'µs';
+    if (ns < 1000000000) return (ns / 1000000).toFixed(1) + 'ms';
+    return (ns / 1000000000).toFixed(2) + 's';
+  }
+
+  function statusBadge(status) {
+    return '<span class="status-badge ' + status + '">' +
+      '<span class="dot"></span>' + status + '</span>';
   }
 
   function renderCards() {
@@ -416,6 +573,21 @@ main {
         '<span class="cap-badge">' + escapeHtml(c) + '</span>'
       ).join('');
 
+      // Execution overlay.
+      let statusHtml = '';
+      let durationHtml = '';
+      let execClass = '';
+      if (hasTrace() && node.exec) {
+        const st = node.exec.status || 'pending';
+        statusHtml = statusBadge(st);
+        execClass = ' exec-' + st;
+        if (st === 'completed' || st === 'failed') {
+          durationHtml = '<span class="duration">' + formatDuration(node.exec.duration_ns) + '</span>';
+        }
+      }
+
+      card.classList.add(execClass);
+
       card.innerHTML =
         '<div class="card-header">' +
           '<div class="icon">' + escapeHtml(shortName.charAt(0) || '?') + '</div>' +
@@ -428,8 +600,10 @@ main {
           (caps ? '<hr class="divider"><div class="capabilities">' + caps + '</div>' : '') +
         '</div>' +
         '<div class="card-footer">' +
-          '<span>' + (node.capabilities ? node.capabilities.length : 0) + ' cap' + (node.capabilities && node.capabilities.length !== 1 ? 's' : '') + '</span>' +
-          '<span>L' + node.layer + '</span>' +
+          (hasTrace() && node.exec ?
+            statusHtml + durationHtml :
+            '<span>' + (node.capabilities ? node.capabilities.length : 0) + ' cap' + (node.capabilities && node.capabilities.length !== 1 ? 's' : '') + '</span>' +
+            '<span>L' + node.layer + '</span>') +
         '</div>' +
         '<div class="port input"></div>' +
         '<div class="port output"></div>';
@@ -489,8 +663,93 @@ main {
       path.dataset.to = edge.to;
       path.classList.add('edge');
 
+      // Execution overlay: flowing animation for edges where source completed
+      // and target is running or completed.
+      if (hasTrace()) {
+        const fromStatus = nodeStatus[edge.from];
+        const toStatus = nodeStatus[edge.to];
+        if (fromStatus === 'completed' && (toStatus === 'running' || toStatus === 'completed')) {
+          path.classList.add('flowing');
+        } else if (fromStatus === 'failed' || toStatus === 'failed') {
+          path.classList.add('flowing-failed');
+        }
+      }
+
       svg.appendChild(path);
     }
+  }
+
+  // ── Timeline (execution overlay) ───────────────────
+  function renderTimeline() {
+    const bar = document.getElementById('timeline-bar');
+    if (!hasTrace()) {
+      bar.classList.remove('visible');
+      return;
+    }
+    bar.classList.add('visible');
+
+    const track = document.getElementById('timeline-track');
+    const summary = document.getElementById('timeline-summary');
+    track.innerHTML = '';
+
+    // Find the time range across all nodes.
+    let minStart = Infinity, maxEnd = 0;
+    const execNodes = DATA.nodes.filter(n => n.exec && n.exec.started_at_ns > 0);
+    for (const n of execNodes) {
+      minStart = Math.min(minStart, n.exec.started_at_ns);
+      const end = n.exec.completed_at_ns || n.exec.started_at_ns;
+      maxEnd = Math.max(maxEnd, end);
+    }
+    if (execNodes.length === 0 || minStart >= maxEnd) {
+      summary.textContent = 'No execution data';
+      return;
+    }
+
+    const range = maxEnd - minStart;
+    const trackWidth = track.clientWidth || 800;
+
+    for (const n of execNodes) {
+      const st = n.exec;
+      const start = st.started_at_ns;
+      const end = st.completed_at_ns || start;
+      const left = ((start - minStart) / range) * (trackWidth - 80) + 40;
+      const width = Math.max(((end - start) / range) * (trackWidth - 80), 4);
+
+      const block = document.createElement('div');
+      block.className = 'timeline-block ' + (st.status || 'pending');
+      block.style.left = left + 'px';
+      block.style.width = width + 'px';
+      block.title = n.name + ' — ' + (st.status || '?') + ' — ' + formatDuration(st.duration_ns);
+      block.dataset.name = n.name;
+      block.addEventListener('click', function() {
+        selectNode(n);
+      });
+
+      const label = document.createElement('span');
+      label.className = 'timeline-label';
+      label.textContent = n.name;
+      label.style.left = (left + 4) + 'px';
+      label.style.top = '4px';
+      block.appendChild(label);
+
+      track.appendChild(block);
+    }
+
+    // Summary line.
+    const t = DATA.trace;
+    const parts = [];
+    parts.push((t.run_status || 'unknown').toUpperCase());
+    parts.push(formatDuration(t.total_duration_ns));
+    if (t.total_capability_calls > 0) {
+      parts.push(t.total_capability_calls + ' cap calls');
+    }
+    if (t.total_tokens > 0) {
+      parts.push(t.total_tokens + ' tokens');
+    }
+    if (t.total_cost_usd > 0) {
+      parts.push('$' + t.total_cost_usd.toFixed(4));
+    }
+    summary.textContent = parts.join(' · ');
   }
 
   // ── Pan / Zoom ─────────────────────────────────────
@@ -580,14 +839,58 @@ main {
       if (edge.dataset.from === node.name || edge.dataset.to === node.name) {
         edge.setAttribute('stroke', '#0e639c');
         edge.setAttribute('stroke-width', '3');
+        edge.classList.remove('flowing');
       } else {
-        edge.setAttribute('stroke', '#555');
-        edge.setAttribute('stroke-width', '2');
+        // Restore default or flowing state.
+        if (hasTrace()) {
+          const fromStatus = nodeStatus[edge.dataset.from];
+          const toStatus = nodeStatus[edge.dataset.to];
+          if (fromStatus === 'completed' && (toStatus === 'running' || toStatus === 'completed')) {
+            edge.setAttribute('stroke', '');
+            edge.setAttribute('stroke-width', '');
+            edge.classList.add('flowing');
+          } else if (fromStatus === 'failed' || toStatus === 'failed') {
+            edge.setAttribute('stroke', '');
+            edge.setAttribute('stroke-width', '');
+            edge.classList.add('flowing-failed');
+          } else {
+            edge.setAttribute('stroke', '#555');
+            edge.setAttribute('stroke-width', '2');
+            edge.classList.remove('flowing');
+          }
+        } else {
+          edge.setAttribute('stroke', '#555');
+          edge.setAttribute('stroke-width', '2');
+        }
       }
     }
 
     // Show detail panel.
     panelTitle.textContent = node.name;
+
+    // Execution details section (if trace present).
+    let execSection = '';
+    if (hasTrace() && node.exec) {
+      const st = node.exec;
+      execSection =
+        '<div class="section">' +
+          '<div class="section-title">Execution</div>' +
+          '<div class="kv"><span class="key">Status</span><span class="val">' + statusBadge(st.status || 'pending') + '</span></div>' +
+          '<div class="kv"><span class="key">Started</span><span class="val">' + (st.started_at_ns ? formatDuration(st.started_at_ns) : '—') + '</span></div>' +
+          '<div class="kv"><span class="key">Duration</span><span class="val">' + formatDuration(st.duration_ns) + '</span></div>' +
+          (st.capability_calls && st.capability_calls.length > 0 ?
+            '<div class="kv"><span class="key">Cap calls</span><span class="val">' + st.capability_calls.length + '</span></div>' +
+            st.capability_calls.map(function(c, i) {
+              return '<div class="kv"><span class="key">cap[' + i + ']</span><span class="val">' +
+                formatDuration(c.duration_ns) +
+                (c.cache_hit ? ' (cache)' : '') +
+                (c.attempts > 1 ? ' ×' + c.attempts : '') +
+                (c.total_tokens > 0 ? ' ' + c.total_tokens + 'tok' : '') +
+                '</span></div>';
+            }).join('') : '') +
+        '</div>';
+    }
+
     panelBody.innerHTML =
       '<div class="section">' +
         '<div class="section-title">Agent</div>' +
@@ -595,6 +898,7 @@ main {
         '<div class="kv"><span class="key">Layer</span><span class="val">' + node.layer + '</span></div>' +
         '<div class="kv"><span class="key">Position</span><span class="val">(' + node.layer + ', ' + node.index + ')</span></div>' +
       '</div>' +
+      execSection +
       '<div class="section">' +
         '<div class="section-title">Types</div>' +
         '<div class="kv"><span class="key">Input</span><span class="val">' + escapeHtml(node.input_type || DATA.input_type || '—') + '</span></div>' +
@@ -627,11 +931,29 @@ main {
       if (card) card.classList.remove('selected');
       selectedNode = null;
     }
-    // Reset edge colors.
+    // Reset edge colors (restore flowing if trace).
     const edges = svg.querySelectorAll('.edge');
     for (const edge of edges) {
-      edge.setAttribute('stroke', '#555');
-      edge.setAttribute('stroke-width', '2');
+      if (hasTrace()) {
+        const fromStatus = nodeStatus[edge.dataset.from];
+        const toStatus = nodeStatus[edge.dataset.to];
+        if (fromStatus === 'completed' && (toStatus === 'running' || toStatus === 'completed')) {
+          edge.setAttribute('stroke', '');
+          edge.setAttribute('stroke-width', '');
+          edge.classList.add('flowing');
+        } else if (fromStatus === 'failed' || toStatus === 'failed') {
+          edge.setAttribute('stroke', '');
+          edge.setAttribute('stroke-width', '');
+          edge.classList.add('flowing-failed');
+        } else {
+          edge.setAttribute('stroke', '#555');
+          edge.setAttribute('stroke-width', '2');
+          edge.classList.remove('flowing');
+        }
+      } else {
+        edge.setAttribute('stroke', '#555');
+        edge.setAttribute('stroke-width', '2');
+      }
     }
   });
 
@@ -652,6 +974,17 @@ main {
   }
 
   // ── Init ───────────────────────────────────────────
+  // Populate execution summary in toolbar.
+  if (hasTrace()) {
+    const t = DATA.trace;
+    const p = [];
+    p.push((t.run_status || 'unknown').toUpperCase());
+    if (t.total_duration_ns > 0) p.push(formatDuration(t.total_duration_ns));
+    if (t.total_capability_calls > 0) p.push(t.total_capability_calls + ' caps');
+    if (t.total_tokens > 0) p.push(t.total_tokens + ' tok');
+    document.getElementById('exec-summary').textContent = p.join(' · ');
+  }
+
   render();
   fitToView();
 })();

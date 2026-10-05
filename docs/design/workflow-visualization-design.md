@@ -1,6 +1,6 @@
 # AHFL Workflow Canvas — Card+Connection-Line Visualization Design
 
-**Status**: Draft v3 (incorporates industry research)
+**Status**: Phase 1 + Phase 2 landed (2026-10-05)
 **Date**: 2026-10-05
 **Author**: Coordinator (autonomous)
 
@@ -350,18 +350,20 @@ src/tooling/cli/
 
 ## Implementation Plan
 
-### Phase 1: Static Canvas (no execution trace)
-- `ahflc visualize --plan execution-plan.json`
+### Phase 1: Static Canvas (no execution trace) — LANDED 2026-10-05
+- `ahflc visualize execution-plan.json`
 - Card+bezier connection rendering, auto-layout, pan/zoom
 - Click to inspect (side panel with agent details)
 - Dark theme, dot-grid background
 
-### Phase 2: Execution Overlay
-- `ahflc visualize trace.jsonl`
-- Event replay → node states
-- Status badges, metrics bars, flowing-dash edge animation
-- Detail panel with event history
-- Timeline with bidirectional sync
+### Phase 2: Execution Overlay — LANDED 2026-10-05
+- `ahflc visualize execution-plan.json trace.jsonl`
+- Event replay → per-node status (pending/scheduled/running/completed/failed/skipped)
+- Status badges in card footer, duration display
+- Flowing-dash edge animation on completed→running/completed paths
+- Timeline bar at bottom with per-node execution blocks
+- Toolbar summary: run status, total duration, capability calls, tokens, cost
+- Detail panel extended with execution section (status, duration, capability calls)
 
 ### Phase 3: Agent State Machine
 - State machine diagram in detail panel

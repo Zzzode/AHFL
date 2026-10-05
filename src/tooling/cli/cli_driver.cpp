@@ -1900,29 +1900,37 @@ void export_cli_memory_report(const CommandLineOptions &options,
 // ---------------------------------------------------------------------------
 
 ExitCode CliDriver::run(std::span<const std::string_view> arguments) {
-    // ahflc visualize <input.json> [-o output.html] [--title <text>]
+    // ahflc visualize <plan.json> [trace.jsonl] [-o output.html] [--title <text>]
     // A post-processing tool that generates an interactive HTML canvas
-    // from an execution-plan JSON file. Does not require the compiler pipeline.
+    // from an execution-plan JSON file. If a run-event JSONL trace is
+    // provided, the canvas shows execution state (status, duration, tokens).
     if (!arguments.empty() && arguments[0] == "visualize") {
         std::string_view input_path;
+        std::string_view trace_path;
         std::string_view output_path = "trace.html";
         std::string_view title;
+        bool got_input = false;
         for (std::size_t i = 1; i < arguments.size(); ++i) {
             if (arguments[i] == "-o" && i + 1 < arguments.size()) {
                 output_path = arguments[++i];
             } else if (arguments[i] == "--title" && i + 1 < arguments.size()) {
                 title = arguments[++i];
             } else if (arguments[i][0] != '-') {
-                input_path = arguments[i];
+                if (!got_input) {
+                    input_path = arguments[i];
+                    got_input = true;
+                } else {
+                    trace_path = arguments[i];
+                }
             }
         }
         if (input_path.empty()) {
-            std::cerr << "usage: ahflc visualize <execution-plan.json> [-o output.html] "
-                         "[--title <text>]\n";
+            std::cerr << "usage: ahflc visualize <execution-plan.json> [trace.jsonl] "
+                         "[-o output.html] [--title <text>]\n";
             return ExitCode::UsageError;
         }
         return static_cast<ExitCode>(
-            ahfl::visualize::run_visualize(input_path, output_path, title));
+            ahfl::visualize::run_visualize(input_path, output_path, title, trace_path));
     }
 
     if (auto status = parse_command_line(arguments); status.has_value()) {

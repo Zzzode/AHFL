@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -45,7 +46,41 @@ struct LayoutResult {
     int canvas_height{0};
 };
 
-// Layout constants (pixels).
+// ── Execution overlay (Phase 2) ────────────────────────────────────────────
+
+/// A single capability invocation recorded in the trace.
+struct CapabilityCall {
+    std::string capability_name;
+    std::uint64_t started_at_ns{0};
+    std::uint64_t completed_at_ns{0};
+    std::uint64_t duration_ns{0};
+    int attempts{1};
+    bool cache_hit{false};
+    std::uint64_t total_tokens{0};
+    double total_cost_usd{0.0};
+};
+
+/// Per-node execution state, replayed from run-event JSONL.
+struct NodeExecutionState {
+    std::string status;  // "pending" | "scheduled" | "running" | "completed" | "failed" | "skipped"
+    std::uint64_t started_at_ns{0};
+    std::uint64_t completed_at_ns{0};
+    std::uint64_t duration_ns{0};
+    std::vector<CapabilityCall> capability_calls;
+};
+
+/// Aggregated execution trace (all nodes + run-level summary).
+struct ExecutionTrace {
+    std::vector<NodeExecutionState> node_states;  // indexed by node order in plan
+    std::string run_status;   // "completed" | "failed" | "suspended" | ...
+    std::uint64_t total_duration_ns{0};
+    std::uint64_t total_tokens{0};
+    double total_cost_usd{0.0};
+    std::uint64_t total_capability_calls{0};
+    bool has_trace{false};    // true if a trace was loaded
+};
+
+/// Layout constants (pixels).
 inline constexpr int kCardWidth = 260;
 inline constexpr int kCardHeight = 120;
 inline constexpr int kHGap = 80;
@@ -69,7 +104,12 @@ inline constexpr int kMargin = 60;
 // Standalone visualize command (called from CLI driver).
 namespace ahfl::visualize {
 /// Run the visualize command. Returns exit code (0 = success).
+/// @param input_path   Path to the execution-plan JSON file.
+/// @param output_path  Path to the output HTML file ("-" for stdout).
+/// @param title        Optional page title.
+/// @param trace_path   Optional path to a run-event JSONL trace file.
 int run_visualize(std::string_view input_path,
                   std::string_view output_path,
-                  std::string_view title);
+                  std::string_view title,
+                  std::string_view trace_path = "");
 } // namespace ahfl::visualize
