@@ -28,6 +28,12 @@
 //   N10 Struct field default that relies on a runtime path via a qualified
 //       value (proves the gate is enforced for the struct-default validation
 //       path, not just const initializers)
+//   N11 Try operator (?) — RFC 0014 control-flow construct, not a
+//       compile-time constant even when the operand is foldable
+//   N12 Bounded quantifier (forall/exists) — RFC 0024 verification-only
+//       predicate, not a compile-time constant
+//   N13 Method call on a receiver (real MethodCallExpr — N1 exercises the
+//       CallExpr branch, not the MethodCallExpr branch)
 // =============================================================================
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
@@ -291,6 +297,52 @@ const R: Record = Record { label: "x" };
     CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.CONST_EXPR_REQUIRED") >= 1);
     CHECK(diagnostics_contain(result.diagnostics,
                               "capability and predicate calls are not compile-time constants"));
+}
+
+// ---------------------------------------------------------------------------
+// N11 Try operator (?) in const initializer.
+// ---------------------------------------------------------------------------
+TEST_CASE("ConstSema: N11 try operator rejected") {
+    const auto source = R"AHFL(module app::main;
+const opt: Option<Int> = Some(42);
+const V: Int = opt?;
+)AHFL";
+    const auto result = typecheck_project_loose("n11_try_operator", source);
+    CHECK(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.CONST_EXPR_REQUIRED") >= 1);
+    CHECK(diagnostics_contain(result.diagnostics,
+                              "try operator (?) is not a compile-time constant"));
+}
+
+// ---------------------------------------------------------------------------
+// N12 Bounded quantifier (forall) in const initializer.
+// ---------------------------------------------------------------------------
+TEST_CASE("ConstSema: N12 quantifier expression rejected") {
+    const auto source = R"AHFL(module app::main;
+const items: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
+const V: Bool = forall x in items: x > 0;
+)AHFL";
+    const auto result = typecheck_project_loose("n12_quantifier", source);
+    CHECK(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.CONST_EXPR_REQUIRED") >= 1);
+    CHECK(diagnostics_contain(result.diagnostics,
+                              "quantifier expressions are not compile-time constants"));
+}
+
+// ---------------------------------------------------------------------------
+// N13 Method call on a receiver (real MethodCallExpr — N1 exercises the
+//      CallExpr branch, not the MethodCallExpr branch).
+// ---------------------------------------------------------------------------
+TEST_CASE("ConstSema: N13 method call rejected") {
+    const auto source = R"AHFL(module app::main;
+const items: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
+const V: Int = items.length();
+)AHFL";
+    const auto result = typecheck_project_loose("n13_method_call", source);
+    CHECK(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.CONST_EXPR_REQUIRED") >= 1);
+    CHECK(diagnostics_contain(result.diagnostics,
+                              "method calls are not compile-time constants"));
 }
 
 } // namespace
