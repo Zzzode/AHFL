@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/fb3_string_capture.ahfl",
+  "kind": "agent",
+  "entry": "wasm::fb3_string_capture::StringCaptureAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::fb3_string_capture::Frame","value":0},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Init", "Done"],
+        "capability_sequence": [],
+        "capability_arguments": [],
+        "output_json": {"_type":"wasm::fb3_string_capture::Frame","value":0}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "RFC 0026 FB-3b fix-forward: a closure captures a String PtrLen (rodata literal) alongside an Int; the lifted fn body copies the two-word PtrLen into the Out struct's label field (exercising the two-word env store + entry load + construct-store path) and computes value from the captured Int. The env-layout coupling between the String and Int captures makes a one-word defect visible through the Int result. The String PtrLen itself is not directly observable through the output frame in this slice (a computed final cannot mix with outlined fns / closures). The in-process evaluator does not yet execute user-defined pure fn calls / first-class closures, so the Node embedded-engine observation is authoritative until KR6.8."
+    }
+  }
+}

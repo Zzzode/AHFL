@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/fb3_f64_capture.ahfl",
+  "kind": "agent",
+  "entry": "wasm::fb3_f64_capture::F64CaptureAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::fb3_f64_capture::Frame","value":0},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Init", "Done"],
+        "capability_sequence": [],
+        "capability_arguments": [],
+        "output_json": {"_type":"wasm::fb3_f64_capture::Frame","value":0}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "RFC 0026 FB-3b fix-forward: a closure captures an f64 value (1.5) through the dedicated F64 P6ScalarKind; the lifted fn body computes x + a via f64.add and the handler checks r == 4.0 via f64.eq, routing the computed goto. Verifies the f64.store env slot and f64.load entry path for f64 captures. The f64 is internal to the module (not in the input/output frame), so no Node host rich-wire-type skip is needed. The in-process evaluator does not yet execute user-defined pure fn calls / first-class closures, so the Node embedded-engine observation is authoritative until KR6.8."
+    }
+  }
+}

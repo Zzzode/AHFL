@@ -2800,11 +2800,12 @@ class P6ComputationHandlerBuilder {
     }
 
     // FB-3b: bind ONE pre-bound environment slot of a lifted fn. It is an
-    // ordinary bound local of `kind` (a pair for a nested-closure capture),
-    // populated at fn entry by an i32.load/i64.load from the env pointer
-    // (wasm local 0) at `offset`. Env slots never appear in the logical
-    // functype parameters, so they consume declared-local pool slots rather
-    // than parameter ordinals; the entry loads run before the region.
+    // ordinary bound local of `kind` (a two-word pair for a nested-closure or
+    // String PtrLen capture), populated at fn entry by an i32.load/f64.load
+    // from the env pointer (wasm local 0) at `offset`. Env slots never appear
+    // in the logical functype parameters, so they consume declared-local pool
+    // slots rather than parameter ordinals; the entry loads run before the
+    // region.
     [[nodiscard]] bool
     bind_env_binding(CoreValueId value, std::uint32_t offset, P6ScalarKind kind) {
         if (value.value >= locals_.size() || locals_[value.value].bound) {
@@ -2819,16 +2820,16 @@ class P6ComputationHandlerBuilder {
             info.slot = f64_count_++;
         } else {
             info.slot = i32_count_++;
-            if (kind == P6ScalarKind::Closure) {
+            if (is_two_word_kind(kind)) {
                 info.is_word_pair = true;
-                ++i32_count_;
+                ++i32_count_; // second word (env_ptr / byte_len)
             }
         }
         EnvBindingInit init;
         init.value = value;
         init.offset = offset;
         init.kind = kind;
-        init.pair = kind == P6ScalarKind::Closure;
+        init.pair = is_two_word_kind(kind);
         env_binding_inits_.push_back(init);
         used_values_[value.value] = true;
         return true;
@@ -3866,8 +3867,11 @@ class P6ComputationHandlerBuilder {
         if (kind == std::nullopt || local == std::nullopt) {
             return reject("captured value is not a readable representable value", std::move(range));
         }
-        if (*kind == P6ScalarKind::Closure) {
-            // Two words at offset (func_index) and offset+4 (env_ptr).
+        if (is_two_word_kind(*kind)) {
+            // Two-word pair: Closure (func_index, env_ptr) or String PtrLen
+            // (payload_ptr, byte_len). Store both words from the operand's two
+            // consecutive i32 locals, matching `emit_construct_store`'s PtrLen
+            // path and the fn-entry pair load.
             emit_local_get(base_local);
             emit_local_get(*local);
             body_.byte(kOpI32Store);
@@ -4755,8 +4759,8 @@ class P6ComputationHandlerBuilder {
             if (captured.value >= storage_.value_types.size() ||
                 p6_scalar_kind(program_, layouts_,
                                storage_.value_types[captured.value]) == std::nullopt) {
-                return reject("a captured closure value is not a representable P6 value "
-                              "(String / f64 captures cross no boundary in this slice)",
+                return reject("a captured closure value is not a representable P6 scalar "
+                              "value (aggregate / non-scalar captures cross no boundary)",
                               expr.source_range);
             }
             if (storage_.value_types[captured.value] != fn.captures[i]) {
@@ -11002,7 +11006,7 @@ build_frame_section_plan(const CoreProgram &program,
                          core_wasm_diag::kUnsupportedOrchestration,
                          "fn '" + fn.name +
                              "' crosses a boundary with a non-representable parameter "
-                             "(String PtrLen / f64 / multi-word types are rejected)");
+                             "(String PtrLen and aggregate / non-scalar types are rejected)");
                 return false;
             }
             param_words.push_back(*word);
@@ -11046,7 +11050,7 @@ build_frame_section_plan(const CoreProgram &program,
                              core_wasm_diag::kUnsupportedOrchestration,
                              "lifted fn '" + fn.name +
                                  "' captures a non-representable value "
-                                 "(String / f64 captures cross no boundary in this slice)");
+                                 "(aggregate / non-scalar captures cross no boundary)");
                     return false;
                 }
                 const std::uint64_t field_offset = env_struct->field_offsets[i];
@@ -15753,12 +15757,16 @@ encode_module(const CoreProgram &program,
             if (word == P6ScalarKind::Closure) {
                 params.push_back(kI32);
                 params.push_back(kI32);
+            } else if (word == P6ScalarKind::F64) {
+                params.push_back(kF64);
             } else {
                 params.push_back(word == P6ScalarKind::IntI64 ? kI64 : kI32);
             }
         }
         const std::uint8_t result_word =
-            fn.result_word == P6ScalarKind::IntI64 ? kI64 : kI32;
+            fn.result_word == P6ScalarKind::IntI64 ? kI64
+            : fn.result_word == P6ScalarKind::F64 ? kF64
+            : kI32;
         append_func_type(types, params, {result_word});
     }
     // RFC 0026 FB-3b: the call_indirect expected functypes follow the per-fn

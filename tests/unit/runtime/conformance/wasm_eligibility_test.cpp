@@ -307,6 +307,8 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"fb1_aggregate_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb1_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_byvalue_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"fb3_string_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"fb3_f64_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_activation.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_lambda_flow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7 corpus widening (FB-5) slice E: the FB-4 effect-classification

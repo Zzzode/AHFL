@@ -1,0 +1,64 @@
+// RFC 0026 FB-3b fix-forward: closure that captures a String PtrLen.
+//
+// The Init handler binds a String literal "hello" (a rodata PtrLen in the
+// module's Data section) and an Int `a = 10`, then constructs a closure
+// `\x -> Out { label: s, value: x + a }` that captures BOTH. The closure
+// body copies the two-word PtrLen from its env aggregate into the Out
+// struct's `label` field (exercising the two-word env store + two-word
+// entry load + two-word construct-store path) and computes `value` from
+// the captured Int. `apply` invokes the closure through call_indirect;
+// the handler projects `r.value` and routes the computed goto.
+//
+// A broken two-word capture path (one i32.store instead of two, or a
+// one-word entry load) shifts the Int's env local and corrupts the
+// arithmetic, routing to Fail. The String PtrLen itself is not directly
+// observable through the output frame in this slice (a computed final
+// cannot mix with outlined fns / closures), but the env-layout coupling
+// between the String and Int captures makes the defect visible through
+// the Int result.
+module wasm::fb3_string_capture;
+
+pub struct Frame {
+    value: Int;
+}
+
+pub struct Out {
+    label: String;
+    value: Int;
+}
+
+fn apply(f: Fn(Int) -> Out, x: Int) -> Out {
+    return f(x);
+}
+
+pub agent StringCaptureAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for StringCaptureAgent {
+    state Init {
+        let s: String = "hello";
+        let a: Int = 10;
+        let f: Fn(Int) -> Out = \x -> Out { label: s, value: x + a };
+        let r: Out = apply(f, 32);
+        if r.value == 42 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

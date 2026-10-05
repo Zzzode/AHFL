@@ -193,7 +193,12 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // rung-E frame subset). The wasm3 lane agrees with the blessed expectation
 // via the dedicated F64 scalar kind; the Node observation is withheld under
 // the same rich-wire-types reason: 69/4 -> 69/8.
-constexpr int kExpectedAgreed = 69;
+// RFC 0026 FB-3b fix-forward: two closure-capture cases
+// (fb3_string_capture: String PtrLen + Int env-layout coupling;
+// fb3_f64_capture: F64 env store/load + f64 functype params) agree on the
+// Node embedded engine without any rich-wire-type skip (the f64 is internal
+// to the module, not in the frame I/O): 69/8 -> 71/8.
+constexpr int kExpectedAgreed = 71;
 constexpr int kExpectedSkipped = 8;
 
 // Pinned STEM SET of cases allowed to declare

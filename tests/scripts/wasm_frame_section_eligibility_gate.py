@@ -81,6 +81,7 @@ DATA_SECTION_FIXTURES = frozenset(
         "v2b_computed_string",
         "v2b_bounded_string",
         "v2b_enum_string",
+        "fb3_string_capture",
     }
 )
 DATA_SECTION_ID = 11

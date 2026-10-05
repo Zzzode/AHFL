@@ -557,6 +557,28 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration,
             WasmNodeObservationSkip::None,
         },
+        // RFC 0026 FB-3b fix-forward: closure that captures a String PtrLen
+        // alongside an Int (env-layout coupling makes a one-word defect
+        // visible through the Int result).
+        {
+            "fb3_string_capture.case.json",
+            "tests/golden/wasm/fb3_string_capture.ahfl",
+            CaseKind::Agent,
+            "wasm::fb3_string_capture::StringCaptureAgent",
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
+        },
+        // RFC 0026 FB-3b fix-forward: closure that captures an f64 value
+        // through the dedicated F64 P6ScalarKind (f64.store env slot,
+        // f64.load entry path, f64 functype params/result).
+        {
+            "fb3_f64_capture.case.json",
+            "tests/golden/wasm/fb3_f64_capture.ahfl",
+            CaseKind::Agent,
+            "wasm::fb3_f64_capture::F64CaptureAgent",
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::None,
+        },
         {
             "fb3_nested_activation.case.json",
             "tests/golden/wasm/fb3_nested_activation.ahfl",

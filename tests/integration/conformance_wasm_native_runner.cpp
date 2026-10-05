@@ -88,7 +88,11 @@ using ahfl::conformance::run_native_scenario;
 // KR6.6 P6 f64 arithmetic ladder: four scenarios across two cases
 // (p6_f64_arith: add/sub/mul/div/neg; p6_f64_compare: f64.gt goto):
 // 73/0 -> 77/0.
-constexpr int kExpectedNativeAgreed = 77;
+// RFC 0026 FB-3b fix-forward: two closure-capture cases
+// (fb3_string_capture: String PtrLen + Int env-layout coupling;
+// fb3_f64_capture: F64 env store/load + f64 functype params):
+// 77/0 -> 79/0.
+constexpr int kExpectedNativeAgreed = 79;
 constexpr int kExpectedNativeSkipped = 0;
 
 int g_failures = 0;

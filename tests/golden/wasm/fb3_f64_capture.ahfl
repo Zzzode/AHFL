@@ -1,0 +1,49 @@
+// RFC 0026 FB-3b fix-forward: closure that captures an f64 value.
+//
+// The Init handler binds `a: Float = 1.5` and constructs a closure
+// `\x -> x + a` that captures it through the dedicated F64 P6ScalarKind
+// (f64.store into the env aggregate, f64.load at fn entry). `apply` invokes
+// the closure through call_indirect; the handler checks `r == 4.0` via
+// f64.eq and routes the computed goto. A broken f64 capture path (wrong
+// store opcode, misaligned slot, or stale IntI64 bit-copy) makes the
+// arithmetic disagree and routes to Fail.
+module wasm::fb3_f64_capture;
+
+pub struct Frame {
+    value: Int;
+}
+
+fn apply(f: Fn(Float) -> Float, x: Float) -> Float {
+    return f(x);
+}
+
+pub agent F64CaptureAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for F64CaptureAgent {
+    state Init {
+        let a: Float = 1.5;
+        let f: Fn(Float) -> Float = \x -> x + a;
+        let r: Float = apply(f, 2.5);
+        if r == 4.0 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}
