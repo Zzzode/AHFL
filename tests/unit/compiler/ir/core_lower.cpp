@@ -3806,6 +3806,385 @@ TEST_CASE("A3(b): the same quantifier in a contract requires/invariant is erased
 }
 
 // ============================================================================
+// N1 (KR6.4 erasure negatives): a verification-only expression node that
+// leaks into an executable flow-handler position must fail closed — never be
+// silently dropped. TemporalExprNode is a separate variant from ExprNode and
+// cannot be embedded in a flow body at the IR level (StatementNode holds
+// ExprRef, not TemporalExprPtr); the QuantifierExpr is the verification-only
+// ExprNode representative that CAN reach a flow handler body. It hits the
+// expression visitor catch-all and must produce CoreUnsupportedExpr +
+// kUnloweredExpression, marking the program non-executable.
+// ============================================================================
+
+TEST_CASE("N1: a hand-built verification-only QuantifierExpr in a flow body is non-executable") {
+    // exists x in input.values: x > 0 — a verification-only predicate placed
+    // directly in a flow handler return position (hand-built IR, independent
+    // of frontend admission rules; A3(a) covers the frontend let-position path).
+    const auto program = make_single_handler_flow([](ir::AhflIr &p) {
+        ir::ExprRef collection = p.expr_arena.make(
+            ir::PathExpr{.path = ir::Path{.root_name = "input", .members = {"values"}}});
+        ir::ExprRef lhs =
+            p.expr_arena.make(ir::PathExpr{.path = ir::Path{.root_name = "x"}});
+        ir::ExprRef rhs = p.expr_arena.make(ir::IntegerLiteralExpr{"0"});
+        ir::ExprRef body = p.expr_arena.make(
+            ir::BinaryExpr{.op = ir::ExprBinaryOp::Greater, .lhs = lhs, .rhs = rhs});
+        ir::TypeRef bool_ty;
+        bool_ty.kind = ir::TypeRefKind::Bool;
+        ir::ExprRef quant = p.expr_arena.make(
+            ir::QuantifierExpr{
+                .kind = ir::QuantifierExpr::Kind::Exists,
+                .binder = "x",
+                .value_binder = "",
+                .collection = collection,
+                .body = body,
+            },
+            std::nullopt, std::move(bool_ty));
+        auto stmt = std::make_unique<ir::Statement>();
+        stmt->node = ir::ReturnStatement{quant};
+        return stmt;
+    });
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    CHECK(has_lower_code(result, ir::core::diag::kUnloweredExpression));
+    CHECK(flow_has_unsupported(result.program, "QuantifierExpr"));
+    // A lowering-error candidate SKIPS the auto-wired verifier.
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
+// ============================================================================
+// N3 (KR6.4 erasure edge cases): verification constructs in their MINIMAL
+// populated form must still be completely erased — the erasure is structural
+// (never visited / never copied), so a construct with zero-or-one clauses or
+// a partial spec must leave exactly the same Core artifact as the same
+// program with the construct stripped at the AHFL-IR layer.
+// ============================================================================
+
+namespace {
+
+const std::string kEmptyContractSource = R"AHFL(
+module er;
+
+struct Req { id: Int; }
+struct Ctx { }
+struct Resp { ok: Bool; }
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for Worker {
+}
+
+flow for Worker {
+    state Init {
+        goto Done;
+    }
+    state Done {
+        return Resp { ok: true };
+    }
+}
+)AHFL";
+
+const std::string kDecreasesOnlyContractSource = R"AHFL(
+module er;
+
+struct Req { id: Int; }
+struct Ctx { }
+struct Resp { ok: Bool; }
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for Worker {
+    decreases: *;
+}
+
+flow for Worker {
+    state Init {
+        goto Done;
+    }
+    state Done {
+        return Resp { ok: true };
+    }
+}
+)AHFL";
+
+const std::string kSafetyOnlyWorkflowSource = R"AHFL(
+module wf;
+
+struct Req { amount: Int; }
+struct Mid { total: Int; }
+struct Reply { ok: Bool; }
+
+agent First {
+    input: Req;
+    output: Mid;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+agent Second {
+    input: Mid;
+    output: Reply;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+workflow Pipe {
+    input: Req;
+    output: Reply;
+
+    node first: First(input);
+    node second: Second(Mid { total: first.total }) after [first];
+
+    safety: always (not running(second) or completed(second));
+
+    return: second;
+}
+)AHFL";
+
+const std::string kDomainOnlyCapabilitySource = R"AHFL(
+module er;
+
+struct Req { id: String; }
+struct Receipt { id: String; }
+
+capability ChargeCard(request: Req) -> Receipt {
+    effect: financial_write;
+    domain: payments;
+}
+
+agent Billing {
+    input: Req;
+    output: Receipt;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [ChargeCard];
+}
+
+flow for Billing {
+    state Done {
+        return ChargeCard(input);
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("N3 (1): an empty contract (zero clauses) lowers clean and leaves no Core trace") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("empty_contract", kEmptyContractSource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // Non-vacuity: the ContractDecl exists but carries zero clauses.
+    const ir::ContractDecl *contract = nullptr;
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *c = std::get_if<ir::ContractDecl>(&d)) {
+            contract = c;
+        }
+    }
+    REQUIRE(contract != nullptr);
+    CHECK(contract->clauses.empty());
+
+    const auto with_contract = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : with_contract.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(with_contract.ok());
+    CHECK(with_contract.is_executable);
+    REQUIRE(with_contract.program.agents.size() == 1);
+    REQUIRE(with_contract.program.flows.size() == 1);
+
+    // Differential: strip the empty ContractDecl and re-lower; every Core
+    // component is byte-identical.
+    auto stripped_ir = lower_source_to_ahfl_ir("empty_contract_stripped", kEmptyContractSource);
+    REQUIRE(stripped_ir.has_value());
+    std::erase_if(stripped_ir->declarations, [](const ir::Decl &d) {
+        return std::holds_alternative<ir::ContractDecl>(d);
+    });
+    const auto without_contract = ir::core::lower_ahfl_to_core(*stripped_ir);
+    REQUIRE(without_contract.ok());
+    CHECK(with_contract.program.agents == without_contract.program.agents);
+    CHECK(with_contract.program.flows == without_contract.program.flows);
+    CHECK(with_contract.program.types == without_contract.program.types);
+    CHECK(with_contract.program.value_types == without_contract.program.value_types);
+    CHECK(with_contract.program.instances == without_contract.program.instances);
+}
+
+TEST_CASE("N3 (2): a contract with only decreases: * lowers clean and leaves no Core trace") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("decreases_only_contract", kDecreasesOnlyContractSource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // Non-vacuity: the ContractDecl carries exactly one wildcard Decreases.
+    const ir::ContractDecl *contract = nullptr;
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *c = std::get_if<ir::ContractDecl>(&d)) {
+            contract = c;
+        }
+    }
+    REQUIRE(contract != nullptr);
+    REQUIRE(contract->clauses.size() == 1);
+    CHECK(contract->clauses[0].kind == ir::ContractClauseKind::Decreases);
+    CHECK(contract->clauses[0].is_wildcard);
+
+    const auto with_contract = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : with_contract.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(with_contract.ok());
+    CHECK(with_contract.is_executable);
+    REQUIRE(with_contract.program.agents.size() == 1);
+    REQUIRE(with_contract.program.flows.size() == 1);
+
+    // Differential: strip the ContractDecl and re-lower; byte-identical.
+    auto stripped_ir =
+        lower_source_to_ahfl_ir("decreases_only_stripped", kDecreasesOnlyContractSource);
+    REQUIRE(stripped_ir.has_value());
+    std::erase_if(stripped_ir->declarations, [](const ir::Decl &d) {
+        return std::holds_alternative<ir::ContractDecl>(d);
+    });
+    const auto without_contract = ir::core::lower_ahfl_to_core(*stripped_ir);
+    REQUIRE(without_contract.ok());
+    CHECK(with_contract.program.agents == without_contract.program.agents);
+    CHECK(with_contract.program.flows == without_contract.program.flows);
+    CHECK(with_contract.program.types == without_contract.program.types);
+    CHECK(with_contract.program.value_types == without_contract.program.value_types);
+    CHECK(with_contract.program.instances == without_contract.program.instances);
+}
+
+TEST_CASE("N3 (3): a workflow with only safety (no liveness) lowers clean and leaves no Core trace") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("safety_only_wf", kSafetyOnlyWorkflowSource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // Non-vacuity: the workflow carries one safety, zero liveness.
+    const ir::WorkflowDecl *wf_ir = nullptr;
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *w = std::get_if<ir::WorkflowDecl>(&d)) {
+            wf_ir = w;
+        }
+    }
+    REQUIRE(wf_ir != nullptr);
+    CHECK(wf_ir->safety.size() == 1);
+    CHECK(wf_ir->liveness.empty());
+
+    const auto with_props = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : with_props.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(with_props.ok());
+    CHECK(with_props.is_executable);
+
+    // Differential: strip the safety at the AHFL-IR layer and re-lower; the
+    // CoreWorkflowDecl is byte-identical.
+    auto stripped_ir =
+        lower_source_to_ahfl_ir("safety_only_stripped", kSafetyOnlyWorkflowSource);
+    REQUIRE(stripped_ir.has_value());
+    for (auto &d : stripped_ir->declarations) {
+        if (auto *w = std::get_if<ir::WorkflowDecl>(&d)) {
+            w->safety.clear();
+        }
+    }
+    const auto stripped_result = ir::core::lower_ahfl_to_core(*stripped_ir);
+    REQUIRE(stripped_result.ok());
+    const auto *full_wf = find_workflow(with_props.program, "Pipe");
+    const auto *stripped_wf = find_workflow(stripped_result.program, "Pipe");
+    REQUIRE(full_wf != nullptr);
+    REQUIRE(stripped_wf != nullptr);
+    CHECK(*full_wf == *stripped_wf);
+}
+
+TEST_CASE("N3 (4): a capability with only domain (no receipt/retry/timeout) leaves only effect_kind on Core") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("domain_only_cap", kDomainOnlyCapabilitySource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // Non-vacuity: the capability carries effect kind + domain, but no
+    // receipt/retry/timeout/compensation.
+    const ir::CapabilityDecl *charge = nullptr;
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *cap = std::get_if<ir::CapabilityDecl>(&d);
+            cap != nullptr && callee_is(cap->name, "ChargeCard")) {
+            charge = cap;
+        }
+    }
+    REQUIRE(charge != nullptr);
+    CHECK(charge->effect.declared);
+    CHECK(charge->effect.kind == ir::CapabilityEffectKind::FinancialWrite);
+    REQUIRE(charge->effect.domain.has_value());
+    CHECK(*charge->effect.domain == "payments");
+    CHECK(charge->effect.receipt_mode == ir::CapabilityReceiptMode::None);
+    CHECK(charge->effect.retry_mode == ir::CapabilityRetryMode::Unsafe);
+    CHECK_FALSE(charge->effect.timeout.has_value());
+    CHECK_FALSE(charge->effect.compensation.has_value());
+
+    const auto full = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : full.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(full.ok());
+    CHECK(full.is_executable);
+    REQUIRE(full.program.capabilities.size() == 1);
+    const auto *core_charge = [&]() -> const ir::core::CoreCapabilityDecl * {
+        for (const auto &c : full.program.capabilities) {
+            if (callee_is(c.name, "ChargeCard")) {
+                return &c;
+            }
+        }
+        return nullptr;
+    }();
+    REQUIRE(core_charge != nullptr);
+    // effect_kind is the ONE piece of the spec the execution layer keeps.
+    CHECK(core_charge->effect_kind == ir::CapabilityEffectKind::FinancialWrite);
+
+    // Differential: reduce the capability spec to its kind at the AHFL-IR
+    // layer and re-lower; the Core capability decl is byte-identical.
+    auto stripped_ir =
+        lower_source_to_ahfl_ir("domain_only_stripped", kDomainOnlyCapabilitySource);
+    REQUIRE(stripped_ir.has_value());
+    for (auto &d : stripped_ir->declarations) {
+        if (auto *cap = std::get_if<ir::CapabilityDecl>(&d)) {
+            const auto kind = cap->effect.kind;
+            cap->effect = ir::CapabilityEffectSpec{};
+            cap->effect.kind = kind;
+        }
+    }
+    const auto stripped = ir::core::lower_ahfl_to_core(*stripped_ir);
+    REQUIRE(stripped.ok());
+    CHECK(full.program.capabilities == stripped.program.capabilities);
+    CHECK(full.program.agents == stripped.program.agents);
+    CHECK(full.program.flows == stripped.program.flows);
+    CHECK(full.program.types == stripped.program.types);
+    CHECK(full.program.value_types == stripped.program.value_types);
+    CHECK(full.program.instances == stripped.program.instances);
+}
+
+// ============================================================================
 // RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT): lambda lifting lands. A
 // real-frontend PURE lambda is no longer an unsupported expression: the Core
 // lowerer lifts it to a monomorphic CoreFnDecl + Fn instance and lowers its

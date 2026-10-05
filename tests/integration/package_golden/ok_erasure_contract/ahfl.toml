@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "erasure-contract"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "erasure"
+root = "."
+
+[exports]
+modules = ["erasure_contract"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "erasure::erasure_contract::ReviewWorkflow"
+exports = [
+  { kind = "workflow", name = "erasure::erasure_contract::ReviewWorkflow" },
+  { kind = "agent", name = "erasure::erasure_contract::ReviewAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

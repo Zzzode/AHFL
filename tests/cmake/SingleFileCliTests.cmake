@@ -950,6 +950,18 @@ ahfl_add_package_output_test(
     PACKAGE_ONLY
 )
 
+# KR6.4 erasure golden: a package carrying an agent contract (requires /
+# ensures / invariant / decreases), an agent quota, and workflow safety +
+# liveness must emit a Core-IR JSON artifact that contains NONE of those
+# verification constructs. The golden file pins their structural absence.
+ahfl_add_package_output_test(
+    ahflc.emit_core_ir_json.erasure_contract
+    "emit core-ir-json"
+    "ok_erasure_contract"
+    "${AHFL_TESTS_DIR}/golden/core/ok_erasure_contract.core.json"
+    PACKAGE_ONLY
+)
+
 ahfl_add_package_output_test(
     ahflc.emit_native_json.workflow_value_flow
     "emit native-json"
