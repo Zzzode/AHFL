@@ -215,8 +215,17 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // carry 5 scenarios total (2+2+1): 74/9 -> 79/4. The
 // wh5c7_rich_input_matrix case stays skipped (it needs Map / Decimal /
 // Duration, not just Float).
-constexpr int kExpectedAgreed = 79;
-constexpr int kExpectedSkipped = 4;
+// WH-5b.3 Node host transcode port: the JS host now implements the
+// ahfl_xcode transcode adapter (P4D_TO_JSON self-transcode + JSON_TO_P4D
+// workflow-output/input crossings), so the two construct-terminal cases
+// (wh5c4_construct_cap_final: P6 entry, self-transcode + workflow-output
+// crossing; wh5c4_p03_opaque_upstream: opaque entry, input crossing +
+// self-transcode + workflow-output crossing) move from skipped to agreed.
+// They carry 2 scenarios total (1+1): 79/4 -> 81/2. The
+// wh5c5_gap4_stash_parity case stays skipped (it needs the WH-5c.5
+// multi-node stash-table join, not transcode).
+constexpr int kExpectedAgreed = 81;
+constexpr int kExpectedSkipped = 2;
 
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip='host_transcode_awaits_node_port'. The wasm
@@ -226,10 +235,12 @@ constexpr int kExpectedSkipped = 4;
 // still a stub (returns [1,0,0]), so the module traps at its transcode sites.
 // The pin moves deliberately when the JS host gains transcode support. Keep
 // sorted.
-constexpr std::array<std::string_view, 2> kExpectedHostTranscodeStems{
-    "wh5c4_construct_cap_final",
-    "wh5c4_p03_opaque_upstream",
-};
+// WH-5b.3 Node host transcode port: the JS host now implements the ahfl_xcode
+// transcode adapter, so the two construct-terminal cases that previously
+// skipped under this reason moved to agreed. The set is empty; the pin stays
+// in place so a future case that skips under this reason must be reviewed and
+// added explicitly (it cannot silently land on the host-transcode lane).
+constexpr std::array<std::string_view, 0> kExpectedHostTranscodeStems{};
 
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip=

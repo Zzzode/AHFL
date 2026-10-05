@@ -25,8 +25,7 @@
   "engines": {
     "wasm": {
       "eligible": "orchestration",
-      "reason": "opaque-lane capability-final agent that constructs the capability argument in-module (WH-5c.4 GAP 2); the wasm codegen emits a P4D_TO_JSON self-transcode for the constructed O_k and a JSON_TO_P4D workflow-output crossing",
-      "node_observation_skip": "host_transcode_awaits_node_port"
+      "reason": "opaque-lane capability-final agent that constructs the capability argument in-module (WH-5c.4 GAP 2); the wasm codegen emits a P4D_TO_JSON self-transcode for the constructed O_k and a JSON_TO_P4D workflow-output crossing, both handled by the Node host transcode adapter"
     }
   }
 }

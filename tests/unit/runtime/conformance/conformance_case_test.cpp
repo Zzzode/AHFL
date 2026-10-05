@@ -663,31 +663,30 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
         // constructs the capability argument in-module. The wasm codegen emits
         // a P4D_TO_JSON self-transcode for the constructed O_k and a
         // JSON_TO_P4D workflow-output crossing. The native wasm3 lane has a
-        // checked-in blessing; the Node observation withholds on
-        // host_transcode_awaits_node_port (the C++ WH-5b.3 transcode landed,
-        // but the Node oracle JS port of ahfl_xcode is still a stub).
+        // checked-in blessing; the Node observation now agrees (the JS host
+        // implements the ahfl_xcode transcode adapter).
         {
             "wh5c4_construct_cap_final.case.json",
             "tests/golden/wasm/wh5c4_construct_cap_final.ahfl",
             CaseKind::Workflow,
             "wasm::wh5c4_construct_cap_final::ReplyWorkflow",
             1, 1, WasmEligibility::Orchestration,
-            WasmNodeObservationSkip::HostTranscodeAwaitsNodePort,
+            WasmNodeObservationSkip::None,
         },
         // WH-5c.4 P0-3: a construct-capability terminal whose upstream node is
         // opaque (Echo capability-final). The construct node carries BOTH a
         // JSON_TO_P4D input crossing (opaque producer output -> P4-D input)
         // AND a P4D_TO_JSON self-transcode (constructed Request -> wire-JSON);
         // the two-slot scheduler table keeps both. The native wasm3 lane has
-        // a checked-in blessing; the Node observation withholds on
-        // host_transcode_awaits_node_port.
+        // a checked-in blessing; the Node observation now agrees (the JS host
+        // implements the ahfl_xcode transcode adapter).
         {
             "wh5c4_p03_opaque_upstream.case.json",
             "tests/golden/wasm/wh5c4_p03_opaque_upstream.ahfl",
             CaseKind::Workflow,
             "wasm::wh5c4_p03_opaque_upstream::OpaqueUpstreamWorkflow",
             2, 1, WasmEligibility::Orchestration,
-            WasmNodeObservationSkip::HostTranscodeAwaitsNodePort,
+            WasmNodeObservationSkip::None,
         },
         {
             "wh5c7_rich_input_matrix.case.json",

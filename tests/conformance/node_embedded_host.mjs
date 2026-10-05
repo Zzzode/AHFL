@@ -445,8 +445,168 @@ function bridgeEnvelope(W, paramWireIds, args) {
   return jsonString({args});
 }
 
+// ---- WH-5b.3: ahfl_xcode transcode codec adapter ----------------------------
+//
+// Mirrors handle_transcode in src/runtime/wasm_host/transcode.cpp. A pure
+// codec: never invokes a capability, touches memo, fires hooks, or writes an
+// event record. The descriptor carries the transcode sites (direction, source,
+// node ordinals, layout) and the shadow/payload regions the host packs/reads
+// against; the JS host resolves the wire binding from the direction + source
+// kind (never a caller-supplied node id), so a corrupt site can only name a
+// legitimate boundary root of its own direction.
+
+// Sentinel for a transcode site whose target is the workflow output slot (not
+// a scheduled node). Mirrors kTranscodeWorkflowOutput in core_frame_layout.hpp.
+const kTranscodeWorkflowOutput = 4294967295;
+
+// Resolve the transcode site's boundary wire root. Mirrors
+// mint_transcode_binding in transcode.cpp. Returns the wire node id, or null
+// when the site names a corrupt/impossible binding.
+function resolveTranscodeBinding(site, roots) {
+  const wfLane = descriptor.workflow_lane;
+  if (wfLane === undefined) return null;
+  if (site.direction === "p4d_to_json") {
+    if (site.source === "entry") return roots.input;
+    if (site.source === "capability_param") {
+      // The construct terminal's self-transcode: the source is the
+      // capability's PARAM type. Resolve via the node's source_symbol.
+      const nodeDesc = wfLane.nodes[site.source_node_ordinal];
+      if (nodeDesc === undefined) return null;
+      const caps = descriptor.wire_schema.capabilities ?? [];
+      const cap = caps.find(
+        (c) => Number(c.source_symbol) === Number(nodeDesc.source_symbol));
+      if (cap === undefined || site.param_ordinal >= cap.params.length) {
+        return null;
+      }
+      return cap.params[site.param_ordinal];
+    }
+    // NodeOutput: the P6 producer's OUTPUT boundary root.
+    const nodeDesc = wfLane.nodes[site.source_node_ordinal];
+    if (nodeDesc === undefined || !nodeDesc.is_p6) return null;
+    return roots.node_outputs[nodeDesc.p6_block_ordinal];
+  }
+  // JSON_TO_P4D
+  if (site.source === "capability_param") return null; // P4DToJson-only
+  if (site.source === "entry") return roots.input;
+  if (site.target_node_ordinal === kTranscodeWorkflowOutput) {
+    return roots.output;
+  }
+  // NodeOutput -> a P6 consumer's INPUT boundary root.
+  const nodeDesc = wfLane.nodes[site.target_node_ordinal];
+  if (nodeDesc === undefined || !nodeDesc.is_p6) return null;
+  return roots.node_inputs[nodeDesc.p6_block_ordinal];
+}
+
+// Build the authorized String-byte regions for a P4D_TO_JSON transcode read.
+// Mirrors build_transcode_string_regions in transcode.cpp. readValue already
+// authorizes the input-payload arena, rodata, and construct heap; these are
+// the ADDITIONAL regions (entry-payload arena, bridge result placements,
+// transcode payload arena).
+function buildTranscodeStringRegions(frameLane) {
+  const regions = [];
+  const wfLane = descriptor.workflow_lane;
+  if (wfLane !== undefined && Number(wfLane.entry_payload_capacity || 0) > 0) {
+    regions.push({
+      lo: Number(wfLane.entry_payload_base),
+      hi: Number(wfLane.entry_payload_base) + Number(wfLane.entry_payload_capacity),
+    });
+  }
+  for (const site of (frameLane.bridge_call_sites ?? [])) {
+    if (Number(site.result_payload_capacity) > 0) {
+      regions.push({
+        lo: Number(site.result_payload_base),
+        hi: Number(site.result_payload_base) + Number(site.result_payload_capacity),
+      });
+    }
+  }
+  if (Number(frameLane.transcode_payload_capacity || 0) > 0) {
+    regions.push({
+      lo: Number(frameLane.transcode_payload_base),
+      hi: Number(frameLane.transcode_payload_base) + Number(frameLane.transcode_payload_capacity),
+    });
+  }
+  return regions;
+}
+
+// The host transcode callback. P4D_TO_JSON reads a P4-D frame at the guest-
+// pushed address and serializes to wire JSON; JSON_TO_P4D parses the guest-
+// pushed wire JSON and packs into the static shadow region.
+function makeTranscodeCallback(site, getInstance, getState) {
+  return (ptr, len) => {
+    const instance = getInstance();
+    const state = getState();
+    const e = instance.exports;
+    const frameLane = descriptor.frame_lane;
+    const W = descriptor.wire_schema.nodes;
+    const L = frameLane.layouts;
+    const roots = descriptor.wire_schema.roots;
+    const backing = backingByLayout(frameLane);
+
+    const wireNodeId = resolveTranscodeBinding(site, roots);
+    if (wireNodeId === null || wireNodeId === undefined) {
+      frameFail(`transcode site xcode_${site.import_ordinal} could not resolve its wire binding`);
+    }
+
+    if (site.direction === "p4d_to_json") {
+      // P4D_TO_JSON: read the P4-D source frame at the guest-pushed address,
+      // serialize to wire JSON, alloc+write, reply (0, json_ptr, json_len).
+      const stringRegions = buildTranscodeStringRegions(frameLane);
+      const value = readValue(e, frameLane, W, L, wireNodeId, site.layout,
+                              ptr, backing, stringRegions);
+      const jsonBytes = encoder.encode(JSON.stringify(value));
+      const out = e.alloc(jsonBytes.length);
+      new Uint8Array(e.memory.buffer, out, jsonBytes.length).set(jsonBytes);
+      return [0, out, jsonBytes.length];
+    }
+
+    // JSON_TO_P4D: parse the wire-JSON source the guest pushed, pack into the
+    // static shadow region, reply (0, shadow_base, shadow_extent).
+    const jsonText = decoder.decode(
+      new Uint8Array(e.memory.buffer, ptr, len));
+    const value = JSON.parse(jsonText);
+
+    // Validate the shadow/payload spans (mirrors the C++ host's
+    // verify_workflow_spans predicates: nonzero, 8-aligned, in-page).
+    const shadowBase = Number(frameLane.transcode_shadow_base);
+    const shadowExtent = Number(frameLane.transcode_shadow_extent);
+    const payloadBase = Number(frameLane.transcode_payload_base);
+    const payloadCapacity = Number(frameLane.transcode_payload_capacity);
+    const siteLayout = L[site.layout];
+    if (siteLayout === undefined) {
+      frameFail(`transcode site names an out-of-range layout ${site.layout}`);
+    }
+    const neededExtent = (Number(siteLayout.size) + 7) & ~7;
+    if (shadowBase === 0 || shadowBase % 8 !== 0 ||
+        shadowExtent < neededExtent ||
+        shadowBase + shadowExtent > kPageSize ||
+        payloadBase === 0 || payloadBase % 8 !== 0 ||
+        payloadCapacity === 0 ||
+        payloadBase + payloadCapacity > kPageSize) {
+      frameFail("transcode shadow/payload spans are invalid (zero, unaligned, or out-of-page)");
+    }
+
+    // The transcode payload arena cursor is shared (append-only) across all
+    // JSON_TO_P4D transcodes in a run, so an earlier consumer's PtrLen stays
+    // valid. Initialize on first use.
+    if (state.transcodeArenaCursor === 0) {
+      state.transcodeArenaCursor = payloadBase;
+    }
+    const arena = {
+      cursor: state.transcodeArenaCursor,
+      base: payloadBase,
+      capacity: payloadCapacity,
+      exhausted_message: "transcode payload arena exhausted",
+    };
+    packValue(e, frameLane, W, L, value, wireNodeId, site.layout,
+              shadowBase, backing, arena);
+    state.transcodeArenaCursor = arena.cursor;
+    return [0, shadowBase, shadowExtent];
+  };
+}
+
 async function makeInstance(compiled, mode) {
-  const state = { calls: 0, events: [], perName: new Map() };
+  const state = { calls: 0, events: [], perName: new Map(),
+                  transcodeArenaCursor: 0 };
   const imports = {};
   for (const importEntry of descriptor.imports) {
     if (importEntry.mode === "bridge") {
@@ -460,7 +620,14 @@ async function makeInstance(compiled, mode) {
         new Uint8Array(instance.exports.memory.buffer, ptr, len));
       state.calls += 1;
       state.events.push({ name: importEntry.name, argument });
-      if (argument !== scenario.input_wire) {
+      // WH-5b.3: a construct-capability terminal's argument is the
+      // P4D_TO_JSON transcoded constructed value, not the workflow input.
+      // Skip the input-equality check when the module carries transcode
+      // sites; the C++ comparator still validates the argument against the
+      // blessed expectation.
+      const hasTranscode =
+          (descriptor.frame_lane?.transcode_sites?.length ?? 0) > 0;
+      if (!hasTranscode && argument !== scenario.input_wire) {
         fail(`opaque capability argument frame changed for ${importEntry.name}`);
       }
 
@@ -506,16 +673,27 @@ async function makeInstance(compiled, mode) {
       return [77, 1234, 9]; // unknown
     };
   }
-  // WH-5b.3: build fail-closed stubs for the ahfl_xcode transcode imports.
-  // The Node embedded host handles bridge transcoding internally via
-  // makeBridgeCallback; the wasm module's ahfl_xcode calls are never reached
-  // in scenarios that suspend before a transcode site. A stub that returns
-  // status=1 (error) traps the module if a transcode is ever attempted.
+  // WH-5b.3: the ahfl_xcode transcode imports. Each xcode_<N> names the
+  // dense transcode site N in descriptor.frame_lane.transcode_sites. The
+  // handler is a pure codec adapter (makeTranscodeCallback): P4D_TO_JSON
+  // reads a P4-D frame and serializes to wire JSON; JSON_TO_P4D parses wire
+  // JSON and packs into the static shadow region.
   const xcodeImports = {};
+  const transcodeSites = descriptor.frame_lane?.transcode_sites ?? [];
   for (const listedImport of WebAssembly.Module.imports(compiled)) {
-    if (listedImport.module === "ahfl_xcode") {
-      xcodeImports[listedImport.name] = () => [1, 0, 0];
+    if (listedImport.module !== "ahfl_xcode") continue;
+    const match = /^xcode_(\d+)$/.exec(listedImport.name);
+    if (match === null) {
+      fail(`ahfl_xcode import '${listedImport.name}' is not xcode_<N>`);
     }
+    const siteIndex = Number(match[1]);
+    const site = transcodeSites[siteIndex];
+    if (site === undefined) {
+      fail(`ahfl_xcode import '${listedImport.name}' names transcode site ${siteIndex} ` +
+           `but the descriptor has ${transcodeSites.length} sites`);
+    }
+    xcodeImports[listedImport.name] = makeTranscodeCallback(
+      site, () => instance, () => state);
   }
   const importObject = { ahfl_cap: imports };
   if (Object.keys(xcodeImports).length > 0) {
@@ -1299,24 +1477,41 @@ async function runWorkflowP6(compiled) {
     expectTraps(() => e[name](), `${name}()`);
   }
 
-  // The schedule's first node is the entry node; pack the canonical workflow
-  // input JSON into its fixed I block (the scheduler materializes the block
-  // from the packed bytes). The entry payload arena is the workflow's.
+  // WH-5b.1: in a hybrid (P6Frame) module the first scheduled node may be
+  // opaque. Pack the P4-D entry frame only when the entry node is P6;
+  // otherwise serialize to wire JSON for the opaque runner. The P6-dense
+  // node_blocks / node_inputs arrays are indexed by p6_block_ordinal (not
+  // the runner index), so a hybrid workflow's opaque entry node must not
+  // index them with its runner.
   const entryNode = lane.nodes.find((n) => n.schedule_pos === 0);
-  const entryRunner = entryNode.runner;
-  const entryBlock = lane.node_blocks[entryRunner];
-  const entryWireRoot = roots.node_inputs[entryRunner];
-  const backing = new Map(); // workflow p6 frames carry no bounded collections
-  const arena = {cursor: lane.entry_payload_base,
-                 base: lane.entry_payload_base,
-                 capacity: lane.entry_payload_capacity};
-  // Zero the frame regions so padding/union words are 0.
-  new Uint8Array(e.memory.buffer, 1024, 16384 - 1024).fill(0);
-  packValue(e, frameLane, W, L, JSON.parse(probe.scenarioInput),
-            entryWireRoot, entryBlock.input_layout,
-            entryBlock.input_base, backing, arena);
+  // Workflow P6 frames carry no bounded collections, so the backing map is
+  // empty; it is still threaded through readValue for the output walk.
+  const backing = new Map();
+  let run2Ptr, run2Len;
+  if (entryNode.is_p6) {
+    // The schedule's first node is the entry node; pack the canonical
+    // workflow input JSON into its fixed I block (the scheduler
+    // materializes the block from the packed bytes).
+    const p6Ord = entryNode.p6_block_ordinal;
+    const entryBlock = lane.node_blocks[p6Ord];
+    const entryWireRoot = roots.node_inputs[p6Ord];
+    const arena = {cursor: lane.entry_payload_base,
+                   base: lane.entry_payload_base,
+                   capacity: lane.entry_payload_capacity};
+    // Zero the frame regions so padding/union words are 0.
+    new Uint8Array(e.memory.buffer, 1024, 16384 - 1024).fill(0);
+    packValue(e, frameLane, W, L, JSON.parse(probe.scenarioInput),
+              entryWireRoot, entryBlock.input_layout,
+              entryBlock.input_base, backing, arena);
+    run2Ptr = entryBlock.input_base;
+    run2Len = entryBlock.input_size;
+  } else {
+    // Opaque entry node: serialize the input to canonical wire JSON and
+    // write it via the module's own exported allocator.
+    [run2Ptr, run2Len] = probe.writeInput();
+  }
 
-  const tuple = e.run2(entryBlock.input_base, entryBlock.input_size);
+  const tuple = e.run2(run2Ptr, run2Len);
   let outputRaw = null;
   // WH-5b.2: a bridge PENDING arm latches and returns (PENDING,0,0) from the
   // P6 runner. The workflow suspends: no output slot, no completed-count
@@ -1340,7 +1535,9 @@ async function runWorkflowP6(compiled) {
     // payloads are authorized in rodata, the entry payload arena, or any bridge
     // call site's disjoint result placement (V2-D emission half 2). KR6.6: the
     // runtime construct-heap span [construct_heap_base, 65536) is also
-    // authorized (String concat result payloads).
+    // authorized (String concat result payloads). WH-5b.3: the transcode
+    // payload arena is also authorized (a JSON_TO_P4D workflow-output crossing
+    // packs String bytes there).
     const stringRegions = [];
     if (frameLane.rodata_extent > 0) {
       stringRegions.push({lo: frameLane.rodata_base,
@@ -1360,17 +1557,22 @@ async function runWorkflowP6(compiled) {
     if (Number(frameLane.construct_heap_base || 0) !== 0) {
       stringRegions.push({lo: Number(frameLane.construct_heap_base), hi: 65536});
     }
+    if (Number(frameLane.transcode_payload_capacity || 0) > 0) {
+      stringRegions.push({lo: Number(frameLane.transcode_payload_base),
+                          hi: Number(frameLane.transcode_payload_base) +
+                              Number(frameLane.transcode_payload_capacity)});
+    }
     const output = readValue(e, frameLane, W, L, roots.output,
                              frameLane.output_layout, tuple[1], backing,
                              stringRegions);
     outputRaw = JSON.stringify(output);
   }
-  // V2-D emission half 2: the state sequence is REAL runtime evidence read
-  // from the module's state-entry trace ring: one (runner, state) record per
-  // dispatched state (a computed-goto routing handler records only the
-  // branch actually taken, and every computed final is included). The runner
-  // dispatch ladder appends in schedule execution order; the host never
-  // re-derives the trace from descriptor walks.
+  // V2-D emission half 2: the state sequence is REAL runtime evidence. In a
+  // hybrid (P6 + opaque) workflow the trace ring carries ONLY P6 nodes'
+  // states; opaque nodes never write to the trace ring, so their walks are
+  // recovered from the node-event records the scheduler writes per completed
+  // node (WH-5c.4 P0-3, mirroring the C++ host's collect_opaque_node_states
+  // + rebuild_states). The two sources are merged in schedule order.
   const traceBase = Number(lane.state_trace_base);
   const traceCap = Number(lane.state_trace_capacity);
   const traceCount = traceCap > 0
@@ -1378,7 +1580,13 @@ async function runWorkflowP6(compiled) {
   if (traceCap === 0 || traceCount * 8 + 8 > traceCap) {
     fail(`state-trace count ${traceCount} exceeds its fixed ring capacity ${traceCap}`);
   }
-  const states = [];
+  // Per-node state lists indexed by schedule_pos.
+  const statesPerNode = Array.from({length: nodeCount}, () => []);
+  // 1. P6 nodes: states from the trace ring, grouped by runner -> schedule_pos.
+  const runnerToSchedule = new Map();
+  for (const node of lane.nodes) {
+    runnerToSchedule.set(node.runner, node.schedule_pos);
+  }
   for (let i = 0; i < traceCount; ++i) {
     const addr = traceBase + 8 + 8 * i;
     const dv2 = new DataView(e.memory.buffer);
@@ -1395,7 +1603,81 @@ async function runWorkflowP6(compiled) {
     if (typeof stateName !== "string") {
       fail(`state-trace record ${i} runner ${runner} names an unknown state ${stateId}`);
     }
-    states.push({ agent: agentWalk.agent, state: stateName });
+    const schedulePos = runnerToSchedule.get(runner);
+    if (schedulePos === undefined) {
+      fail(`state-trace record ${i} runner ${runner} is not in the schedule`);
+    }
+    statesPerNode[schedulePos].push({agent: agentWalk.agent, state: stateName});
+  }
+  // 2. Opaque nodes: states from node-event records. The node-event region
+  //    overlaps the P6 input frame in an import-free module, so skip decoding
+  //    when there are no imports (mirrors the C++ host's guard).
+  if (descriptor.imports.length > 0) {
+    const evtView = new DataView(e.memory.buffer);
+    const evtBase = descriptor.event_buffer.log_base;
+    const evtRecordsBase = descriptor.event_buffer.records_base;
+    const evtRecordBytes = descriptor.event_buffer.record_bytes;
+    if (evtView.getUint32(evtBase + 4, true) !== 0) {
+      fail("node-event header pad is nonzero");
+    }
+    const evtCount = evtView.getUint32(evtBase, true);
+    if (evtCount > nodeCount) {
+      fail(`event_count ${evtCount} exceeds node_count ${nodeCount}`);
+    }
+    for (let i = 0; i < evtCount; ++i) {
+      const addr = evtRecordsBase + i * evtRecordBytes;
+      const tag = evtView.getUint8(addr);
+      if (evtView.getUint8(addr + 1) !== 0 || evtView.getUint8(addr + 2) !== 0 ||
+          evtView.getUint8(addr + 3) !== 0) {
+        fail(`node-event record ${i} pad bytes are nonzero`);
+      }
+      if (evtView.getUint32(addr + 36, true) !== 0) {
+        fail(`node-event record ${i} reserved bytes are nonzero`);
+      }
+      const nodeId = evtView.getUint32(addr + 4, true);
+      const schedulePos = evtView.getUint32(addr + 8, true);
+      const recordStatus = evtView.getUint32(addr + 32, true);
+      if (schedulePos !== i) {
+        fail(`node-event record ${i} schedule_pos ${schedulePos} != ${i}`);
+      }
+      if (recordStatus !== 0) {
+        fail(`node-event record ${i} status is not OK`);
+      }
+      const node = lane.nodes.find((n) => n.node_id === nodeId);
+      if (node === undefined) {
+        fail(`node-event record ${i} names unknown node ${nodeId}`);
+      }
+      // P6 nodes' states are already collected from the trace ring.
+      if (node.is_p6) continue;
+      const agentWalk = lane.agents[node.runner];
+      if (agentWalk === undefined) {
+        fail(`node-event record ${i} node ${nodeId} has no runner ${node.runner}`);
+      }
+      // Cross-check capability kind + source_symbol (mirrors the C++ host).
+      if (node.has_capability) {
+        if (tag !== 1) fail(`node-event record ${i} capability node tag is not 1`);
+        if (evtView.getUint32(addr + 12, true) !== node.capability_ordinal) {
+          fail(`node-event record ${i} capability ordinal mismatch`);
+        }
+        if (evtView.getBigUint64(addr + 16, true) !== BigInt(node.source_symbol)) {
+          fail(`node-event record ${i} source_symbol mismatch`);
+        }
+      } else {
+        if (tag !== 0) fail(`node-event record ${i} identity node tag is not 0`);
+        if (evtView.getUint32(addr + 12, true) !== 0 ||
+            evtView.getBigUint64(addr + 16, true) !== 0n) {
+          fail(`node-event record ${i} identity node carries capability identity`);
+        }
+      }
+      for (const state of agentWalk.walk) {
+        statesPerNode[schedulePos].push({agent: agentWalk.agent, state});
+      }
+    }
+  }
+  // 3. Flatten in schedule order.
+  const states = [];
+  for (const nodeStates of statesPerNode) {
+    states.push(...nodeStates);
   }
   // V2-D emission half 2: in-handler capability bridges record their
   // capabilities + argument envelopes on probe events (no node-event records).

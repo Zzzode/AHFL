@@ -171,6 +171,11 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
         node_node->set("has_capability", json::JsonValue::make_bool(node.has_capability));
         node_node->set("capability_ordinal", juint(node.capability_ordinal));
         node_node->set("source_symbol", juint(node.source_symbol));
+        // WH-5b.3: the P6-dense block ordinal the host uses to resolve a
+        // transcode site's node boundary root (node_inputs/node_outputs are
+        // P6-dense, parallel to node_blocks). False/0 on an opaque node.
+        node_node->set("is_p6", json::JsonValue::make_bool(node.is_p6));
+        node_node->set("p6_block_ordinal", juint(node.p6_block_ordinal));
         nodes->push(std::move(node_node));
     }
     lane->set("nodes", std::move(nodes));
@@ -475,6 +480,44 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
     // KR6.6: the runtime construct-heap base (String concat result region).
     // Zero on a module without String concat.
     node->set("construct_heap_base", juint(lane.construct_heap_base));
+    // WH-5b.3: the deterministic encoding-boundary transcode sites and the
+    // shadow/payload regions the host codec adapter packs/reads against.
+    // All spans are zero on a module with no transcode sites.
+    auto transcode_sites = json::JsonValue::make_array();
+    for (const auto &site : section.transcode_sites) {
+        auto s = json::JsonValue::make_object();
+        s->set("import_ordinal", juint(site.import_ordinal));
+        s->set("direction",
+               jstr(site.direction ==
+                            irc::CoreFrameTranscodeSite::Direction::P4DToJson
+                        ? "p4d_to_json"
+                        : "json_to_p4d"));
+        s->set("source",
+               jstr(site.source ==
+                            irc::CoreFrameTranscodeSite::Source::Entry
+                        ? "entry"
+                        : site.source ==
+                                    irc::CoreFrameTranscodeSite::Source::NodeOutput
+                              ? "node_output"
+                              : "capability_param"));
+        s->set("param_ordinal", juint(site.param_ordinal));
+        s->set("source_node_ordinal", juint(site.source_node_ordinal));
+        s->set("target_node_ordinal", juint(site.target_node_ordinal));
+        s->set("layout", juint(site.layout.value));
+        transcode_sites->push(std::move(s));
+    }
+    node->set("transcode_sites", std::move(transcode_sites));
+    node->set("transcode_shadow_base", juint(section.transcode_shadow_base));
+    node->set("transcode_shadow_extent",
+              juint(section.transcode_shadow_extent));
+    node->set("transcode_payload_base",
+              juint(section.transcode_payload_base));
+    node->set("transcode_payload_capacity",
+              juint(section.transcode_payload_capacity));
+    node->set("transcode_entry_shadow_base",
+              juint(section.transcode_entry_shadow_base));
+    node->set("transcode_entry_shadow_extent",
+              juint(section.transcode_entry_shadow_extent));
     return node;
 }
 
@@ -505,6 +548,25 @@ build_wire_schema(const irc::CoreWireSchemaTable &schema) {
             roots->set("node_outputs", std::move(node_outputs));
         }
         node->set("roots", std::move(roots));
+    }
+    // WH-5b.3: the capability wire schemas the host resolves a
+    // CapabilityParam transcode binding against (source_symbol -> the
+    // capability's param/result wire node ids). Empty on a module with no
+    // construct-capability terminals.
+    if (!schema.capabilities.empty()) {
+        auto caps = json::JsonValue::make_array();
+        for (const auto &cap : schema.capabilities) {
+            auto c = json::JsonValue::make_object();
+            c->set("source_symbol", juint(cap.source_symbol));
+            auto params = json::JsonValue::make_array();
+            for (const auto param : cap.params) {
+                params->push(juint(param.value));
+            }
+            c->set("params", std::move(params));
+            c->set("result", juint(cap.result.value));
+            caps->push(std::move(c));
+        }
+        node->set("capabilities", std::move(caps));
     }
     return node;
 }
