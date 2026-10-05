@@ -96,7 +96,10 @@ using ahfl::conformance::run_native_scenario;
 // (kr66_string_concat: short/empty/longer prefix + literal suffix;
 // the concat result payload is bump-allocated in the construct heap
 // and copied with memory.copy): 79/0 -> 82/0.
-constexpr int kExpectedNativeAgreed = 82;
+// KR6.6 f64 collection element ladder: one scenario across one case
+// (p6_f64_collection: List<Float> element load/store through the dedicated
+// F64 scalar kind on the P6 frame lane): 82/0 -> 83/0.
+constexpr int kExpectedNativeAgreed = 83;
 constexpr int kExpectedNativeSkipped = 0;
 
 int g_failures = 0;

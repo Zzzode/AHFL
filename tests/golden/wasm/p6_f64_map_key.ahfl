@@ -1,0 +1,61 @@
+// @repo-std
+//
+// RFC 0026 P6 (KR6.6) f64 collection ladder bounded-Map F64-KEY keyed-lookup
+// fixture. The marker compiles this file through a PROJECT parse with the repo
+// std module root.
+//
+// `input.table[7.5]` desugars to map_raw_get -> the Core KeyGet collection op:
+// a bounded KEYED scan whose KEY slot is an f64. The emitter loads the key
+// with f64.load and compares it with f64.eq (IEEE 754 equality, so a NaN key
+// never matches — consistent with the language's `==` on Float).
+//
+// The host materializes a Map<Float, Int>(4) frame. The live entries are
+// (3.5 -> 9) and (7.5 -> 42); only the keyed lookup of 7.5 (at slot 1, never
+// slot 0) returns 42, so a positional miscompile (returning slot 0), an
+// i64-vs-f64 compare, or a missing-key non-trap all change the observed
+// state-id path. Observable purely through state ids.
+module app::main;
+
+import std::collections as c;
+
+pub struct Frame {
+    table: c::Map<Float, Int>(4);
+}
+
+pub agent F64MapKeyAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for F64MapKeyAgent {
+    state Decide {
+        // Keyed lookup of the PRESENT Float key at slot 1.
+        let answer: Int = input.table[7.5];
+        if (answer == 42) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

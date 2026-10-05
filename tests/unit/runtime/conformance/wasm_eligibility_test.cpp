@@ -218,6 +218,13 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // KR6.6 P6 f64 collection element ladder: List<Float> element load/store
+        // through the dedicated F64 scalar kind on the P6 frame lane.
+        {"p6_f64_collection.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         {"p6_implies.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_match_binding_payload.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_match_expr.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},

@@ -1,0 +1,63 @@
+// @repo-std
+//
+// RFC 0026 P6 (KR6.6) f64 collection ladder bounded-Map F64-VALUE keyed-lookup
+// fixture. The marker compiles this file through a PROJECT parse with the repo
+// std module root (a standalone parse cannot declare std::collections::Map with
+// its SSOT (Invariant K, Covariant V) variance).
+//
+// `input.table[7]` desugars (typed_hir_lower) to map_raw_get -> the Core
+// KeyGet collection op: a bounded KEYED scan over the backing entries. The Map
+// VALUE slot is an f64; the emitter loads it with f64.load (not i64.load/i32.
+// load) and the computed-goto compares it with f64.gt.
+//
+// The host materializes a Map<Int, Float>(4) frame: inline (ptr,len) header,
+// backing entries one P4-D stride apart. The live entries are (3 -> 9.0) and
+// (7 -> 42.0); only the keyed lookup of 7 returns 42.0. A positional
+// miscompile (returning entry 0's value), a wrong value_offset, a wrong
+// stride, a mis-sized value load, or a missing-key non-trap all change the
+// observed state-id path. Observable purely through state ids.
+module app::main;
+
+import std::collections as c;
+
+pub struct Frame {
+    table: c::Map<Int, Float>(4);
+}
+
+pub agent F64MapValueAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for F64MapValueAgent {
+    state Decide {
+        // Keyed lookup of the PRESENT Int key at slot 1; the value is an f64.
+        let answer: Float = input.table[7];
+        if (answer > 40.0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

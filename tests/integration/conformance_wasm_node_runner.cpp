@@ -204,8 +204,13 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // and copied with memory.copy; the Node host authorizes the construct-heap
 // region via the frame-layout v4 construct_heap_base extension):
 // 71/8 -> 74/8.
+// KR6.6 f64 collection element ladder: one scenario across one case
+// (p6_f64_collection: List<Float> element load/store through the dedicated
+// F64 scalar kind on the P6 frame lane) withholds the Node observation
+// under the rich-wire-types reason (Float outside the JS host's rung-E
+// frame subset): 74/8 -> 74/9.
 constexpr int kExpectedAgreed = 74;
-constexpr int kExpectedSkipped = 8;
+constexpr int kExpectedSkipped = 9;
 
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip='host_transcode_awaits_node_port'. The wasm
@@ -243,8 +248,9 @@ constexpr std::array<std::string_view, 1> kExpectedMultiNodeStashStems{
 // frame subset). The C++ host supports them (WH-5c.7); the Node
 // observation is withheld until the JS host ports the rich wire-type
 // matrix. Keep sorted.
-constexpr std::array<std::string_view, 3> kExpectedRichWireTypesStems{
+constexpr std::array<std::string_view, 4> kExpectedRichWireTypesStems{
     "p6_f64_arith",
+    "p6_f64_collection",
     "p6_f64_compare",
     "wh5c7_rich_input_matrix",
 };

@@ -764,6 +764,12 @@ lower_golden_file(const std::filesystem::path &path) {
         // KR6.6 P6: f64 arithmetic ladder fixture (f64.const/add/sub/mul/div/
         // neg + f64.gt comparison through the dedicated F64 scalar kind).
         "wasm/p6_f64_arith.ahfl",
+        // KR6.6 P6: f64 collection element ladder fixtures (List<Float>
+        // element load/store, Map<Int,Float> f64 value, Map<Float,Int> f64
+        // key through the three-way P6ScalarKind width classification).
+        "wasm/p6_f64_collection.ahfl",
+        "wasm/p6_f64_map_key.ahfl",
+        "wasm/p6_f64_map_value.ahfl",
         // WH-5c.7: P6 builtin/map fixtures that use the repo-std marker and
         // lower to verifier-clean Core.
         "wasm/p6_builtins.ahfl",

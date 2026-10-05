@@ -309,6 +309,14 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
         },
         {
+            "p6_f64_collection.case.json",
+            "tests/golden/wasm/p6_f64_collection.ahfl",
+            CaseKind::Agent,
+            "std::collections::F64CollectionAgent",
+            0, 1, WasmEligibility::Orchestration,
+            WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
+        },
+        {
             "p6_implies.case.json",
             "tests/golden/wasm/p6_implies.ahfl",
             CaseKind::Agent,

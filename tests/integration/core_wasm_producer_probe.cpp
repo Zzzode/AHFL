@@ -15,6 +15,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "base/json/json_value.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
@@ -158,14 +159,20 @@ constexpr std::uint32_t kCollectionInputLen = 2;
 struct MapSpec {
     bool key_is_bool{false};
     bool value_is_bool{false};
+    bool key_is_f64{false};
+    bool value_is_f64{false};
     std::vector<std::int64_t> keys;
     std::vector<std::int64_t> values;
+    std::vector<double> f64_keys;
+    std::vector<double> f64_values;
 };
 
 // Derive the two live Map entries from the input struct's leading (Map) field
 // TypeRef: a Bool K or V is encoded as the i32 words 1/0 the wasm scan
-// compares against, an Int K or V keeps the 3 -> 9 / 7 -> 42 evidence shape.
-// Defaults to Int/Int when the TypeRef is not structurally available.
+// compares against, a Float K or V is encoded as the f64 words the wasm
+// scan loads with f64.load / compares with f64.eq, an Int K or V keeps the
+// 3 -> 9 / 7 -> 42 evidence shape. Defaults to Int/Int when the TypeRef is
+// not structurally available.
 [[nodiscard]] MapSpec map_spec_for(const ir::StructDecl *input_struct) {
     MapSpec spec;
     if (input_struct != nullptr && !input_struct->fields.empty()) {
@@ -175,6 +182,10 @@ struct MapSpec {
                                map.params[0]->kind == ir::TypeRefKind::Bool;
             spec.value_is_bool = map.params[1] != nullptr &&
                                  map.params[1]->kind == ir::TypeRefKind::Bool;
+            spec.key_is_f64 = map.params[0] != nullptr &&
+                              map.params[0]->kind == ir::TypeRefKind::Float;
+            spec.value_is_f64 = map.params[1] != nullptr &&
+                                map.params[1]->kind == ir::TypeRefKind::Float;
         }
     }
     if (spec.key_is_bool) {
@@ -182,12 +193,20 @@ struct MapSpec {
         // PRESENT key at slot 1 (true), so a positional miscompile that
         // returned slot 0 would route Low — the same evidence the Int map pins.
         spec.keys = {0, 1};
+    } else if (spec.key_is_f64) {
+        // slot 0: 3.5 -> 9, slot 1: 7.5 -> 42. The fixture looks up the
+        // PRESENT f64 key at slot 1 (7.5), so a positional miscompile that
+        // returned slot 0 would route Low.
+        spec.f64_keys = {3.5, 7.5};
     } else {
         spec.keys = {3, 7};
     }
     if (spec.value_is_bool) {
         // 3 -> false (slot 0), 7 -> true (slot 1); the lookup of 7 yields true.
         spec.values = {0, 1};
+    } else if (spec.value_is_f64) {
+        // 3 -> 9.0 (slot 0), 7 -> 42.0 (slot 1); the lookup of 7 yields 42.0.
+        spec.f64_values = {9.0, 42.0};
     } else {
         spec.values = {9, 42};
     }
@@ -635,26 +654,52 @@ int main(int argc, char **argv) {
             std::cerr << "map fixture input field has no Map container layout\n";
             return 1;
         }
+        // The scalar width classification: I64 and F64 are both 8-byte ("wide")
+        // words; the f64 flags distinguish the F64 lane so the Node host uses
+        // setFloat64 (not setBigInt64) for those slots.
         std::int64_t key_wide = 0;
+        std::int64_t key_f64 = 0;
         if (container->element.value < layouts.table->layouts.size()) {
             const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(
                 &layouts.table->layouts[container->element.value].shape);
-            if (scalar != nullptr && scalar->repr == ir::core::CoreScalarRepr::I64) {
-                key_wide = 1;
+            if (scalar != nullptr) {
+                if (scalar->repr == ir::core::CoreScalarRepr::I64) {
+                    key_wide = 1;
+                } else if (scalar->repr == ir::core::CoreScalarRepr::F64) {
+                    key_wide = 1;
+                    key_f64 = 1;
+                }
             }
         }
         std::int64_t value_wide = 0;
+        std::int64_t value_f64 = 0;
         if (container->value->value < layouts.table->layouts.size()) {
             const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(
                 &layouts.table->layouts[container->value->value].shape);
-            if (scalar != nullptr && scalar->repr == ir::core::CoreScalarRepr::I64) {
-                value_wide = 1;
+            if (scalar != nullptr) {
+                if (scalar->repr == ir::core::CoreScalarRepr::I64) {
+                    value_wide = 1;
+                } else if (scalar->repr == ir::core::CoreScalarRepr::F64) {
+                    value_wide = 1;
+                    value_f64 = 1;
+                }
             }
         }
         constexpr std::uint32_t kMapInputLen = 2;
         auto emit_word_list = [&](const std::vector<std::int64_t> &words) {
             for (std::size_t i = 0; i < words.size(); ++i) {
                 std::cout << (i == 0 ? "" : ",") << words[i];
+            }
+        };
+        auto emit_f64_list = [&](const std::vector<double> &vals) {
+            for (std::size_t i = 0; i < vals.size(); ++i) {
+                if (i != 0) {
+                    std::cout << ",";
+                }
+                // format_wire_float keeps the spelling recognizably a float
+                // (appends ".0" for integral values), so the Node host parses
+                // every token as a float.
+                std::cout << json::format_wire_float(vals[i]);
             }
         };
         std::cout << "map_base=" << ir::core::kP6AggregateInputBase
@@ -667,10 +712,15 @@ int main(int argc, char **argv) {
                   << " capacity=" << container->capacity
                   << " backing_size=" << container->backing_size
                   << " key_wide=" << key_wide << " value_wide=" << value_wide
+                  << " key_f64=" << key_f64 << " value_f64=" << value_f64
                   << " keys=";
         emit_word_list(map_spec.keys);
         std::cout << " values=";
         emit_word_list(map_spec.values);
+        std::cout << " f64_keys=";
+        emit_f64_list(map_spec.f64_keys);
+        std::cout << " f64_values=";
+        emit_f64_list(map_spec.f64_values);
         std::cout << "\n";
     }
     return 0;

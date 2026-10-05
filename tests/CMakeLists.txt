@@ -201,6 +201,52 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6 (KR6.6) f64 collection ladder: the keyed-scan width gate
+    # extends from the binary i32/i64 classification to the three-way
+    # P6ScalarKind (I32/I64/F64). Two @repo-std fixtures pin the f64 key and
+    # f64 value paths: Map<Int,Float>(4) loads the f64 value with f64.load for
+    # the computed-goto compare, and Map<Float,Int>(4) loads the f64 key with
+    # f64.load and compares it with f64.eq. Structural producer probes for both.
+    add_test(NAME ahfl.wasm.p6_f64_map_value_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_f64_map_value.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_f64_map_value.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_f64_map_value_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "emitted=ok bytes=[0-9]+"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_f64_map_key_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_producer_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_f64_map_key.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_f64_map_key.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_f64_map_key_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "emitted=ok bytes=[0-9]+"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # Real Node v22 engine execution for the f64 Map keyed-lookup fixtures.
+    # The producer reports the P4-D facts (including the f64 words) and the
+    # Node host materializes them directly in the wasm module's memory, drives
+    # the state machine, and pins the state-id path + missing-key trap.
+    add_test(NAME ahfl.wasm.p6_f64_map_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_f64_map_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_f64_map_value.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_f64_map_key.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.p6_f64_map_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "f64 collection ladder bounded-Map f64 key/value keyed lookup Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 P6 (CORE-GAPS 1 fix-forward): an aggregate (Pair) payload routed
     # through the expression-match arm copy (unwrap, or a source match binding
     # it) pre-fix emitted a well-formed module whose payload latch copied the

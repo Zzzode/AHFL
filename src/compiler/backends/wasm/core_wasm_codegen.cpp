@@ -1996,6 +1996,16 @@ enum class P6ScalarKind {
     return (kind == P6ScalarKind::IntI64 || kind == P6ScalarKind::F64) ? kAlignI64
                                                                        : kAlignI32;
 }
+// RFC 0026 P6 f64 collection ladder: the width-exact equality opcode for a
+// scalar kind. F64 uses f64.eq (IEEE 754 equality, so a NaN key never matches
+// — consistent with the language's `==` on Float), IntI64 uses i64.eq, and
+// every other one-word kind uses i32.eq.
+[[nodiscard]] constexpr std::uint8_t scalar_eq_op(P6ScalarKind kind) {
+    if (kind == P6ScalarKind::F64) {
+        return kOpF64Eq;
+    }
+    return kind == P6ScalarKind::IntI64 ? kOpI64Eq : kOpI32Eq;
+}
 
 // The location in the scrutinee a pattern is tested at (RFC 0026 P6-4). The root
 // site is the scrutinee itself — a scalar in a local (`in_memory == false`), or
@@ -3210,10 +3220,10 @@ class P6ComputationHandlerBuilder {
     // needs three trailing module-level i32 scratch locals (cursor, found flag,
     // current-entry address), appended after every SSA/scratch pool so the pool
     // index spaces are unchanged. There is NO key-width dummy and NO result
-    // local: the matched value word is selected by the value_wide immediate
-    // load and left on the operand stack (the enclosing let consumes it). The
-    // loop bounds the cursor by the container's header len clamped to capacity,
-    // so the scan is always finite.
+    // local: the matched value word is selected by the value-kind load
+    // (i32/i64/f64 via scalar_load_op) and left on the operand stack (the
+    // enclosing let consumes it). The loop bounds the cursor by the
+    // container's header len clamped to capacity, so the scan is always finite.
     bool keyget_scratch_needed_{false};
     std::uint32_t keyget_cursor_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t keyget_found_local_{std::numeric_limits<std::uint32_t>::max()};
@@ -5608,7 +5618,7 @@ class P6ComputationHandlerBuilder {
         }
         const auto index_kind = readable_kind(collection.index);
         const auto element_slot = container->element;
-        const bool element_wide = place_kind_of_layout(element_slot) == P6ScalarKind::IntI64;
+        const P6ScalarKind element_kind = place_kind_of_layout(element_slot);
         const std::uint32_t element_offset = static_cast<std::uint32_t>(container->value_offset);
         // The index must be a scalar Int. The bounds test itself is emitted
         // BEFORE the address arithmetic so a bad index cannot compute a wild
@@ -5671,8 +5681,8 @@ class P6ComputationHandlerBuilder {
         // single-word load/store that follows consumes exactly one address.
         body_.byte(kOpI32Add);
         if (collection.op == CoreCollectionOpKind::ElementGet) {
-            body_.byte(element_wide ? kOpI64Load : kOpI32Load);
-            body_.u32(element_wide ? kAlignI64 : kAlignI32);
+            body_.byte(scalar_load_op(element_kind));
+            body_.u32(scalar_align(element_kind));
             body_.u32(0);
             return true;
         }
@@ -5687,8 +5697,8 @@ class P6ComputationHandlerBuilder {
             body_.u32(kAlignI32);
             body_.u32(0);
         } else {
-            body_.byte(element_wide ? kOpI64Store : kOpI32Store);
-            body_.u32(element_wide ? kAlignI64 : kAlignI32);
+            body_.byte(scalar_store_op(element_kind));
+            body_.u32(scalar_align(element_kind));
             body_.u32(0);
         }
         // The result is the base handle itself, so an element write chains.
@@ -5713,12 +5723,13 @@ class P6ComputationHandlerBuilder {
                             const ir::core::CoreLayoutContainer *container,
                             ir::SourceRangeOpt range) {
         const bool is_contains = collection.op == CoreCollectionOpKind::Contains;
-        const bool key_wide = place_kind_of_layout(container->element) == P6ScalarKind::IntI64;
+        const P6ScalarKind key_kind = place_kind_of_layout(container->element);
         // A membership test never reads the value slot; a Set container has no
         // value edge at all. A KeyGet on a Map reads the value at value_offset.
-        const bool value_wide =
-            container->value.has_value() &&
-            place_kind_of_layout(*container->value) == P6ScalarKind::IntI64;
+        const std::optional<P6ScalarKind> value_kind =
+            container->value.has_value()
+                ? std::optional<P6ScalarKind>{place_kind_of_layout(*container->value)}
+                : std::nullopt;
 
         const auto emit_header_ptr = [&]() -> bool {
             if (!emit_value_read(collection.base, range)) {
@@ -5802,13 +5813,13 @@ class P6ComputationHandlerBuilder {
         // Compare the key word at entry+0 with the search key operand.
         body_.byte(kOpLocalGet);
         body_.u32(keyget_addr_local_);
-        body_.byte(key_wide ? kOpI64Load : kOpI32Load);
-        body_.u32(key_wide ? kAlignI64 : kAlignI32);
+        body_.byte(scalar_load_op(key_kind));
+        body_.u32(scalar_align(key_kind));
         body_.u32(0);
         if (!emit_value_read(collection.index, range)) {
             return false;
         }
-        body_.byte(key_wide ? kOpI64Eq : kOpI32Eq);
+        body_.byte(scalar_eq_op(key_kind));
         body_.byte(kOpIf);
         body_.byte(kEmptyBlock);
         ++label_depth_;
@@ -5848,8 +5859,8 @@ class P6ComputationHandlerBuilder {
             // Matched value word at entry + value_offset; leave it on the stack.
             body_.byte(kOpLocalGet);
             body_.u32(keyget_addr_local_);
-            body_.byte(value_wide ? kOpI64Load : kOpI32Load);
-            body_.u32(value_wide ? kAlignI64 : kAlignI32);
+            body_.byte(scalar_load_op(*value_kind));
+            body_.u32(scalar_align(*value_kind));
             body_.u32(static_cast<std::uint32_t>(container->value_offset));
         } else {
             // Membership: leave the found flag (i32 0/1) on the stack.
@@ -6077,8 +6088,8 @@ class P6ComputationHandlerBuilder {
             const auto key_kind = readable_kind(collection.index);
             if (key_kind == std::nullopt || *key_kind == P6ScalarKind::Ptr ||
                 *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure ||
-                *key_kind == P6ScalarKind::String || *key_kind == P6ScalarKind::F64) {
-                return reject("keyed scan key is not a scalar Int/Bool/enum value", range);
+                *key_kind == P6ScalarKind::String) {
+                return reject("keyed scan key is not a scalar Int/Bool/Float/enum value", range);
             }
             if (!same_word_width(*key_kind, place_kind_of_layout(container->element))) {
                 return reject("keyed scan key width does not match the key slot layout", range);
@@ -6087,8 +6098,7 @@ class P6ComputationHandlerBuilder {
                 const auto value_kind_opt = scalar_kind(storage_.exprs[id.value].result_type);
                 if (value_kind_opt == std::nullopt || *value_kind_opt == P6ScalarKind::Ptr ||
                     *value_kind_opt == P6ScalarKind::Collection ||
-                    *value_kind_opt == P6ScalarKind::String ||
-                    *value_kind_opt == P6ScalarKind::F64) {
+                    *value_kind_opt == P6ScalarKind::String) {
                     return reject("Map keyed lookup result is not a scalar P6 value", range);
                 }
                 if (!same_word_width(*value_kind_opt,
@@ -6126,13 +6136,9 @@ class P6ComputationHandlerBuilder {
         if (!place_is_p6_value(container->element)) {
             return reject("collection element is not a single-word P6 value", range);
         }
-        // f64 collection elements are not on this ladder: the emit path's
-        // width classification is IntI64-exact, so an f64 element would
-        // silently truncate to i32. Fail closed until the f64 collection
-        // ladder lands.
-        if (place_kind_of_layout(container->element) == P6ScalarKind::F64) {
-            return reject("f64 collection elements await the f64 collection ladder", range);
-        }
+        // f64 collection elements are on the f64 collection ladder: the emit
+        // path uses f64.load/f64.store (scalar_load_op/scalar_store_op), so an
+        // f64 element is a first-class single-word P6 value here.
         const auto index_kind = readable_kind(collection.index);
         if (index_kind == std::nullopt ||
             (*index_kind != P6ScalarKind::IntI32 && *index_kind != P6ScalarKind::IntI64)) {

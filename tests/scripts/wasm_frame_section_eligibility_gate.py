@@ -71,6 +71,9 @@ FRAME_FIXTURES = frozenset(
         # KR6.6: String concatenation computed final (construct-heap region
         # authorized via the v4 presence-gated construct_heap_base extension).
         "kr66_string_concat",
+        # KR6.6: f64 collection element ladder (List<Float> element load/store
+        # through the dedicated F64 scalar kind on the P6 frame lane).
+        "p6_f64_collection",
     }
 )
 
