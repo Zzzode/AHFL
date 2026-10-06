@@ -2,22 +2,17 @@
 """RFC 0026 P6-7 rung A corpus-wide frame-section eligibility gate.
 
 The P4-D frame lane (`ahfl.core-layout.v1` + the boundary-root block of
-`ahfl.wire-schema.v1`) is admitted for frame-lane agents that project the
-raw input frame, materialize a computed final, or carry an in-handler
-capability bridge. Outlined fns and closures no longer disqualify an
-agent from the frame lane (the P6 frame lane supports them: the construct
-heap sits above the input frame's container placements, and fn/closure
-containers reference the input frame's collections, not separate
-backing). Keying eligibility off the raw-input projection alone latched
-for the FB-1..FB-4 outlined-fn/closure agents (and even mutated a
-capability module's wire-schema section), changing the bytes of modules
-the rung-A byte-identity invariant pins.
+`ahfl.wire-schema.v1`) is the UNIFORM execution lane for every agent whose
+finals are identity or computed (runv returns the borrowed input base for
+identity, the fixed output base for computed). Outlined fns and closures
+do not disqualify an agent (KR6.6), and identity finals are first-class
+p6-frame terminals. Agents whose finals are ALL opaque capability calls
+stay on the WireJson lane (runv has no capability-final arm).
 
 This gate emits EVERY tests/golden/wasm fixture and asserts:
   * the core-layout frame custom section appears in EXACTLY the pinned frame
-    fixtures (the census cases, the rung-A regression fixtures, and the
-    FB agents that project the raw input frame or carry a bridge) and in
-    no other successfully emitted module;
+    fixtures (every identity/computed-final agent with a wire-representable
+    boundary) and in no other successfully emitted module;
   * every successful emission is deterministic (two runs byte-identical).
 
 It is a structural gate, not execution evidence.
@@ -30,44 +25,61 @@ from pathlib import Path
 
 # The ONLY fixtures allowed to carry the ahfl.core-layout.v1 frame section.
 # Anything else emitting one is a byte-identity / lane-mixing regression.
-# RFC 0026 P6-7 frame-bridge v2 rung V2-A adds the three node-only
-# computed-final fixtures (scalar / nested aggregate / if-selected tag
-# enum): they materialize the output frame, so they are p6-frame
-# modules even though no handler projects the raw input. The V2-A
-# fix-forward adds two more computed-final fixtures: the
-# active-variant-only payload-enum materialization (runtime
-# discriminant ladder over the payload union) and an if-let arm whose
-# trailing if returns on both branches. V2-B adds the
-# String-literal computed final, the bounded-String variant, and the
-# input-String passthrough (no Data section, but still a p6-frame
-# module with runv + both frame sections). V2-C adds the first
-# capability-BRIDGE module (multi-arg control block + disjoint result
-# placements), which is likewise a p6-frame module.
+# KR6.6 identity-final frame lane: every agent with at least one identity or
+# computed final (and a wire-representable boundary) is a P6-frame module.
+# Agents whose finals are ALL opaque capability calls stay on WireJson.
 FRAME_FIXTURES = frozenset(
     {
+        # E1 identity agent: the canonical identity-final module.
+        "e1_identity_agent",
+        # P6 scalar/computation fixtures with identity or computed finals.
         "p6_aggregate",
+        "p6_cascade",
+        "p6_cascade_high",
+        "p6_coerce",
+        "p6_coerce_bounds",
         "p6_collection",
+        "p6_elseless_fallthrough",
+        "p6_elseless_taken",
+        "p6_implies",
+        "p6_match_arm_trap",
+        "p6_match_binding_payload",
+        "p6_match_enum",
+        "p6_match_expr",
+        "p6_match_fallthrough",
+        "p6_match_guard",
+        "p6_match_or",
+        "p6_match_result_i64",
+        "p6_member_base",
+        "p6_neg_compare",
+        "p6_nested_depth3",
+        "p6_nested_depth3_taken",
+        "p6_nested_elseless",
+        "p6_nested_elseless_taken",
+        "p6_nested_fallthrough",
+        "p6_nested_projection",
+        "p6_nested_taken_high",
+        "p6_scalar_cond",
+        "p6_scalar_trap",
+        "p6_unwrap_none_trap",
+        "p6_unwrap_some",
         "p6_frame_two_containers",
+        # V2-A computed-final fixtures.
         "v2a_computed_scalar",
         "v2a_computed_aggregate",
         "v2a_computed_enum",
         "v2a_computed_payload_enum",
         "v2a_computed_if_let_return",
+        # V2-B String/computed-final and bounded-arena fixtures.
         "v2b_computed_string",
         "v2b_bounded_string",
         "v2b_string_passthrough",
-        # V2-B fix-forward: String-payload enum final, bounded List<String> /
-        # nested-struct-element arena multiplicity fixtures, and the
-        # Decimal/Duration i64-word final (emits but intentionally outside the
-        # host walk subset).
         "v2b_enum_string",
         "v2b_list_string_arena",
         "v2b_list_nested_string_arena",
         "v2b_builtin_i64_final",
+        # V2-C capability-bridge fixtures.
         "v2c_multi_arg_bridge",
-        # V2-C fix-forward: two computed bridge handlers in a chain (two dense
-        # sites share one import ordinal), a producing match followed by an
-        # ordered bridge statement, and a single tag-only-enum bridge argument.
         "v2c_bridge_chain",
         "v2c_route_then_bridge",
         "v2c_single_arg_bridge",
@@ -78,11 +90,19 @@ FRAME_FIXTURES = frozenset(
         # KR6.6: f64 collection element ladder (List<Float> element load/store
         # through the dedicated F64 scalar kind on the P6 frame lane).
         "p6_f64_collection",
-        # FB agents that project the raw input frame (bounded collection) or
-        # carry a capability bridge: the frame_lane_eligible gate no longer
-        # rejects outlined fns / closures on the P6 frame lane.
+        # FB agents with outlined fns / closures (KR6.6: the frame_lane_eligible
+        # gate is removed; fns/closures are first-class P6-frame constructs).
+        "fb1_aggregate_direct_call",
+        "fb1_direct_call",
         "fb2_bounded_recursion",
         "fb3_bounded_collection",
+        "fb3_byvalue_capture",
+        "fb3_f64_capture",
+        "fb3_higher_order",
+        "fb3_nested_activation",
+        "fb3_nested_lambda_flow",
+        "fb3_string_capture",
+        "fb4_construct_only_closure",
         "fb4_effect_clause_pure_body",
         "fb4_effectful_fn",
     }

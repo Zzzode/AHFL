@@ -608,6 +608,13 @@ struct AgentPlan {
     // runv returns the fixed output base; mixing it with capability finals (or a
     // second final kind in one agent) is rejected by build_agent_plan.
     bool has_computed_final{false};
+    // RFC 0026 KR6.6 P6 frame lane: true when at least one final state is an
+    // IdentityAction (the canonical `let in = input; return in;` passthrough).
+    // runv returns the borrowed input base for such finals, so an identity
+    // final is a first-class p6-frame terminal. Without this flag the planner
+    // cannot distinguish identity finals from unplanned (default-IdentityAction)
+    // states at the needs_frame_section checkpoint.
+    bool has_identity_final{false};
     // RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: true when at least
     // one NON-FINAL state is a ComputedGotoAction (a scalar computed-goto
     // preamble, with or without a capability final behind it). The opaque
@@ -11910,6 +11917,7 @@ build_frame_section_plan(const CoreProgram &program,
                 return std::nullopt;
             }
             plan.actions[state] = IdentityAction{};
+            plan.has_identity_final = true;
             continue;
         }
 
@@ -12636,8 +12644,14 @@ build_frame_section_plan(const CoreProgram &program,
         workflow_bridge_lane
             ? effective_bridge_registry.site_count_for_runner(policy.wf_runner) != 0
             : !bridge_registry.empty();
+    // KR6.6 P6 frame lane: an identity final is a first-class p6-frame
+    // terminal (runv returns the borrowed input base), so every agent with at
+    // least one identity or computed final -- or a raw read / bridge -- gets
+    // the frame section. Agents whose finals are ALL opaque capability calls
+    // stay on the WireJson lane (runv has no capability-final arm).
     const bool needs_frame_section =
-        planned_raw_read || planned_computed_final || this_build_bridges;
+        planned_raw_read || planned_computed_final || this_build_bridges ||
+        plan.has_identity_final;
     // A bridge call or a computed final REQUIRES the frame sections (there is
     // no sectionless observation for either). A raw-projecting agent whose
     // boundary is not yet wire-representable keeps the legacy sectionless

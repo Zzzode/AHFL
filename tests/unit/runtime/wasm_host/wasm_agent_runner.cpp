@@ -118,27 +118,27 @@ emit_agent(const std::filesystem::path &source_path) {
     };
 }
 
-// ==== 1. WireJson identity agent (no capabilities) ====
+// ==== 1. P6-frame identity agent (no capabilities) ====
 
-void test_wirejson_identity_agent(
+void test_p6frame_identity_agent(
     const std::filesystem::path &repo_root) {
     const auto source =
         repo_root / "tests/golden/wasm/e1_identity_agent.ahfl";
     auto emitted = emit_agent(source);
-    check(emitted.has_value(), "wirejson_id.emit");
+    check(emitted.has_value(), "p6frame_id.emit");
     if (!emitted.has_value()) {
         return;
     }
 
     const auto &desc = emitted->descriptor;
-    check(!desc.is_workflow, "wirejson_id.not_workflow");
+    check(!desc.is_workflow, "p6frame_id.not_workflow");
     check(desc.frame_contract ==
-              ahfl::backends::CoreWasmFrameContract::WireJson,
-          "wirejson_id.wirejson");
-    check(desc.imports.empty(), "wirejson_id.no_imports");
+              ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "p6frame_id.p6frame");
+    check(desc.imports.empty(), "p6frame_id.no_imports");
 
     auto input = value_from_json(R"({"_type":"wasm::e1_identity::Frame","value":"hello"})");
-    check(input.has_value(), "wirejson_id.input");
+    check(input.has_value(), "p6frame_id.input");
     if (!input.has_value()) {
         return;
     }
@@ -161,48 +161,48 @@ void test_wirejson_identity_agent(
 
     auto result = wh::run_wasm_agent(emitted->module_bytes, desc, *input,
                                      std::move(hooks), std::move(invoker));
-    check(result.has_value(), "wirejson_id.run");
+    check(result.has_value(), "p6frame_id.run");
     if (!result.has_value()) {
         std::cerr << "  error: " << result.error() << "\n";
         return;
     }
 
     // The step-walk should produce: Start -> Done (2 states).
-    check(result->states.size() == 2, "wirejson_id.state_count");
+    check(result->states.size() == 2, "p6frame_id.state_count");
     if (result->states.size() == 2) {
         check(result->states[0].state == "Start",
-              "wirejson_id.state_0");
+              "p6frame_id.state_0");
         check(result->states[1].state == "Done",
-              "wirejson_id.state_1");
+              "p6frame_id.state_1");
     }
 
     // The hook should have fired for both states.
-    check(hook_states.size() == 2, "wirejson_id.hook_count");
+    check(hook_states.size() == 2, "p6frame_id.hook_count");
     if (hook_states.size() == 2) {
-        check(hook_states[0] == "Start", "wirejson_id.hook_0");
-        check(hook_states[1] == "Done", "wirejson_id.hook_1");
+        check(hook_states[0] == "Start", "p6frame_id.hook_0");
+        check(hook_states[1] == "Done", "p6frame_id.hook_1");
     }
 
     // No capabilities were invoked.
-    check(result->capabilities.empty(), "wirejson_id.no_capabilities");
+    check(result->capabilities.empty(), "p6frame_id.no_capabilities");
     check(result->capability_arguments.empty(),
-          "wirejson_id.no_cap_args");
+          "p6frame_id.no_cap_args");
     check(result->capability_failures.empty(),
-          "wirejson_id.no_failures");
+          "p6frame_id.no_failures");
 
     // The run completed successfully.
     check(result->result.status() ==
               ahfl::runtime::WorkflowStatus::Completed,
-          "wirejson_id.completed");
+          "p6frame_id.completed");
 
     // The output should equal the input (identity agent).
     const auto *output = result->result.output();
-    check(output != nullptr, "wirejson_id.has_output");
+    check(output != nullptr, "p6frame_id.has_output");
     if (output != nullptr) {
         const auto json = value_to_json(*output);
         check(json ==
                   R"({"_type":"wasm::e1_identity::Frame","value":"hello"})",
-              "wirejson_id.output_value");
+              "p6frame_id.output_value");
     }
 }
 
@@ -543,7 +543,7 @@ int main() {
     const auto repo_root =
         ahfl::test_support::repo_root_from_source_file(__FILE__);
 
-    test_wirejson_identity_agent(repo_root);
+    test_p6frame_identity_agent(repo_root);
     test_p6frame_computed_agent(repo_root);
     test_wirejson_capability_agent(repo_root);
     test_wirejson_capability_agent_with_usage(repo_root);

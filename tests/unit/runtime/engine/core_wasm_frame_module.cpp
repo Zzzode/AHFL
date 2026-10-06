@@ -300,14 +300,16 @@ int main() {
         }
     }
 
-    // Negative: an identity E1 module carries NO frame sections and must fail
-    // admission (rather than be silently treated as a frame module).
+    // Negative: a capability-final-only agent (e2) carries NO frame sections
+    // and must fail admission (rather than be silently treated as a frame
+    // module). Identity-final agents (e1) now carry frame sections, so the
+    // capability-final e2 fixture is the correct negative case.
     {
-        const auto bytes = emit_fixture(repo / "tests/golden/wasm/e1_identity_agent.ahfl");
-        check(bytes.has_value(), "emit identity agent fixture");
+        const auto bytes = emit_fixture(repo / "tests/golden/wasm/e2_capability_agent.ahfl");
+        check(bytes.has_value(), "emit capability agent fixture");
         if (bytes.has_value()) {
             check(!fr::admit_core_wasm_frame_sections(*bytes).ok(),
-                  "identity module without frame sections rejected");
+                  "capability module without frame sections rejected");
         }
     }
 

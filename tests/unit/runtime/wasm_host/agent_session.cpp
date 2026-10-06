@@ -2,11 +2,13 @@
 //
 // Drives the step-walk on REAL wasm3 agent modules and pins the walked state
 // sequence against the descriptor's state table. Two lanes:
-//   1. WireJson agent (e1_identity_agent): no capabilities, no input packing;
-//      the walk drives Start -> Done on the effects-free instance.
-//   2. P6-frame agent (v2b_computed_string): the input is packed into the
-//      fixed P4-D regions before the walk (computed handlers branch on packed
-//      input); the walk drives Start -> Done.
+//   1. P6-frame identity agent (e1_identity_agent): the canonical
+//      `let in = input; return in;` passthrough; the input is packed into the
+//      fixed P4-D regions and runv returns the borrowed input base. The walk
+//      drives Start -> Done on the effects-free instance.
+//   2. P6-frame computed agent (v2b_computed_string): the input is packed into
+//      the fixed P4-D regions before the walk (computed handlers branch on
+//      packed input); the walk drives Start -> Done.
 //
 // Also verifies the state_entered_hook fires per transition (including the
 // initial state) and the transition_count is correct.
@@ -110,28 +112,35 @@ eng::ImportCallbackResult noop_import(const eng::ImportObservation &) {
     return eng::ImportReply{};
 }
 
-// ==== 1. WireJson agent step-walk ====
+// ==== 1. P6-frame identity agent step-walk ====
 
-void test_wirejson_agent(const std::filesystem::path &repo_root) {
+void test_p6frame_identity_agent(const std::filesystem::path &repo_root) {
     const auto source = repo_root / "tests/golden/wasm/e1_identity_agent.ahfl";
     auto emitted = emit_agent(source);
-    check(emitted.has_value(), "wirejson.emit");
+    check(emitted.has_value(), "p6frame_id.emit");
     if (!emitted.has_value()) {
         return;
     }
 
     const auto &desc = emitted->descriptor;
-    check(!desc.is_workflow, "wirejson.not_workflow");
-    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::WireJson,
-          "wirejson.frame_contract");
-    check(desc.states.size() == 2, "wirejson.state_count");
-    check(desc.initial_state == 1, "wirejson.initial_state"); // Start = id 1
+    check(!desc.is_workflow, "p6frame_id.not_workflow");
+    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "p6frame_id.frame_contract");
+    check(desc.frame_section.has_value(), "p6frame_id.has_frame_section");
+    check(desc.wire_schema.has_value(), "p6frame_id.has_wire_schema");
+    if (!desc.frame_section.has_value() || !desc.wire_schema.has_value()) {
+        return;
+    }
+    check(desc.states.size() == 2, "p6frame_id.state_count");
+    check(desc.initial_state == 1, "p6frame_id.initial_state"); // Start = id 1
 
     wh::AgentWalkDescriptor walk_desc;
     walk_desc.agent_name = desc.agent_name;
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
-    walk_desc.is_p6_frame = false;
+    walk_desc.is_p6_frame = true;
+    walk_desc.frame_section = &*desc.frame_section;
+    walk_desc.wire_schema = &*desc.wire_schema;
 
     std::vector<std::string> hook_states;
     wh::StateEnteredHook hook =
@@ -141,7 +150,7 @@ void test_wirejson_agent(const std::filesystem::path &repo_root) {
         };
 
     auto input = value_from_json(R"({"value":"hello"})");
-    check(input.has_value(), "wirejson.input");
+    check(input.has_value(), "p6frame_id.input");
     if (!input.has_value()) {
         return;
     }
@@ -153,22 +162,22 @@ void test_wirejson_agent(const std::filesystem::path &repo_root) {
         },
         hook,
         AgentId{0}, "node");
-    check(result.has_value(), "wirejson.step_walk");
+    check(result.has_value(), "p6frame_id.step_walk");
     if (!result.has_value()) {
         std::cerr << "  error: " << result.error() << "\n";
         return;
     }
 
     // The walk should produce: Start -> Done (2 states, 1 transition).
-    check(result->states.size() == 2, "wirejson.walk_length");
-    check(result->states[0] == "Start", "wirejson.state_0");
-    check(result->states[1] == "Done", "wirejson.state_1");
-    check(result->transition_count == 1, "wirejson.transition_count");
+    check(result->states.size() == 2, "p6frame_id.walk_length");
+    check(result->states[0] == "Start", "p6frame_id.state_0");
+    check(result->states[1] == "Done", "p6frame_id.state_1");
+    check(result->transition_count == 1, "p6frame_id.transition_count");
 
     // The hook should have fired for both states.
-    check(hook_states.size() == 2, "wirejson.hook_count");
-    check(hook_states[0] == "Start", "wirejson.hook_0");
-    check(hook_states[1] == "Done", "wirejson.hook_1");
+    check(hook_states.size() == 2, "p6frame_id.hook_count");
+    check(hook_states[0] == "Start", "p6frame_id.hook_0");
+    check(hook_states[1] == "Done", "p6frame_id.hook_1");
 }
 
 // ==== 2. P6-frame agent step-walk ====
@@ -250,11 +259,20 @@ void test_hook_liveness(const std::filesystem::path &repo_root) {
     }
 
     const auto &desc = emitted->descriptor;
+    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "liveness.frame_contract");
+    check(desc.frame_section.has_value(), "liveness.has_frame_section");
+    check(desc.wire_schema.has_value(), "liveness.has_wire_schema");
+    if (!desc.frame_section.has_value() || !desc.wire_schema.has_value()) {
+        return;
+    }
     wh::AgentWalkDescriptor walk_desc;
     walk_desc.agent_name = desc.agent_name;
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
-    walk_desc.is_p6_frame = false;
+    walk_desc.is_p6_frame = true;
+    walk_desc.frame_section = &*desc.frame_section;
+    walk_desc.wire_schema = &*desc.wire_schema;
 
     // The hook mutates a counter; we verify it fired during the walk (not
     // after) by checking the counter is non-zero when the walk returns.
@@ -288,7 +306,7 @@ void test_hook_liveness(const std::filesystem::path &repo_root) {
 int main() {
     const auto repo_root = ahfl::test_support::repo_root_from_source_file(__FILE__);
 
-    test_wirejson_agent(repo_root);
+    test_p6frame_identity_agent(repo_root);
     test_p6frame_agent(repo_root);
     test_hook_liveness(repo_root);
 

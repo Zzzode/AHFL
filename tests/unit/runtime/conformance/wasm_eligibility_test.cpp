@@ -166,10 +166,12 @@ struct CaseVerdict {
     std::string_view code; // empty for runnable
     std::string_view reason_substring;
     // The exact frame contract the emitted descriptor must carry. Pins the
-    // p6-frame SET independently of the Node runner: only the raw P4-D frame
-    // handlers (aggregate/collection) may be P6Frame; every other runnable
-    // case must be WireJson.
-    CoreWasmFrameContract frame_contract{CoreWasmFrameContract::WireJson};
+    // p6-frame SET independently of the Node runner. KR6.6 identity-final
+    // frame lane: every agent with at least one identity or computed final
+    // (and a wire-representable boundary) is a P6-frame module, so P6Frame
+    // is the default. Only agents whose finals are ALL opaque capability
+    // calls stay on WireJson (runv has no capability-final arm).
+    CoreWasmFrameContract frame_contract{CoreWasmFrameContract::P6Frame};
 };
 
 void test_committed_catalogue(const std::filesystem::path &repo_root) {
@@ -179,13 +181,24 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
     // a restatement of the manifest.
     const std::vector<CaseVerdict> runnable = {
         {"e1_identity_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // Capability-final-only agent: runv has no capability-final arm, so the
+        // agent stays on the WireJson lane.
+        {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::WireJson},
+        {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::WireJson},
+        // Capability-final-only workflow: every node is a capability call, so
+        // the workflow stays on the WireJson lane.
+        {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::WireJson},
         // WH-5c.5 GAP 4: three-node identity+capability+identity workflow; the
         // per-node output stash table makes every node output host-observable.
-        {"wh5c5_gap4_stash_parity.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // The workflow stays on WireJson: its identity agents forward the
+        // borrowed wire frame without a P6 frame plan.
+        {"wh5c5_gap4_stash_parity.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::WireJson},
+        {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::WireJson},
         // KR6.7: landed KR6.6 (P6) computation slices emit cleanly on the agent
         // lane with an identity final forwarding the borrowed wire frame.
         {"p6_scalar_cond.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
@@ -305,12 +318,13 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"e3_capability_workflow_resume.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         ""},
+         "",
+         CoreWasmFrameContract::WireJson},
         // KR6.7 corpus widening (FB-5): expectation-lane FB-1/FB-3 cases whose
         // user pure-fn / first-class-closure constructs have no checked-in
-        // blessing. The modules emit cleanly on the orchestration lane
-        // (WireJson identity finals) and the Node observation compares
-        // against the manifest's blessed expectation.
+        // blessing. The modules emit cleanly on the P6-frame lane (identity
+        // finals forwarding the borrowed wire frame) and the Node observation
+        // compares against the manifest's blessed expectation.
         {"fb1_aggregate_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb1_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_byvalue_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},

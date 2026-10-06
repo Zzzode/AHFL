@@ -27,11 +27,12 @@ def read_u32(data: bytes, offset: int) -> tuple[int, int]:
     fail("non-canonical/out-of-domain ULEB128")
 
 
-def sections(data: bytes) -> dict[int, bytes]:
+def sections(data: bytes) -> tuple[dict[int, bytes], list[str]]:
     if data[:8] != b"\0asm\x01\0\0\0":
         fail("CLI output is not a wasm v1 binary")
     result: dict[int, bytes] = {}
     order: list[int] = []
+    custom_names: list[str] = []
     offset = 8
     while offset < len(data):
         section_id = data[offset]
@@ -40,14 +41,28 @@ def sections(data: bytes) -> dict[int, bytes]:
         end = offset + size
         if end > len(data):
             fail("section extends past artifact")
-        if section_id == 0 or section_id in result:
-            fail("E1 artifact contains a custom or duplicate section")
+        if section_id == 0:
+            name_len, name_start = read_u32(data, offset)
+            name_end = name_start + name_len
+            if name_end > end:
+                fail("custom section name exceeds its section bounds")
+            try:
+                custom_names.append(data[name_start:name_end].decode("utf-8"))
+            except UnicodeDecodeError as exc:
+                fail(f"invalid UTF-8 custom section name: {exc}")
+        elif section_id in result:
+            fail("E1 artifact contains a duplicate standard section")
         order.append(section_id)
         result[section_id] = data[offset:end]
         offset = end
-    if order != [1, 3, 5, 6, 7, 10]:
+    # KR6.6 identity-final frame lane: the E1 identity agent is now a P6-frame
+    # module. The standard sections keep their canonical order; the two P6-frame
+    # custom sections (core-layout + wire-schema) follow Code.
+    if order != [1, 3, 5, 6, 7, 10, 0, 0]:
         fail(f"non-canonical E1 section order: {order}")
-    return result
+    if custom_names != ["ahfl.core-layout.v1", "ahfl.wire-schema.v1"]:
+        fail(f"unexpected E1 custom sections: {custom_names}")
+    return result, custom_names
 
 
 def read_name(data: bytes, offset: int) -> tuple[str, int]:
@@ -144,7 +159,7 @@ def main(argv: list[str]) -> int:
     if wasi_first != browser:
         fail("no-import wasi/browser E1 artifacts differ")
 
-    parsed = sections(wasi_first)
+    parsed, _custom_names = sections(wasi_first)
     expected_exports = [
         "memory",
         "alloc",
@@ -155,6 +170,7 @@ def main(argv: list[str]) -> int:
         "current_state",
         "transition_count",
         "ahfl_abi_version",
+        "runv",
     ]
     if export_names(parsed[7]) != expected_exports:
         fail("E1 export catalogue/order mismatch")
