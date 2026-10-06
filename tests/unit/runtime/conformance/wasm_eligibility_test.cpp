@@ -336,7 +336,8 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"fb4_effect_clause_pure_body.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         ""},
+         "",
+         CoreWasmFrameContract::P6Frame},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical

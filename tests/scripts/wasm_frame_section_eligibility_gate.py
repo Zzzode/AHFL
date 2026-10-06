@@ -2,18 +2,22 @@
 """RFC 0026 P6-7 rung A corpus-wide frame-section eligibility gate.
 
 The P4-D frame lane (`ahfl.core-layout.v1` + the boundary-root block of
-`ahfl.wire-schema.v1`) is admitted for ONLY the frame-lane agents the design
-names (sections 3.4/4.1/11): no capability import, no outlined fn / closure.
-Keying eligibility off the raw-input projection alone latched for the
-FB-1..FB-4 outlined-fn/closure agents (and even mutated a capability module's
-wire-schema section), changing the bytes of modules the rung-A byte-identity
-invariant pins.
+`ahfl.wire-schema.v1`) is admitted for frame-lane agents that project the
+raw input frame, materialize a computed final, or carry an in-handler
+capability bridge. Outlined fns and closures no longer disqualify an
+agent from the frame lane (the P6 frame lane supports them: the construct
+heap sits above the input frame's container placements, and fn/closure
+containers reference the input frame's collections, not separate
+backing). Keying eligibility off the raw-input projection alone latched
+for the FB-1..FB-4 outlined-fn/closure agents (and even mutated a
+capability module's wire-schema section), changing the bytes of modules
+the rung-A byte-identity invariant pins.
 
 This gate emits EVERY tests/golden/wasm fixture and asserts:
   * the core-layout frame custom section appears in EXACTLY the pinned frame
-    fixtures (the two census cases plus the rung-A regression fixtures) and in
-    no other successfully emitted module -- the frame lane and the
-    wire-JSON capability / FB lanes never mix;
+    fixtures (the census cases, the rung-A regression fixtures, and the
+    FB agents that project the raw input frame or carry a bridge) and in
+    no other successfully emitted module;
   * every successful emission is deterministic (two runs byte-identical).
 
 It is a structural gate, not execution evidence.
@@ -74,6 +78,13 @@ FRAME_FIXTURES = frozenset(
         # KR6.6: f64 collection element ladder (List<Float> element load/store
         # through the dedicated F64 scalar kind on the P6 frame lane).
         "p6_f64_collection",
+        # FB agents that project the raw input frame (bounded collection) or
+        # carry a capability bridge: the frame_lane_eligible gate no longer
+        # rejects outlined fns / closures on the P6 frame lane.
+        "fb2_bounded_recursion",
+        "fb3_bounded_collection",
+        "fb4_effect_clause_pure_body",
+        "fb4_effectful_fn",
     }
 )
 

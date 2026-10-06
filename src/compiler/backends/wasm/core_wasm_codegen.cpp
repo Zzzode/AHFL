@@ -11366,14 +11366,14 @@ build_frame_section_plan(const CoreProgram &program,
         // max(base + backing_size) shortcut would relocate the heap into a
         // second simultaneously-live input container's backing. The predicate
         // mirrors frame-lane eligibility in emit_core_wasm: no capability
-        // import, no outlined fn, no closure, and an entry handler that
-        // projects the raw input frame. At rung E that predicate implies the
-        // heap stays disabled (frame agents carry no fns/closures), so this is
-        // byte-neutral today and becomes load-bearing if a frame agent is ever
-        // allowed outlined-fn constructs.
+        // import and an entry handler that projects the raw input frame.
+        // Outlined fns and closures no longer disqualify: the P6 frame lane
+        // supports them (the construct heap sits above the input frame's
+        // container placements, and the fn/closure containers reference the
+        // input frame's collections, not separate backing).
         const bool frame_packed_input =
-            (imports == nullptr || imports->empty()) && planned_fns.empty() &&
-            closure_table_out.empty() && frame_input_nominal.has_value() &&
+            (imports == nullptr || imports->empty()) &&
+            frame_input_nominal.has_value() &&
             std::any_of(entry_builders.begin(),
                         entry_builders.end(),
                         [](const P6ComputationHandlerBuilder *builder) {
@@ -12644,27 +12644,11 @@ build_frame_section_plan(const CoreProgram &program,
     // raw-frame fallback (its pre-P6-7 skip).
     const bool frame_section_required =
         planned_computed_final || this_build_bridges;
-    const bool frame_lane_eligible =
-        plan.fns.empty() && plan.closure_table.empty();
     // V2-D: a packaged agent keeps the same per-handler subset gates but the
     // WORKFLOW packager builds the module-level core-layout section; the agent
-    // plan itself must not carry one. A packaged computed/bridge agent still
-    // fails the fn/closure mix gate below.
+    // plan itself must not carry one.
     const bool build_agent_frame_section = !policy.skip_frame_section;
-    if (needs_frame_section) {
-        if (!frame_lane_eligible) {
-            // An FB-lane agent (outlined fn / closure) may still project an
-            // input field in a handler, but the v1 eligibility rule keeps it on
-            // the opaque wire-JSON sectionless lane; only a REQUIRED frame
-            // section (computed final / bridge) rejects here.
-            if (frame_section_required) {
-                add_diag(result,
-                         core_wasm_diag::kUnsupportedCapabilityFrame,
-                         "a P6-frame agent cannot mix the frame lane with outlined fns or "
-                         "closures");
-                return std::nullopt;
-            }
-        } else if (build_agent_frame_section) {
+    if (needs_frame_section && build_agent_frame_section) {
         const CoreAgentDecl &agent_decl = program.agents[target.value];
         auto candidate_boundary = [&]()
             -> std::optional<std::pair<ir::core::CoreValueTypeId,
@@ -12775,7 +12759,6 @@ build_frame_section_plan(const CoreProgram &program,
             }
             // A raw-projecting-only agent with an unprojectable boundary keeps
             // the legacy sectionless fallback: no frame plan is attached.
-        }
         }
     }
 
