@@ -64,6 +64,20 @@ No class inheritance, no `dynamic_cast`, no virtual dispatch for data-carrying t
 Every error / warning carries a `SourceRange`.
 Diagnostic messages are human-readable and actionable. No "internal error" messages that users can't understand.
 
+### Principle 6: Correct Architecture Over Implementation Compromise
+
+**Best practices and correct architecture take priority over implementation constraints. A constraint that forces a wrong architecture is a problem to solve, not a state to accept.**
+
+When the correct architecture (per the Reference Hierarchy and industry practice) is blocked by a tool, library, runtime, or other external constraint, the project must:
+
+1. **Name the constraint explicitly** — document what is blocking the correct architecture and why, in the owning RFC or design doc.
+2. **Work to remove the constraint** — replace the tool, upgrade the library, or change the runtime. Do not design a permanent workaround around a removable constraint.
+3. **Keep any workaround deletable** — a transitional design necessitated by a constraint must be structured so it can be removed in one big-bang change when the constraint is gone (Principle 1). A workaround must never become load-bearing.
+
+A constraint is never a justification for a permanent architectural compromise. "The runtime doesn't support it" means "change the runtime," not "design around the runtime."
+
+When a decision agent (see Autonomous Decision-Making) evaluates a trade-off, it must not accept a constraint-driven divergence from the Reference Hierarchy as a settled answer. The decision record must name the constraint, describe the end-state architecture, and define the trigger condition for removing the constraint.
+
 ### Reference Hierarchy
 
 When in doubt about how to design something, look to these systems (in priority order):
