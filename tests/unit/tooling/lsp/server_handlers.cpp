@@ -11961,6 +11961,31 @@ void test_hover_variant_construction_fact() {
           "hoverVariant.fact_value");
 }
 
+void test_hover_capability_fact() {
+    // The effect_capability TypedExpr fact records which capability was
+    // invoked on a capability-call expression.  Hovering over the call
+    // (outside the callee identifier so the Expression target wins over
+    // the CallableReference target) must surface the capability name.
+    const std::string source =
+        "capability fetch_data(key: String) -> Int;\n"
+        "\n"
+        "fn test() -> Int effect fetch_data decreases 0 {\n"
+        "    return fetch_data(\"answer\");\n"
+        "}\n";
+
+    // Secondary facts are Debug-only; use debug detail level.
+    // Hover at the opening paren so the position is inside the call
+    // expression range but outside the CallableReference target's callee
+    // range (exclusive-end containment).
+    const std::string debug_init =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"initializationOptions":{"hover":{"detailLevel":"debug"}}}})";
+    const auto hover = run_hover_request_with_init(source, "(\"answer\")", debug_init);
+    check(hover.find("Capability") != std::string::npos,
+          "hoverCapability.fact_label");
+    check(hover.find("`fetch_data`") != std::string::npos,
+          "hoverCapability.fact_value");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -12135,11 +12160,13 @@ int main() {
     test_manifest_references_nonexistent_export_module();
     test_manifest_deletion_falls_back_to_detached();
 
-    // Typed-HIR hover enrichment: const value, effect, dispatch, variant facts.
+    // Typed-HIR hover enrichment: const value, effect, dispatch, variant,
+    // capability facts.
     test_hover_const_value_fact();
     test_hover_effect_fact();
     test_hover_dispatch_target_fact();
     test_hover_variant_construction_fact();
+    test_hover_capability_fact();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

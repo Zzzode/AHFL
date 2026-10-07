@@ -30,8 +30,10 @@ struct IdentifierSegment {
     return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
 }
 
+// SourceRange uses exclusive end_offset (parser sets end = stop_index + 1),
+// so the LSP containment check is begin <= offset < end.
 [[nodiscard]] bool contains(SourceRange range, std::size_t offset) noexcept {
-    return range.begin_offset <= offset && offset <= range.end_offset;
+    return range.begin_offset <= offset && offset < range.end_offset;
 }
 
 [[nodiscard]] bool is_identifier_char(char ch) noexcept {

@@ -95,8 +95,10 @@ constexpr std::string_view kAllKeywords[] = {
     return std::isalnum(value) != 0 || ch == '_';
 }
 
+// SourceRange uses exclusive end_offset (parser sets end = stop_index + 1),
+// so the LSP containment check is begin <= offset < end.
 [[nodiscard]] bool contains(SourceRange range, std::size_t offset) noexcept {
-    return range.begin_offset <= offset && offset <= range.end_offset;
+    return range.begin_offset <= offset && offset < range.end_offset;
 }
 
 [[nodiscard]] bool same_source(std::optional<SourceId> lhs, std::optional<SourceId> rhs) noexcept {
@@ -491,10 +493,6 @@ void push_unique_location(std::vector<Location> &locations, Location location) {
 
 [[nodiscard]] std::size_t source_range_size(SourceRange range) noexcept {
     return range.end_offset >= range.begin_offset ? range.end_offset - range.begin_offset : 0;
-}
-
-[[nodiscard]] bool contains_exclusive(SourceRange range, std::size_t offset) noexcept {
-    return range.begin_offset <= offset && offset < range.end_offset;
 }
 
 [[nodiscard]] bool contains_range(SourceRange outer, SourceRange inner) noexcept {
@@ -986,7 +984,7 @@ collect_local_binding_targets(const LspSourceSnapshot &source) {
 [[nodiscard]] bool local_binding_declaration_contains(const LocalBindingTarget &target,
                                                       SourceRange range,
                                                       std::size_t offset) noexcept {
-    return contains_exclusive(range, offset) &&
+    return contains(range, offset) &&
            (target.kind == LocalBindingKind::Pattern || target.kind == LocalBindingKind::Let ||
             target.kind == LocalBindingKind::ShadowOnly);
 }
@@ -1077,7 +1075,7 @@ innermost_local_binding_for_reference(const std::vector<LocalBindingTarget> &tar
             continue;
         }
         const auto root_range = typed_expr_root_range(*source.source, expr);
-        if (!root_range.has_value() || !contains_exclusive(*root_range, offset)) {
+        if (!root_range.has_value() || !contains(*root_range, offset)) {
             continue;
         }
         const auto *target =
