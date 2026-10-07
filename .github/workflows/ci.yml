@@ -160,3 +160,39 @@ jobs:
 
       - name: Run sanitizer test suite
         run: ctest --preset test-asan --output-on-failure --no-label-summary
+
+  vscode-extension-tests:
+    name: VS Code Extension Tests (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build xvfb
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.10.0 --activate
+
+      - name: Install extension dependencies
+        working-directory: tools/vscode
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Configure
+        run: cmake --preset dev -DAHFL_WARNINGS_AS_ERRORS=ON
+
+      - name: Build LSP server
+        run: cmake --build --preset build-dev --target ahfl-lsp
+
+      - name: Run extension tests
+        working-directory: tools/vscode
+        run: xvfb-run -a pnpm run test:extension
