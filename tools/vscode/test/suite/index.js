@@ -1,5 +1,6 @@
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 
@@ -287,7 +288,7 @@ async function configureExtension() {
   await config.update('hover.maxFacts', 3, vscode.ConfigurationTarget.Global);
   await config.update('hover.showSource', false, vscode.ConfigurationTarget.Global);
 
-  const extension = vscode.extensions.getExtension('ahfl.ahfl-language');
+  const extension = vscode.extensions.getExtension('ahfl-team.ahfl');
   assert.ok(extension, 'AHFL extension under test is not registered');
   await extension.activate();
 }
@@ -467,6 +468,85 @@ async function runWatchedFilesRegression() {
   }
 }
 
+async function runWorkspaceFolderRegression() {
+  // Create a second project OUTSIDE the current workspace so it is not
+  // already indexed.  Adding it as a workspace folder must cause the LSP
+  // server to pick it up (didChangeWorkspaceFolders), and removing it must
+  // leave the server responsive.
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ahfl-vscode-ws-folder-'));
+  const sourceFile = path.join(tempDir, 'main.ahfl');
+  const source = [
+    'module wsx::main;',
+    '',
+    'pub struct WsFolderMsg {',
+    '    value: String;',
+    '}',
+    '',
+  ].join('\n');
+
+  let folderAdded = false;
+  try {
+    writePackageManifest(tempDir, 'ws-folder-test', 'wsx', ['main'], 'main.ahfl');
+    writeTextFile(sourceFile, source);
+
+    // --- Add the temp dir as a second workspace folder. ---
+    const folderUri = vscode.Uri.file(tempDir);
+    const existingCount = vscode.workspace.workspaceFolders?.length ?? 0;
+    const added = vscode.workspace.updateWorkspaceFolders(existingCount, 0, {
+      uri: folderUri,
+      name: 'ahfl-ws-folder-test',
+    });
+    assert.strictEqual(added, true, 'expected updateWorkspaceFolders to accept the new folder');
+    folderAdded = true;
+    assert.strictEqual(
+      vscode.workspace.workspaceFolders?.length,
+      existingCount + 1,
+      'expected workspace folder count to increase after add'
+    );
+
+    // Give the server a moment to process didChangeWorkspaceFolders.
+    await sleep(1000);
+
+    // Open a file from the added folder and verify the server analyzes it
+    // (hover resolves the struct declaration).
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(sourceFile));
+    await vscode.window.showTextDocument(document, { preview: false });
+    await waitForHover(document, 'WsFolderMsg', ['struct wsx::main::WsFolderMsg', 'struct']);
+
+    // --- Remove the workspace folder. ---
+    const folderIndex = vscode.workspace.workspaceFolders?.findIndex(
+      (folder) => folder.uri.fsPath === tempDir
+    );
+    assert.ok(folderIndex !== undefined && folderIndex >= 0, 'expected to find the added folder');
+    const removed = vscode.workspace.updateWorkspaceFolders(folderIndex, 1);
+    assert.strictEqual(removed, true, 'expected updateWorkspaceFolders to remove the folder');
+    folderAdded = false;
+    assert.strictEqual(
+      vscode.workspace.workspaceFolders?.length,
+      existingCount,
+      'expected workspace folder count to restore after remove'
+    );
+
+    // Verify the server is still responsive after removal.
+    await sleep(500);
+    const agents = await openWorkspaceDocument('lib/agents.ahfl');
+    await waitForHover(agents, 'input:', ['input: lib::types::Request', 'Input schema for']);
+  } finally {
+    // Best-effort cleanup: remove the folder if still present, close the editor.
+    if (folderAdded) {
+      const idx = vscode.workspace.workspaceFolders?.findIndex(
+        (folder) => folder.uri.fsPath === tempDir
+      );
+      if (idx !== undefined && idx >= 0) {
+        vscode.workspace.updateWorkspaceFolders(idx, 1);
+      }
+    }
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    await sleep(500);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function run() {
   await configureExtension();
   await runHoverRegression();
@@ -474,6 +554,7 @@ async function run() {
   await runRenameRegression();
   await runDiagnosticsRegression();
   await runWatchedFilesRegression();
+  await runWorkspaceFolderRegression();
   writeDiagnosticsTranscript();
 }
 
