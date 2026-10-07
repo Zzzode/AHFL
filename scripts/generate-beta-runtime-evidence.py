@@ -17,6 +17,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument(
+        "--source-revision",
+        default=None,
+        help="precomputed source revision; defaults to computing it from the repo",
+    )
     return parser.parse_args()
 
 
@@ -156,7 +161,7 @@ def main() -> int:
         "parallel provider audit fact source",
     )
 
-    revision = compute_source_revision(repo)
+    revision = args.source_revision or compute_source_revision(repo)
     runtime_test_pattern = (
         "^(ahfl\\.runtime\\."
         "(execution_(event|report|metadata|renderer|projection|otel)_all|"

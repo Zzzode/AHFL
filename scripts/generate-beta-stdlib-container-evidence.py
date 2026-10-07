@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--source-revision",
+        default=None,
+        help="precomputed source revision; defaults to computing it from the repo",
+    )
     return parser.parse_args()
 
 
@@ -122,7 +127,7 @@ def main() -> int:
         "schema": "ahfl.beta-evidence.stdlib-container-migration.v1",
         "status": "passed",
         "criterion": "BETA-06",
-        "source_revision": compute_source_revision(repo),
+        "source_revision": args.source_revision or compute_source_revision(repo),
         "semantic_type_representation": "nominal_generics",
         "runtime_option_representation": "nominal_enum",
         "legacy_type_kinds": [],

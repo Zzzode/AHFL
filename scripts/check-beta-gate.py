@@ -34,6 +34,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="return non-zero unless every beta criterion has passing evidence",
     )
+    parser.add_argument(
+        "--source-revision",
+        default=None,
+        help="precomputed current source revision; defaults to computing it from the repo",
+    )
     return parser.parse_args()
 
 
@@ -213,11 +218,14 @@ def main() -> int:
                     )
             criterion["status"] = criterion_status(criterion["evidence"])
 
-    try:
-        current_source_revision = compute_source_revision(root)
-    except RuntimeError as error:
-        print(f"beta gate source revision error: {error}", file=sys.stderr)
-        return 2
+    if args.source_revision:
+        current_source_revision = args.source_revision
+    else:
+        try:
+            current_source_revision = compute_source_revision(root)
+        except RuntimeError as error:
+            print(f"beta gate source revision error: {error}", file=sys.stderr)
+            return 2
     if canonical_revision is not None and canonical_revision != current_source_revision:
         for criterion in reports:
             for evidence in criterion["evidence"]:

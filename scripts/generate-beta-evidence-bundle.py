@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from ahfl_source_revision import compute_source_revision
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,13 +26,19 @@ def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def run_checked(args: list[str], cwd: Path, label: str) -> None:
+def run_checked(
+    args: list[str],
+    cwd: Path,
+    label: str,
+    env: dict[str, str] | None = None,
+) -> None:
     result = subprocess.run(
         args,
         cwd=cwd,
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -72,6 +81,7 @@ def generator_command(
     script: str,
     build: Path,
     output: Path,
+    source_revision: str,
 ) -> list[str]:
     return [
         sys.executable,
@@ -82,6 +92,8 @@ def generator_command(
         str(build),
         "--out",
         str(output),
+        "--source-revision",
+        source_revision,
     ]
 
 
@@ -90,6 +102,16 @@ def main() -> int:
     repo = args.repo_root.resolve()
     build = args.build_dir.resolve()
     output_dir = repo / "build/release-evidence/beta"
+
+    # Compute the source revision exactly once and hand it to every generator
+    # and the gate checker. Computing it independently in each subprocess lets
+    # parallel test activity change the dirty-tree digest mid-run, which makes
+    # the checker mark freshly generated evidence as stale.
+    try:
+        source_revision = compute_source_revision(repo)
+    except RuntimeError as error:
+        print(f"beta evidence bundle source revision error: {error}", file=sys.stderr)
+        return 1
 
     validate_output_paths(repo, output_dir)
     if output_dir.exists():
@@ -108,6 +130,7 @@ def main() -> int:
             ],
             repo,
             "run profiles evidence tests",
+            env={**os.environ, "AHFL_SOURCE_REVISION": source_revision},
         )
         run_checked(
             [
@@ -119,6 +142,8 @@ def main() -> int:
                 str(build),
                 "--out-dir",
                 str(output_dir),
+                "--source-revision",
+                source_revision,
             ],
             repo,
             "runtime evidence generation",
@@ -147,7 +172,9 @@ def main() -> int:
         )
         for script, filename, label in generators:
             run_checked(
-                generator_command(repo, script, build, output_dir / filename),
+                generator_command(
+                    repo, script, build, output_dir / filename, source_revision
+                ),
                 repo,
                 label,
             )
@@ -159,6 +186,8 @@ def main() -> int:
                 str(repo),
                 "--out",
                 str(output_dir / "readme-capabilities.json"),
+                "--source-revision",
+                source_revision,
             ],
             repo,
             "README capability evidence generation",
@@ -174,6 +203,8 @@ def main() -> int:
             "--root",
             str(repo),
             "--require-ready",
+            "--source-revision",
+            source_revision,
         ],
         cwd=repo,
         check=False,

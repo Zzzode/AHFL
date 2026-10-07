@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--source-revision",
+        default=None,
+        help="precomputed source revision; defaults to computing it from the repo",
+    )
     return parser.parse_args()
 
 
@@ -149,7 +154,7 @@ def main() -> int:
         "schema": "ahfl.beta-evidence.lifecycle-matrix.v1",
         "status": "passed",
         "criterion": "BETA-04",
-        "source_revision": compute_source_revision(repo),
+        "source_revision": args.source_revision or compute_source_revision(repo),
         "lifecycles": matrix,
         "terminal_invariants": [
             "missing_terminal",

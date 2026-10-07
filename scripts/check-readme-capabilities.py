@@ -21,6 +21,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--out", type=Path)
+    parser.add_argument(
+        "--source-revision",
+        default=None,
+        help="precomputed source revision; defaults to computing it from the repo",
+    )
     return parser.parse_args()
 
 
@@ -138,7 +143,7 @@ def main() -> int:
             "schema": "ahfl.beta-evidence.readme-capabilities.v1",
             "status": "passed",
             "criterion": "BETA-09",
-            "source_revision": compute_source_revision(root),
+            "source_revision": args.source_revision or compute_source_revision(root),
             "readmes": ["README.md", "README.zh.md"],
             "covered_criteria": expected_ids,
             "evidence_schemas": evidence_schemas,

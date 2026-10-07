@@ -46,7 +46,7 @@ sys.path.insert(0, str(root / "scripts"))
 from ahfl_source_revision import compute_source_revision
 
 out = root / "build/release-evidence/beta"
-revision = compute_source_revision(root)
+revision = os.environ.get("AHFL_SOURCE_REVISION") or compute_source_revision(root)
 values = (
     ("run-profiles.json", "ahfl.beta-evidence.run-profiles.v1", "BETA-01"),
 )
@@ -84,7 +84,11 @@ else:
     out = Path(args[args.index("--out") + 1]).parent
 root_flag = "--repo-root" if "--repo-root" in args else "--root"
 repo = Path(args[args.index(root_flag) + 1])
-revision = compute_source_revision(repo)
+revision = None
+if "--source-revision" in args:
+    revision = args[args.index("--source-revision") + 1]
+if not revision:
+    revision = compute_source_revision(repo)
 outputs = {outputs!r}
 for name, schema, criterion in outputs:
     path = out / name

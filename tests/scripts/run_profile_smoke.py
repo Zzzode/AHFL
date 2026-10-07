@@ -220,7 +220,10 @@ def main() -> int:
                 "schema": "ahfl.beta-evidence.run-profiles.v1",
                 "status": "passed",
                 "criterion": "BETA-01",
-                "source_revision": compute_source_revision(repo_root),
+                "source_revision": (
+                    os.environ.get("AHFL_SOURCE_REVISION")
+                    or compute_source_revision(repo_root)
+                ),
                 "reference_workflow": "examples/execution-demo",
                 "profiles": ["default", "low-risk"],
                 "formats": ["human", "json", "jsonl", "quiet"],
