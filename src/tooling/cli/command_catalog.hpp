@@ -52,12 +52,10 @@ enum class CommandKind {
 
 // RFC 0028: formal verification stage in the default compilation pipeline.
 // `Off`   — structural IR invariants only (pre-RFC behavior).
-// `Light` — structural + subset eligibility + SMT-BMC (Z3, when present) +
-//           size-gated, timeout-bounded NuSMV BMC (when present); degrades to
-//           a note + success when an external engine is absent or times out.
-// `Full`  — structural + SMT-BMC + full SMV model checking, fail-closed on
-//           missing NuSMV, timeout, or refutation (production/CI gate).
-enum class VerificationMode { Off, Light, Full };
+// `On`  — structural + subset eligibility + SMT-BMC + full SMV model checking,
+//         fail-closed on missing solver, timeout, or refutation.
+// `Off` — structural verification only (no formal stage).
+enum class VerificationMode { Off, On };
 
 struct CommandLineOptions {
     std::optional<CommandKind> selected_command;
@@ -184,12 +182,12 @@ core_backend_for_command(std::optional<CommandKind> command);
 void set_command_option(CommandLineOptions &options, CommandKind command);
 void print_usage(std::ostream &out);
 
-// RFC 0028: parse the --verify=<off|light|full> string into the enum.
+// RFC 0028: parse the --verify=<off|on> string into the enum.
 // Returns nullopt for unrecognized values.
 [[nodiscard]] std::optional<VerificationMode> parse_verification_mode(std::string_view text);
 
 // RFC 0028: resolve the per-command default verification mode.
-// check/run default to light; everything else defaults to off.
+// check/run default to on (fail-closed); everything else defaults to off.
 [[nodiscard]] VerificationMode default_verification_mode(std::optional<CommandKind> command);
 
 // RFC 0028: true when the formal verification stage is active (mode != Off).

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 
 namespace ahfl::formal {
 
@@ -68,7 +69,11 @@ std::string write_temp_model(const std::string &model_text) {
     auto tmp_dir = fs::temp_directory_path() / "ahfl_verification_formal";
     fs::create_directories(tmp_dir);
 
-    auto path = tmp_dir / "model.smv";
+    // Unique per invocation: parallel REPL sessions must not clobber each
+    // other's model files.
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto path = tmp_dir / ("model-" + std::to_string(getpid()) + "-" +
+                           std::to_string(now) + ".smv");
     std::ofstream ofs(path, std::ios::trunc);
     ofs << model_text;
     ofs.close();

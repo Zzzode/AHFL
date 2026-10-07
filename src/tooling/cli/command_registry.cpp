@@ -518,27 +518,25 @@ std::string command_short_name(CommandKind command) {
 std::optional<VerificationMode> parse_verification_mode(std::string_view text) {
     if (text == "off")
         return VerificationMode::Off;
-    if (text == "light")
-        return VerificationMode::Light;
-    if (text == "full")
-        return VerificationMode::Full;
+    if (text == "on")
+        return VerificationMode::On;
     return std::nullopt;
 }
 
 VerificationMode default_verification_mode(std::optional<CommandKind> command) {
     if (!command.has_value())
-        return VerificationMode::Light;
+        return VerificationMode::On;
     switch (*command) {
     case CommandKind::Check:
     case CommandKind::RunWorkflow:
-        return VerificationMode::Light;
+        return VerificationMode::On;
     default:
         return VerificationMode::Off;
     }
 }
 
 bool formal_stage_active(VerificationMode mode) {
-    return mode != VerificationMode::Off;
+    return mode == VerificationMode::On;
 }
 
 } // namespace ahfl::cli

@@ -69,12 +69,11 @@ emit_core_backend(std::optional<CommandKind> effective_command,
 [[nodiscard]] int validate_assurance_program(const ahfl::ir::Program &program);
 
 // RFC 0028: formal verification stage in the default compilation pipeline.
-// Runs subset eligibility + SMT-BMC + SMV model checking at the given mode.
-// Light degrades to a note + success on missing solver / timeout; full is
-// fail-closed. Returns true on pass, false on refutation/failure.
+// Runs subset eligibility + SMT-BMC + SMV model checking. Fail-closed:
+// missing solver, timeout, or refutation all fail the stage.
+// Returns true on pass, false on refutation/failure.
 [[nodiscard]] bool run_pipeline_formal_verification(const ahfl::ir::Program &program,
                                                     const CommandLineOptions &options,
-                                                    VerificationMode mode,
                                                     std::ostream &out,
                                                     std::ostream &err);
 

@@ -95,7 +95,7 @@ void print_usage(std::ostream &out) {
         << "    public-api-diff            Diff two public API JSON snapshots; optional SemVer "
            "gate\n"
         << "    summary                    Human-readable summary\n"
-        << "    smv                        NuSMV model (for --verify=full)\n"
+        << "    smv                        NuSMV model (for --verify=on)\n"
         << "    smt                        SMT-LIB 2 encoding of contract data predicates\n"
         << "    assurance-json             Assurance model (for validate)\n";
 
@@ -135,8 +135,9 @@ void print_usage(std::ostream &out) {
         << "  --to <version>              Next version for emit public-api-diff only\n";
 
     out << "\nVerification Options:\n"
-        << "  --verify <mode>            Formal verification stage: off, light (default for\n"
-        << "                             check/run), or full (fail-closed production gate)\n"
+        << "  --verify <mode>            Formal verification stage: off or on (default for\n"
+        << "                             check/run; fail-closed: missing solver or refutation\n"
+        << "                             fails the build)\n"
         << "  --formal-backend <name>    Backend: nuxmv, nusmv, spin, or tlaplus\n"
         << "  --model-checker <path>     NuSMV/nuXmv binary path\n"
         << "  --checker-timeout-seconds <n>  Formal checker process timeout\n"

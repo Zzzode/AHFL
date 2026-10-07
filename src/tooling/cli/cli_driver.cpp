@@ -2397,7 +2397,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     // to "formal stage active" (resolved --verify != off).
     if (options_.verify_mode.has_value() &&
         !parse_verification_mode(*options_.verify_mode).has_value()) {
-        std::cerr << "error: --verify expects off, light, or full (got '"
+        std::cerr << "error: --verify expects off or on (got '"
                   << *options_.verify_mode << "')\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -2413,13 +2413,13 @@ std::optional<ExitCode> CliDriver::validate_options() {
     };
 
     if (options_.model_checker.has_value() && formal_stage_inactive()) {
-        std::cerr << "error: --model-checker requires --verify=light or --verify=full\n";
+        std::cerr << "error: --model-checker requires --verify=on\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
     if (options_.checker_timeout_seconds.has_value() && formal_stage_inactive()) {
-        std::cerr << "error: --checker-timeout-seconds requires --verify=light or --verify=full\n";
+        std::cerr << "error: --checker-timeout-seconds requires --verify=on\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2432,7 +2432,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.formal_backend.has_value() && formal_stage_inactive()) {
-        std::cerr << "error: --formal-backend requires --verify=light or --verify=full\n";
+        std::cerr << "error: --formal-backend requires --verify=on\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2446,14 +2446,14 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.formal_model_out.has_value() && formal_stage_inactive()) {
-        std::cerr << "error: --formal-model-out requires --verify=light or --verify=full\n";
+        std::cerr << "error: --formal-model-out requires --verify=on\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
     if (options_.bmc_depth.has_value() && formal_stage_inactive() &&
         effective_command_ != CommandKind::EmitSmv) {
-        std::cerr << "error: --bmc-depth requires --verify=light/full or emit smv\n";
+        std::cerr << "error: --bmc-depth requires --verify=on or emit smv\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2466,7 +2466,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.bmc_boundary_invariants.has_value() && formal_stage_inactive() &&
         effective_command_ != CommandKind::EmitSmv) {
-        std::cerr << "error: --bmc-boundary-invariants requires --verify=light/full or emit smv\n";
+        std::cerr << "error: --bmc-boundary-invariants requires --verify=on or emit smv\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2521,7 +2521,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.explain_requested && formal_stage_inactive()) {
-        std::cerr << "error: --explain requires --verify=light or --verify=full\n";
+        std::cerr << "error: --explain requires --verify=on\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -4044,7 +4044,7 @@ ExitCode CliDriver::run_analysis(const InputT &input,
 
     // RFC 0028: formal verification stage in the default compilation pipeline.
     // Runs after IR lowering + structural verification, before the command tail.
-    // light (default for check/run) degrades gracefully; full is fail-closed.
+    // Fail-closed: missing solver, timeout, or refutation all fail the build.
     {
         const auto verify_mode = [&]() -> VerificationMode {
             if (options_.verify_mode.has_value()) {
@@ -4057,7 +4057,7 @@ ExitCode CliDriver::run_analysis(const InputT &input,
         }();
         if (formal_stage_active(verify_mode)) {
             if (!run_pipeline_formal_verification(
-                    ir_program, options_, verify_mode, std::cout, std::cerr)) {
+                    ir_program, options_, std::cout, std::cerr)) {
                 return ExitCode::CompileError;
             }
         }

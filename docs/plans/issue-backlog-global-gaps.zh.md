@@ -168,7 +168,7 @@
 
 验收证据：
 
-- `check --verify=full` 在 NuSMV/nuXmv 可用时有真实外部工具测试；不可用时有确定 skip 语义；外部 checker 卡死时有可配置 timeout 和确定 failure report。（RFC 0028 后 `verify-formal` 命令已删除，形式化验证通过 `--verify=<off|light|full>` 集成在默认编译流程中。）
+- `check --verify=on` 在 NuSMV/nuXmv 可用时有真实外部工具测试；不可用时 fail-closed 阻塞编译；外部 checker 卡死时有可配置 timeout 和确定 failure report。（RFC 0028 后 `verify-formal` 命令已删除，形式化验证通过 `--verify=<off|on>` 集成在默认编译流程中，默认 fail-closed。）
 - counterexample JSON 可被 LSP/IDE 或 CLI explain 稳定消费。
 
 ### 3.6 P2：Pass 与 target backend 产品化

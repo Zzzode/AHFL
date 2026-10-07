@@ -21,6 +21,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <unistd.h>
 
 namespace ahfl::formal {
 
@@ -93,9 +94,14 @@ struct CheckerResolution {
 }
 
 [[nodiscard]] std::filesystem::path make_temp_model_path() {
+    // Unique per invocation: parallel ahflc processes (e.g. ctest -j) must not
+    // clobber each other's model files. The path never appears in user-visible
+    // output (the report prints it only when --formal-model-out is passed), so
+    // a non-deterministic name is safe.
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     return std::filesystem::temp_directory_path() /
-           ("ahfl-formal-model-" + std::to_string(now) + ".smv");
+           ("ahfl-formal-model-" + std::to_string(getpid()) + "-" +
+            std::to_string(now) + ".smv");
 }
 
 struct ProcessResult {
@@ -131,6 +137,27 @@ struct ProcessResult {
     auto output = result.stdout_output;
     if (!result.stderr_output.empty()) {
         output += result.stderr_output;
+    }
+
+    // Normalize the temp model path in checker output: NuSMV echoes the file
+    // path in type errors (e.g. "TYPE ERROR file /tmp/ahfl-formal-...smv: line
+    // 67"), and the unique-per-invocation name would break differential tests
+    // that compare stderr across reruns.
+    constexpr std::string_view model_placeholder = "<temp-model>";
+    const auto model_path_str = model_path.string();
+    for (std::size_t pos = 0;
+         (pos = output.find(model_path_str, pos)) != std::string::npos;
+         pos += model_placeholder.size()) {
+        output.replace(pos, model_path_str.size(), model_placeholder);
+    }
+    if (!cmd_path.empty()) {
+        constexpr std::string_view script_placeholder = "<temp-script>";
+        const auto cmd_path_str = cmd_path.string();
+        for (std::size_t pos = 0;
+             (pos = output.find(cmd_path_str, pos)) != std::string::npos;
+             pos += script_placeholder.size()) {
+            output.replace(pos, cmd_path_str.size(), script_placeholder);
+        }
     }
 
     if (!cmd_path.empty()) {
