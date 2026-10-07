@@ -91,12 +91,7 @@ std::vector<std::uint8_t> func_type(const std::vector<std::uint8_t> &params,
     return t;
 }
 
-std::vector<std::uint8_t> capability_tuple() {
-    return func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f});
-}
-
-// WH-3: the bridge (i32)->(i32,i32) ahfl_cap functype, accepted alongside the
-// opaque 3-result tuple (decision doc section 11.3).
+// The sole ahfl_cap functype: the bridge (i32)->(i32,i32) signature.
 std::vector<std::uint8_t> bridge_signature() {
     return func_type({0x7f}, {0x7f, 0x7f});
 }
@@ -179,8 +174,9 @@ struct ManifestNodeSpec {
     std::uint8_t cap_call_count; // 0 or 1
     std::uint32_t capability;    // used iff cap_call_count == 1
     std::uint64_t source_symbol; // used iff cap_call_count == 1
-    // WH-5b.2: in-runner bridge sites (manifest v2). Empty for agent / opaque
-    // nodes; a P6 bridge node carries cap_call_count == 0 + non-empty sites.
+    // WH-5b.2: in-runner bridge sites (manifest v2). Empty for agent /
+    // construct-terminal nodes; a P6 bridge node carries cap_call_count == 0 +
+    // non-empty sites.
     std::vector<ManifestBridgeSiteSpec> bridge_sites = {};
 };
 
@@ -294,8 +290,8 @@ struct ModuleSpec {
 
 std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    // Type section: one tuple type at index 0.
-    put_section(m, 1, type_payload({capability_tuple()}));
+    // Type section: one bridge type at index 0.
+    put_section(m, 1, type_payload({bridge_signature()}));
     // Import section: every cap imports type 0, in cap order (ascending symbol as
     // the table is ascending by cap id; we keep imports aligned 1:1 by position).
     std::vector<std::pair<std::uint64_t, std::uint32_t>> imports;
@@ -818,9 +814,10 @@ int main() {
             s.manifest_override = bad;
             check(admit_fails(build_module(s)), "neg.manifest_schedule_pos_gap");
         }
-        // manifest node mixes an opaque capability call (cap_call_count=1) with
-        // a non-empty bridge-site table (P2-7 mutual exclusion). The decoder
-        // rejects after reading the bridge site, before admitting the node.
+        // manifest node mixes a construct-terminal capability call
+        // (cap_call_count=1) with a non-empty bridge-site table (P2-7 mutual
+        // exclusion). The decoder rejects after reading the bridge site, before
+        // admitting the node.
         {
             ModuleSpec s = base;
             std::vector<std::uint8_t> bad;
@@ -834,7 +831,7 @@ int main() {
             put_uleb(bad, 1);
             put_uleb(bad, 40);
             put_uleb(bad, 0); // schedule_pos == index 0
-            bad.push_back(1); // cap_call_count = 1 (opaque)
+            bad.push_back(1); // cap_call_count = 1 (construct-terminal)
             put_uleb(bad, 3); // capability
             put_uleb(bad, 300); // source_symbol
             bad.push_back(1); // bridge_site_count = 1 (mixes both -> reject)
@@ -1115,8 +1112,9 @@ int main() {
             s.schema_override = encode_schema(schema_table({{3, 300}, {7, 700}})); // schema has TWO
             check(admit_fails(build_module(s)), "neg.hidden_schema_capability");
         }
-        // exact-one-Param violation: the cap's schema result/param shape gives the
-        // capability TWO params, so eager Param{0} mint context rejects cardinality.
+        // Bridge multi-param: the cap's schema carries TWO params. The bridge
+        // lane accepts multi-argument capabilities (the control block holds N
+        // arg ptr/len pairs), so eager mint succeeds.
         {
             ModuleSpec s;
             s.caps = {{3, 300}};
@@ -1131,18 +1129,18 @@ int main() {
             c.result = CoreWireSchemaNodeId{1};
             two_param.capabilities.push_back(c);
             s.schema_override = encode_schema(two_param);
-            check(admit_fails(build_module(s)), "neg.exact_one_param_violation");
+            check(admit_ok(build_module(s)), "bridge.multi_param_admitted");
         }
         // wrong Type ordinal: the import points at a typeidx whose signature is NOT
-        // the ahfl_cap tuple (two types; import -> the non-tuple one).
+        // the ahfl_cap bridge (two types; import -> the non-bridge one).
         {
             ModuleSpec s;
             s.caps = {{3, 300}};
             s.manifest_nodes = {{40, 1, 3, 300}};
-            // Build a bespoke module with two types: index 0 tuple, index 1 wrong;
+            // Build a bespoke module with two types: index 0 bridge, index 1 wrong;
             // import references type index 1.
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple(), func_type({0x7f}, {0x7f})}));
+            put_section(m, 1, type_payload({bridge_signature(), func_type({0x7f}, {0x7f})}));
             put_section(m, 2, import_payload({{300, 1}})); // typeidx 1 (wrong signature)
             put_section(m, 0,
                         custom_payload("ahfl.wasm-exec-manifest.v1",
@@ -1151,10 +1149,10 @@ int main() {
                                              encode_schema(schema_table({{3, 300}}))));
             check(admit_fails(m), "neg.import_wrong_type_ordinal");
         }
-        // WH-3 bridge positive: the import uses the bridge (i32)->(i32,i32)
-        // functype (not the opaque 3-result tuple) and is ADMITTED. The schema
-        // capability still has exactly one Param (the one-param rule is about the
-        // schema, not the functype), so eager mint succeeds.
+        // Bridge positive: the import uses the bridge (i32)->(i32,i32)
+        // functype and is ADMITTED. The schema capability still has exactly one
+        // Param (the one-param rule is about the schema, not the functype), so
+        // eager mint succeeds.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
             put_section(m, 1, type_payload({bridge_signature()}));
@@ -1169,12 +1167,12 @@ int main() {
             check(admitted.ok() && admitted.module->call_site_count() == 1,
                   "bridge.import_one_call_site");
         }
-        // WH-3 bridge + tuple coexist: two types [tuple, bridge], the import
-        // references the bridge typeidx and is admitted (proves the gate is
-        // tuple-OR-bridge, not tuple-only).
+        // Extra non-bridge type coexists: two types [(i32)->i32, bridge], the
+        // import references the bridge typeidx and is admitted (proves the gate
+        // checks the IMPORTED type, not every type in the section).
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple(), bridge_signature()}));
+            put_section(m, 1, type_payload({func_type({0x7f}, {0x7f}), bridge_signature()}));
             put_section(m, 2, import_payload({{300, 1}})); // typeidx 1 == bridge
             put_section(m, 0,
                         custom_payload("ahfl.wasm-exec-manifest.v1",
@@ -1183,14 +1181,14 @@ int main() {
                                              encode_schema(schema_table({{3, 300}}))));
             check(admit_ok(m), "bridge.import_bridge_second_type_admitted");
         }
-        // WH-3 third-functype negative: three types [tuple, bridge, (i32)->i32],
-        // the import references the (i32)->i32 typeidx and is REJECTED (neither
-        // tuple nor bridge). Proves the bridge acceptance does not loosen the gate
+        // Third-functype negative: three types [(i32)->i32, bridge, (i32)->i32],
+        // the import references the (i32)->i32 typeidx and is REJECTED (not the
+        // bridge signature). Proves the bridge acceptance does not loosen the gate
         // for an unrelated shape.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
             put_section(m, 1,
-                        type_payload({capability_tuple(), bridge_signature(),
+                        type_payload({func_type({0x7f}, {0x7f}), bridge_signature(),
                                       func_type({0x7f}, {0x7f})}));
             put_section(m, 2, import_payload({{300, 2}})); // typeidx 2 == (i32)->i32
             put_section(m, 0,
@@ -1207,7 +1205,7 @@ int main() {
         // Positive: a single-cap agent manifest is admitted with the agent arm.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              agent_manifest_body(7, {{3, 300}})));
@@ -1233,7 +1231,7 @@ int main() {
         // ordinals assigned by schema-table position.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}, {700, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              agent_manifest_body(7, {{3, 300}, {7, 700}})));
@@ -1257,7 +1255,7 @@ int main() {
         // Negative: agent_id is the invalid sentinel.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0,
                         custom_payload("ahfl.wasm-exec-manifest.v1",
@@ -1269,7 +1267,7 @@ int main() {
         // Negative: a capability id is the invalid sentinel.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0,
                         custom_payload("ahfl.wasm-exec-manifest.v1",
@@ -1281,7 +1279,7 @@ int main() {
         // Negative: a duplicate capability id in the agent list.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0,
                         custom_payload("ahfl.wasm-exec-manifest.v1",
@@ -1293,7 +1291,7 @@ int main() {
         // Negative: a manifest capability absent from the schema authority set.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              agent_manifest_body(7, {{99, 300}})));
@@ -1304,7 +1302,7 @@ int main() {
         // Negative: the capability is present but its source_symbol mismatches.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              agent_manifest_body(7, {{3, 999}})));
@@ -1315,7 +1313,7 @@ int main() {
         // Negative: trailing bytes after the capability list.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             auto body = agent_manifest_body(7, {{3, 300}});
             body.push_back(0x00); // trailing byte
@@ -1327,7 +1325,7 @@ int main() {
         // Negative: a capability_count that exceeds the remaining bytes.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             auto body = agent_manifest_body(7, {{3, 300}});
             // Corrupt the capability_count ULEB to a huge value. Layout: magic(6) +
@@ -1345,7 +1343,7 @@ int main() {
         // reference (set equality fails closed).
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}, {700, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              agent_manifest_body(7, {{3, 300}})));
@@ -1358,7 +1356,7 @@ int main() {
         // equality fails closed; an agent module with imports must reference all).
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              agent_manifest_body(7, {})));
@@ -1371,7 +1369,7 @@ int main() {
         // section after the (first) EOF-target and fails the not-at-EOF gate.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                              exec_manifest_body(7, {{40, 1, 3, 300}})));
@@ -1384,7 +1382,7 @@ int main() {
         // section payload (non-canonical/bounds) must fail closed in the framer.
         {
             std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 1, type_payload({bridge_signature()}));
             put_section(m, 2, import_payload({{300, 0}}));
             // A custom section whose declared name length exceeds its own payload.
             std::vector<std::uint8_t> bad_custom;
@@ -1406,7 +1404,7 @@ int main() {
         s.caps = {{3, 300}};
         s.manifest_nodes = {{40, 1, 3, 300}};
         std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(m, 1, type_payload({capability_tuple()}));
+        put_section(m, 1, type_payload({bridge_signature()}));
         put_section(m, 2, import_payload({{300, 0}}));
         put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
                                          exec_manifest_body(7, {{40, 1, 3, 300}})));
@@ -1491,12 +1489,16 @@ int main() {
                 check(admitted.module->entry_id() == CoreWorkflowId{0},
                       "real.capwf_entry_id");
                 check(admitted.module->node_count() == 2, "real.capwf_node_count");
-                // node0 = capability (id 0, schedule 0, cap_call_count 1).
+                // node0 = P6 bridge (id 0, schedule 0, cap_call_count 0, one
+                // bridge site carrying capability 0 / source_symbol 1).
                 auto n0 = admitted.module->resolve_node(ManifestNodeIndex{0});
                 check(n0.ok() &&
                           n0.node->workflow_node_id() == CoreWorkflowNodeId{0} &&
                           n0.node->schedule_pos() == ManifestNodeIndex{0} &&
-                          n0.node->cap_call_count() == 1,
+                          n0.node->cap_call_count() == 0 &&
+                          n0.node->bridge_sites().size() == 1 &&
+                          n0.node->bridge_sites()[0].capability == CoreCapabilityId{0} &&
+                          n0.node->bridge_sites()[0].source_symbol == 1,
                       "real.capwf_node0_capability");
                 // node1 = identity (id 1, schedule 1, cap_call_count 0).
                 auto n1 = admitted.module->resolve_node(ManifestNodeIndex{1});
@@ -1763,12 +1765,12 @@ int main() {
         // the exact byte-locked slices above (whole module / raw AHFLWS / raw AHFLXM).
         // The AHFLXM slice is manifest v2 (adds a trailing bridge_site_count byte per
         // node), so the module and manifest digests differ from the v1 pins.
-        // Recompute: sha256(kModule)=61b191..f940; sha256(kRawAhflws)=6cbb2b..0c5b;
+        // Recompute: sha256(kModule)=d04e82..b88c; sha256(kRawAhflws)=6cbb2b..0c5b;
         // sha256(kRawAhflxm)=49aaf9..c833. NOT produced by the getter or support::sha256.
         static constexpr ArtifactDigest kModuleKat = {
-            0x61, 0xb1, 0x91, 0x46, 0x2e, 0x16, 0xcd, 0xdb, 0xbb, 0x93, 0x97,
-            0xe2, 0xb8, 0x82, 0xdd, 0x27, 0x41, 0xed, 0xf1, 0x50, 0x68, 0x45,
-            0xdc, 0xe9, 0xb9, 0xbc, 0xbb, 0x4d, 0xf6, 0xfb, 0xf9, 0x40};
+            0xd0, 0x4e, 0x82, 0x22, 0x95, 0x72, 0xe0, 0x90, 0x73, 0xd9, 0x0c,
+            0x5f, 0x17, 0xcf, 0xbc, 0xe7, 0xe7, 0xf9, 0x00, 0x4c, 0x55, 0x74,
+            0xaf, 0x17, 0xcf, 0x8e, 0x76, 0x99, 0x4d, 0x3c, 0xb8, 0x8c};
         static constexpr ArtifactDigest kWireKat = {
             0x6c, 0xbb, 0x2b, 0xc1, 0x35, 0xd2, 0xe4, 0xaf, 0x2b, 0x56, 0x7e,
             0xe8, 0x20, 0x06, 0xf2, 0xf6, 0xdc, 0x85, 0xeb, 0x54, 0x63, 0x26,

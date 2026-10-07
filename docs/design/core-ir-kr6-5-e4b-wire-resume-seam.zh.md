@@ -363,10 +363,12 @@ unsigned decimal instead of a negative. A fully provenance-preserving serializer
 (option B) was considered and rejected as an out-of-scope persisted-format
 change.
 
-Until a separately reviewed map encoding exists, E4-B accepts only
-`Map<String,V>`. Any other Map key schema fails projection with a stable
-`wire.UNSUPPORTED_MAP_KEY` diagnostic. Silently stringifying an arbitrary key
-would change the RFC 0019/0021 byte contract.
+E4-B admits any wire-representable scalar/string Map key (`Int`, `Bool`,
+`String`, ...). The P4-D frame packer/reader walk key/value generically
+through the layout/wire child pairs, so the wire schema — the host's
+frame-binding authority — projects any wire-representable key. The old
+`Map<String,V>`-only restriction (`wire.UNSUPPORTED_MAP_KEY`) was lifted by
+the RFC 0026 dual-track elimination (2026-10-06).
 
 ### 2.4 One rule engine, two input policies
 

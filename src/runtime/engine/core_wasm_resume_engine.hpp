@@ -22,6 +22,9 @@
 //   * read_whole_memory() returns the WHOLE fixed 64 KiB page as a
 //     non-owning span (the controller re-decodes the node-event prefix from
 //     it, never from a caller-cooked shorter buffer).
+//   * mutable_whole_memory() returns the WHOLE fixed 64 KiB page as a
+//     mutable span (the bridge lane packs P4-D frames at fixed result-block
+//     addresses, not bump allocations).
 //   * alloc_then_write(bytes) bumps one instance-lifetime, never-reclaimed
 //     L0/L3/L4 frame allocation (seam 5.3: instance-lifetime ownership, no
 //     GC) and returns the guest pointer it wrote the exact bytes at.
@@ -83,12 +86,12 @@ using Run2Outcome = std::variant<Run2ResultTuple, Run2Trapped, Run2HostAborted>;
 // whole fixed page at the moment of the call, the controller's sole
 // node-event authority.
 //
-// WH-3: `scalar_arg` carries the single i32 argument of a 1-param import (the
-// bridge lane's control-block pointer, or the section-9 probe's opaque scalar).
-// For a 2-param opaque import it carries the first arg (the frame pointer,
-// also the start of `param_frame`) and is not authoritative; the bridge
-// executor resolves its call site from `scalar_arg` (the control-block
-// address), never from the ordinal alone.
+// WH-3: `scalar_arg` carries the single i32 argument of the bridge import
+// (the control-block pointer). The bridge executor resolves its call site
+// from `scalar_arg` (the control-block address), never from the ordinal
+// alone. On the bridge lane `param_frame` is empty (the args live in the
+// P4-D control block); the in-test Fake engine still populates it to
+// exercise the controller's L2 Param decode path.
 struct ImportObservation {
     std::uint32_t import_ordinal{0};
     std::uint32_t scalar_arg{0};
@@ -109,17 +112,23 @@ struct ImportObservation {
 // (include/ahfl/runtime/ahfl_host.h: AHFL_CAP_OK=0 / AHFL_CAP_ERROR=1 /
 // AHFL_CAP_PENDING=2). The engine writes it verbatim into the import's first
 // result slot and NEVER classifies it -- the guest's compiled code is the
-// classifier (the opaque lane's graceful ERROR/PENDING arms; the bridge lane's
-// unreachable on any non-zero), exactly as run2's raw_status is carried
-// verbatim and classified by the D1b controller. ImportAbort stays
-// HOST-DECISION-failure-only (store/CAS/engine fault): a capability that
-// executed but failed/pending is a raw non-OK reply, never an abort.
+// classifier (the bridge lane traps on any non-zero status), exactly as
+// run2's raw_status is carried verbatim and classified by the D1b controller.
+// ImportAbort stays HOST-DECISION-failure-only (store/CAS/engine fault): a
+// capability that executed but failed/pending is a raw non-OK reply, never an
+// abort.
 struct ImportReply {
     // The raw ahfl_cap_status word, written verbatim to the import's first
     // result slot. Default 0 (AHFL_CAP_OK): a delivered frame is the success
     // encoding, so every pre-WH-3 construction site keeps its semantics.
     std::uint32_t raw_status{0};
     GuestPointer result_ptr{};
+    // The bridge result extent (bytes packed at result_ptr). The capability
+    // callback sets it; production engines do not read it (the sole accepted
+    // bridge functype (i32)->(i32,i32) has no third result slot, and the
+    // module's run2 return carries the workflow output length). The in-test
+    // Fake engine and the capability-import tests consume it as the
+    // authoritative result extent.
     std::uint32_t result_len{0};
 };
 struct ImportAbort {};
@@ -159,6 +168,15 @@ class CoreWasmResumeEngine {
     // it to the controller and finishes that decision BEFORE mutating memory.
     [[nodiscard]] virtual std::expected<std::span<const std::uint8_t>, EngineError>
     read_whole_memory() = 0;
+
+    // The WHOLE fixed 64 KiB linear-memory page as a MUTABLE span. The bridge
+    // lane packs P4-D result frames at fixed result-block addresses (not bump
+    // allocations), so the resume host needs write access to the whole page.
+    // The returned view is valid until the next mutating call. The caller is
+    // the trusted host frame writer; it must not clobber the read-only rodata
+    // region the Data section initialized.
+    [[nodiscard]] virtual std::expected<std::span<std::uint8_t>, EngineError>
+    mutable_whole_memory() = 0;
 
     // One bump allocation: reserve `bytes.size()` bytes of instance memory,
     // write the exact bytes, and return the guest pointer. Instance-lifetime,

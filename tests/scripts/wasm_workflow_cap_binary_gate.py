@@ -35,35 +35,41 @@ from pathlib import Path
 
 # The hardcoded, independently-reviewed canonical AHFLXM payload for the golden
 # capability workflow: magic "AHFLXM", version 2 (WH-5b.2 manifest v2),
-# entry{kind 0, id 0}, node_count 2; node0 id=0 sched=0 cap_call=1 capability=0
-# source_symbol=1 bridge_site_count=0; node1 id=1 sched=1 cap_call=0
-# bridge_site_count=0. The per-node bridge_site_count(u8) is appended AFTER the
-# capabilities array in v2; both nodes are opaque-lane (zero bridge sites).
-EXPECTED_AHFLXM = bytes.fromhex("4148464c584d0200000200000100010001010000")
+# entry{kind 0, id 0}, node_count 2; node0 id=0 sched=0 cap_call=0
+# bridge_site_count=1 (P6 bridge node: ordinal=0 call_site_id=0 capability=0
+# source_symbol=1); node1 id=1 sched=1 cap_call=0 bridge_site_count=0.
+# RFC 0026 dual-track elimination: node0 converted from an opaque cap site
+# (cap_call_count=1) to a P6 bridge node (cap_call_count=0 + in-runner bridge
+# site) — the bridge protocol is the sole capability calling convention.
+EXPECTED_AHFLXM = bytes.fromhex("4148464c584d02000002000000010000000101010000")
 
 WASM_HEADER = b"\x00asm\x01\x00\x00\x00"
+CORE_LAYOUT_NAME = "ahfl.core-layout.v1"
 EXEC_MANIFEST_NAME = "ahfl.wasm-exec-manifest.v1"
 WIRE_SCHEMA_NAME = "ahfl.wire-schema.v1"
 
-# Hard-lock the no-capability E3 identity workflow byte-freeze. WH-5c.5
-# (design 12.15.19) intentionally adds the per-node output stash stores to
-# every opaque node, so the identity workflow grew from 470 to 502 bytes
-# (2 nodes x 16 bytes of i32.store pairs); only a pure-P6 workflow (no
-# opaque nodes) stays byte-identical. Independently reproduced from the
-# WH-5c.5 artifact.
-E3_IDENTITY_SIZE = 502
-E3_IDENTITY_SHA256 = "8eb0bb9f9a64a0930c44e50939e22e40dfd4aac6fdde1359dd16c55544b3d3ff"
+# Hard-lock the no-capability E3 identity workflow byte-freeze. RFC 0026
+# dual-track elimination: every agent is P6-frame now, so the workflow runner
+# carries the frame-lane machinery (runv, bridge control blocks, frame pack/
+# unpack) even for a no-capability identity workflow. The module grew from
+# 502 to 1283 bytes; the freeze fails if the runner bytes move again.
+# Finding 1 fix-forward: the bare-root yield path now distinguishes inline
+# O_k (bulk-copy) from pointer-tree O_k (copy_aggregate) via a per-node
+# needs_normalize flag, adding 36 bytes to the identity workflow runner.
+E3_IDENTITY_SIZE = 1319
+E3_IDENTITY_SHA256 = "418a33ca2a96eaa1937d84a537e902ad382fab89b7c7e49b3a2a8d24289f9b6d"
 
-# Hard-lock the pure-P6 workflow byte-freeze. WH-5c.5 reserves the stash
-# region and emits the per-node (ptr,len) stores ONLY when the schedule has an
-# opaque node (workflow_has_opaque_nodes / stash_base != 0 guards). This
-# fixture is a two-node all-P6 fan-out with zero imports; its bytes must not
-# move when the stash machinery lands, so this freeze fails loudly if the
-# guards regress and stash bytes leak into a pure-P6 emission. Independently
-# reproduced from the WH-5c.5 artifact.
+# Hard-lock the pure-P6 workflow byte-freeze (WH-5c.5 stash guards):
+# zero imports, zero stash bytes, byte-identical emission. RFC 0026
+# dual-track elimination: the runner bytes changed (frame-lane machinery)
+# but the size stayed at 1513 — the stash guards still hold (no opaque
+# nodes means no stash stores). Independently reproduced from the
+# post-elimination artifact.
+# Finding 1 fix-forward: the bare-root yield path inline/pointer-tree
+# distinction added 64 bytes to the pure-P6 workflow runner.
 PURE_P6_GOLDEN_NAME = "wh5c_instance_reuse_fanout.ahfl"
-PURE_P6_SIZE = 1513
-PURE_P6_SHA256 = "ca80b9d1bb02e3e0e1480de1ccb0c5bc18e25f0dee766a1632cc6ab3fe39636b"
+PURE_P6_SIZE = 1577
+PURE_P6_SHA256 = "7f00882700f22c3f0e309e44d432e2991cf627bdac4641d498896f221d789f90"
 
 
 def fail(message: str) -> "NoReturn":
@@ -216,19 +222,21 @@ def main(argv: "list[str]") -> int:
     if not any(sid == 2 for sid, _ in order):
         fail("capability workflow has no import section")
 
-    # The two custom sections must be exactly AHFLXM then AHFLWS, and AHFLWS must
-    # be the module's FINAL section at EOF.
+    # The three custom sections must be exactly core-layout, AHFLXM, then
+    # AHFLWS, and AHFLWS must be the module's FINAL section at EOF.
+    # RFC 0026 dual-track elimination: the core-layout section is now present
+    # on every module (all agents are P6-frame), not just pinned frame agents.
     customs = [(name, payload) for sid, name, payload in sections if sid == 0]
     custom_names = [name for name, _ in customs]
-    if custom_names != [EXEC_MANIFEST_NAME, WIRE_SCHEMA_NAME]:
+    if custom_names != [CORE_LAYOUT_NAME, EXEC_MANIFEST_NAME, WIRE_SCHEMA_NAME]:
         fail(f"unexpected custom section order: {custom_names}")
     if order[-1] != (0, WIRE_SCHEMA_NAME):
         fail("wire-schema section is not the module's final section")
 
-    manifest_payload = customs[0][1]
+    manifest_payload = customs[1][1]
     if manifest_payload != EXPECTED_AHFLXM:
         fail(f"AHFLXM payload mismatch: {manifest_payload.hex()}")
-    if customs[1][1][:6] != b"AHFLWS":
+    if customs[2][1][:6] != b"AHFLWS":
         fail("wire-schema payload does not begin with AHFLWS")
 
     # The run2 opcode-level structural contract (pending-latch first instruction,

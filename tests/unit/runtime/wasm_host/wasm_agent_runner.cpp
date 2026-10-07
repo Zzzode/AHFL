@@ -6,14 +6,14 @@
 // instance, capability invoked/result on the canonical instance), and the
 // result status + output.
 //
-// Three lanes:
-//   1. WireJson identity agent (e1_identity_agent): no capabilities; the
+// Three lanes (every module is P6-frame after the WireJson lane elimination):
+//   1. P6-frame identity agent (e1_identity_agent): no capabilities; the
 //      step-walk drives Start -> Done and run2 returns the input unchanged.
 //   2. P6-frame computed agent (v2b_computed_string): the input is packed
 //      into the fixed P4-D regions, runv walks the state machine, and the
 //      computed output is read from the authorized output base.
-//   3. WireJson capability agent (e2_capability_agent): the Echo capability
-//      on the opaque lane; capability_invoked_hook and
+//   3. P6-frame capability agent (e2_capability_agent): the Echo capability
+//      on the bridge lane; capability_invoked_hook and
 //      capability_result_observer fire LIVE at the canonical instance's
 //      imports.
 
@@ -132,9 +132,6 @@ void test_p6frame_identity_agent(
 
     const auto &desc = emitted->descriptor;
     check(!desc.is_workflow, "p6frame_id.not_workflow");
-    check(desc.frame_contract ==
-              ahfl::backends::CoreWasmFrameContract::P6Frame,
-          "p6frame_id.p6frame");
     check(desc.imports.empty(), "p6frame_id.no_imports");
 
     auto input = value_from_json(R"({"_type":"wasm::e1_identity::Frame","value":"hello"})");
@@ -220,9 +217,6 @@ void test_p6frame_computed_agent(
 
     const auto &desc = emitted->descriptor;
     check(!desc.is_workflow, "p6_computed.not_workflow");
-    check(desc.frame_contract ==
-              ahfl::backends::CoreWasmFrameContract::P6Frame,
-          "p6_computed.p6_frame");
     check(desc.imports.empty(), "p6_computed.no_imports");
 
     auto input = value_from_json(R"({"_type":"wasm::v2b::computed_string::In","flag":true})");
@@ -287,24 +281,21 @@ void test_p6frame_computed_agent(
     }
 }
 
-// ==== 3. WireJson capability agent (Echo, opaque lane) ====
+// ==== 3. P6-frame capability agent (Echo, P6 lane) ====
 
-void test_wirejson_capability_agent(
+void test_p6frame_capability_agent(
     const std::filesystem::path &repo_root) {
     const auto source =
         repo_root / "tests/golden/wasm/e2_capability_agent.ahfl";
     auto emitted = emit_agent(source);
-    check(emitted.has_value(), "wirejson_cap.emit");
+    check(emitted.has_value(), "p6frame_cap.emit");
     if (!emitted.has_value()) {
         return;
     }
 
     const auto &desc = emitted->descriptor;
-    check(!desc.is_workflow, "wirejson_cap.not_workflow");
-    check(desc.frame_contract ==
-              ahfl::backends::CoreWasmFrameContract::WireJson,
-          "wirejson_cap.wirejson");
-    check(desc.imports.size() == 1, "wirejson_cap.one_import");
+    check(!desc.is_workflow, "p6frame_cap.not_workflow");
+    check(desc.imports.size() == 1, "p6frame_cap.one_import");
     if (desc.imports.empty()) {
         return;
     }
@@ -313,11 +304,11 @@ void test_wirejson_capability_agent(
     // imports table carries it; the assertions below compare against it.
     const auto &echo_name = desc.imports[0].canonical_name;
     check(echo_name == "wasm::e2_capability::Echo",
-          "wirejson_cap.echo_name");
+          "p6frame_cap.echo_name");
 
     auto input = value_from_json(
         R"({"_type":"wasm::e2_capability::InputFrame","value":"hello"})");
-    check(input.has_value(), "wirejson_cap.input");
+    check(input.has_value(), "p6frame_cap.input");
     if (!input.has_value()) {
         return;
     }
@@ -336,7 +327,7 @@ void test_wirejson_capability_agent(
     hooks.capability_invoked_hook =
         [&cap_invoked_count, echo_name](AgentId, std::string_view name) {
             ++cap_invoked_count;
-            check(name == echo_name, "wirejson_cap.hook_cap_name");
+            check(name == echo_name, "p6frame_cap.hook_cap_name");
         };
     hooks.capability_result_observer =
         [&cap_result_count](const CapabilityInvocationContext &,
@@ -365,34 +356,34 @@ void test_wirejson_capability_agent(
 
     auto result = wh::run_wasm_agent(emitted->module_bytes, desc, *input,
                                      std::move(hooks), std::move(invoker));
-    check(result.has_value(), "wirejson_cap.run");
+    check(result.has_value(), "p6frame_cap.run");
     if (!result.has_value()) {
         std::cerr << "  error: " << result.error() << "\n";
         return;
     }
 
     // The step-walk should produce: Start -> Done (2 states).
-    check(result->states.size() == 2, "wirejson_cap.state_count");
+    check(result->states.size() == 2, "p6frame_cap.state_count");
     if (result->states.size() == 2) {
         check(result->states[0].state == "Start",
-              "wirejson_cap.state_0");
+              "p6frame_cap.state_0");
         check(result->states[1].state == "Done",
-              "wirejson_cap.state_1");
+              "p6frame_cap.state_1");
     }
 
     // The Echo capability was invoked exactly once.
-    check(cap_invoked_count == 1, "wirejson_cap.cap_invoked_count");
-    check(cap_result_count == 1, "wirejson_cap.cap_result_count");
+    check(cap_invoked_count == 1, "p6frame_cap.cap_invoked_count");
+    check(cap_result_count == 1, "p6frame_cap.cap_result_count");
     check(result->capabilities.size() == 1,
-          "wirejson_cap.capabilities_size");
+          "p6frame_cap.capabilities_size");
     if (!result->capabilities.empty()) {
         check(result->capabilities[0] == echo_name,
-              "wirejson_cap.capabilities[0]");
+              "p6frame_cap.capabilities[0]");
     }
 
     // No failures.
     check(result->capability_failures.empty(),
-          "wirejson_cap.no_failures");
+          "p6frame_cap.no_failures");
 
     // P2-4: the agent lane must emit CapabilityStarted /
     // CapabilityCompleted lifecycle events for each capability call.
@@ -406,7 +397,7 @@ void test_wirejson_capability_agent(
         if (const auto *started =
                 std::get_if<CapabilityStarted>(&event.payload)) {
             ++cap_started_count;
-            check(started->attempt == 1, "wirejson_cap.started_attempt");
+            check(started->attempt == 1, "p6frame_cap.started_attempt");
         } else if (const auto *completed =
                        std::get_if<CapabilityCompleted>(&event.payload)) {
             ++cap_completed_count;
@@ -414,50 +405,50 @@ void test_wirejson_capability_agent(
             completed_cache_hit = completed->cache_hit;
         }
     }
-    check(cap_started_count == 1, "wirejson_cap.cap_started_count");
-    check(cap_completed_count == 1, "wirejson_cap.cap_completed_count");
-    check(completed_attempts == 1, "wirejson_cap.completed_attempts");
-    check(!completed_cache_hit, "wirejson_cap.completed_cache_hit");
+    check(cap_started_count == 1, "p6frame_cap.cap_started_count");
+    check(cap_completed_count == 1, "p6frame_cap.cap_completed_count");
+    check(completed_attempts == 1, "p6frame_cap.completed_attempts");
+    check(!completed_cache_hit, "p6frame_cap.completed_cache_hit");
 
     // The run completed successfully.
     check(result->result.status() ==
               ahfl::runtime::WorkflowStatus::Completed,
-          "wirejson_cap.completed");
+          "p6frame_cap.completed");
 
     // The output should be the OutputFrame-typed echo of the input value
     // (the agent's output type is OutputFrame; the WH-3 executor validates
     // the mock's result against the OutputFrame schema binding).
     const auto *output = result->result.output();
-    check(output != nullptr, "wirejson_cap.has_output");
+    check(output != nullptr, "p6frame_cap.has_output");
     if (output != nullptr) {
         const auto json = value_to_json(*output);
         check(json ==
                   R"({"_type":"wasm::e2_capability::OutputFrame","value":"hello"})",
-              "wirejson_cap.output_value");
+              "p6frame_cap.output_value");
     }
 }
 
-// ==== 4. WireJson capability agent with usage + non-default attempts ====
+// ==== 4. P6-frame capability agent with usage + non-default attempts ====
 
-void test_wirejson_capability_agent_with_usage(
+void test_p6frame_capability_agent_with_usage(
     const std::filesystem::path &repo_root) {
     const auto source =
         repo_root / "tests/golden/wasm/e2_capability_agent.ahfl";
     auto emitted = emit_agent(source);
-    check(emitted.has_value(), "wirejson_cap_usage.emit");
+    check(emitted.has_value(), "p6frame_cap_usage.emit");
     if (!emitted.has_value()) {
         return;
     }
 
     const auto &desc = emitted->descriptor;
-    check(!desc.is_workflow, "wirejson_cap_usage.not_workflow");
+    check(!desc.is_workflow, "p6frame_cap_usage.not_workflow");
     if (desc.imports.empty()) {
         return;
     }
 
     auto input = value_from_json(
         R"({"_type":"wasm::e2_capability::InputFrame","value":"hello"})");
-    check(input.has_value(), "wirejson_cap_usage.input");
+    check(input.has_value(), "p6frame_cap_usage.input");
     if (!input.has_value()) {
         return;
     }
@@ -491,7 +482,7 @@ void test_wirejson_capability_agent_with_usage(
 
     auto result = wh::run_wasm_agent(emitted->module_bytes, desc, *input,
                                      std::move(hooks), std::move(invoker));
-    check(result.has_value(), "wirejson_cap_usage.run");
+    check(result.has_value(), "p6frame_cap_usage.run");
     if (!result.has_value()) {
         std::cerr << "  error: " << result.error() << "\n";
         return;
@@ -522,19 +513,19 @@ void test_wirejson_capability_agent_with_usage(
             completed_cache_hit = completed->cache_hit;
         }
     }
-    check(usage_count == 1, "wirejson_cap_usage.usage_count");
-    check(usage_prompt == 100, "wirejson_cap_usage.usage_prompt");
-    check(usage_completion == 50, "wirejson_cap_usage.usage_completion");
-    check(usage_total == 150, "wirejson_cap_usage.usage_total");
-    check(usage_cost == 0.001, "wirejson_cap_usage.usage_cost");
-    check(completed_count == 1, "wirejson_cap_usage.completed_count");
-    check(completed_attempts == 3, "wirejson_cap_usage.completed_attempts");
-    check(completed_cache_hit, "wirejson_cap_usage.completed_cache_hit");
+    check(usage_count == 1, "p6frame_cap_usage.usage_count");
+    check(usage_prompt == 100, "p6frame_cap_usage.usage_prompt");
+    check(usage_completion == 50, "p6frame_cap_usage.usage_completion");
+    check(usage_total == 150, "p6frame_cap_usage.usage_total");
+    check(usage_cost == 0.001, "p6frame_cap_usage.usage_cost");
+    check(completed_count == 1, "p6frame_cap_usage.completed_count");
+    check(completed_attempts == 3, "p6frame_cap_usage.completed_attempts");
+    check(completed_cache_hit, "p6frame_cap_usage.completed_cache_hit");
 
     // The run completed successfully.
     check(result->result.status() ==
               ahfl::runtime::WorkflowStatus::Completed,
-          "wirejson_cap_usage.completed");
+          "p6frame_cap_usage.completed");
 }
 
 } // namespace
@@ -545,8 +536,8 @@ int main() {
 
     test_p6frame_identity_agent(repo_root);
     test_p6frame_computed_agent(repo_root);
-    test_wirejson_capability_agent(repo_root);
-    test_wirejson_capability_agent_with_usage(repo_root);
+    test_p6frame_capability_agent(repo_root);
+    test_p6frame_capability_agent_with_usage(repo_root);
 
     std::cout << "wasm_agent_runner: " << g_checks << " checks passed\n";
     return 0;

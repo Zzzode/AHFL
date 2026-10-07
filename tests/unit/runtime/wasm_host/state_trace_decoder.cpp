@@ -8,7 +8,7 @@
 //      against the descriptor's all_states for BOTH branches (n=1 -> High,
 //      n=0 -> Low), proving the ring captures input-dependent computed
 //      handlers a static walk cannot derive.
-//   2. node_event_kat: a WireJson capability workflow (e3_capability_workflow)
+//   2. node_event_kat: a P6 capability workflow (e3_capability_workflow)
 //      driven on the REAL wasm3 engine through run2 with an echo import
 //      callback. The decoded node-event buffer (88 bytes = 8 header + 2*40
 //      records) is pinned against the descriptor's schedule -- the same
@@ -24,18 +24,22 @@
 
 #include "runtime/wasm_host/state_trace_decoder.hpp"
 #include "runtime/wasm_host/frame_packer.hpp"
+#include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
 #include "runtime/wasm_host/wasm3_engine.hpp"
 
 #include "runtime/engine/core_wasm_node_events.hpp"
 #include "runtime/engine/core_wasm_resume_engine.hpp"
 #include "runtime/engine/core_wasm_resume_record.hpp"
+#include "runtime/engine/core_wasm_schema_module.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
+#include "runtime/wasm_host/capability_import.hpp"
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "conformance/compile_source.hpp"
@@ -59,6 +63,7 @@ namespace wh = ahfl::runtime::wasm_host;
 namespace eng = ahfl::runtime::core_wasm_resume_engine;
 namespace resume = ahfl::runtime::core_wasm_resume;
 namespace ne = ahfl::runtime::core_wasm_node_events;
+namespace csm = ahfl::runtime::core_wasm_schema_module;
 namespace conf = ahfl::conformance;
 
 using ahfl::runtime::Value;
@@ -135,6 +140,30 @@ state_id(const std::vector<std::string> &all_states, const std::string &name) {
     return UINT32_MAX;
 }
 
+// Build the string regions for P6-frame output reading (mirrors the
+// workflow_session's build_string_regions).
+[[nodiscard]] std::vector<wh::StringRegion>
+build_string_regions(const irc::CoreFrameLayoutSection &section) {
+    std::vector<wh::StringRegion> regions;
+    if (section.rodata_extent > 0) {
+        regions.push_back(
+            {section.rodata_base, section.rodata_base + section.rodata_extent});
+    }
+    if (section.entry_payload_capacity > 0) {
+        regions.push_back({section.entry_payload_base,
+                           section.entry_payload_base +
+                               section.entry_payload_capacity});
+    }
+    for (const auto &site : section.bridge_call_sites) {
+        if (site.result_payload_capacity > 0) {
+            regions.push_back({site.result_payload_base,
+                               site.result_payload_base +
+                                   site.result_payload_capacity});
+        }
+    }
+    return regions;
+}
+
 // ==== 1. trace ring KAT (P6-frame workflow, real wasm3 run2) ====
 
 void test_trace_ring_kat(const std::filesystem::path &repo_root) {
@@ -147,16 +176,9 @@ void test_trace_ring_kat(const std::filesystem::path &repo_root) {
 
     const auto &desc = wf->descriptor;
     check(desc.is_workflow, "trace_kat.is_workflow");
-    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
-          "trace_kat.p6_frame");
-    check(desc.frame_section.has_value(), "trace_kat.has_frame_section");
-    check(desc.wire_schema.has_value(), "trace_kat.has_wire_schema");
-    if (!desc.frame_section.has_value() || !desc.wire_schema.has_value()) {
-        return;
-    }
 
-    const auto &section = *desc.frame_section;
-    const auto &wire = *desc.wire_schema;
+    const auto &section = desc.frame_section;
+    const auto &wire = desc.wire_schema;
 
     check(section.state_trace_capacity > 0, "trace_kat.trace_capacity > 0");
     check(section.node_blocks.size() == 1, "trace_kat.one_node_block");
@@ -285,7 +307,7 @@ void test_trace_ring_kat(const std::filesystem::path &repo_root) {
     }
 }
 
-// ==== 2. node-event KAT (WireJson capability workflow, real wasm3 run2) ====
+// ==== 2. node-event KAT (P6 capability workflow, real wasm3 run2) ====
 
 void test_node_event_kat(const std::filesystem::path &repo_root) {
     const auto source =
@@ -303,37 +325,79 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
     if (desc.imports.empty()) {
         return;
     }
-    // The Echo capability is on the opaque lane (the workflow is WireJson;
-    // bridge mode is tagged only for P6-frame in-handler bridge calls).
-    check(desc.imports[0].mode == "opaque", "node_event_kat.opaque_lane");
-    if (desc.imports[0].mode != "opaque") {
-        return;
-    }
 
     // The canonical workflow input JSON (sorted keys, no whitespace).
     const std::string input_json =
         "{\"_type\":\"wasm::e3_capability_workflow::Frame\",\"value\":\"identity\"}";
-    const auto input_span = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(input_json.data()),
-        input_json.size());
+    auto input = value_from_json(input_json);
+    check(input.has_value(), "node_event_kat.input_json");
+    if (!input.has_value()) {
+        return;
+    }
 
     wh::Wasm3ResumeEngine engine;
 
-    // Echo callback: the opaque envelope is the capability argument frame;
-    // Echo returns it unchanged, so the callback allocates and copies the
-    // exact bytes back through the engine's own allocator.
-    auto echo_callback = [&engine](const eng::ImportObservation &obs)
-        -> eng::ImportCallbackResult {
-        if (obs.param_frame.empty()) {
-            return eng::ImportAbort{}; // bridge lane not expected
+    // Build the production bridge callback (the same executor the
+    // workflow_session and wasm_agent_runner use). The Echo invoker returns
+    // its single argument unchanged; the bridge executor packs the result
+    // into the call site's result region.
+    auto admitted = csm::make_verified_core_wasm_schema_module(wf->module_bytes);
+    check(admitted.ok() && admitted.module.has_value(),
+          "node_event_kat.wire_admission");
+    if (!admitted.ok() || !admitted.module.has_value()) {
+        return;
+    }
+
+    const auto &frame_section = desc.frame_section;
+    ahfl::runtime::CapabilityInvocationContext invocation_context;
+    invocation_context.agent_id = ahfl::runtime::AgentId{0};
+
+    ahfl::runtime::ContextualCapabilityInvoker echo_invoker =
+        [](const ahfl::runtime::CapabilityInvocationContext &,
+           const std::string &,
+           const std::vector<Value> &args)
+        -> ahfl::runtime::CapabilityCallResult {
+        ahfl::runtime::CapabilityCallResult r;
+        r.status = ahfl::runtime::CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
         }
-        auto alloc = engine.alloc_then_write(obs.param_frame);
-        if (!alloc.has_value()) {
-            return eng::ImportAbort{};
-        }
-        return eng::ImportReply{0, *alloc,
-                                static_cast<std::uint32_t>(obs.param_frame.size())};
+        return r;
     };
+
+    std::function<std::optional<std::string>(std::uint64_t)> name_resolver =
+        [&desc](std::uint64_t source_symbol) -> std::optional<std::string> {
+        for (const auto &node : desc.nodes) {
+            if (!node.has_capability) {
+                continue;
+            }
+            if (!node.all_capabilities.empty()) {
+                for (const auto &[ordinal, sym] : node.all_capabilities) {
+                    if (sym == source_symbol &&
+                        ordinal < desc.imports.size()) {
+                        return desc.imports[ordinal].canonical_name;
+                    }
+                }
+            } else if (node.source_symbol == source_symbol &&
+                       node.capability_ordinal < desc.imports.size()) {
+                return desc.imports[node.capability_ordinal].canonical_name;
+            }
+        }
+        return std::nullopt;
+    };
+
+    wh::CapabilityImportState import_state;
+    wh::CapabilityImportConfig cap_config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = frame_section,
+        .invoker = echo_invoker,
+        .context = invocation_context,
+        .name_resolver = std::move(name_resolver),
+        .state = import_state,
+    };
+    auto echo_callback =
+        wh::make_capability_import_callback(std::move(cap_config));
 
     auto inst = engine.fresh_instance(wf->module_bytes, std::move(echo_callback));
     check(inst.has_value(), "node_event_kat.fresh_instance");
@@ -341,15 +405,49 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
         return;
     }
 
-    // Write the workflow input via the module's own exported allocator.
-    auto input_ptr = engine.alloc_then_write(input_span);
-    check(input_ptr.has_value(), "node_event_kat.alloc_input");
-    if (!input_ptr.has_value()) {
+    // Pack the workflow input as a P4-D frame into the entry node's I_k block
+    // (the P6-only world has no wire-JSON entry lane; run2 receives the P4-D
+    // frame pointer, not a JSON pointer).
+    const auto &section = desc.frame_section;
+    const auto &wire = desc.wire_schema;
+    check(wire.frame_roots.has_value(), "node_event_kat.has_frame_roots");
+    if (!wire.frame_roots.has_value()) {
+        return;
+    }
+    const auto p6_ord = desc.nodes[0].p6_block_ordinal;
+    check(p6_ord < section.node_blocks.size(),
+          "node_event_kat.p6_ord_in_range");
+    if (p6_ord >= section.node_blocks.size()) {
+        return;
+    }
+    const auto &block = section.node_blocks[p6_ord];
+    const auto w_id = wire.frame_roots->node_inputs[p6_ord];
+    const auto l_id = block.input_layout;
+
+    auto page = engine.mutable_whole_memory();
+    check(page.has_value(), "node_event_kat.mutable_memory");
+    if (!page.has_value()) {
+        return;
+    }
+    // Zero the reserved named regions so padding/union words are 0 (the same
+    // discipline as the workflow_session entry pack).
+    std::fill(page->begin() + irc::kP6AggregateInputBase,
+              page->begin() + irc::kP6CollectionBackingBase,
+              std::uint8_t{0});
+
+    wh::FrameWalkContext pack_ctx(section, wire);
+    std::uint32_t arena_cursor = section.entry_payload_base;
+    auto packed = wh::pack_value_at(pack_ctx, *page, w_id, l_id, *input,
+                                    block.input_base, arena_cursor,
+                                    section.entry_payload_base,
+                                    section.entry_payload_capacity);
+    check(packed.has_value(), "node_event_kat.pack_input");
+    if (!packed.has_value()) {
         return;
     }
 
     auto outcome = engine.invoke_run2(
-        *input_ptr, static_cast<std::uint32_t>(input_json.size()));
+        eng::GuestPointer{block.input_base}, block.input_size);
     check(outcome.has_value(), "node_event_kat.invoke_run2");
     if (!outcome.has_value()) {
         return;
@@ -361,19 +459,34 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
         return;
     }
     check(tuple->raw_status == 0, "node_event_kat.status_ok");
-    check(tuple->output_ptr.value != 0, "node_event_kat.output_ptr_nonzero");
-    check(tuple->output_len > 0, "node_event_kat.output_len_nonzero");
 
     // The output must equal the input (Echo echoes, SecondAgent is identity).
+    // In the P6-only world the output is a binary P4-D frame at the workflow
+    // output base; read it through the frame reader and compare as JSON.
     auto mem = engine.read_whole_memory();
     check(mem.has_value(), "node_event_kat.read_memory");
     if (!mem.has_value()) {
         return;
     }
-    const std::string output_json(
-        reinterpret_cast<const char *>(mem->data() + tuple->output_ptr.value),
-        tuple->output_len);
-    check(output_json == input_json, "node_event_kat.output_echo");
+    check(desc.wire_schema.frame_roots.has_value(),
+          "node_event_kat.has_frame_roots");
+    if (!desc.wire_schema.frame_roots.has_value()) {
+        return;
+    }
+    {
+        const auto &section = desc.frame_section;
+        const auto &wire = desc.wire_schema;
+        const auto string_regions = build_string_regions(section);
+        wh::FrameWalkContext ctx(section, wire);
+        auto output = wh::read_value_at(
+            ctx, *mem, wire.frame_roots->output, section.output_layout,
+            section.workflow_output_base, string_regions);
+        check(output.has_value(), "node_event_kat.output_read");
+        if (output.has_value()) {
+            const auto output_json = ahfl::runtime::value_to_json(*output);
+            check(output_json == input_json, "node_event_kat.output_echo");
+        }
+    }
 
     // Decode the node-event buffer (88 bytes = 8 header + 2 * 40 records).
     auto events = ne::decode_node_events(*mem, desc.workflow_node_count);

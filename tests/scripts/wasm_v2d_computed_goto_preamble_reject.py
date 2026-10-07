@@ -1,29 +1,23 @@
 #!/usr/bin/env python3
-"""RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward fail-closed gate.
+"""RFC 0026 dual-track elimination: computed-goto preamble capability final.
 
 A workflow node whose packaged agent's ONLY computed content is a SCALAR
-computed-goto preamble feeding an opaque capability final
-(v2d_computed_goto_preamble_reject.ahfl) must NOT be packaged on the opaque
-workflow-runner lane: that runner is a static GotoAction walk, so the
-ComputedGotoAction state becomes its terminal and the emitted module completes
-the node through the identity arm WITHOUT EVER INVOKING THE CAPABILITY
-(the ahfl_cap import is present but dead, and run2 forges an
-un-capability-called result). Pre-fix the producer emitted a well-formed,
-byte-gate-passing module.
-
-Until V2-D computed-runner module emission lands the producer must fail
-closed:
-  * exit non-zero;
-  * stderr carries wasm.UNSUPPORTED_WORKFLOW_FRAME;
-  * no wasm artifact is written.
+computed-goto preamble feeding a capability final
+(v2d_computed_goto_preamble_reject.ahfl) is now packaged on the P6 bridge
+runner lane. The P6 bridge runner is a full state-machine interpreter, so the
+ComputedGotoAction state dispatches to the capability final and the bridge
+import is invoked. Pre-elimination the opaque workflow runner (a static
+GotoAction walk) would have treated the ComputedGotoAction state as its
+terminal and completed the node through the identity arm WITHOUT EVER
+INVOKING THE CAPABILITY, so the producer fail-closed rejected this shape.
+With the opaque lane gone, the emission succeeds.
 
 Positive control: the baseline bare-goto capability workflow
 (e3_capability_workflow.ahfl, Start -> Done{return Echo(input)}) still emits
-with exactly one ahfl_cap import, so the fail-closed predicate did not sweep
-the opaque capability lane.
+with exactly one ahfl_cap import.
 
-Engine-independent (no Node needed): the gate is the reject plus the
-baseline import count.
+Engine-independent (no Node needed): the gate is the successful emission plus
+the baseline import count.
 """
 from __future__ import annotations
 
@@ -32,9 +26,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-REJECT_FIXTURE = "v2d_computed_goto_preamble_reject.ahfl"
+FORMERLY_REJECT_FIXTURE = "v2d_computed_goto_preamble_reject.ahfl"
 BASELINE_FIXTURE = "e3_capability_workflow.ahfl"
-EXPECTED_CODE = "wasm.UNSUPPORTED_WORKFLOW_FRAME"
 
 
 def fail(message: str) -> int:
@@ -50,9 +43,9 @@ def main(argv: list[str]) -> int:
         return fail("missing capability-workflow producer")
     fixtures = Path(__file__).resolve().parent.parent / "golden" / "wasm"
 
-    reject_source = fixtures / REJECT_FIXTURE
-    if not reject_source.is_file():
-        return fail(f"missing negative fixture {REJECT_FIXTURE}")
+    source = fixtures / FORMERLY_REJECT_FIXTURE
+    if not source.is_file():
+        return fail(f"missing fixture {FORMERLY_REJECT_FIXTURE}")
     baseline_source = fixtures / BASELINE_FIXTURE
     if not baseline_source.is_file():
         return fail(f"missing baseline fixture {BASELINE_FIXTURE}")
@@ -60,25 +53,22 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-v2d-preamble-") as td:
         scratch = Path(td)
 
-        rejected = scratch / "must_not_exist.wasm"
+        # The computed-goto preamble feeding a capability final now emits
+        # successfully on the P6 bridge runner lane.
+        emitted = scratch / "computed_goto_preamble.wasm"
         run = subprocess.run(
-            [str(producer), str(reject_source), str(rejected)],
+            [str(producer), str(source), str(emitted)],
             capture_output=True, text=True, timeout=60,
         )
-        if run.returncode == 0:
+        if run.returncode != 0:
             return fail(
                 "a scalar computed-goto preamble feeding a capability final "
-                "emitted a workflow module (opaque runner would forge an "
-                "un-capability-called result)"
+                f"stopped emitting: {run.stderr!r}"
             )
-        if EXPECTED_CODE not in run.stderr:
-            return fail(
-                f"expected {EXPECTED_CODE} rejection, got stderr: {run.stderr!r}"
-            )
-        if rejected.exists():
-            return fail("the rejected workflow must not write a wasm artifact")
+        if not emitted.is_file():
+            return fail("the computed-goto preamble workflow wrote no wasm artifact")
 
-        # Positive control: the bare-goto opaque capability workflow still
+        # Positive control: the bare-goto capability workflow still
         # emits with exactly one capability import.
         baseline = scratch / "baseline.wasm"
         base_run = subprocess.run(
@@ -98,7 +88,7 @@ def main(argv: list[str]) -> int:
         if not baseline.is_file():
             return fail("the baseline capability workflow wrote no wasm artifact")
 
-    print("V2-D scalar computed-goto preamble fail-closed compile-reject lane passed")
+    print("V2-D scalar computed-goto preamble P6-bridge emission lane passed")
     return 0
 
 

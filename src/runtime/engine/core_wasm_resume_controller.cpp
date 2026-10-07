@@ -547,12 +547,21 @@ build_prepared(VerifiedCoreWasmSchemaModule module,
     st->callsite_memo.assign(st->call_site_count, std::nullopt);
     st->callsite_arg_hash.assign(st->call_site_count, std::nullopt);
 
-    // Per-occurrence memo authority. For every committed capability memo, Verified-decode
-    // its result bytes against that call site's Result binding and record its arg_hash.
-    // Repeated result_slot ids reuse the same authenticated bytes (O(1) lookup) but each
-    // occurrence still runs its own binding decode.
+    // Per-occurrence memo authority. For every committed capability memo OR P6
+    // bridge-node memo, Verified-decode its result bytes against that call site's
+    // Result binding and record its arg_hash. Repeated result_slot ids reuse the
+    // same authenticated bytes (O(1) lookup) but each occurrence still runs its
+    // own binding decode.
     for (const ResumeNode &node : st->record.nodes) {
-        if (node.node_kind != core_wasm_resume::NodeKind::Capability) {
+        const bool is_capability =
+            node.node_kind == core_wasm_resume::NodeKind::Capability;
+        // P6 bridge nodes carry node_kind Identity but hold memo/pending state
+        // (the coordinate gate admitted them via is_p6_bridge_node).
+        const auto module_node =
+            st->module.resolve_node(ManifestNodeIndex{node.schedule_pos});
+        const bool is_bridge =
+            module_node.ok() && is_p6_bridge_node(*module_node.node);
+        if (!is_capability && !is_bridge) {
             continue;
         }
         if (node.schedule_pos >= st->schedule_to_callsite.size()) {
@@ -723,7 +732,11 @@ event_join(const detail::PreparedState &st, std::span<const std::uint8_t> whole_
         if (!node.ok()) {
             return ResumeStepReason::CoordinateMismatch;
         }
-        const bool manifest_is_cap = node.node->cap_call_count() == kCapabilityCallCount;
+        // P6 bridge nodes publish NodeKind::Capability (they call a capability
+        // via the bridge) even though their cap_call_count is 0; the manifest
+        // kind check must admit them alongside construct-terminal cap nodes.
+        const bool manifest_is_cap = node.node->cap_call_count() == kCapabilityCallCount ||
+                                     is_p6_bridge_node(*node.node);
         const bool record_is_cap = r.kind == core_wasm_resume::NodeKind::Capability;
         if (manifest_is_cap != record_is_cap) {
             return ResumeStepReason::CoordinateMismatch;
@@ -1003,29 +1016,36 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
     }
 
     // Param Verified-decode + arity-1 wire-canonical hash (before any branch).
-    auto dom = json::parse_json(std::string_view(
-        reinterpret_cast<const char *>(input.module_param_frame.data()),
-        input.module_param_frame.size()));
-    if (!dom.has_value()) {
-        st.phase = Phase::Failed;
-        return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
-    }
-    auto decoded = wire_codec::decode_json(**dom, expected.call_site->param_binding());
-    if (!decoded.ok()) {
-        st.phase = Phase::Failed;
-        return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
-    }
+    // Bridge lane: the adapter pre-decoded the P4-D args and supplied the hash.
+    // Opaque lane: decode the wire-JSON param frame.
+    std::uint64_t arg_hash;
     std::vector<runtime::Value> params;
-    params.push_back(std::move(*decoded.value));
-    // The param was decoded from wire JSON under the binding, so it cannot be a
-    // closure and hashing cannot reject it; a nullopt here is nevertheless a
-    // fail-closed payload fault rather than a zero-digest acceptance.
-    const auto arg_hash_or = runtime::hash_values(params);
-    if (!arg_hash_or.has_value()) {
-        st.phase = Phase::Failed;
-        return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
+    if (input.bridge_arg_hash.has_value()) {
+        arg_hash = *input.bridge_arg_hash;
+    } else {
+        auto dom = json::parse_json(std::string_view(
+            reinterpret_cast<const char *>(input.module_param_frame.data()),
+            input.module_param_frame.size()));
+        if (!dom.has_value()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
+        }
+        auto decoded = wire_codec::decode_json(**dom, expected.call_site->param_binding());
+        if (!decoded.ok()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
+        }
+        params.push_back(std::move(*decoded.value));
+        // The param was decoded from wire JSON under the binding, so it cannot be a
+        // closure and hashing cannot reject it; a nullopt here is nevertheless a
+        // fail-closed payload fault rather than a zero-digest acceptance.
+        const auto arg_hash_or = runtime::hash_values(params);
+        if (!arg_hash_or.has_value()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
+        }
+        arg_hash = *arg_hash_or;
     }
-    const std::uint64_t arg_hash = *arg_hash_or;
 
     const std::size_t j = st.replay_cursor;
     const bool below_frontier = j < st.frontier_call_site;

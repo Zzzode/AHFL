@@ -165,7 +165,6 @@ def main(argv: list[str]) -> int:
         "alloc",
         "dealloc",
         "run",
-        "run2",
         "step",
         "current_state",
         "transition_count",

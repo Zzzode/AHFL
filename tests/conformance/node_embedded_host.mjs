@@ -264,18 +264,63 @@ function readBridgeArgValue(e, lane, W, L, backing, currentSite, wireId, layoutI
 }
 
 // Union of the String-payload regions the read walker may authorize for a
-// BRIDGE argument: the packed input-payload arena, the rodata region, and
-// every OTHER call site's result placement payload. The CURRENT call site's
-// own result region is excluded — its block is this call's output, so before
-// the host packs it that region can never be a valid arg source.
+// BRIDGE argument: the packed input-payload arena, the rodata region, the
+// construct heap, and every OTHER call site's result placement payload. The
+// CURRENT call site's own result region is excluded — its block is this
+// call's output, so before the host packs it that region can never be a
+// valid arg source.
+//
+// Mirrors build_bridge_string_regions in capability_import.cpp: a
+// capability-final's construct terminal builds its argument at the node's
+// O_k block (workflow lane) or the agent output frame (agent lane), so
+// String leaves inside that argument must be authorized.
 function bridgeStringRegions(lane, currentSite) {
   const regions = [];
+  // Packed input-payload arena.
+  const arenaLo = Number(lane.payload_arena_base || 0);
+  const arenaHi = arenaLo + Number(lane.payload_arena_capacity || 0);
+  if (arenaLo !== 0 && arenaHi > arenaLo) {
+    regions.push({lo: arenaLo, hi: arenaHi});
+  }
+  // Workflow entry payload arena (packed input frame; String arguments
+  // spilled from a bridge call site point into it).
+  const wfLane = descriptor.workflow_lane;
+  if (wfLane !== undefined && Number(wfLane.entry_payload_capacity || 0) > 0) {
+    regions.push({lo: Number(wfLane.entry_payload_base),
+                  hi: Number(wfLane.entry_payload_base) +
+                      Number(wfLane.entry_payload_capacity)});
+  }
+  // Rodata region.
+  const rodataLo = Number(lane.rodata_base || 0);
+  const rodataHi = rodataLo + Number(lane.rodata_extent || 0);
+  if (rodataLo !== 0 && rodataHi > rodataLo) {
+    regions.push({lo: rodataLo, hi: rodataHi});
+  }
+  // Construct heap [construct_heap_base, 65536) (String concat results).
+  const heapLo = Number(lane.construct_heap_base || 0);
+  if (heapLo !== 0) {
+    regions.push({lo: heapLo, hi: 65536});
+  }
   for (const s of lane.bridge_call_sites) {
     if (s.call_site_id === currentSite.call_site_id) continue;
     if (s.result_payload_capacity > 0) {
       regions.push({lo: s.result_payload_base,
                     hi: s.result_payload_base + s.result_payload_capacity});
     }
+  }
+  // Workflow lane: every packaged node's O_k block is an authorized String
+  // payload home (a construct terminal materializes its argument there).
+  if (wfLane?.node_blocks) {
+    for (const block of wfLane.node_blocks) {
+      if (Number(block.output_size) > 0) {
+        regions.push({lo: Number(block.output_base),
+                      hi: Number(block.output_base) + Number(block.output_size)});
+      }
+    }
+  } else if (Number(lane.output_size) > 0) {
+    // Agent lane: the fixed output frame.
+    regions.push({lo: Number(lane.output_base),
+                  hi: Number(lane.output_base) + Number(lane.output_size)});
   }
   return regions;
 }
@@ -307,10 +352,6 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
     const e = instance.exports;
     const dv = new DataView(e.memory.buffer);
     const lane = descriptor.frame_lane;
-    if (importEntry.mode !== "bridge") {
-      frameFail(`import ${importEntry.field} is invoked but the descriptor does not tag it as a ` +
-                `bridge import`);
-    }
     // Resolve the call site FROM THE CONTROL-BLOCK ADDRESS, never from the
     // import ordinal: one capability legally occupies one import (one ordinal)
     // shared by MANY dense call sites (the normal loop / chain shape, design
@@ -368,6 +409,15 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
         if (Number(block.scratch_size) > 0) {
           rootRegions.push({lo: Number(block.scratch_base),
                             hi: Number(block.scratch_base) + Number(block.scratch_size)});
+        }
+        // RFC 0026 dual-track elimination: a capability-final construct
+        // terminal materializes its result into the node's O_k block and
+        // passes it as the bridge argument. The output block is an
+        // authorized aggregate-root home (mirrors build_bridge_root_regions
+        // in capability_import.cpp).
+        if (Number(block.output_size) > 0) {
+          rootRegions.push({lo: Number(block.output_base),
+                            hi: Number(block.output_base) + Number(block.output_size)});
         }
       }
     } else {
@@ -438,267 +488,24 @@ function bridgeEnvelope(W, paramWireIds, args) {
     const wireNode = W[paramWireIds[0]];
     if (wireNode === undefined) frameFail("bridge envelope names an unknown wire parameter");
     if (wireNode.t === "struct") {
-      return jsonString(args[0]);
+      return stringifyValue(args[0]);
     }
-    return jsonString({value: args[0]});
+    return stringifyValue({value: args[0]});
   }
-  return jsonString({args});
-}
-
-// ---- WH-5b.3: ahfl_xcode transcode codec adapter ----------------------------
-//
-// Mirrors handle_transcode in src/runtime/wasm_host/transcode.cpp. A pure
-// codec: never invokes a capability, touches memo, fires hooks, or writes an
-// event record. The descriptor carries the transcode sites (direction, source,
-// node ordinals, layout) and the shadow/payload regions the host packs/reads
-// against; the JS host resolves the wire binding from the direction + source
-// kind (never a caller-supplied node id), so a corrupt site can only name a
-// legitimate boundary root of its own direction.
-
-// Sentinel for a transcode site whose target is the workflow output slot (not
-// a scheduled node). Mirrors kTranscodeWorkflowOutput in core_frame_layout.hpp.
-const kTranscodeWorkflowOutput = 4294967295;
-
-// Resolve the transcode site's boundary wire root. Mirrors
-// mint_transcode_binding in transcode.cpp. Returns the wire node id, or null
-// when the site names a corrupt/impossible binding.
-function resolveTranscodeBinding(site, roots) {
-  const wfLane = descriptor.workflow_lane;
-  if (wfLane === undefined) return null;
-  if (site.direction === "p4d_to_json") {
-    if (site.source === "entry") return roots.input;
-    if (site.source === "capability_param") {
-      // The construct terminal's self-transcode: the source is the
-      // capability's PARAM type. Resolve via the node's source_symbol.
-      const nodeDesc = wfLane.nodes[site.source_node_ordinal];
-      if (nodeDesc === undefined) return null;
-      const caps = descriptor.wire_schema.capabilities ?? [];
-      const cap = caps.find(
-        (c) => Number(c.source_symbol) === Number(nodeDesc.source_symbol));
-      if (cap === undefined || site.param_ordinal >= cap.params.length) {
-        return null;
-      }
-      return cap.params[site.param_ordinal];
-    }
-    // NodeOutput: the P6 producer's OUTPUT boundary root.
-    const nodeDesc = wfLane.nodes[site.source_node_ordinal];
-    if (nodeDesc === undefined || !nodeDesc.is_p6) return null;
-    return roots.node_outputs[nodeDesc.p6_block_ordinal];
-  }
-  // JSON_TO_P4D
-  if (site.source === "capability_param") return null; // P4DToJson-only
-  if (site.source === "entry") return roots.input;
-  if (site.target_node_ordinal === kTranscodeWorkflowOutput) {
-    return roots.output;
-  }
-  // NodeOutput -> a P6 consumer's INPUT boundary root.
-  const nodeDesc = wfLane.nodes[site.target_node_ordinal];
-  if (nodeDesc === undefined || !nodeDesc.is_p6) return null;
-  return roots.node_inputs[nodeDesc.p6_block_ordinal];
-}
-
-// Build the authorized String-byte regions for a P4D_TO_JSON transcode read.
-// Mirrors build_transcode_string_regions in transcode.cpp. readValue already
-// authorizes the input-payload arena, rodata, and construct heap; these are
-// the ADDITIONAL regions (entry-payload arena, bridge result placements,
-// transcode payload arena).
-function buildTranscodeStringRegions(frameLane) {
-  const regions = [];
-  const wfLane = descriptor.workflow_lane;
-  if (wfLane !== undefined && Number(wfLane.entry_payload_capacity || 0) > 0) {
-    regions.push({
-      lo: Number(wfLane.entry_payload_base),
-      hi: Number(wfLane.entry_payload_base) + Number(wfLane.entry_payload_capacity),
-    });
-  }
-  for (const site of (frameLane.bridge_call_sites ?? [])) {
-    if (Number(site.result_payload_capacity) > 0) {
-      regions.push({
-        lo: Number(site.result_payload_base),
-        hi: Number(site.result_payload_base) + Number(site.result_payload_capacity),
-      });
-    }
-  }
-  if (Number(frameLane.transcode_payload_capacity || 0) > 0) {
-    regions.push({
-      lo: Number(frameLane.transcode_payload_base),
-      hi: Number(frameLane.transcode_payload_base) + Number(frameLane.transcode_payload_capacity),
-    });
-  }
-  return regions;
-}
-
-// The host transcode callback. P4D_TO_JSON reads a P4-D frame at the guest-
-// pushed address and serializes to wire JSON; JSON_TO_P4D parses the guest-
-// pushed wire JSON and packs into the static shadow region.
-function makeTranscodeCallback(site, getInstance, getState) {
-  return (ptr, len) => {
-    const instance = getInstance();
-    const state = getState();
-    const e = instance.exports;
-    const frameLane = descriptor.frame_lane;
-    const W = descriptor.wire_schema.nodes;
-    const L = frameLane.layouts;
-    const roots = descriptor.wire_schema.roots;
-    const backing = backingByLayout(frameLane);
-
-    const wireNodeId = resolveTranscodeBinding(site, roots);
-    if (wireNodeId === null || wireNodeId === undefined) {
-      frameFail(`transcode site xcode_${site.import_ordinal} could not resolve its wire binding`);
-    }
-
-    if (site.direction === "p4d_to_json") {
-      // P4D_TO_JSON: read the P4-D source frame at the guest-pushed address,
-      // serialize to wire JSON, alloc+write, reply (0, json_ptr, json_len).
-      const stringRegions = buildTranscodeStringRegions(frameLane);
-      const value = readValue(e, frameLane, W, L, wireNodeId, site.layout,
-                              ptr, backing, stringRegions);
-      const jsonBytes = encoder.encode(JSON.stringify(value));
-      const out = e.alloc(jsonBytes.length);
-      new Uint8Array(e.memory.buffer, out, jsonBytes.length).set(jsonBytes);
-      return [0, out, jsonBytes.length];
-    }
-
-    // JSON_TO_P4D: parse the wire-JSON source the guest pushed, pack into the
-    // static shadow region, reply (0, shadow_base, shadow_extent).
-    const jsonText = decoder.decode(
-      new Uint8Array(e.memory.buffer, ptr, len));
-    const value = JSON.parse(jsonText);
-
-    // Validate the shadow/payload spans (mirrors the C++ host's
-    // verify_workflow_spans predicates: nonzero, 8-aligned, in-page).
-    const shadowBase = Number(frameLane.transcode_shadow_base);
-    const shadowExtent = Number(frameLane.transcode_shadow_extent);
-    const payloadBase = Number(frameLane.transcode_payload_base);
-    const payloadCapacity = Number(frameLane.transcode_payload_capacity);
-    const siteLayout = L[site.layout];
-    if (siteLayout === undefined) {
-      frameFail(`transcode site names an out-of-range layout ${site.layout}`);
-    }
-    const neededExtent = (Number(siteLayout.size) + 7) & ~7;
-    if (shadowBase === 0 || shadowBase % 8 !== 0 ||
-        shadowExtent < neededExtent ||
-        shadowBase + shadowExtent > kPageSize ||
-        payloadBase === 0 || payloadBase % 8 !== 0 ||
-        payloadCapacity === 0 ||
-        payloadBase + payloadCapacity > kPageSize) {
-      frameFail("transcode shadow/payload spans are invalid (zero, unaligned, or out-of-page)");
-    }
-
-    // The transcode payload arena cursor is shared (append-only) across all
-    // JSON_TO_P4D transcodes in a run, so an earlier consumer's PtrLen stays
-    // valid. Initialize on first use.
-    if (state.transcodeArenaCursor === 0) {
-      state.transcodeArenaCursor = payloadBase;
-    }
-    const arena = {
-      cursor: state.transcodeArenaCursor,
-      base: payloadBase,
-      capacity: payloadCapacity,
-      exhausted_message: "transcode payload arena exhausted",
-    };
-    packValue(e, frameLane, W, L, value, wireNodeId, site.layout,
-              shadowBase, backing, arena);
-    state.transcodeArenaCursor = arena.cursor;
-    return [0, shadowBase, shadowExtent];
-  };
+  return stringifyValue({args});
 }
 
 async function makeInstance(compiled, mode) {
-  const state = { calls: 0, events: [], perName: new Map(),
-                  transcodeArenaCursor: 0 };
+  const state = { calls: 0, events: [], perName: new Map() };
   const imports = {};
   for (const importEntry of descriptor.imports) {
-    if (importEntry.mode === "bridge") {
-      const ordinal = importEntry.ordinal;
-      imports[importEntry.field] = makeBridgeCallback(
-        importEntry, ordinal, () => instance, () => state, mode);
-      continue;
-    }
-    imports[importEntry.field] = (ptr, len) => {
-      const argument = decoder.decode(
-        new Uint8Array(instance.exports.memory.buffer, ptr, len));
-      state.calls += 1;
-      state.events.push({ name: importEntry.name, argument });
-      // WH-5b.3: a construct-capability terminal's argument is the
-      // P4D_TO_JSON transcoded constructed value, not the workflow input.
-      // Skip the input-equality check when the module carries transcode
-      // sites; the C++ comparator still validates the argument against the
-      // blessed expectation.
-      const hasTranscode =
-          (descriptor.frame_lane?.transcode_sites?.length ?? 0) > 0;
-      if (!hasTranscode && argument !== scenario.input_wire) {
-        fail(`opaque capability argument frame changed for ${importEntry.name}`);
-      }
-
-      // scenario mode: replay the manifest mock for this capability at its
-      // per-name invocation cursor.
-      if (mode === "scenario") {
-        const index = state.perName.get(importEntry.name) ?? 0;
-        state.perName.set(importEntry.name, index + 1);
-        const mocks = scenario.mocks.filter((m) => m.name === importEntry.name);
-        const mock = mocks[index];
-        if (mock === undefined) {
-          fail(`scenario '${scenario.name}' has no mock for call ${index} of ${importEntry.name}`);
-        }
-        if (mock.status === "ok") {
-          const resultBytes = encoder.encode(mock.result_wire);
-          const out = instance.exports.alloc(resultBytes.length);
-          new Uint8Array(instance.exports.memory.buffer, out, resultBytes.length)
-            .set(resultBytes);
-          return [0, out, resultBytes.length];
-        }
-        if (mock.status === "pending") return [2, 0, 0];
-        return [1, 0, 0];
-      }
-
-      if (mode === "ok" || mode === "corrupt-count") {
-        if (mode === "corrupt-count") {
-          // Tamper the event_count header before returning a legal OK frame; the
-          // scheduler's defensive coordinate gate must reject it.
-          new DataView(instance.exports.memory.buffer).setUint32(
-            descriptor.event_buffer.log_base, 99, true);
-        }
-        const resultBytes = encoder.encode(scenario.mocks[state.calls - 1]?.result_wire ?? "");
-        const out = instance.exports.alloc(resultBytes.length);
-        new Uint8Array(instance.exports.memory.buffer, out, resultBytes.length)
-          .set(resultBytes);
-        return [0, out, resultBytes.length];
-      }
-      if (mode === "ok-null") return [0, 0, 0];
-      if (mode === "ok-zero-len") return [0, 1234, 0];
-      if (mode === "error") return [1, 1234, 9];
-      if (mode === "pending") return [2, 0, 99];
-      if (mode === "pending-nonnull") return [2, 1234, 9];
-      return [77, 1234, 9]; // unknown
-    };
-  }
-  // WH-5b.3: the ahfl_xcode transcode imports. Each xcode_<N> names the
-  // dense transcode site N in descriptor.frame_lane.transcode_sites. The
-  // handler is a pure codec adapter (makeTranscodeCallback): P4D_TO_JSON
-  // reads a P4-D frame and serializes to wire JSON; JSON_TO_P4D parses wire
-  // JSON and packs into the static shadow region.
-  const xcodeImports = {};
-  const transcodeSites = descriptor.frame_lane?.transcode_sites ?? [];
-  for (const listedImport of WebAssembly.Module.imports(compiled)) {
-    if (listedImport.module !== "ahfl_xcode") continue;
-    const match = /^xcode_(\d+)$/.exec(listedImport.name);
-    if (match === null) {
-      fail(`ahfl_xcode import '${listedImport.name}' is not xcode_<N>`);
-    }
-    const siteIndex = Number(match[1]);
-    const site = transcodeSites[siteIndex];
-    if (site === undefined) {
-      fail(`ahfl_xcode import '${listedImport.name}' names transcode site ${siteIndex} ` +
-           `but the descriptor has ${transcodeSites.length} sites`);
-    }
-    xcodeImports[listedImport.name] = makeTranscodeCallback(
-      site, () => instance, () => state);
+    // RFC 0026 dual-track elimination: every capability import uses the bridge
+    // type (i32)->(i32,i32). The opaque (i32,i32)->(i32,i32,i32) lane is gone.
+    const ordinal = importEntry.ordinal;
+    imports[importEntry.field] = makeBridgeCallback(
+      importEntry, ordinal, () => instance, () => state, mode);
   }
   const importObject = { ahfl_cap: imports };
-  if (Object.keys(xcodeImports).length > 0) {
-    importObject.ahfl_xcode = xcodeImports;
-  }
   const instance = (await WebAssembly.instantiate(compiled, importObject));
   state.instance = instance;
   state.exports = instance.exports;
@@ -806,6 +613,49 @@ function readF64(e, addr) {
   checkRange(addr, 8);
   return dataView(e).getFloat64(addr, true);
 }
+
+// Marker for a frame-read f64 leaf. JSON.stringify serializes an integral
+// double as "2" (integer syntax), which would make the C++ comparator parse
+// the token as Int (not Float) and diverge from the blessing's "2.0".
+// stringifyValue formats FloatValue leaves with the runtime SSOT float
+// spelling (mirrors ahfl::json::format_wire_float) so the token is always
+// classified as Float and canonical re-serialization agrees.
+class FloatValue {
+  constructor(value) { this.value = value; }
+}
+
+// Mirrors ahfl::json::format_wire_float: shortest round-trip spelling, then
+// keep ".0" for integral floats so the wire token is valid float syntax.
+function formatWireFloat(v) {
+  if (Object.is(v, -0)) return "-0.0";
+  const s = String(v);
+  if (!s.includes(".") && !s.includes("e") && !s.includes("E")) {
+    return s + ".0";
+  }
+  return s;
+}
+
+// Serializes a readValue() result tree to wire JSON. FloatValue leaves keep
+// the float spelling; everything else delegates to JSON.stringify. The C++
+// comparator re-serializes both sides through canonical_json, so key order
+// and exponent spelling are normalized there — only the Int/Float token
+// classification matters, and FloatValue guarantees Float.
+function stringifyValue(v) {
+  if (v instanceof FloatValue) return formatWireFloat(v.value);
+  if (v === null) return "null";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number") return JSON.stringify(v);
+  if (typeof v === "string") return JSON.stringify(v);
+  if (Array.isArray(v)) {
+    return "[" + v.map(stringifyValue).join(",") + "]";
+  }
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    return "{" + keys.map((k) => JSON.stringify(k) + ":" + stringifyValue(v[k])).join(",") + "}";
+  }
+  frameFail(`cannot serialize observation value of type ${typeof v}`);
+}
+
 function writeRaw(e, addr, bytes) {
   checkRange(addr, bytes.length);
   new Uint8Array(e.memory.buffer, addr, bytes.length).set(bytes);
@@ -1055,7 +905,7 @@ function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = 
       if (l.t !== "scalar" || l.repr !== "f64") {
         frameFail("float wire shape maps to a non-f64 scalar layout");
       }
-      return readF64(e, addr);
+      return new FloatValue(readF64(e, addr));
     }
     case "decimal":
     case "duration":
@@ -1232,7 +1082,8 @@ function encodeP6Output(probe, packed) {
   const tuple = e.runv();
   if (tuple[0] !== 0) frameFail(`runv returned non-OK status ${tuple[0]}`);
   const authorizedBase =
-      lane.final_kind === "computed" ? lane.output_base : lane.input_base;
+      (lane.final_kind === "computed" || lane.final_kind === "capability")
+          ? lane.output_base : lane.input_base;
   if (tuple[1] !== authorizedBase) {
     frameFail(`runv value_ptr ${tuple[1]} is not the authorized base ${authorizedBase} ` +
               `for a '${lane.final_kind}' final`);
@@ -1248,7 +1099,7 @@ function encodeP6Output(probe, packed) {
   const output = readValue(e, lane, W, L, descriptor.wire_schema.roots.output,
                            lane.output_layout, tuple[1], backing,
                            outputStringRegions);
-  return JSON.stringify(output);
+  return stringifyValue(output);
 }
 
 // V2-C: collect the state sequence on a FRESH instance via step(). A frame
@@ -1304,15 +1155,17 @@ async function runAgent(compiled) {
   // runv() is the one canonical run (it walks init->final on its own); the
   // state sequence is collected on a separate instrumentation instance so the
   // bridge effects fire exactly once on the canonical instance.
-  const hasBridge = descriptor.frame_contract === "p6_frame" &&
-                    descriptor.frame_lane.bridge_call_sites.length > 0;
+  // RFC 0026 dual-track elimination: every module is P6-frame, so the bridge
+  // predicate reads frame_lane directly (no frame_contract discriminator).
+  const hasBridge = descriptor.frame_lane.bridge_call_sites.length > 0;
 
   // RFC 0026 P6-7: pack the canonical input into the P4-D frame BEFORE the
   // step() walk, since non-final computed handlers branch on packed input.
-  const p6 = descriptor.frame_contract === "p6_frame" ? packP6Input(probe) : null;
+  // Every module is P6-frame after the WireJson lane elimination.
+  const p6 = packP6Input(probe);
 
   let walked;
-  if (p6 !== null && hasBridge) {
+  if (hasBridge) {
     walked = await collectStatesViaStep(compiled);
   } else {
     // step() drives the state walk to its stable final state WITHOUT invoking a
@@ -1345,37 +1198,12 @@ async function runAgent(compiled) {
   }
 
   // RFC 0026 P6-7: a p6-frame agent invokes runv on the packed frame and
-  // encodes the output instead of exchanging opaque JSON over run2.
-  if (p6 !== null) {
-    const outputRaw = encodeP6Output(probe, p6);
-    return {
-      status: "completed",
-      states: walked.map((state) => ({agent: lane.agent, state})),
-      capabilities: probe.events.map((event) => event.name),
-      capabilityArguments: probe.events.map((event) => event.argument),
-      outputRaw,
-      transitions: e.transition_count.value,
-      completedNodes: null,
-    };
-  }
-
-  // run2 resets and performs the terminal identity/capability action.
-  const [ptr, len] = probe.writeInput();
-  const tuple = e.run2(ptr, len);
-  let outputRaw = null;
-  if (tuple[0] === 0) {
-    outputRaw = decoder.decode(new Uint8Array(e.memory.buffer, tuple[1], tuple[2]));
-    // Release the host-allocated result frame after decoding it. For an
-    // identity final this is the borrowed input frame (dealloc is a no-op
-    // either way); for a capability final tuple[1..2] names the frame the
-    // ahfl_cap import allocated, which the host owns once run2 returns it.
-    e.dealloc(tuple[1], tuple[2]);
-  }
-  e.dealloc(ptr, len);
-
+  // encodes the output. Every module is P6-frame after the WireJson lane
+  // elimination, so this is the sole return path.
+  const outputRaw = encodeP6Output(probe, p6);
   return {
-    status: normalizeStatus(tuple[0]),
-    states: walked.map((state) => ({ agent: lane.agent, state })),
+    status: "completed",
+    states: walked.map((state) => ({agent: lane.agent, state})),
     capabilities: probe.events.map((event) => event.name),
     capabilityArguments: probe.events.map((event) => event.argument),
     outputRaw,
@@ -1477,21 +1305,15 @@ async function runWorkflowP6(compiled) {
     expectTraps(() => e[name](), `${name}()`);
   }
 
-  // WH-5b.1: in a hybrid (P6Frame) module the first scheduled node may be
-  // opaque. Pack the P4-D entry frame only when the entry node is P6;
-  // otherwise serialize to wire JSON for the opaque runner. The P6-dense
-  // node_blocks / node_inputs arrays are indexed by p6_block_ordinal (not
-  // the runner index), so a hybrid workflow's opaque entry node must not
-  // index them with its runner.
+  // RFC 0026 dual-track elimination: every workflow node is P6-frame, so the
+  // entry is always packed as a P4-D frame into the entry node's I block.
+  // The P6-dense node_blocks / node_inputs arrays are indexed by
+  // p6_block_ordinal (not the runner index).
   const entryNode = lane.nodes.find((n) => n.schedule_pos === 0);
   // Workflow P6 frames carry no bounded collections, so the backing map is
   // empty; it is still threaded through readValue for the output walk.
   const backing = new Map();
-  let run2Ptr, run2Len;
-  if (entryNode.is_p6) {
-    // The schedule's first node is the entry node; pack the canonical
-    // workflow input JSON into its fixed I block (the scheduler
-    // materializes the block from the packed bytes).
+  {
     const p6Ord = entryNode.p6_block_ordinal;
     const entryBlock = lane.node_blocks[p6Ord];
     const entryWireRoot = roots.node_inputs[p6Ord];
@@ -1503,12 +1325,8 @@ async function runWorkflowP6(compiled) {
     packValue(e, frameLane, W, L, JSON.parse(probe.scenarioInput),
               entryWireRoot, entryBlock.input_layout,
               entryBlock.input_base, backing, arena);
-    run2Ptr = entryBlock.input_base;
-    run2Len = entryBlock.input_size;
-  } else {
-    // Opaque entry node: serialize the input to canonical wire JSON and
-    // write it via the module's own exported allocator.
-    [run2Ptr, run2Len] = probe.writeInput();
+    var run2Ptr = entryBlock.input_base;
+    var run2Len = entryBlock.input_size;
   }
 
   const tuple = e.run2(run2Ptr, run2Len);
@@ -1535,9 +1353,7 @@ async function runWorkflowP6(compiled) {
     // payloads are authorized in rodata, the entry payload arena, or any bridge
     // call site's disjoint result placement (V2-D emission half 2). KR6.6: the
     // runtime construct-heap span [construct_heap_base, 65536) is also
-    // authorized (String concat result payloads). WH-5b.3: the transcode
-    // payload arena is also authorized (a JSON_TO_P4D workflow-output crossing
-    // packs String bytes there).
+    // authorized (String concat result payloads).
     const stringRegions = [];
     if (frameLane.rodata_extent > 0) {
       stringRegions.push({lo: frameLane.rodata_base,
@@ -1557,15 +1373,10 @@ async function runWorkflowP6(compiled) {
     if (Number(frameLane.construct_heap_base || 0) !== 0) {
       stringRegions.push({lo: Number(frameLane.construct_heap_base), hi: 65536});
     }
-    if (Number(frameLane.transcode_payload_capacity || 0) > 0) {
-      stringRegions.push({lo: Number(frameLane.transcode_payload_base),
-                          hi: Number(frameLane.transcode_payload_base) +
-                              Number(frameLane.transcode_payload_capacity)});
-    }
     const output = readValue(e, frameLane, W, L, roots.output,
                              frameLane.output_layout, tuple[1], backing,
                              stringRegions);
-    outputRaw = JSON.stringify(output);
+    outputRaw = stringifyValue(output);
   }
   // V2-D emission half 2: the state sequence is REAL runtime evidence. In a
   // hybrid (P6 + opaque) workflow the trace ring carries ONLY P6 nodes'
@@ -1647,31 +1458,10 @@ async function runWorkflowP6(compiled) {
       if (node === undefined) {
         fail(`node-event record ${i} names unknown node ${nodeId}`);
       }
-      // P6 nodes' states are already collected from the trace ring.
-      if (node.is_p6) continue;
-      const agentWalk = lane.agents[node.runner];
-      if (agentWalk === undefined) {
-        fail(`node-event record ${i} node ${nodeId} has no runner ${node.runner}`);
-      }
-      // Cross-check capability kind + source_symbol (mirrors the C++ host).
-      if (node.has_capability) {
-        if (tag !== 1) fail(`node-event record ${i} capability node tag is not 1`);
-        if (evtView.getUint32(addr + 12, true) !== node.capability_ordinal) {
-          fail(`node-event record ${i} capability ordinal mismatch`);
-        }
-        if (evtView.getBigUint64(addr + 16, true) !== BigInt(node.source_symbol)) {
-          fail(`node-event record ${i} source_symbol mismatch`);
-        }
-      } else {
-        if (tag !== 0) fail(`node-event record ${i} identity node tag is not 0`);
-        if (evtView.getUint32(addr + 12, true) !== 0 ||
-            evtView.getBigUint64(addr + 16, true) !== 0n) {
-          fail(`node-event record ${i} identity node carries capability identity`);
-        }
-      }
-      for (const state of agentWalk.walk) {
-        statesPerNode[schedulePos].push({agent: agentWalk.agent, state});
-      }
+      // RFC 0026 dual-track elimination: every node is P6, so the opaque
+      // node-event state collection is gone. P6 nodes' states are already
+      // collected from the trace ring above. The record validation
+      // (pad/reserved/schedule_pos/status) still runs for every record.
     }
   }
   // 3. Flatten in schedule order.
@@ -1695,106 +1485,9 @@ async function runWorkflowP6(compiled) {
 }
 
 async function runWorkflow(compiled) {
-  if (descriptor.frame_contract === "p6_frame") {
-    return runWorkflowP6(compiled);
-  }
-  const lane = descriptor.workflow_lane;
-  const nodeCount = descriptor.workflow_node_count;
-  const probe = await makeInstance(compiled, "scenario");
-  const e = probe.exports;
-  if (e.workflow_node_count.value !== nodeCount) {
-    fail(`workflow_node_count ${e.workflow_node_count.value} != ${nodeCount}`);
-  }
-  // Fail-closed contract: step()/current_state() trap BEFORE any effect.
-  for (const name of ["step", "current_state"]) {
-    expectTraps(() => e[name](), `${name}()`);
-    if (e.workflow_completed_count.value !== 0 || e.transition_count.value !== 0) {
-      fail(`${name}() had an effect before trapping`);
-    }
-  }
-
-  // Deterministic transition expectation:
-  //  * a V2-D emission-half-2 P6 workflow (with the state-entry trace ring)
-  //    enters N states per scheduled node along its REAL runtime path and
-  //    performs exactly (N - 1) transitions; the exact total is traceCount -
-  //    nodeCount, which a static walk cannot derive for a computed-goto
-  //    routing handler;
-  //  * an older P6/opaque workflow still uses the descriptor walk sum
-  //    (every node executes its full declared walk).
-  const traceLane = descriptor.frame_lane;
-  const traceCount = traceLane && Number(traceLane.state_trace_capacity) > 0
-      ? new DataView(probe.exports.memory.buffer)
-            .getUint32(Number(traceLane.state_trace_base), true)
-      : null;
-  let expectedTransitions;
-  if (traceCount !== null) {
-    if (traceCount < nodeCount) {
-      fail(`p6 workflow state-trace count ${traceCount} is below the node count ${nodeCount}`);
-    }
-    expectedTransitions = traceCount - nodeCount;
-  } else {
-    expectedTransitions = expectedWorkflowTransitions();
-  }
-
-  const [ptr, len] = probe.writeInput();
-  const tuple = e.run2(ptr, len);
-  const status = normalizeStatus(tuple[0]);
-  let outputRaw = null;
-  let states = [];
-  if (tuple[0] === 0) {
-    if (tuple[1] === 0 || tuple[2] === 0) fail("OK workflow tuple carried an empty frame");
-    outputRaw = decoder.decode(new Uint8Array(e.memory.buffer, tuple[1], tuple[2]));
-    if (e.workflow_completed_count.value !== nodeCount) {
-      fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
-    }
-    if (e.transition_count.value !== expectedTransitions) {
-      fail(`transition_count ${e.transition_count.value} != ${expectedTransitions} ` +
-           "(sum of runner walk gotos)");
-    }
-    const records = readEventRecords(lane, nodeCount, e);
-    states = records.map((record) => recordStates(lane, record)).flat();
-    // Common-KAT bridge: for the committed two-node cap/identity fixture the
-    // executed node-event region must equal the contract-derived golden hex,
-    // byte for byte -- the same value the C++ decoder KAT pins.
-    if (descriptor.imports.length > 0 && descriptorMatchesCommonKat(lane, nodeCount)) {
-      const regionLength = descriptor.event_buffer.header_bytes +
-                           nodeCount * descriptor.event_buffer.record_bytes;
-      const actualHex = regionHex(e.memory, descriptor.event_buffer.log_base, regionLength);
-      if (actualHex !== kNodeEventGoldenHex) {
-        fail(`node-event region != contract-derived common KAT golden: ${actualHex}`);
-      }
-    }
-    // Identity workflow: run2 is idempotent on a persistent instance; the
-    // replay reaches the exact same counters (the retired bespoke host pinned
-    // this, not just non-zero).
-    if (descriptor.imports.length === 0) {
-      const replay = e.run2(ptr, len);
-      if (replay[0] !== tuple[0] || replay[1] !== tuple[1] || replay[2] !== tuple[2] ||
-          e.workflow_completed_count.value !== nodeCount ||
-          e.transition_count.value !== expectedTransitions) {
-        fail(`identity workflow replay counters/tuple mismatch: ${replay}`);
-      }
-      // The replayed OK tuple still names a host-readable frame; release it.
-      e.dealloc(replay[1], replay[2]);
-    }
-    // Release the host-allocated OK result frame (the capability-returned
-    // tuple, or the borrowed input frame of an identity final) after decoding.
-    e.dealloc(tuple[1], tuple[2]);
-  } else {
-    if (e.workflow_completed_count.value !== 0) fail("non-OK run published completion events");
-    if (e.transition_count.value !== 0) fail("non-OK run advanced the transition counter");
-  }
-  e.dealloc(ptr, len);
-
-  return {
-    status,
-    states,
-    capabilities: probe.events.map((event) => event.name),
-    capabilityArguments: probe.events.map((event) => event.argument),
-    outputRaw,
-    transitions: e.transition_count.value,
-    completedNodes: e.workflow_completed_count.value,
-  };
+  // RFC 0026 dual-track elimination: every workflow is P6-frame, so the
+  // WireJson run2 path is gone. runWorkflowP6 is the sole execution path.
+  return runWorkflowP6(compiled);
 }
 
 // ---- ABI normalization matrix (real-engine negative coverage) ----------------
@@ -1803,7 +1496,6 @@ async function runWorkflow(compiled) {
 // pending latch, on FRESH instances, using descriptor facts (import presence,
 // heap base, event buffer layout). They do not change the canonical observation.
 async function runAbiProbes(compiled) {
-  const hasCapabilities = descriptor.imports.length > 0;
   const isWorkflow = Boolean(descriptor.workflow_lane);
 
   if (!isWorkflow) {
@@ -1813,8 +1505,7 @@ async function runAbiProbes(compiled) {
     // packed P4-D frame + runv, NEVER the legacy opaque entry points: run2/run
     // have no defined contract on this lane and writing opaque JSON over the
     // fixed input frame would corrupt the bridge argument spans.
-    const hasBridge = descriptor.frame_contract === "p6_frame" &&
-                      (descriptor.frame_lane?.bridge_call_sites?.length ?? 0) > 0;
+    const hasBridge = (descriptor.frame_lane?.bridge_call_sites?.length ?? 0) > 0;
     if (hasBridge) {
       // OK path: every dense bridge call site fires exactly once on one
       // completed run (one capability may legally own several sites that share
@@ -1849,86 +1540,22 @@ async function runAbiProbes(compiled) {
       }
       return;
     }
-    if (hasCapabilities) {
-      // Every non-OK / malformed-OK normalization collapses to (ERROR,0,0) with
-      // exactly one import call and no state/capability side effect beyond it.
-      for (const mode of ["ok-null", "ok-zero-len", "error", "unknown"]) {
-        const p = await makeInstance(compiled, mode);
-        const result = p.exports.run2(...p.writeInput());
-        const expected = [1, 0, 0];
-        if (result.some((v, i) => v !== expected[i]) || p.calls !== 1) {
-          fail(`agent ${mode} normalization mismatch: ${result}`);
-        }
-      }
-      // PENDING-nonnull normalizes to ERROR and does NOT latch: a second run2 on
-      // the same instance re-invokes the import.
-      {
-        const p = await makeInstance(compiled, "pending-nonnull");
-        const first = p.exports.run2(...p.writeInput());
-        if (first[0] !== 1 || first[1] !== 0 || first[2] !== 0) {
-          fail("agent pending-nonnull did not normalize to (ERROR,0,0)");
-        }
-        let trapped = false;
-        let second;
-        try { second = p.exports.run2(...p.writeInput()); }
-        catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
-        if (trapped || second[0] !== 1 || p.calls !== 2) {
-          fail("agent pending-nonnull incorrectly latched the instance");
-        }
-      }
-      // PENDING latches: (PENDING,0,0), then a second run2 traps pre-effect and
-      // does not re-invoke the import.
-      {
-        const p = await makeInstance(compiled, "pending");
-        const first = p.exports.run2(...p.writeInput());
-        if (first[0] !== 2 || first[1] !== 0 || first[2] !== 0 || p.calls !== 1) {
-          fail("agent pending did not return (PENDING,0,0) with one call");
-        }
-        expectTraps(() => p.exports.run2(...p.writeInput()),
-                    "second agent run2 after PENDING (latch)");
-        if (p.calls !== 1) fail("agent latch re-invoked the capability");
-      }
-      // The pointer-only legacy run() traps before any capability effect.
-      {
-        const p = await makeInstance(compiled, "ok");
-        expectTraps(() => p.exports.run(...p.writeInput()), "legacy agent run()");
-        if (p.calls !== 0) fail("legacy agent run() reached the capability");
-      }
-    } else {
-      // RFC 0026 P6-7: runv is the SOLE defined observation entry for a
-      // p6-frame agent. Only it is probed here: pack the P4-D frame on a FRESH
-      // instance and assert runv returns OK with the descriptor-authorized
-      // root (the input base for an identity final, the output base for a
-      // computed final).
-      //
-      // The legacy pointer exports run()/run2() are deliberately NOT exercised
-      // on this lane, because they have no defined p6-frame contract and the
-      // outcome is frame-shape dependent. Both share the E1 identity arm: the
-      // walk runs and run2 returns (OK, borrowed host ptr, len), run() echoes
-      // the host ptr. But a p6-frame agent's canonical input lives in the
-      // fixed P4-D regions, and the host bump allocator starts at the input
-      // frame base (1024), so a legacy writeInput() overwrites the packed
-      // header with JSON bytes: a scalar-only frame's walk still completes and
-      // returns the borrowed (arbitrary) span, while a frame whose walk
-      // dereferences a collection pointer traps Wasm OOB. Neither result is a
-      // value observation -- only runv's value_ptr is -- so asserting either
-      // would pin incidental behavior, not a contract.
-      if (descriptor.frame_contract === "p6_frame") {
-        const p = await makeInstance(compiled, "ok");
-        const packed = packP6Input(p);
-        const tuple = p.exports.runv();
-        if (tuple[0] !== 0) fail("p6-frame runv did not return OK");
-        const authorized = packed.lane.final_kind === "computed"
-            ? packed.lane.output_base : packed.lane.input_base;
-        if (tuple[1] !== authorized) fail("p6-frame runv returned an unauthorized value_ptr");
-        return;
-      }
-      // Identity agent: legacy run() executes the same schedule and returns the
-      // borrowed input pointer.
+    // RFC 0026 dual-track elimination: every agent is P6-frame. A capability
+    // agent always carries bridge call sites (the bridge is the sole capability
+    // calling convention), so the hasBridge path above is the only capability
+    // probe. Agents without bridge call sites are identity agents: runv is the
+    // sole defined observation entry. Pack the P4-D frame on a FRESH instance
+    // and assert runv returns OK with the descriptor-authorized root (the input
+    // base for an identity final, the output base for a computed final).
+    {
       const p = await makeInstance(compiled, "ok");
-      const [ptr, len] = p.writeInput();
-      if (p.exports.run(ptr, len) !== ptr) fail("identity agent legacy run() pointer");
-      p.exports.dealloc(ptr, len);
+      const packed = packP6Input(p);
+      const tuple = p.exports.runv();
+      if (tuple[0] !== 0) fail("p6-frame runv did not return OK");
+      const authorized = (packed.lane.final_kind === "computed" ||
+                          packed.lane.final_kind === "capability")
+          ? packed.lane.output_base : packed.lane.input_base;
+      if (tuple[1] !== authorized) fail("p6-frame runv returned an unauthorized value_ptr");
     }
     return;
   }
@@ -1939,111 +1566,20 @@ async function runAbiProbes(compiled) {
     expectTraps(() => p.exports[name](), `workflow ${name}()`);
   }
 
-  // V2-D p6 workflow: run2 drives the frame lane and is already fully
-  // exercised by runWorkflowP6 (packed I block, fixed output slot); the opaque
-  // identity/capability normalization below does not apply.
-  if (descriptor.frame_contract === "p6_frame") {
+  // RFC 0026 dual-track elimination: every workflow is P6-frame. run2 drives
+  // the frame lane and is already fully exercised by runWorkflowP6 (packed I
+  // block, fixed output slot); the opaque identity/capability normalization
+  // probes are deleted with the WireJson lane.
+  {
     const p = await makeInstance(compiled, "ok");
     expectTraps(() => p.exports.run(...p.writeInput()), "p6 workflow legacy run()");
-    return;
-  }
-
-  if (!hasCapabilities) {
-    // Identity workflow: run2 returns the borrowed tuple, counters reach the
-    // node count, and a second run2 replays the full schedule idempotently.
-    const p = await makeInstance(compiled, "ok");
-    const input = p.writeInput();
-    const expectedTransitions = expectedWorkflowTransitions();
-    const a = p.exports.run2(...input);
-    if (a[0] !== 0 || a[1] !== input[0] || a[2] !== input[1]) {
-      fail("identity workflow run2 tuple mismatch");
-    }
-    if (p.exports.workflow_completed_count.value !== descriptor.workflow_node_count ||
-        p.exports.transition_count.value !== expectedTransitions) {
-      fail(`identity workflow counters mismatch (completed=${p.exports.workflow_completed_count.value}, ` +
-           `transitions=${p.exports.transition_count.value}, expected=${expectedTransitions})`);
-    }
-    const b = p.exports.run2(...input);
-    if (b[0] !== 0 || b[1] !== input[0] || b[2] !== input[1] ||
-        p.exports.workflow_completed_count.value !== descriptor.workflow_node_count ||
-        p.exports.transition_count.value !== expectedTransitions) {
-      fail(`identity workflow second run2 did not replay identically (transitions=` +
-           `${p.exports.transition_count.value}, expected=${expectedTransitions})`);
-    }
-    p.exports.dealloc(a[1], a[2]);
-    if (p.exports.run(input[0], input[1]) !== input[0]) {
-      fail("identity workflow legacy run() did not return the borrowed frame");
-    }
-    return;
-  }
-
-  // Capability workflow non-OK normalization: no event, no completion, and the
-  // node-event header + record region stays byte-for-byte zero.
-  for (const mode of ["ok-null", "ok-zero-len", "error", "unknown"]) {
-    const p = await makeInstance(compiled, mode);
-    const result = p.exports.run2(...p.writeInput());
-    if (result[0] !== 1 || result[1] !== 0 || result[2] !== 0 || p.calls !== 1) {
-      fail(`workflow ${mode} normalization mismatch: ${result}`);
-    }
-    if (p.exports.workflow_completed_count.value !== 0) {
-      fail(`workflow ${mode} published a completion event`);
-    }
-    assertEventRegionZero(p.exports, `workflow ${mode}`, /*includeHeader=*/true);
-  }
-  // PENDING-nonnull normalizes to ERROR and does not latch.
-  {
-    const p = await makeInstance(compiled, "pending-nonnull");
-    const first = p.exports.run2(...p.writeInput());
-    if (first[0] !== 1 || p.calls !== 1) {
-      fail("workflow pending-nonnull did not normalize to ERROR with one call");
-    }
-    assertEventRegionZero(p.exports, "workflow pending-nonnull first", /*includeHeader=*/true);
-    let trapped = false;
-    try { p.exports.run2(...p.writeInput()); }
-    catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
-    if (trapped || p.calls !== 2) fail("workflow pending-nonnull incorrectly latched");
-    assertEventRegionZero(p.exports, "workflow pending-nonnull replay", /*includeHeader=*/true);
-  }
-  // PENDING latches the instance.
-  {
-    const p = await makeInstance(compiled, "pending");
-    const first = p.exports.run2(...p.writeInput());
-    if (first[0] !== 2 || p.calls !== 1 ||
-        p.exports.workflow_completed_count.value !== 0) {
-      fail("workflow pending did not suspend with no event");
-    }
-    assertEventRegionZero(p.exports, "workflow pending first", /*includeHeader=*/true);
-    expectTraps(() => p.exports.run2(...p.writeInput()),
-                "second workflow run2 after PENDING (latch)");
-    if (p.calls !== 1) fail("workflow latch re-invoked the capability");
-    assertEventRegionZero(p.exports, "workflow pending after latch trap",
-                          /*includeHeader=*/true);
-  }
-  // Corrupt-count defensive coordinate gate: a host-injected event_count before
-  // the OK frame returns makes the scheduler reject (ERROR) with no record. The
-  // scheduler must NOT overwrite the host-injected count, and every record-body
-  // slot must remain zero-filled.
-  {
-    const p = await makeInstance(compiled, "corrupt-count");
-    const result = p.exports.run2(...p.writeInput());
-    if (result[0] !== 1 || p.calls !== 1) {
-      fail("workflow corrupt-count was not rejected with one call");
-    }
-    if (new DataView(p.exports.memory.buffer).getUint32(
-          descriptor.event_buffer.log_base, true) !== 99) {
-      fail("workflow corrupt-count published despite coordinate mismatch");
-    }
-    assertEventRegionZero(p.exports, "workflow corrupt-count", /*includeHeader=*/false);
-  }
-  // Legacy pointer-only run() traps before any effect.
-  {
-    const p = await makeInstance(compiled, "ok");
-    expectTraps(() => p.exports.run(...p.writeInput()), "legacy workflow run()");
     if (p.calls !== 0) fail("legacy workflow run() reached a capability");
   }
   // Checked bump allocator: over-capacity returns 0 without advancing, then the
   // next allocations start at the descriptor heap base and advance exactly.
-  {
+  // Only capability workflows use the checked allocator; identity workflows
+  // use the unchecked variant.
+  if (descriptor.imports.length > 0) {
     const p = await makeInstance(compiled, "ok");
     if (p.exports.alloc(70000) !== 0) fail("over-capacity alloc did not return 0");
     const heapBase = descriptor.heap_base;
@@ -2055,10 +1591,6 @@ async function runAbiProbes(compiled) {
 // ---- run ---------------------------------------------------------------------
 const compiled = await WebAssembly.compile(bytes);
 for (const listedImport of WebAssembly.Module.imports(compiled)) {
-  // WH-5b.3: the ahfl_xcode transcode imports are host-side codec adapters,
-  // not capability imports. The Node embedded host provides fail-closed
-  // stubs (they trap if reached); the descriptor does not list them.
-  if (listedImport.module === "ahfl_xcode") continue;
   if (listedImport.module !== "ahfl_cap" ||
       !descriptor.imports.some((i) => i.field === listedImport.name)) {
     fail(`module imports undeclared capability ${listedImport.module}.${listedImport.name}`);

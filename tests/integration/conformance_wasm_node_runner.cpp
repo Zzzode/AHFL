@@ -224,6 +224,12 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // They carry 2 scenarios total (1+1): 79/4 -> 81/2. The
 // wh5c5_gap4_stash_parity case stays skipped (it needs the WH-5c.5
 // multi-node stash-table join, not transcode).
+// RFC 0026 dual-track elimination: the Node host's readValue now tags f64
+// leaves with a FloatValue marker and stringifyValue formats them with the
+// runtime SSOT float spelling (".0" for integral floats), so the
+// float_output_e2e/integral_float case (identity passthrough of an integral
+// f64) agrees with the blessing instead of diverging on "2" vs "2.0":
+// 80/2 -> 81/2.
 constexpr int kExpectedAgreed = 81;
 constexpr int kExpectedSkipped = 2;
 

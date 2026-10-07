@@ -54,16 +54,23 @@ if (declared.length !== 1 || declared[0].module !== "ahfl_cap")
 let instance;
 const calls = [];
 const importObj = { ahfl_cap: {} };
-// Bump: read the i64 field at the request frame, allocate a result frame of the
-// SAME opaque length, write n + 1, return (OK, ptr, len).
+// Bump: the bridge callback receives a control-block pointer. The control
+// block is {call_site_id: u32, arg_count: u32, arg_ptr: i32, arg_len: u32}.
+// Read the i64 field at the argument frame, allocate a result frame of the
+// SAME length, write n + 1, return (OK, result_ptr).
 for (const imp of declared) {
-  importObj.ahfl_cap[imp.name] = (ptr, len) => {
+  importObj.ahfl_cap[imp.name] = (blockPtr) => {
     const mem = new DataView(instance.exports.memory.buffer);
+    const argCount = mem.getUint32(blockPtr + 4, true);
+    if (argCount !== 1)
+      throw new Error(`expected 1 bridge argument, got ${argCount}`);
+    const ptr = mem.getInt32(blockPtr + 8, true);
+    const len = mem.getUint32(blockPtr + 12, true);
     const n = mem.getBigInt64(ptr, true);
     calls.push({ field: imp.field, n: Number(n), len });
     const out = instance.exports.alloc(Number(len));
     mem.setBigInt64(out, n + 1n, true);
-    return [0, out, len];
+    return [0, out];
   };
 }
 instance = await WebAssembly.instantiate(mod, importObj);

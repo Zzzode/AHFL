@@ -483,7 +483,7 @@ TEST_CASE("the transported-table factory rejects reserved wire-name collisions (
     }
 }
 
-TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String key") {
+TEST_CASE("migration projector lowers String-keyed and Int-keyed Map") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
     const auto env = require_env(*program);
@@ -499,12 +499,15 @@ TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String 
         CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(*result.binding, map.value)));
     }
 
-    SUBCASE("Map<Int, Int> fails closed (non-String key)") {
+    SUBCASE("Map<Int, Int> projects (non-String key admitted)") {
         const auto *cap = find_capability(*program, "MapKeyCap");
         REQUIRE(cap != nullptr);
         const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
-        CHECK_FALSE(result.ok());
-        CHECK_FALSE(result.binding.has_value());
+        REQUIRE(result.ok());
+        const auto &map = std::get<CoreWireSchemaMap>(
+            shape_of(*result.binding, result.binding->root()));
+        CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(*result.binding, map.key)));
+        CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(*result.binding, map.value)));
     }
 }
 

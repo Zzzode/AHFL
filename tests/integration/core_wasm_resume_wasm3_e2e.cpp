@@ -31,6 +31,8 @@
 // engine.
 
 #include "runtime/wasm_host/capability_import.hpp"
+#include "runtime/wasm_host/frame_packer.hpp"
+#include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/p6_frame_driver.hpp"
 #include "runtime/wasm_host/wasm3_engine.hpp"
 
@@ -40,6 +42,7 @@
 
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "common/project_input_support.hpp"
@@ -82,10 +85,6 @@ void check(bool condition, const std::string &name) {
     }
 }
 
-// Memory layout for the e2e fixtures (well within the 64 KiB page, past the
-// rodata region [256,1024) and the heap start at 1032).
-constexpr std::uint32_t kEnvelopeBase = 1032; // opaque arg envelope
-
 // A scripted invoker the e2e tests drive. The `result` member is mutable so a
 // replay test can flip PENDING -> OK between runs.
 struct ScriptedInvoker {
@@ -101,17 +100,6 @@ struct ScriptedInvoker {
         };
     }
 };
-
-// Write the opaque arg envelope into the engine's memory at kEnvelopeBase.
-void write_opaque_envelope(wh::Wasm3ResumeEngine &engine,
-                           const std::string &envelope_json) {
-    auto page = engine.mutable_whole_memory();
-    if (!page.has_value()) {
-        return;
-    }
-    std::memcpy(page->data() + kEnvelopeBase, envelope_json.data(),
-                envelope_json.size());
-}
 
 // Create a fresh engine + executor for one invoke_run2 call. The `module_bytes`
 // must already carry the A2 admission sections. `name_resolver` resolves
@@ -201,15 +189,9 @@ std::optional<EmittedBridgeFixture> emit_bridge_fixture() {
         std::cerr << "  bridge emit failed\n";
         return std::nullopt;
     }
-    if (!emitted.descriptor->frame_section.has_value() ||
-        !emitted.descriptor->wire_schema.has_value()) {
-        std::cerr << "  bridge descriptor missing frame_section or wire_schema\n";
-        return std::nullopt;
-    }
-
     // Mint the input/output frame bindings from the descriptor's verified wire
     // schema (the same authorities admit_core_wasm_frame_sections produces).
-    auto verified = irc::make_verified_wire_schema_table(*emitted.descriptor->wire_schema);
+    auto verified = irc::make_verified_wire_schema_table(emitted.descriptor->wire_schema);
     if (!verified.table.has_value()) {
         std::cerr << "  bridge wire schema verify failed\n";
         return std::nullopt;
@@ -230,13 +212,12 @@ std::optional<EmittedBridgeFixture> emit_bridge_fixture() {
     }
 
     const wh::P6FinalKind final_kind =
-        (emitted.descriptor->frame.has_value() &&
-         emitted.descriptor->frame->final_kind == "computed")
+        (emitted.descriptor->frame.final_kind == "computed")
             ? wh::P6FinalKind::Computed
             : wh::P6FinalKind::Identity;
     return EmittedBridgeFixture{
         .module_bytes = emitted.artifact->bytes,
-        .layout = *emitted.descriptor->frame_section,
+        .layout = emitted.descriptor->frame_section,
         .input_binding = std::move(*input_binding),
         .output_binding = std::move(*output_binding),
         .final_kind = final_kind,
@@ -367,277 +348,6 @@ void test_bridge_e2e() {
     }
 }
 
-// ==== opaque lane e2e tests ====
-
-// 1. Opaque OK: the module calls the opaque import; the executor invokes the
-//    mock (Success + IntValue(42)), serializes "42", alloc_then_writes, and
-//    replies (0, ptr, 2). The classifier returns (0, ptr, 2).
-void test_opaque_e2e_ok() {
-    constexpr std::uint64_t kSymbol = 100;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::IntValue{42}};
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-    check(session.admitted.ok(), "opaque e2e ok: A2 admission");
-
-    write_opaque_envelope(session.engine, "{\"value\":42}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-    check(outcome.has_value(), "opaque e2e ok: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2ResultTuple>(*outcome),
-              "opaque e2e ok: outcome is Run2ResultTuple");
-        if (const auto *r = std::get_if<eng::Run2ResultTuple>(&*outcome)) {
-            check(r->raw_status == 0, "opaque e2e ok: raw_status == 0");
-            check(r->output_ptr.value != 0, "opaque e2e ok: output_ptr != 0");
-            check(r->output_len == 2, "opaque e2e ok: output_len == 2");
-            auto mem = session.engine.read_whole_memory();
-            std::string result_json(
-                mem->begin() + r->output_ptr.value,
-                mem->begin() + r->output_ptr.value + r->output_len);
-            check(result_json == "42", "opaque e2e ok: result == '42'");
-        }
-    }
-    check(mock.call_count == 1, "opaque e2e ok: invoker called once");
-}
-
-// 2. Opaque ERROR: the mock returns Error; the executor replies (1, 0, 0); the
-//    classifier returns (1, 0, 0).
-void test_opaque_e2e_error() {
-    constexpr std::uint64_t kSymbol = 101;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Error;
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-    check(session.admitted.ok(), "opaque e2e error: A2 admission");
-
-    write_opaque_envelope(session.engine, "{\"value\":42}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-    check(outcome.has_value(), "opaque e2e error: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2ResultTuple>(*outcome),
-              "opaque e2e error: outcome is Run2ResultTuple");
-        if (const auto *r = std::get_if<eng::Run2ResultTuple>(&*outcome)) {
-            check(r->raw_status == 1, "opaque e2e error: raw_status == 1");
-            check(r->output_ptr.value == 0, "opaque e2e error: output_ptr == 0");
-            check(r->output_len == 0, "opaque e2e error: output_len == 0");
-        }
-    }
-    check(mock.call_count == 1, "opaque e2e error: invoker called once");
-}
-
-// 3. Opaque PENDING: the mock returns Pending; the executor replies (2, 0, 0);
-//    the classifier sets the latch and returns (2, 0, 0).
-void test_opaque_e2e_pending() {
-    constexpr std::uint64_t kSymbol = 102;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Pending;
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-    check(session.admitted.ok(), "opaque e2e pending: A2 admission");
-
-    write_opaque_envelope(session.engine, "{\"value\":42}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-    check(outcome.has_value(), "opaque e2e pending: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2ResultTuple>(*outcome),
-              "opaque e2e pending: outcome is Run2ResultTuple");
-        if (const auto *r = std::get_if<eng::Run2ResultTuple>(&*outcome)) {
-            check(r->raw_status == 2, "opaque e2e pending: raw_status == 2");
-            check(r->output_ptr.value == 0, "opaque e2e pending: output_ptr == 0");
-            check(r->output_len == 0, "opaque e2e pending: output_len == 0");
-        }
-    }
-    check(mock.call_count == 1, "opaque e2e pending: invoker called once");
-}
-
-// 4. Suspended -> Injected -> Consumed replay: the first run suspends
-//    (PENDING); the host injects the result (scripted Success on a fresh
-//    instance); the second run consumes it (OK).
-void test_replay_suspended_injected_consumed() {
-    constexpr std::uint64_t kSymbol = 103;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Pending;
-
-    // --- Run 1: Suspended ---
-    {
-        E2eSession session(bytes, mock,
-                           [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-        check(session.admitted.ok(), "replay run1: A2 admission");
-
-        write_opaque_envelope(session.engine, "{\"value\":42}");
-        auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-        check(outcome.has_value(), "replay run1: invoke_run2 succeeded");
-        if (outcome.has_value()) {
-            if (const auto *r = std::get_if<eng::Run2ResultTuple>(&*outcome)) {
-                check(r->raw_status == 2, "replay run1: raw_status == 2 (Suspended)");
-            } else {
-                check(false, "replay run1: expected Run2ResultTuple");
-            }
-        }
-        check(mock.call_count == 1, "replay run1: invoker called once");
-    }
-
-    // --- Inject: flip the mock to Success ---
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::IntValue{42}};
-
-    // --- Run 2: Injected + Consumed (fresh instance, latch is 0) ---
-    {
-        E2eSession session(bytes, mock,
-                           [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-        check(session.admitted.ok(), "replay run2: A2 admission");
-
-        write_opaque_envelope(session.engine, "{\"value\":42}");
-        auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-        check(outcome.has_value(), "replay run2: invoke_run2 succeeded");
-        if (outcome.has_value()) {
-            if (const auto *r = std::get_if<eng::Run2ResultTuple>(&*outcome)) {
-                check(r->raw_status == 0, "replay run2: raw_status == 0 (Consumed)");
-                check(r->output_ptr.value != 0, "replay run2: output_ptr != 0");
-                check(r->output_len == 2, "replay run2: output_len == 2");
-                auto mem = session.engine.read_whole_memory();
-                std::string result_json(
-                    mem->begin() + r->output_ptr.value,
-                    mem->begin() + r->output_ptr.value + r->output_len);
-                check(result_json == "42", "replay run2: result == '42'");
-            } else {
-                check(false, "replay run2: expected Run2ResultTuple");
-            }
-        }
-        check(mock.call_count == 2, "replay run2: invoker called twice total");
-    }
-}
-
-// ==== ImportAbort e2e test ====
-
-// 5. ImportAbort on engine fault: the name_resolver returns nullopt; the
-//    executor returns ImportAbort(CapabilityNameUnknown); invoke_run2 unwinds
-//    as Run2HostAborted (distinct from Run2Trapped).
-void test_import_abort_e2e() {
-    constexpr std::uint64_t kSymbol = 300;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::IntValue{42}};
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::nullopt; }); // unknown name
-    check(session.admitted.ok(), "import abort e2e: A2 admission");
-
-    write_opaque_envelope(session.engine, "{\"value\":42}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-    check(outcome.has_value(), "import abort e2e: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
-              "import abort e2e: outcome is Run2HostAborted");
-        check(!std::holds_alternative<eng::Run2Trapped>(*outcome),
-              "import abort e2e: NOT Run2Trapped (distinct failure mode)");
-    }
-    check(mock.call_count == 0, "import abort e2e: invoker not called");
-    check(session.state.last_error.has_value() &&
-              *session.state.last_error == wh::CapabilityImportError::CapabilityNameUnknown,
-          "import abort e2e: error is CapabilityNameUnknown");
-}
-
-// ==== P2-4: opaque lane schema-bound validation ====
-
-// Param-schema violation (pre-effect): the param JSON does not match the
-// wire-schema param binding. The capability is NEVER invoked.
-void test_opaque_param_schema_invalid() {
-    constexpr std::uint64_t kSymbol = 310;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::IntValue{42}};
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-    check(session.admitted.ok(), "opaque param-schema: A2 admission");
-
-    // The schema expects an Int param; send a String instead.
-    write_opaque_envelope(session.engine, "{\"value\":\"not_an_int\"}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 22);
-    check(outcome.has_value(), "opaque param-schema: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
-              "opaque param-schema: Run2HostAborted");
-    }
-    check(mock.call_count == 0, "opaque param-schema: invoker NOT called (pre-effect)");
-    check(session.state.last_error.has_value() &&
-              *session.state.last_error == wh::CapabilityImportError::ParamSchemaInvalid,
-          "opaque param-schema: error is ParamSchemaInvalid");
-}
-
-// Result-schema violation (post-effect): the capability returns Success with
-// a value that does not match the wire-schema result binding. The capability
-// WAS invoked; the host rejects the result as a host fault.
-void test_opaque_result_schema_invalid() {
-    constexpr std::uint64_t kSymbol = 311;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::StringValue{"not_an_int"}};
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-    check(session.admitted.ok(), "opaque result-schema: A2 admission");
-
-    write_opaque_envelope(session.engine, "{\"value\":42}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
-    check(outcome.has_value(), "opaque result-schema: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
-              "opaque result-schema: Run2HostAborted");
-    }
-    check(mock.call_count == 1, "opaque result-schema: invoker called once (post-effect)");
-    check(session.state.last_error.has_value() &&
-              *session.state.last_error == wh::CapabilityImportError::ResultSchemaInvalid,
-          "opaque result-schema: error is ResultSchemaInvalid");
-}
-
-// Missing "value" field: the envelope for a non-Struct param lacks the
-// "value" wrapper. The capability is NEVER invoked.
-void test_opaque_missing_value_field() {
-    constexpr std::uint64_t kSymbol = 312;
-    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::IntValue{42}};
-
-    E2eSession session(bytes, mock,
-                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
-    check(session.admitted.ok(), "opaque missing-value: A2 admission");
-
-    // The schema expects an Int param (non-Struct); the envelope must be
-    // {"value":...}. Send "{}" (no "value" field).
-    write_opaque_envelope(session.engine, "{}");
-    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 2);
-    check(outcome.has_value(), "opaque missing-value: invoke_run2 succeeded");
-    if (outcome.has_value()) {
-        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
-              "opaque missing-value: Run2HostAborted");
-    }
-    check(mock.call_count == 0, "opaque missing-value: invoker NOT called (pre-effect)");
-    check(session.state.last_error.has_value() &&
-              *session.state.last_error == wh::CapabilityImportError::ParamSchemaInvalid,
-          "opaque missing-value: error is ParamSchemaInvalid");
-}
 
 // ==== P1-3: production run_resume on real wasm3 + real IntegrityPayloadStore ====
 
@@ -648,6 +358,8 @@ namespace fs = std::filesystem;
 // without the subprocess dependency).
 struct EmittedWorkflowFixture {
     std::vector<std::uint8_t> module_bytes;
+    irc::CoreFrameLayoutSection frame_section;
+    irc::CoreWireSchemaTable wire_schema;
 };
 
 std::optional<EmittedWorkflowFixture> emit_workflow_fixture() {
@@ -673,11 +385,13 @@ std::optional<EmittedWorkflowFixture> emit_workflow_fixture() {
     const auto emitted = ahfl::backends::emit_core_wasm(
         core.program, *layouts.table,
         {irc::CoreWorkflowId{0}, ahfl::backends::WasmProfileKind::Wasi});
-    if (!emitted.ok() || !emitted.artifact.has_value()) {
+    if (!emitted.ok() || !emitted.artifact.has_value() || !emitted.descriptor.has_value()) {
         std::cerr << "  workflow emit failed\n";
         return std::nullopt;
     }
-    return EmittedWorkflowFixture{.module_bytes = emitted.artifact->bytes};
+    return EmittedWorkflowFixture{.module_bytes = emitted.artifact->bytes,
+                                  .frame_section = emitted.descriptor->frame_section,
+                                  .wire_schema = emitted.descriptor->wire_schema};
 }
 
 // Build a module that passes A2 admission (AHFLXM + AHFLWS + Memory + Type +
@@ -686,15 +400,20 @@ std::optional<EmittedWorkflowFixture> emit_workflow_fixture() {
 // path on the real wasm3 engine.
 std::vector<std::uint8_t> build_a2_trap_module() {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    // Type: tuple (i32,i32)->(i32,i32,i32) + (i32)->i32 (for alloc)
+    // Type: bridge (i32)->(i32,i32) for the ahfl_cap import, (i32)->i32 for
+    // alloc, and (i32,i32)->(i32,i32,i32) for the run2 workflow scheduler entry.
+    // RFC 0026 dual-track elimination: every capability import must use the
+    // bridge signature; the opaque (i32,i32)->(i32,i32,i32) import type is gone.
     rts::put_section(m, 1,
-                     rts::type_payload({rts::func_type({wht::kI32, wht::kI32},
-                                                       {wht::kI32, wht::kI32, wht::kI32}),
-                                        rts::func_type({wht::kI32}, {wht::kI32})}));
-    // Import: 1 ahfl_cap import (type 0)
+                     rts::type_payload({rts::func_type({wht::kI32},
+                                                       {wht::kI32, wht::kI32}),
+                                        rts::func_type({wht::kI32}, {wht::kI32}),
+                                        rts::func_type({wht::kI32, wht::kI32},
+                                                       {wht::kI32, wht::kI32, wht::kI32})}));
+    // Import: 1 ahfl_cap import (type 0, the bridge signature)
     rts::put_section(m, 2, rts::import_payload({{0, 0}}));
-    // Function: run2 (type 0, defined index 1), alloc (type 1, defined index 2)
-    wht::put_section(m, 3, wht::function_section({0, 1}));
+    // Function: run2 (type 2, defined index 1), alloc (type 1, defined index 2)
+    wht::put_section(m, 3, wht::function_section({2, 1}));
     // Memory: 1 page
     wht::put_section(m, 5, wht::memory_section(1));
     // Global: heap pointer
@@ -706,10 +425,13 @@ std::vector<std::uint8_t> build_a2_trap_module() {
     run2_body.push_back(wht::kOpUnreachable);
     run2_body.push_back(wht::kOpEnd);
     wht::append_standard_code(m, run2_body);
-    // AHFLXM: 1 cap node (workflow_node_id=0, cap_call_count=1, cap=0, sym=0)
+    // AHFLXM: 1 P6 bridge node (workflow_node_id=0, cap_call_count=0, one
+    // in-runner bridge site: ordinal=0, call_site_id=0, capability=0, sym=0).
     rts::put_section(m, 0,
                      rts::custom_payload("ahfl.wasm-exec-manifest.v1",
-                                         rts::exec_manifest_body(0, {{0, 1, 0, 0}})));
+                                         rts::exec_manifest_body(
+                                             0, {{0, 0, 0, 0,
+                                                  {{0, 0, 0, 0}}}})));
     // AHFLWS: 1 cap (cap_id=0, sym=0, result=node 0) with Int param (node 0)
     rts::put_section(
         m, 0,
@@ -775,6 +497,237 @@ void test_run_resume_wasm3_e2e() {
     const rts::PayloadSlotId entry_slot{9};
     const rts::PayloadSlotId injected_slot{5};
 
+    // P4-D entry frame packer: decode the wire-JSON entry bytes against the
+    // entry node's input binding, then pack the Value into the node's fixed
+    // I block (the bridge lane requires the entry at the node's fixed input
+    // region, not a bump allocation). Mirrors the production workflow
+    // session's entry packing (workflow_session.cpp section 7).
+    auto entry_packer = [&fixture](
+                            eng::CoreWasmResumeEngine &engine,
+                            std::span<const std::uint8_t> entry_json)
+        -> std::expected<std::pair<eng::GuestPointer, std::uint32_t>,
+                         eng::EngineError> {
+        const auto &section = fixture->frame_section;
+        const auto &wire = fixture->wire_schema;
+        if (section.node_blocks.empty() || !wire.frame_roots.has_value() ||
+            wire.frame_roots->node_inputs.empty()) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        constexpr std::uint32_t p6_ord = 0; // entry node is the first P6 node
+        if (p6_ord >= section.node_blocks.size()) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        const auto &block = section.node_blocks[p6_ord];
+        const auto w_id = wire.frame_roots->node_inputs[p6_ord];
+        const auto l_id = block.input_layout;
+
+        // Mint the input binding for the entry node.
+        auto verified = irc::make_verified_wire_schema_table(wire);
+        if (!verified.ok()) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        std::vector<irc::CoreLowerDiagnostic> diags;
+        auto binding = irc::make_node_frame_binding_from_verified_table(
+            *verified.table,
+            irc::CoreWireNodeRootSelector{p6_ord, irc::CoreWireNodeRootKind::Input},
+            diags);
+        if (!binding.has_value()) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+
+        // Decode the wire-JSON entry bytes.
+        auto dom = ahfl::json::parse_json(
+            std::string_view(reinterpret_cast<const char *>(entry_json.data()),
+                             entry_json.size()));
+        if (!dom.has_value() || !*dom) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        auto decoded =
+            ahfl::runtime::wire_codec::decode_json(**dom, *binding);
+        if (!decoded.ok()) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+
+        // Pack the Value into the entry node's I block.
+        auto page = engine.mutable_whole_memory();
+        if (!page.has_value()) {
+            return std::unexpected(page.error());
+        }
+        std::fill(page->begin() + irc::kP6AggregateInputBase,
+                  page->begin() + irc::kP6CollectionBackingBase,
+                  std::uint8_t{0});
+        wh::FrameWalkContext ctx(section, wire);
+        std::uint32_t arena_cursor = section.entry_payload_base;
+        auto packed = wh::pack_value_at(ctx, *page, w_id, l_id, *decoded.value,
+                                        block.input_base, arena_cursor,
+                                        section.entry_payload_base,
+                                        section.entry_payload_capacity);
+        if (!packed.has_value()) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        return std::make_pair(eng::GuestPointer{block.input_base},
+                              block.input_size);
+    };
+
+    // P4-D bridge result packer: resolve the bridge call site from the
+    // control-block pointer, decode the wire-JSON result against the call
+    // site's result binding, and pack into the fixed result block. Mirrors
+    // the production workflow session's memo-replay packing.
+    auto result_packer = [&fixture](
+                             eng::CoreWasmResumeEngine &engine,
+                             const eng::ImportObservation &obs,
+                             const csm::VerifiedCoreWasmCallSite &call_site,
+                             std::span<const std::uint8_t> result_json)
+        -> eng::ImportCallbackResult {
+        const auto &section = fixture->frame_section;
+        wh::CapabilityImportError resolve_error{};
+        auto resolved =
+            wh::resolve_bridge_call_site(section, obs.scalar_arg, resolve_error);
+        if (!resolved.has_value()) {
+            return eng::ImportAbort{};
+        }
+        auto dom = ahfl::json::parse_json(
+            std::string_view(reinterpret_cast<const char *>(result_json.data()),
+                             result_json.size()));
+        if (!dom.has_value() || !*dom) {
+            return eng::ImportAbort{};
+        }
+        auto decoded = ahfl::runtime::wire_codec::decode_json(
+            **dom, call_site.result_binding());
+        if (!decoded.ok()) {
+            return eng::ImportAbort{};
+        }
+        wh::CapabilityImportError pack_error{};
+        return wh::pack_bridge_result_value(engine, section, call_site,
+                                            *resolved->site,
+                                            std::move(*decoded.value),
+                                            pack_error);
+    };
+
+    // Bridge-lane arg hasher: decode the P4-D args from the control block and
+    // compute the wire-canonical arg_hash the controller cross-checks against
+    // the ledgered memo/pending.
+    auto arg_hasher = [&fixture](
+                          eng::CoreWasmResumeEngine &,
+                          const eng::ImportObservation &obs,
+                          const csm::VerifiedCoreWasmCallSite &call_site)
+        -> std::optional<std::uint64_t> {
+        const auto &section = fixture->frame_section;
+        wh::CapabilityImportError resolve_error{};
+        auto resolved =
+            wh::resolve_bridge_call_site(section, obs.scalar_arg, resolve_error);
+        if (!resolved.has_value()) {
+            return std::nullopt;
+        }
+        wh::CapabilityImportError decode_error{};
+        wh::ArgDecodeSubReason sub_reason{wh::ArgDecodeSubReason::kUnspecified};
+        auto args = wh::decode_bridge_import_args(
+            section, call_site, *resolved->site, obs.scalar_arg,
+            obs.whole_memory, decode_error, sub_reason);
+        if (!args.has_value()) {
+            return std::nullopt;
+        }
+        return ahfl::runtime::hash_values(*args);
+    };
+
+    // P4-D workflow output decoder: read the workflow output frame from the
+    // engine's whole linear memory and decode it to a runtime::Value via
+    // read_value_at (the same primitive the production workflow session
+    // uses). Strings live in the rodata / entry-payload / bridge-result
+    // arenas, so the whole page (not just the output span) is required.
+    auto build_string_regions = [](const irc::CoreFrameLayoutSection &section)
+        -> std::vector<wh::StringRegion> {
+        std::vector<wh::StringRegion> regions;
+        if (section.rodata_extent > 0) {
+            regions.push_back(
+                {section.rodata_base, section.rodata_base + section.rodata_extent});
+        }
+        if (section.entry_payload_capacity > 0) {
+            regions.push_back({section.entry_payload_base,
+                               section.entry_payload_base +
+                                   section.entry_payload_capacity});
+        }
+        for (const auto &site : section.bridge_call_sites) {
+            if (site.result_payload_capacity > 0) {
+                regions.push_back({site.result_payload_base,
+                                   site.result_payload_base +
+                                       site.result_payload_capacity});
+            }
+        }
+        if (section.construct_heap_base != 0) {
+            regions.push_back(
+                {section.construct_heap_base,
+                 irc::kCoreWasmFixedLinearMemoryCapacityBytes});
+        }
+        return regions;
+    };
+
+    auto decode_workflow_output =
+        [&fixture, &build_string_regions](
+            eng::CoreWasmResumeEngine &engine) -> std::optional<ahfl::runtime::Value> {
+        const auto &section = fixture->frame_section;
+        const auto &wire = fixture->wire_schema;
+        if (!wire.frame_roots.has_value()) {
+            return std::nullopt;
+        }
+        auto page = engine.read_whole_memory();
+        if (!page.has_value()) {
+            return std::nullopt;
+        }
+        auto regions = build_string_regions(section);
+        wh::FrameWalkContext ctx(section, wire);
+        auto output = wh::read_value_at(
+            ctx, *page, wire.frame_roots->output, section.output_layout,
+            section.workflow_output_base, regions);
+        if (!output.has_value()) {
+            return std::nullopt;
+        }
+        return std::move(*output);
+    };
+
+    // Canonical wire-JSON comparison helper: decode the expected wire JSON
+    // against the workflow output binding, re-encode both the expected and
+    // the P4-D-decoded actual to canonical wire JSON, and compare.
+    auto output_matches =
+        [&fixture, &decode_workflow_output](
+            eng::CoreWasmResumeEngine &engine,
+            std::span<const std::uint8_t> expected_json) -> bool {
+        const auto &wire = fixture->wire_schema;
+        auto verified = irc::make_verified_wire_schema_table(wire);
+        if (!verified.ok()) {
+            return false;
+        }
+        // The workflow output binding uses the workflow-level output root.
+        std::vector<irc::CoreLowerDiagnostic> diags;
+        auto binding = irc::make_frame_binding_from_verified_table(
+            *verified.table,
+            irc::CoreWireFrameRootSelector{irc::CoreWireFrameRootKind::Output},
+            diags);
+        if (!binding.has_value()) {
+            return false;
+        }
+        auto dom = ahfl::json::parse_json(
+            std::string_view(reinterpret_cast<const char *>(expected_json.data()),
+                             expected_json.size()));
+        if (!dom.has_value() || !*dom) {
+            return false;
+        }
+        auto expected =
+            ahfl::runtime::wire_codec::decode_json(**dom, *binding);
+        if (!expected.ok()) {
+            return false;
+        }
+        auto actual = decode_workflow_output(engine);
+        if (!actual.has_value()) {
+            return false;
+        }
+        const std::string expected_canonical =
+            ahfl::runtime::value_to_json(*expected.value);
+        const std::string actual_canonical =
+            ahfl::runtime::value_to_json(*actual);
+        return expected_canonical == actual_canonical;
+    };
+
     // ==== Scenario 1: Injected memo replay (ReturnMemo, call count ZERO) ====
     {
         const ps::ResumeCheckpointId ckpt{101};
@@ -799,12 +752,19 @@ void test_run_resume_wasm3_e2e() {
         request.checkpoint = ckpt;
         request.key_id = id_span;
         request.key = std::span<const std::uint8_t>(key);
+        request.pack_entry_frame = entry_packer;
+        request.pack_bridge_result = result_packer;
+        request.bridge_arg_hasher = arg_hasher;
 
         auto done = host::run_resume(request);
+        if (!done.has_value()) {
+            std::cerr << "  memo error: " << host::host_code(done.error())
+                      << " variant=" << done.error().index() << "\n";
+        }
         check(done.has_value(), "run_resume e2e memo: completes");
         if (done.has_value()) {
             check(done->raw_status == 0, "run_resume e2e memo: raw_status OK");
-            check(done->output == injected_bytes,
+            check(output_matches(engine, injected_bytes),
                   "run_resume e2e memo: output is memo bytes (no live capability)");
             // The driver's import callback served the memo from the store. It
             // has NO live capability invoker: ReadyForLive is blocked (aborts).
@@ -836,12 +796,18 @@ void test_run_resume_wasm3_e2e() {
         request.key = std::span<const std::uint8_t>(key);
         request.injected_result = std::span<const std::uint8_t>(injected_bytes);
         request.chosen_injected_slot = injected_slot;
+        request.pack_entry_frame = entry_packer;
+        request.pack_bridge_result = result_packer;
+        request.bridge_arg_hasher = arg_hasher;
 
         auto done = host::run_resume(request);
+        if (!done.has_value()) {
+            std::cerr << "  inject error: " << host::host_code(done.error()) << "\n";
+        }
         check(done.has_value(), "run_resume e2e inject: completes");
         if (done.has_value()) {
             check(done->raw_status == 0, "run_resume e2e inject: raw_status OK");
-            check(done->output == injected_bytes,
+            check(output_matches(engine, injected_bytes),
                   "run_resume e2e inject: output is injected bytes");
         }
     }
@@ -881,8 +847,18 @@ void test_run_resume_wasm3_e2e() {
         request.key = std::span<const std::uint8_t>(key);
         request.injected_result = std::span<const std::uint8_t>(memo_bytes);
         request.chosen_injected_slot = injected_slot;
+        // The hand-built trap module has no frame layout section, so the P4-D
+        // packer cannot work. Use the bump-packers: run2 traps before any
+        // import is served, so the entry frame placement is irrelevant.
+        request.pack_entry_frame = rts::make_bump_entry_packer();
+        request.pack_bridge_result = rts::make_bump_result_packer();
 
         auto done = host::run_resume(request);
+        if (done.has_value()) {
+            std::cerr << "  trap: unexpected success\n";
+        } else {
+            std::cerr << "  trap error: " << host::host_code(done.error()) << "\n";
+        }
         check(!done.has_value(), "run_resume e2e trap: fails");
         if (!done.has_value()) {
             const auto &f = done.error();
@@ -926,8 +902,16 @@ void test_run_resume_wasm3_e2e() {
         request.key = std::span<const std::uint8_t>(key);
         request.injected_result = std::span<const std::uint8_t>(injected_bytes);
         request.chosen_injected_slot = injected_slot;
+        request.pack_entry_frame = entry_packer;
+        request.pack_bridge_result = result_packer;
+        request.bridge_arg_hasher = arg_hasher;
 
         auto done = host::run_resume(request);
+        if (done.has_value()) {
+            std::cerr << "  abort: unexpected success\n";
+        } else {
+            std::cerr << "  abort error: " << host::host_code(done.error()) << "\n";
+        }
         check(!done.has_value(), "run_resume e2e abort: fails");
         if (!done.has_value()) {
             const auto &f = done.error();
@@ -948,14 +932,6 @@ void test_run_resume_wasm3_e2e() {
 
 int main() {
     test_bridge_e2e();
-    test_opaque_e2e_ok();
-    test_opaque_e2e_error();
-    test_opaque_e2e_pending();
-    test_replay_suspended_injected_consumed();
-    test_import_abort_e2e();
-    test_opaque_param_schema_invalid();
-    test_opaque_result_schema_invalid();
-    test_opaque_missing_value_field();
     test_run_resume_wasm3_e2e();
 
     std::cout << pass_count << "/" << test_count << " checks passed\n";

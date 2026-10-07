@@ -7,7 +7,6 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
-#include "ahfl/runtime/ahfl_host.h" // AHFL_CAP_OK
 #include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp"
@@ -24,7 +23,6 @@ using engine::GuestPointer;
 using engine::ImportAbort;
 using engine::ImportCallbackResult;
 using engine::ImportObservation;
-using engine::ImportReply;
 using engine::Run2HostAborted;
 using engine::Run2ResultTuple;
 using engine::Run2Trapped;
@@ -112,24 +110,6 @@ struct ReplayState {
     std::optional<ResumeFailure> abort_failure{};
 };
 
-// Write one decision's exact bytes as an instance-lifetime L3/L4 bump and hand
-// the engine its guest (ptr,len). A memo/injected frame is ALWAYS an OK reply:
-// the controller only ever decides ReturnMemo/NeedInjectedSlot for an
-// authenticated result, so the raw status is AHFL_CAP_OK explicitly (WH-3: the
-// engine carries it verbatim, never classifies).
-[[nodiscard]] std::expected<ImportReply, EngineError>
-write_frame(CoreWasmResumeEngine &engine, ReplayState &state,
-            std::span<const std::uint8_t> bytes) {
-    auto ptr = engine.alloc_then_write(bytes);
-    if (!ptr.has_value()) {
-        state.abort_failure = host_failure(ResumeHostReason::EngineFailure, ptr.error());
-        return std::unexpected(ptr.error());
-    }
-    return ImportReply{.raw_status = AHFL_CAP_OK,
-                       .result_ptr = *ptr,
-                       .result_len = static_cast<std::uint32_t>(bytes.size())};
-}
-
 // Fail closed with a precise ResumeFailure and an engine-side abort.
 [[nodiscard]] ImportCallbackResult abort_with(ReplayState &state, ResumeFailure failure) {
     state.abort_failure = std::move(failure);
@@ -141,10 +121,32 @@ write_frame(CoreWasmResumeEngine &engine, ReplayState &state,
                                                 const ImportObservation &observation) {
     CoreWasmResumeEngine &engine = *state.request->engine;
 
+    // Resolve the A2 call site first (the arg hasher + packer both need it).
+    auto cs_result =
+        state.request->module->resolve(csm::ManifestCallSiteIndex{observation.import_ordinal});
+    if (!cs_result.ok() || !cs_result.call_site.has_value()) {
+        return abort_with(state, host_failure(ResumeHostReason::EngineFailure,
+                                              EngineError::InvalidSequence));
+    }
+    const auto &call_site = *cs_result.call_site;
+
+    // Bridge lane: the param frame is empty (args live in the P4-D control
+    // block). The caller decodes the P4-D args and supplies the arg_hash so
+    // the controller can cross-check against the ledgered memo/pending.
+    std::optional<std::uint64_t> bridge_hash;
+    if (observation.param_frame.empty() && state.request->bridge_arg_hasher) {
+        bridge_hash = state.request->bridge_arg_hasher(engine, observation, call_site);
+        if (!bridge_hash.has_value()) {
+            return abort_with(state, host_failure(ResumeHostReason::EngineFailure,
+                                                  EngineError::InvalidSequence));
+        }
+    }
+
     rc::ImportStepInput input;
     input.observed_ordinal = csm::CapabilityImportOrdinal{observation.import_ordinal};
     input.module_param_frame = observation.param_frame;
     input.whole_linear_memory = observation.whole_memory;
+    input.bridge_arg_hash = bridge_hash;
 
     auto decision = rc::next_import(*state.prepared, input);
     if (!decision.has_value()) {
@@ -158,11 +160,12 @@ write_frame(CoreWasmResumeEngine &engine, ReplayState &state,
             // frontier's already-committed memo. Exact authenticated bytes, NO
             // CAS and NO live call.
             [&](const ReturnMemo &memo) -> Result {
-                auto reply = write_frame(engine, state, memo.memo_bytes);
-                if (!reply.has_value()) {
-                    return ImportCallbackResult{ImportAbort{}};
+                if (!state.request->pack_bridge_result) {
+                    return abort_with(state, host_failure(ResumeHostReason::EngineFailure,
+                                                          EngineError::InvalidSequence));
                 }
-                return ImportCallbackResult{*reply};
+                return state.request->pack_bridge_result(engine, observation, call_site,
+                                                         memo.memo_bytes);
             },
 
             // L4: the Suspended frontier. bind -> CAS publish -> explicit ACK;
@@ -185,13 +188,13 @@ write_frame(CoreWasmResumeEngine &engine, ReplayState &state,
                     // Available / unconsumed.
                     return abort_with(state, map_step_error(injected.error()));
                 }
-                auto reply = write_frame(engine, state, *injected);
-                if (!reply.has_value()) {
+                if (!state.request->pack_bridge_result) {
                     // The publish is already ACKed: the newest generation stays
                     // Available and is replayable; only the transfer failed.
                     return ImportCallbackResult{ImportAbort{}};
                 }
-                return ImportCallbackResult{*reply};
+                return state.request->pack_bridge_result(engine, observation, call_site,
+                                                         *injected);
             },
 
             // After-frontier verdicts. The live OK/PENDING/ERROR response API
@@ -345,16 +348,24 @@ std::expected<ResumeCompleted, ResumeFailure> run_resume(const ResumeRequest &re
                                             instantiated.error()));
     }
 
-    // L0: write the verbatim opaque entry frame and hand run2 its (ptr,len).
+    // L0: pack the entry frame as P4-D into the entry node's I block and
+    // hand run2 its (ptr,len). The bridge lane requires the entry at the
+    // node's fixed input region, not a bump allocation.
     const auto entry = prepared.entry_frame().bytes();
-    auto entry_ptr = engine.alloc_then_write(entry);
-    if (!entry_ptr.has_value()) {
+    if (!request.pack_entry_frame) {
         return std::unexpected(host_failure(ResumeHostReason::EngineFailure,
-                                            entry_ptr.error()));
+                                            EngineError::InvalidSequence));
     }
+    auto packed_entry = request.pack_entry_frame(engine, entry);
+    if (!packed_entry.has_value()) {
+        return std::unexpected(host_failure(ResumeHostReason::EngineFailure,
+                                            packed_entry.error()));
+    }
+    const auto entry_ptr = packed_entry->first;
+    const auto entry_len = packed_entry->second;
 
     // (5) run2 blocks while every ahfl_cap import is served synchronously.
-    auto run = engine.invoke_run2(*entry_ptr, static_cast<std::uint32_t>(entry.size()));
+    auto run = engine.invoke_run2(entry_ptr, entry_len);
     if (!run.has_value()) {
         return std::unexpected(host_failure(ResumeHostReason::EngineFailure, run.error()));
     }

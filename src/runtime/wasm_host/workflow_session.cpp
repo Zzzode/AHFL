@@ -25,7 +25,6 @@
 #include "runtime/wasm_host/frame_packer.hpp"
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
-#include "runtime/wasm_host/transcode.hpp"
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
@@ -77,15 +76,6 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
                                    site.result_payload_capacity});
         }
     }
-    // WH-5b.3: the transcode payload arena is the bump-allocation region for
-    // String bytes packed by a JSON_TO_P4D transcode. A workflow output that
-    // carries a transcoded String has its PtrLen pointing into this arena, so
-    // the post-run output read must admit it as a valid String region.
-    if (section.transcode_payload_capacity > 0) {
-        regions.push_back({section.transcode_payload_base,
-                           section.transcode_payload_base +
-                               section.transcode_payload_capacity});
-    }
     // KR6.6: String concatenation result payloads live in the runtime bump
     // heap [construct_heap_base, 65536). The base is zero on a module without
     // String concat (the construct heap is disabled).
@@ -95,16 +85,6 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
              irc::kCoreWasmFixedLinearMemoryCapacityBytes});
     }
     return regions;
-}
-
-// WH-5c.5: little-endian u32 load from an already-bounds-checked byte offset
-// (the per-node output stash slot reader; mirrors the node-events decoder's
-// load_u32).
-[[nodiscard]] std::uint32_t load_u32_le(const std::uint8_t *p) {
-    return static_cast<std::uint32_t>(p[0]) |
-           (static_cast<std::uint32_t>(p[1]) << 8) |
-           (static_cast<std::uint32_t>(p[2]) << 16) |
-           (static_cast<std::uint32_t>(p[3]) << 24);
 }
 
 // Fire state_entered_hook for a batch of new trace records. Also populates
@@ -154,165 +134,10 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return std::nullopt;
 }
 
-// Reconstruct the state_sequence for a WireJson workflow from decoded
-// node-event records joined to the descriptor's agent walks (schedule order).
-// Identity workflows (no capability imports, no event buffer) reconstruct from
-// the descriptor nodes directly. Fail-closed on any out-of-range runner or
-// unknown node (D-B: mirrors the JS oracle's recordStates, which fails rather
-// than skips). P2-3: cross-checks event capability/source_symbol against the
-// descriptor node. Also populates states_per_node for lifecycle events.
-// WH-8 (kr68 section 12.9.4 item 2): reconstruct WireJson state_sequence
-// from node-event records joined to agent walks. Does NOT fire
-// state_entered_hook -- the hook fires post-run AFTER node_completed_hook
-// (per-node schedule order: node_completed THEN state_entered).
-[[nodiscard]] std::optional<std::string> reconstruct_wirejson_states(
-    std::span<const std::uint8_t> linear_memory,
-    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-    std::vector<StateEntry> &collected_states,
-    std::vector<std::vector<WasmNodeStateEntry>> &states_per_node) {
-    const auto &nodes = descriptor.nodes;
-    const auto &agents = descriptor.agents;
-
-    // Identity workflow: no event buffer. The descriptor nodes (in Kahn
-    // schedule order) ARE the schedule; join each to its runner's walk.
-    if (descriptor.imports.empty()) {
-        for (std::size_t i = 0; i < nodes.size(); ++i) {
-            const auto &node = nodes[i];
-            if (node.runner >= agents.size()) {
-                return "identity workflow node runner index out of range";
-            }
-            const auto &agent = agents[node.runner];
-            for (const auto &state_name : agent.walk) {
-                collected_states.push_back({agent.agent, state_name});
-                states_per_node[i].push_back({node.runner, state_name});
-            }
-        }
-        return std::nullopt;
-    }
-
-    // Capability workflow: decode node-event records from the event buffer.
-    auto events =
-        ne::decode_node_events(linear_memory, descriptor.workflow_node_count);
-    if (!events.has_value()) {
-        return "node-event decode failed";
-    }
-    for (const auto &event : *events) {
-        // Join to the descriptor node by workflow_node_id.
-        const ahfl::backends::CoreWasmNodeDescriptor *node_desc = nullptr;
-        std::size_t node_schedule = 0;
-        for (std::size_t i = 0; i < nodes.size(); ++i) {
-            if (nodes[i].node_id == event.workflow_node_id.value) {
-                node_desc = &nodes[i];
-                node_schedule = i;
-                break;
-            }
-        }
-        if (node_desc == nullptr) {
-            return "node-event record names unknown node";
-        }
-        if (node_desc->runner >= agents.size()) {
-            return "node-event record runner index out of range";
-        }
-
-        // P2-3: cross-check event capability kind + source_symbol against
-        // the descriptor node. A mismatch is evidence of a corrupt module.
-        const bool event_is_capability =
-            event.kind == core_wasm_resume::NodeKind::Capability;
-        if (event_is_capability != node_desc->has_capability) {
-            return "node-event record capability kind disagrees with descriptor";
-        }
-        if (node_desc->has_capability) {
-            if (event.source_symbol != node_desc->source_symbol) {
-                return "node-event record source_symbol disagrees with descriptor";
-            }
-        } else {
-            if (event.source_symbol != 0) {
-                return "identity node-event record has nonzero source_symbol";
-            }
-        }
-
-        const auto &agent = agents[node_desc->runner];
-        for (const auto &state_name : agent.walk) {
-            collected_states.push_back({agent.agent, state_name});
-            states_per_node[node_schedule].push_back(
-                {node_desc->runner, state_name});
-        }
-    }
-    return std::nullopt;
-}
-
-// WH-5c.4 P0-3: collect state transitions for OPAQUE (non-P6) nodes from
-// node-event records in a P6-frame module. P6 nodes' states are collected
-// from the trace ring (fire_state_entries); opaque nodes never write to the
-// trace ring, so their walks are only recoverable from the node-event
-// records the scheduler writes per completed node. Populates
-// states_per_node ONLY (no hook, no collected_states -- the caller rebuilds
-// collected_states via rebuild_states and fires the hook in schedule order
-// in section 10's per-node loop).
-[[nodiscard]] std::optional<std::string> collect_opaque_node_states(
-    std::span<const std::uint8_t> linear_memory,
-    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-    std::vector<std::vector<WasmNodeStateEntry>> &states_per_node) {
-    const auto &nodes = descriptor.nodes;
-    const auto &agents = descriptor.agents;
-
-    auto events =
-        ne::decode_node_events(linear_memory, descriptor.workflow_node_count);
-    if (!events.has_value()) {
-        return "node-event decode failed";
-    }
-    for (const auto &event : *events) {
-        const ahfl::backends::CoreWasmNodeDescriptor *node_desc = nullptr;
-        std::size_t node_schedule = 0;
-        for (std::size_t i = 0; i < nodes.size(); ++i) {
-            if (nodes[i].node_id == event.workflow_node_id.value) {
-                node_desc = &nodes[i];
-                node_schedule = i;
-                break;
-            }
-        }
-        if (node_desc == nullptr) {
-            return "node-event record names unknown node";
-        }
-        // P6 nodes' states are already collected from the trace ring.
-        if (node_desc->is_p6) {
-            continue;
-        }
-        if (node_desc->runner >= agents.size()) {
-            return "node-event record runner index out of range";
-        }
-
-        // WH-5c.4 fix-forward P2-C: cross-check event capability kind +
-        // source_symbol against the descriptor node, exactly as the WireJson
-        // reconstruction does. A mismatch is evidence of a corrupt module;
-        // fail closed rather than firing the wrong agent's state walk.
-        const bool event_is_capability =
-            event.kind == core_wasm_resume::NodeKind::Capability;
-        if (event_is_capability != node_desc->has_capability) {
-            return "node-event record capability kind disagrees with descriptor";
-        }
-        if (node_desc->has_capability) {
-            if (event.source_symbol != node_desc->source_symbol) {
-                return "node-event record source_symbol disagrees with descriptor";
-            }
-        } else if (event.source_symbol != 0) {
-            return "identity node-event record has nonzero source_symbol";
-        }
-
-        const auto &agent = agents[node_desc->runner];
-        for (const auto &state_name : agent.walk) {
-            states_per_node[node_schedule].push_back(
-                {node_desc->runner, state_name});
-        }
-    }
-    return std::nullopt;
-}
-
 // WH-5c.4 P0-3: rebuild collected_states from states_per_node in schedule
-// order and fire state_entered_hook for every entry. In a P6-frame module
-// the trace ring fires P6 states live at import boundaries (out of schedule
-// order relative to opaque nodes); this post-run pass produces a single
-// schedule-ordered sequence.
+// order and fire state_entered_hook for every entry. The trace ring fires
+// states live at import boundaries (out of schedule order); this post-run
+// pass produces a single schedule-ordered sequence.
 // WH-8 (kr68 section 12.9.4 item 2): rebuild collected_states from
 // states_per_node in schedule order. Does NOT fire state_entered_hook --
 // the hook fires post-run AFTER node_completed_hook (per-node schedule
@@ -331,6 +156,53 @@ void rebuild_states(
             collected_states.push_back({agent.agent, entry.state_name});
         }
     }
+}
+
+// P2-3: post-run validation of node-event records against the descriptor.
+// The scheduler writes one record per completed node; each record's
+// capability kind and source_symbol must agree with the descriptor node.
+// A mismatch is evidence of a corrupt module; fail closed rather than
+// firing the wrong agent's lifecycle events. Identity workflows (no
+// imports) have no event buffer and skip validation.
+[[nodiscard]] std::optional<std::string> validate_node_events(
+    std::span<const std::uint8_t> linear_memory,
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
+    if (descriptor.imports.empty()) {
+        return std::nullopt;
+    }
+    auto events =
+        ne::decode_node_events(linear_memory, descriptor.workflow_node_count);
+    if (!events.has_value()) {
+        return "node-event decode failed";
+    }
+    for (const auto &event : *events) {
+        const ahfl::backends::CoreWasmNodeDescriptor *node_desc = nullptr;
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            if (descriptor.nodes[i].node_id == event.workflow_node_id.value) {
+                node_desc = &descriptor.nodes[i];
+                break;
+            }
+        }
+        if (node_desc == nullptr) {
+            return "node-event record names unknown node";
+        }
+        if (node_desc->runner >= descriptor.agents.size()) {
+            return "node-event record runner index out of range";
+        }
+        const bool event_is_capability =
+            event.kind == core_wasm_resume::NodeKind::Capability;
+        if (event_is_capability != node_desc->has_capability) {
+            return "node-event record capability kind disagrees with descriptor";
+        }
+        if (node_desc->has_capability) {
+            if (event.source_symbol != node_desc->source_symbol) {
+                return "node-event record source_symbol disagrees with descriptor";
+            }
+        } else if (event.source_symbol != 0) {
+            return "identity node-event record has nonzero source_symbol";
+        }
+    }
+    return std::nullopt;
 }
 
 // WH-4b: validate a recovery snapshot against the descriptor before a resume
@@ -527,11 +399,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         };
     }
 
-    const bool is_p6 =
-        descriptor.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame;
     const bool has_trace =
-        is_p6 && descriptor.frame_section.has_value() &&
-        descriptor.frame_section->state_trace_capacity > 0;
+        descriptor.frame_section.state_trace_capacity > 0;
 
     // --- 1. Create the engine ---
     Wasm3ResumeEngine engine;
@@ -790,20 +659,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // make_capability_import_callback lambda that is called during
     // invoke_run2 (long after the else block below ends). Declaring them
     // inside the else block would dangle the references.
-    irc::CoreFrameLayoutSection default_section;
     CapabilityInvocationContext invocation_context;
     invocation_context.agent_id = AgentId{0};
-
-    // WH-5b.3: transcode routing state. The map joins a wasm import ordinal
-    // to its frame-section transcode site; the verified wire authority mints
-    // the typed binding for each direction's boundary root; the arena cursor
-    // bump-allocates String bytes for JSON_TO_P4D. All MUST outlive the
-    // callback (the lambda captures them by reference and fires during
-    // invoke_run2, long after this setup block ends).
-    std::unordered_map<std::uint32_t, const irc::CoreFrameTranscodeSite *>
-        transcode_by_ordinal;
-    std::optional<irc::VerifiedWireSchemaTable> verified_wire;
-    std::uint32_t transcode_arena_cursor = 0;
 
     if (descriptor.imports.empty()) {
         wrapped_callback =
@@ -817,13 +674,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 "run_workflow_session: wire-schema admission failed");
         }
 
-        // A default frame section for WireJson workflows (the opaque lane
-        // does not use it, but the CapabilityImportConfig requires a
-        // reference).
         const irc::CoreFrameLayoutSection &frame_section =
-            is_p6 && descriptor.frame_section.has_value()
-                ? *descriptor.frame_section
-                : default_section;
+            descriptor.frame_section;
 
         // WH-5b.2: host-side trust checks. Cross-check the manifest
         // bridge-site table against the frame section: every bridge
@@ -833,8 +685,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // the fixed 64 KiB page. The A2 decoder already validates
         // ordinal density and call_site_id uniqueness; these checks
         // close the manifest<->frame-section trust gap (design 12.14.4).
-        if (is_p6 && descriptor.frame_section.has_value()) {
-            const auto &fsection = *descriptor.frame_section;
+        {
+            const auto &fsection = descriptor.frame_section;
             for (std::size_t i = 0; i < admitted.module->node_count();
                  ++i) {
                 auto node_result = admitted.module->resolve_node(
@@ -878,30 +730,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                             "payload arena out of bounds");
                     }
                 }
-            }
-        }
-
-        // WH-5b.3: build the transcode ordinal->site map and admit the wire
-        // schema for binding minting. A hybrid P6+opaque workflow carries
-        // transcode sites; an all-P6 or all-opaque workflow has none and the
-        // map stays empty (no routing overhead in the callback).
-        if (descriptor.frame_section.has_value()) {
-            for (const auto &site :
-                 descriptor.frame_section->transcode_sites) {
-                transcode_by_ordinal.emplace(site.import_ordinal, &site);
-            }
-            if (!transcode_by_ordinal.empty() &&
-                descriptor.wire_schema.has_value()) {
-                auto wire_result = irc::make_verified_wire_schema_table(
-                    *descriptor.wire_schema);
-                if (!wire_result.ok() || !wire_result.table.has_value()) {
-                    return std::unexpected(
-                        "run_workflow_session: wire-schema admission failed "
-                        "for transcode binding");
-                }
-                verified_wire = std::move(*wire_result.table);
-                transcode_arena_cursor =
-                    descriptor.frame_section->transcode_payload_base;
             }
         }
 
@@ -980,7 +808,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
              &boundary_cancel,
              &descriptor, &last_trace_count, &collected_states,
              &states_per_node, &runner_to_schedule, &trace_error, &admitted,
-             &transcode_by_ordinal, &verified_wire, &transcode_arena_cursor,
              &frame_section,
              has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
@@ -1002,7 +829,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     return eng::ImportAbort{};
                 }
                 if (has_trace) {
-                    const auto &section = *descriptor.frame_section;
+                    const auto &section = descriptor.frame_section;
                     auto decoded = decode_state_trace(
                         obs.whole_memory, section.state_trace_base,
                         section.state_trace_capacity);
@@ -1042,60 +869,18 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     return eng::ImportAbort{};
                 }
 
-                // WH-5b.2: lane detection. Bridge imports (empty param_frame)
-                // now flow through the same memo/replay machinery as opaque
-                // imports: the bridge ABI has a graceful PENDING arm
-                // (suspend), so suspend/resume parity holds on both lanes.
-                const bool is_bridge = obs.param_frame.empty();
-
-                // WH-5b.3: route transcode imports BEFORE the memo/replay/
-                // event_count machinery. A transcode is a pure deterministic
-                // codec adapter: it never invokes a capability, touches memo,
-                // fires capability hooks, or writes an event record. The
-                // handler fails closed with a nonzero status that the guest's
-                // scheduler traps on, converting the failure to NodeFailed.
-                if (auto xit = transcode_by_ordinal.find(obs.import_ordinal);
-                    xit != transcode_by_ordinal.end()) {
-                    if (!verified_wire.has_value() ||
-                        !descriptor.frame_section.has_value() ||
-                        !descriptor.wire_schema.has_value()) {
-                        return eng::ImportAbort{};
-                    }
-                    TranscodeConfig xconfig{
-                        .engine = engine,
-                        .frame_section = *descriptor.frame_section,
-                        .wire_table = *descriptor.wire_schema,
-                        .descriptor = descriptor,
-                        .verified_wire = *verified_wire,
-                        .arena_cursor = transcode_arena_cursor,
-                    };
-                    return handle_transcode(xconfig, *xit->second, obs);
-                }
-
-                // WH-5b.2: bridge lane. Resolve the bridge site from the
-                // control-block pointer (the same resolution handle_bridge
-                // performs). The site gives the result placement
-                // (result_base / result_extent / result_payload_base /
+                // WH-5b.2: resolve the bridge site from the control-block
+                // pointer (the same resolution handle_bridge performs). The
+                // site gives the result placement (result_base /
+                // result_extent / result_payload_base /
                 // result_payload_capacity) for memo capture and injection.
-                // The call site (resolved below for both lanes) gives the
-                // source_symbol and result binding.
+                // The call site (resolved below) gives the source_symbol and
+                // result binding.
                 const irc::CoreFrameBridgeCallSite *bridge_site = nullptr;
-                if (is_bridge) {
-                    if (!descriptor.frame_section.has_value()) {
-                        if (recorder.is_replay()) {
-                            replay_divergence =
-                                "durable resume replay diverged: bridge "
-                                "import without frame section";
-                            return eng::ImportAbort{};
-                        }
-                        origination_failure =
-                            "bridge import without frame section at import "
-                            "boundary";
-                        return eng::ImportAbort{};
-                    }
+                {
                     CapabilityImportError resolve_error{};
                     auto resolved = resolve_bridge_call_site(
-                        *descriptor.frame_section, obs.scalar_arg,
+                        descriptor.frame_section, obs.scalar_arg,
                         resolve_error);
                     if (!resolved.has_value()) {
                         if (recorder.is_replay()) {
@@ -1142,7 +927,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 // the call site's (the call site was resolved from the
                 // import ordinal; the bridge site from the control-block
                 // pointer). A mismatch is a host-side invariant violation.
-                if (is_bridge && bridge_site->source_symbol != source_symbol) {
+                if (bridge_site->source_symbol != source_symbol) {
                     if (recorder.is_replay()) {
                         replay_divergence =
                             "durable resume replay diverged: bridge site "
@@ -1206,19 +991,18 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 std::to_string(ordinal) + ")";
                             return eng::ImportAbort{};
                         }
-                        // WH-5b.2: lane-specific arg_hash. The bridge lane
-                        // decodes P4-D args; the opaque lane decodes the
-                        // wire-JSON envelope. Both feed hash_values so the
-                        // origination and replay hashes use the SAME code
-                        // path (decode_bridge_import_args is shared with
-                        // handle_bridge).
+                        // WH-5b.2: bridge arg_hash. The bridge lane
+                        // decodes P4-D args; the hash feeds hash_values so
+                        // the origination and replay hashes use the SAME
+                        // code path (decode_bridge_import_args is shared
+                        // with handle_bridge).
                         std::uint64_t live_arg_hash = 0;
-                        if (is_bridge) {
+                        {
                             CapabilityImportError decode_error{};
                             ArgDecodeSubReason decode_sub_reason{
                                 ArgDecodeSubReason::kUnspecified};
                             auto bargs = decode_bridge_import_args(
-                                *descriptor.frame_section, *call_site,
+                                descriptor.frame_section, *call_site,
                                 *bridge_site, obs.scalar_arg,
                                 obs.whole_memory, decode_error,
                                 decode_sub_reason);
@@ -1236,27 +1020,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 return eng::ImportAbort{};
                             }
                             auto h = runtime::hash_values(*bargs);
-                            if (!h.has_value()) {
-                                replay_divergence =
-                                    "durable resume replay diverged from "
-                                    "the recorded memo (ordinal " +
-                                    std::to_string(ordinal) + ")";
-                                return eng::ImportAbort{};
-                            }
-                            live_arg_hash = *h;
-                        } else {
-                            auto decoded_args = decode_opaque_import_args(
-                                *admitted.module, obs.import_ordinal,
-                                obs.param_frame);
-                            if (!decoded_args.has_value()) {
-                                replay_divergence =
-                                    "durable resume replay diverged from "
-                                    "the recorded memo (ordinal " +
-                                    std::to_string(ordinal) + ")";
-                                return eng::ImportAbort{};
-                            }
-                            auto h = runtime::hash_values(
-                                decoded_args->args);
                             if (!h.has_value()) {
                                 replay_divergence =
                                     "durable resume replay diverged from "
@@ -1283,110 +1046,92 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 std::to_string(ordinal) + ")";
                             return eng::ImportAbort{};
                         }
-                        if (is_bridge) {
-                            // WH-5b.2: resolve the bridge site from the
-                            // manifest (node, ordinal) -> call_site_id ->
-                            // frame section site. The manifest is the
-                            // trusted authority (A2-admitted); the
-                            // control-block site is untrusted guest input.
-                            auto node_result = admitted.module->resolve_node(
-                                csm::ManifestNodeIndex{schedule_pos});
-                            if (!node_result.ok() ||
-                                !node_result.node.has_value()) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "manifest node not found";
-                                return eng::ImportAbort{};
-                            }
-                            const auto sites =
-                                node_result.node->bridge_sites();
-                            if (ordinal >= sites.size()) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge site ordinal out of range";
-                                return eng::ImportAbort{};
-                            }
-                            const auto &manifest_site =
-                                sites[static_cast<std::size_t>(ordinal)];
-                            // Cross-check the manifest site's call_site_id
-                            // with the control-block site's (defense-in-
-                            // depth: they must agree).
-                            if (manifest_site.call_site_id !=
-                                bridge_site->call_site_id) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge call_site_id mismatch";
-                                return eng::ImportAbort{};
-                            }
-                            const auto *inject_site =
-                                find_bridge_site_by_id(
-                                    *descriptor.frame_section,
-                                    manifest_site.call_site_id);
-                            if (inject_site == nullptr) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge site not found in frame "
-                                    "section";
-                                return eng::ImportAbort{};
-                            }
-                            // WH-5b.2: the bridge lane stores NativeOnly at
-                            // origination (the result is a P4-D binary frame,
-                            // not JSON). The persistence layer serializes the
-                            // native Value to wire JSON; on reload the entry
-                            // is ExactSidecar with wire-JSON
-                            // authoritative_json. Decode through the call
-                            // site's result binding, then pack into the P4-D
-                            // frame (the same packing the Frontier path
-                            // uses). The P4-D encoding is deterministic, so
-                            // re-packing produces the identical frame the
-                            // guest wrote at origination.
-                            auto dom = ahfl::json::parse_json(
-                                *entry->authoritative_json);
-                            if (!dom.has_value() || !*dom) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge memo result is not valid wire "
-                                    "JSON";
-                                return eng::ImportAbort{};
-                            }
-                            auto decoded = wire_codec::decode_json(
-                                **dom, call_site->result_binding());
-                            if (!decoded.ok()) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge memo result type mismatch";
-                                return eng::ImportAbort{};
-                            }
-                            CapabilityImportError pack_error{};
-                            auto packed = pack_bridge_result_value(
-                                engine, *descriptor.frame_section,
-                                *call_site, *inject_site,
-                                std::move(*decoded.value), pack_error);
-                            if (std::holds_alternative<
-                                    eng::ImportAbort>(packed)) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge memo pack failed";
-                                return eng::ImportAbort{};
-                            }
-                            return packed;
-                        }
-                        // Opaque lane: alloc_then_write the wire JSON.
-                        const std::span<const std::uint8_t> bytes(
-                            reinterpret_cast<const std::uint8_t *>(
-                                entry->authoritative_json->data()),
-                            entry->authoritative_json->size());
-                        auto ptr = engine.alloc_then_write(bytes);
-                        if (!ptr.has_value()) {
+                        // WH-5b.2: resolve the bridge site from the
+                        // manifest (node, ordinal) -> call_site_id ->
+                        // frame section site. The manifest is the
+                        // trusted authority (A2-admitted); the
+                        // control-block site is untrusted guest input.
+                        auto node_result = admitted.module->resolve_node(
+                            csm::ManifestNodeIndex{schedule_pos});
+                        if (!node_result.ok() ||
+                            !node_result.node.has_value()) {
                             replay_divergence =
-                                "durable resume replay diverged: engine "
-                                "alloc failed";
+                                "durable resume replay diverged: "
+                                "manifest node not found";
                             return eng::ImportAbort{};
                         }
-                        return eng::ImportReply{
-                            AHFL_CAP_OK, *ptr,
-                            static_cast<std::uint32_t>(
-                                entry->authoritative_json->size())};
+                        const auto sites =
+                            node_result.node->bridge_sites();
+                        if (ordinal >= sites.size()) {
+                            replay_divergence =
+                                "durable resume replay diverged: "
+                                "bridge site ordinal out of range";
+                            return eng::ImportAbort{};
+                        }
+                        const auto &manifest_site =
+                            sites[static_cast<std::size_t>(ordinal)];
+                        // Cross-check the manifest site's call_site_id
+                        // with the control-block site's (defense-in-
+                        // depth: they must agree).
+                        if (manifest_site.call_site_id !=
+                            bridge_site->call_site_id) {
+                            replay_divergence =
+                                "durable resume replay diverged: "
+                                "bridge call_site_id mismatch";
+                            return eng::ImportAbort{};
+                        }
+                        const auto *inject_site =
+                            find_bridge_site_by_id(
+                                descriptor.frame_section,
+                                manifest_site.call_site_id);
+                        if (inject_site == nullptr) {
+                            replay_divergence =
+                                "durable resume replay diverged: "
+                                "bridge site not found in frame "
+                                "section";
+                            return eng::ImportAbort{};
+                        }
+                        // WH-5b.2: the bridge lane stores NativeOnly at
+                        // origination (the result is a P4-D binary frame,
+                        // not JSON). The persistence layer serializes the
+                        // native Value to wire JSON; on reload the entry
+                        // is ExactSidecar with wire-JSON
+                        // authoritative_json. Decode through the call
+                        // site's result binding, then pack into the P4-D
+                        // frame (the same packing the Frontier path
+                        // uses). The P4-D encoding is deterministic, so
+                        // re-packing produces the identical frame the
+                        // guest wrote at origination.
+                        auto dom = ahfl::json::parse_json(
+                            *entry->authoritative_json);
+                        if (!dom.has_value() || !*dom) {
+                            replay_divergence =
+                                "durable resume replay diverged: "
+                                "bridge memo result is not valid wire "
+                                "JSON";
+                            return eng::ImportAbort{};
+                        }
+                        auto decoded = wire_codec::decode_json(
+                            **dom, call_site->result_binding());
+                        if (!decoded.ok()) {
+                            replay_divergence =
+                                "durable resume replay diverged: "
+                                "bridge memo result type mismatch";
+                            return eng::ImportAbort{};
+                        }
+                        CapabilityImportError pack_error{};
+                        auto packed = pack_bridge_result_value(
+                            engine, descriptor.frame_section,
+                            *call_site, *inject_site,
+                            std::move(*decoded.value), pack_error);
+                        if (std::holds_alternative<
+                                eng::ImportAbort>(packed)) {
+                            replay_divergence =
+                                "durable resume replay diverged: "
+                                "bridge memo pack failed";
+                            return eng::ImportAbort{};
+                        }
+                        return packed;
                     }
                     case WasmResumeRecorder::ReplayClass::Frontier: {
                         // Identity gate (P0-15): the pending call's
@@ -1417,107 +1162,52 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                                 "capability result";
                             return eng::ImportAbort{};
                         }
-                        if (is_bridge) {
-                            // WH-5b.2: bridge frontier. Pack the pending
-                            // result Value into the P4-D frame at the
-                            // bridge site's disjoint result placement (the
-                            // same packing handle_bridge performs on a
-                            // live success), then return the ImportReply
-                            // identical in shape to live placement.
-                            runtime::Value pending_value{
-                                runtime::NoneValue{}};
-                            if (has_native) {
-                                pending_value = runtime::clone_value(
-                                    *resume_pending_result);
-                            } else {
-                                auto dom = ahfl::json::parse_json(
-                                    *resume_pending_result_wire_json);
-                                if (!dom.has_value() || !*dom) {
-                                    replay_divergence =
-                                        "durable resume pending result "
-                                        "is not valid wire JSON";
-                                    return eng::ImportAbort{};
-                                }
-                                auto decoded = wire_codec::decode_json(
-                                    **dom,
-                                    call_site->result_binding());
-                                if (!decoded.ok()) {
-                                    replay_divergence =
-                                        "durable resume pending-result "
-                                        "type mismatch";
-                                    return eng::ImportAbort{};
-                                }
-                                pending_value = std::move(
-                                    *decoded.value);
-                            }
-                            CapabilityImportError pack_error{};
-                            auto packed = pack_bridge_result_value(
-                                engine, *descriptor.frame_section,
-                                *call_site, *bridge_site,
-                                std::move(pending_value), pack_error);
-                            if (std::holds_alternative<
-                                    eng::ImportAbort>(packed)) {
-                                replay_divergence =
-                                    "durable resume replay diverged: "
-                                    "bridge frontier pack failed";
-                                return eng::ImportAbort{};
-                            }
-                            recorder.mark_frontier_injected();
-                            return packed;
-                        }
-                        // Opaque lane: build the wire bytes to supply.
-                        std::string wire_bytes;
-                        if (has_raw) {
-                            wire_bytes =
-                                *resume_pending_result_wire_json;
+                        // WH-5b.2: bridge frontier. Pack the pending
+                        // result Value into the P4-D frame at the
+                        // bridge site's disjoint result placement (the
+                        // same packing handle_bridge performs on a
+                        // live success), then return the ImportReply
+                        // identical in shape to live placement.
+                        runtime::Value pending_value{
+                            runtime::NoneValue{}};
+                        if (has_native) {
+                            pending_value = runtime::clone_value(
+                                *resume_pending_result);
                         } else {
-                            auto serialized =
-                                runtime::serialize_value_for_wire_json(
-                                    *resume_pending_result);
-                            if (!serialized.has_value()) {
+                            auto dom = ahfl::json::parse_json(
+                                *resume_pending_result_wire_json);
+                            if (!dom.has_value() || !*dom) {
                                 replay_divergence =
-                                    "durable resume pending result is not "
-                                    "wire-encodable";
+                                    "durable resume pending result "
+                                    "is not valid wire JSON";
                                 return eng::ImportAbort{};
                             }
-                            wire_bytes = std::move(*serialized);
+                            auto decoded = wire_codec::decode_json(
+                                **dom,
+                                call_site->result_binding());
+                            if (!decoded.ok()) {
+                                replay_divergence =
+                                    "durable resume pending-result "
+                                    "type mismatch";
+                                return eng::ImportAbort{};
+                            }
+                            pending_value = std::move(
+                                *decoded.value);
                         }
-                        // Type gate: parse + decode under the pending
-                        // capability's result binding.
-                        auto dom =
-                            ahfl::json::parse_json(wire_bytes);
-                        if (!dom.has_value() || !*dom) {
+                        CapabilityImportError pack_error{};
+                        auto packed = pack_bridge_result_value(
+                            engine, descriptor.frame_section,
+                            *call_site, *bridge_site,
+                            std::move(pending_value), pack_error);
+                        if (std::holds_alternative<
+                                eng::ImportAbort>(packed)) {
                             replay_divergence =
-                                "durable resume pending result is not "
-                                "valid wire JSON";
-                            return eng::ImportAbort{};
-                        }
-                        auto decoded = wire_codec::decode_json(
-                            **dom, call_site->result_binding());
-                        if (!decoded.ok()) {
-                            replay_divergence =
-                                "durable resume pending-result type "
-                                "mismatch";
-                            return eng::ImportAbort{};
-                        }
-                        // Supply verbatim (the original bytes, never
-                        // re-serialized).
-                        const std::span<const std::uint8_t> bytes(
-                            reinterpret_cast<const std::uint8_t *>(
-                                wire_bytes.data()),
-                            wire_bytes.size());
-                        auto ptr = engine.alloc_then_write(bytes);
-                        if (!ptr.has_value()) {
-                            replay_divergence =
-                                "durable resume replay diverged: engine "
-                                "alloc failed";
+                                "durable resume replay diverged: "
+                                "bridge frontier pack failed";
                             return eng::ImportAbort{};
                         }
                         recorder.mark_frontier_injected();
-                        return eng::ImportReply{
-                            AHFL_CAP_OK, *ptr,
-                            static_cast<std::uint32_t>(
-                                wire_bytes.size())};
+                        return packed;
                     }
                     case WasmResumeRecorder::ReplayClass::PostFrontier: {
                         // ReadyForLive: pass through to the live invoker
@@ -1546,79 +1236,19 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     if (import_reply->raw_status == AHFL_CAP_PENDING) {
                         recorder.stamp_pending();
                     } else if (import_reply->raw_status == AHFL_CAP_OK) {
-                        if (is_bridge) {
-                            // WH-5b.2: the bridge result is a P4-D binary
-                            // frame, not JSON. Store the native Value
-                            // (NativeOnly) so the persistence layer
-                            // serializes it to wire JSON via
-                            // try_value_to_json. On reload the entry becomes
-                            // ExactSidecar with wire-JSON bytes, and the
-                            // replay MemoHit path re-packs it through
-                            // pack_bridge_result_value (the same packing the
-                            // Frontier path uses). The P4-D bytes are
-                            // deterministic, so re-packing produces the
-                            // identical frame the guest wrote.
-                            recorder.append_memo_entry(
-                                {}, PersistedMemoResultSource::NativeOnly);
-                        } else {
-                            // P2-3: record the memo even for a
-                            // zero-length OK result (an empty-but-valid
-                            // reply is still a deterministic outcome the
-                            // resume must replay).
-                            //
-                            // Reachability note (WH-4b P2-C): on the
-                            // production opaque lane this zero-length
-                            // branch is provably unreachable for two
-                            // independent reasons:
-                            //   1. handle_opaque (capability_import.cpp)
-                            //      always serializes the result through
-                            //      serialize_value_for_wire_json, which
-                            //      produces non-empty output even for
-                            //      NoneValue ("null").
-                            //   2. The guest classifies an OK reply with
-                            //      a null result pointer or zero length
-                            //      as ERROR (core_wasm_codegen.cpp
-                            //      cap-status dispatch), so an
-                            //      AHFL_CAP_OK import reply always
-                            //      carries a non-empty body.
-                            // The guard is retained as
-                            // defense-in-depth: a future capability lane
-                            //      that returns raw (unserialized) bytes
-                            //      could legitimately produce an empty
-                            //      OK body, and the memo must still
-                            //      record it. The replay-side defense
-                            //      (empty authoritative JSON rejected at
-                            //      MemoHit) is exercised by the P2-C
-                            //      test in wasm_workflow_resume_e2e.cpp.
-                            //
-                            // Read the exact reply wire bytes from guest
-                            // memory (never re-serialized: no spelling
-                            // drift).
-                            const auto offset =
-                                import_reply->result_ptr.value;
-                            const auto len = import_reply->result_len;
-                            // P2-4: a bogus guest offset+len that names
-                            // bytes outside linear memory is a host-side
-                            // invariant violation. Fail the origination
-                            // run rather than silently skipping the memo
-                            // (which would produce a snapshot that cannot
-                            // resume). Widen to size_t before adding so a
-                            // u32 wrap cannot bypass the bounds check.
-                            if (static_cast<std::size_t>(offset) +
-                                    static_cast<std::size_t>(len) >
-                                obs.whole_memory.size()) {
-                                origination_failure =
-                                    "capability reply pointer is out of "
-                                    "bounds for the module linear memory";
-                                return eng::ImportAbort{};
-                            }
-                            std::string bytes(
-                                reinterpret_cast<const char *>(
-                                    obs.whole_memory.data() + offset),
-                                len);
-                            recorder.append_memo_entry(
-                                std::move(bytes));
-                        }
+                        // WH-5b.2: the bridge result is a P4-D binary
+                        // frame, not JSON. Store the native Value
+                        // (NativeOnly) so the persistence layer
+                        // serializes it to wire JSON via
+                        // try_value_to_json. On reload the entry becomes
+                        // ExactSidecar with wire-JSON bytes, and the
+                        // replay MemoHit path re-packs it through
+                        // pack_bridge_result_value (the same packing the
+                        // Frontier path uses). The P4-D bytes are
+                        // deterministic, so re-packing produces the
+                        // identical frame the guest wrote.
+                        recorder.append_memo_entry(
+                            {}, PersistedMemoResultSource::NativeOnly);
                     }
                 }
                 return reply;
@@ -1633,23 +1263,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // --- 7. Pack / write the input ---
+    // Every workflow is P6-frame: pack the P4-D entry frame for the first
+    // scheduled node.
     eng::GuestPointer entry_ptr{};
     std::uint32_t entry_len = 0;
-
-    // WH-5b.1: in a hybrid (P6Frame) module the first scheduled node may be
-    // opaque. Pack the P4-D entry frame only when the entry node is P6;
-    // otherwise serialize to wire JSON for the opaque runner.
-    const bool entry_node_p6 =
-        is_p6 && !descriptor.nodes.empty() && descriptor.nodes[0].is_p6;
-    if (entry_node_p6) {
-        if (!descriptor.frame_section.has_value() ||
-            !descriptor.wire_schema.has_value()) {
-            return std::unexpected(
-                "run_workflow_session: P6-frame workflow missing frame_section "
-                "or wire_schema");
-        }
-        const auto &section = *descriptor.frame_section;
-        const auto &wire = *descriptor.wire_schema;
+    {
+        const auto &section = descriptor.frame_section;
+        const auto &wire = descriptor.wire_schema;
         if (section.node_blocks.empty()) {
             return std::unexpected(
                 "run_workflow_session: P6-frame workflow has no node blocks");
@@ -1705,113 +1325,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
 
         entry_ptr = eng::GuestPointer{block.input_base};
         entry_len = block.input_size;
-
-        // WH-5b.3: if the workflow has a P4D_TO_JSON ENTRY crossing, copy
-        // the host-packed P4-D entry frame into the entry shadow. The shadow
-        // is an INLINE copy (never normalized): the transcode handler reads
-        // it via read_value_at and serializes to wire JSON for the opaque
-        // runner. The entry shadow extent equals the entry block input size
-        // (both are align8(layout.size) from the same layout root).
-        //
-        // The requirement is DERIVED from the site table, not from the span's
-        // presence: a corrupt or foreign descriptor that declares a
-        // P4D_TO_JSON ENTRY site while zeroing the entry shadow must fail
-        // closed here (the guest still invokes the transcode with the
-        // baked-in shadow address and would otherwise read zeroed memory,
-        // reconstructing a schema-valid forged input). This mirrors the
-        // frame-section verifier's needs_entry_shadow rule, which the
-        // session path cannot assume ran (modules are admitted without the
-        // frame-section gate).
-        const bool needs_entry_shadow =
-            std::any_of(section.transcode_sites.begin(),
-                        section.transcode_sites.end(),
-                        [](const irc::CoreFrameTranscodeSite &site) {
-                            return site.direction ==
-                                       irc::CoreFrameTranscodeSite::Direction::
-                                           P4DToJson &&
-                                   site.source ==
-                                       irc::CoreFrameTranscodeSite::Source::
-                                           Entry;
-                        });
-        if (needs_entry_shadow) {
-            // Re-derive the frame size from the named layout root exactly as
-            // the frame-section verifier does; the descriptor's input_size is
-            // untrusted (sessions admit modules without that gate). A forged
-            // input_size must not become either the copy length or the
-            // required shadow extent.
-            const auto *entry_layout = ctx.layout(l_id);
-            if (entry_layout == nullptr) {
-                return std::unexpected(
-                    "run_workflow_session: entry node names an out-of-range "
-                    "layout root");
-            }
-            const std::uint64_t copy_size_u64 =
-                (static_cast<std::uint64_t>(entry_layout->size) + 7u) &
-                ~std::uint64_t{7u};
-            if (copy_size_u64 == 0 ||
-                block.input_size !=
-                    static_cast<std::uint32_t>(copy_size_u64)) {
-                return std::unexpected(
-                    "run_workflow_session: node block input size disagrees "
-                    "with the aligned size of its named layout root");
-            }
-            const auto copy_size =
-                static_cast<std::size_t>(copy_size_u64);
-            if (section.transcode_entry_shadow_base == 0 ||
-                section.transcode_entry_shadow_base % 8u != 0 ||
-                section.transcode_entry_shadow_extent !=
-                    static_cast<std::uint64_t>(copy_size)) {
-                return std::unexpected(
-                    "run_workflow_session: a P4D_TO_JSON ENTRY transcode site "
-                    "needs a valid entry shadow span");
-            }
-            // Widen BEFORE adding: both fields are u32, so a base such as
-            // 0xFFFFFFF8 would wrap the sum to a small in-page value if the
-            // addition happened first and the memcpy would land ~4 GiB out
-            // of bounds. The source (the host-packed entry frame) and the
-            // destination (the shadow) are checked independently.
-            const auto source_end =
-                static_cast<std::size_t>(block.input_base) + copy_size;
-            if (source_end > page->size()) {
-                return std::unexpected(
-                    "run_workflow_session: entry frame exceeds page");
-            }
-            const auto shadow_end =
-                static_cast<std::size_t>(
-                    section.transcode_entry_shadow_base) +
-                copy_size;
-            if (shadow_end > page->size()) {
-                return std::unexpected(
-                    "run_workflow_session: entry shadow exceeds page");
-            }
-            std::memcpy(page->data() + section.transcode_entry_shadow_base,
-                        page->data() + block.input_base, copy_size);
-        } else if (section.transcode_entry_shadow_extent != 0) {
-            // No site consumes it: a nonzero span on a module whose sites do
-            // not need one is a descriptor/module disagreement; fail closed
-            // rather than silently copying into an unreferenced region.
-            return std::unexpected(
-                "run_workflow_session: an entry shadow span exists without a "
-                "P4D_TO_JSON ENTRY transcode site");
-        }
-    } else {
-        // WireJson: serialize the input to canonical wire JSON and write it
-        // via the module's own exported allocator.
-        auto input_json = serialize_value_for_wire_json(input);
-        if (!input_json.has_value()) {
-            return std::unexpected(
-                "run_workflow_session: input is not wire-encodable");
-        }
-        const auto input_span = std::span<const std::uint8_t>(
-            reinterpret_cast<const std::uint8_t *>(input_json->data()),
-            input_json->size());
-        auto ptr = engine.alloc_then_write(input_span);
-        if (!ptr.has_value()) {
-            return std::unexpected(
-                "run_workflow_session: alloc_then_write failed");
-        }
-        entry_ptr = *ptr;
-        entry_len = static_cast<std::uint32_t>(input_json->size());
     }
 
     // --- 8. Invoke run2 ---
@@ -1900,7 +1413,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         run_failure_code = wasm_diag::kTrap;
         run_failure_message = "run_workflow_session: run2 trapped";
         // WH-5c.1: a capability that executed and failed traps the guest by
-        // design (the bridge/opaque lanes have a graceful PENDING arm only).
+        // design (the bridge lane has a graceful PENDING arm only).
         // Surface the human-readable capability failure so the diagnostic is
         // actionable instead of a bare trap.
         if (import_state.last_capability_error.has_value()) {
@@ -1944,8 +1457,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             "pending call was never reached";
     }
 
-    // WH-5c.5 test seam: a fail-closed mutation pin may corrupt the stash
-    // table / output bytes here (after run2, before the post-run join).
+    // WH-5c.5 test seam: a fail-closed mutation pin may corrupt the
+    // output bytes here (after run2, before the post-run join).
     if (config.post_run2_memory_mutator) {
         if (auto mem = engine.mutable_whole_memory(); mem.has_value()) {
             config.post_run2_memory_mutator(*mem);
@@ -1965,7 +1478,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     "run_workflow_session: " + std::move(*trace_error));
             }
         } else {
-            const auto &section = *descriptor.frame_section;
+            const auto &section = descriptor.frame_section;
             auto mem = engine.read_whole_memory();
             if (mem.has_value()) {
                 auto decoded = decode_state_trace(
@@ -1992,64 +1505,34 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
-    // --- 9b. Post-run: reconstruct WireJson state_sequence from node-event
-    //         records joined to agent walks (D-B) ---
-    if (!is_p6) {
-        auto mem = engine.read_whole_memory();
-        if (mem.has_value()) {
-            auto err = reconstruct_wirejson_states(
-                *mem, descriptor,
-                collected_states, states_per_node);
-            if (err.has_value() && run_ok) {
-                return std::unexpected(
-                    "run_workflow_session: " + std::move(*err));
-            }
-            if (err.has_value()) {
-                // On the failure path, a reconstruction error is secondary.
-                // Proceed with whatever was collected (might be empty).
-            }
-        }
-    }
+    // --- 9b. Post-run: rebuild collected_states from states_per_node in
+    //         schedule order (the trace ring fires at import boundaries,
+    //         out of schedule order) ---
+    rebuild_states(collected_states, states_per_node, descriptor);
 
-    // --- 9c. WH-5c.4 P0-3: P6-frame opaque-node state collection +
-    //          schedule-ordered hook firing ---
-    // In a P6-frame module the trace ring carries ONLY P6 nodes' states
-    // (collected at import boundaries above, hook suppressed). Opaque
-    // nodes never write to the trace ring; their walks are recovered from
-    // the node-event records. Collect them, then rebuild collected_states
-    // from states_per_node in schedule order and fire the hook for the
-    // full sequence.
-    if (is_p6) {
-        // Node-event records are written ONLY by the capability dispatch
-        // path, so an import-free module never writes them. Skipping the
-        // decode here is not about opaque-node presence (an identity
-        // workflow can mix P6 and opaque nodes): for an import-free P6
-        // workflow the node-event region overlaps the P6 input frame
-        // (node_blocks_base == kNodeEventLogBase), so decoding it would
-        // read input bytes as an event count.
-        if (!descriptor.imports.empty()) {
-            auto mem = engine.read_whole_memory();
-            if (mem.has_value()) {
-                auto err =
-                    collect_opaque_node_states(*mem, descriptor, states_per_node);
-                if (err.has_value() && run_ok) {
-                    return std::unexpected(
-                        "run_workflow_session: " + std::move(*err));
-                }
-            }
+    // --- 9c. Post-run: P2-3 node-event record validation. The scheduler
+    //         writes one record per completed node; each record's
+    //         capability kind + source_symbol must agree with the
+    //         descriptor. A mismatch is evidence of a corrupt module. ---
+    if (run_ok) {
+        std::span<const std::uint8_t> linear_memory;
+        if (auto mem = engine.mutable_whole_memory()) {
+            linear_memory = *mem;
         }
-        rebuild_states(collected_states, states_per_node, descriptor);
+        if (auto err = validate_node_events(linear_memory, descriptor)) {
+            return std::unexpected(
+                "run_workflow_session: " + std::move(*err));
+        }
     }
 
     // --- 10. Post-run: per-node output join (design 12.15.19.7) ---
     // The completion authority is the workflow_completed_count global (NOT
     // the node-event records, which stay decoded for capability lifecycle in
-    // 9b/9c). The scheduler bumps it once per node completion in schedule
+    // 9b). The scheduler bumps it once per node completion in schedule
     // order, so the first `count` nodes completed and the rest never ran.
-    // Each completed node's output is decoded in schedule order: P6 nodes
-    // from their O_k block (read_value_at), opaque nodes from the per-node
-    // output stash table (value_from_json). Every decode failure fails
-    // closed (kOutputDecodeFailed) -- the old silent NoneValue branch is
+    // Each completed node's output is decoded in schedule order from its
+    // O_k block (read_value_at). Every decode failure fails closed
+    // (kOutputDecodeFailed) -- the old silent NoneValue branch is
     // deleted big-bang (design 12.15.19.8).
     std::vector<std::optional<Value>> node_outputs(descriptor.nodes.size());
     std::vector<bool> node_completed(descriptor.nodes.size(), false);
@@ -2085,42 +1568,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         node_completed[i] = i < workflow_completed_count;
     }
 
-    // WH-5c.5: the per-node output stash table (design 12.15.19.4). Only a
-    // workflow with at least one opaque (non-P6) node reserves it; stash_base
-    // is pure arithmetic from the ABI constants + node count + imports flag
-    // (no descriptor field). A corrupt module whose stash region exceeds the
-    // heap base fails closed.
-    bool has_opaque_nodes = false;
-    for (const auto &node : descriptor.nodes) {
-        if (!node.is_p6) {
-            has_opaque_nodes = true;
-            break;
-        }
-    }
-    std::uint32_t stash_base = 0;
-    bool stash_available = false;
-    if (has_opaque_nodes) {
-        const std::uint32_t n = descriptor.workflow_node_count;
-        stash_base = descriptor.imports.empty()
-                         ? irc::kNodeEventLogBase
-                         : irc::kNodeEventRecordsBase +
-                               n * irc::kNodeEventRecordBytes;
-        const std::uint64_t stash_end =
-            std::uint64_t{stash_base} +
-            std::uint64_t{n} * irc::kNodeStashRecordBytes;
-        if (stash_end <= descriptor.heap_base) {
-            stash_available = true;
-        } else if (run_ok) {
-            run_ok = false;
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::EvaluationFailed;
-            run_failure_code = std::string{wasm_diag::kOutputDecodeFailed};
-            run_failure_message =
-                "run_workflow_session: the per-node output stash region "
-                "exceeds the module heap base";
-        }
-    }
-
     // --- 10. WH-8 (kr68 section 12.9.4 item 2): per-node interleaving of
     //          node_completed then state_entered hooks, in schedule order ---
     // Decode each completed node's output in schedule order and fire
@@ -2148,9 +1595,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     };
     if (auto mem = engine.read_whole_memory(); mem.has_value()) {
         const auto string_regions =
-            is_p6 && descriptor.frame_section.has_value()
-                ? build_string_regions(*descriptor.frame_section)
-                : std::vector<StringRegion>{};
+            build_string_regions(descriptor.frame_section);
         for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
             if (i >= workflow_completed_count) {
                 // Not completed: no node_completed, but state hooks fire.
@@ -2160,12 +1605,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             }
             const auto &node_desc = descriptor.nodes[i];
             std::optional<Value> decoded;
-            if (node_desc.is_p6 &&
-                descriptor.frame_section.has_value() &&
-                descriptor.wire_schema.has_value()) {
+            {
                 // P6 node: read the output from its runner's O_k block.
-                const auto &section = *descriptor.frame_section;
-                const auto &wire = *descriptor.wire_schema;
+                const auto &section = descriptor.frame_section;
+                const auto &wire = descriptor.wire_schema;
                 const auto p6_ord = node_desc.p6_block_ordinal;
                 if (p6_ord < section.node_blocks.size() &&
                     wire.frame_roots.has_value() &&
@@ -2180,36 +1623,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         string_regions);
                     if (output.has_value()) {
                         decoded = std::move(*output);
-                    }
-                }
-            } else if (stash_available) {
-                // Opaque node: read the (ptr, len) stash slot the scheduler
-                // wrote at stash_base + schedule_pos*8 and range-check the
-                // JSON span against the fixed 64 KiB page (design
-                // 12.15.19.4/8: ptr >= heap_base, ptr+len <= 65536, both
-                // non-zero -- a forged/corrupt entry fails closed).
-                const std::size_t slot_addr =
-                    stash_base + i * irc::kNodeStashRecordBytes;
-                if (slot_addr + irc::kNodeStashRecordBytes <= mem->size()) {
-                    const auto *slot = mem->data() + slot_addr;
-                    const std::uint32_t ptr = load_u32_le(slot);
-                    const std::uint32_t len = load_u32_le(slot + 4);
-                    if (ptr != 0 && len != 0 &&
-                        ptr >= descriptor.heap_base) {
-                        const std::size_t out_end =
-                            std::size_t{ptr} + std::size_t{len};
-                        if (out_end <=
-                                irc::kCoreWasmFixedLinearMemoryCapacityBytes &&
-                            out_end <= mem->size()) {
-                            const std::string output_json(
-                                reinterpret_cast<const char *>(
-                                    mem->data() + ptr),
-                                len);
-                            auto parsed = value_from_json(output_json);
-                            if (parsed.has_value()) {
-                                decoded = std::move(*parsed);
-                            }
-                        }
                     }
                 }
             }
@@ -2337,69 +1750,27 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     if (run_ok) {
         auto mem = engine.read_whole_memory();
         if (mem.has_value()) {
-            if (is_p6 && descriptor.frame_section.has_value() &&
-                descriptor.wire_schema.has_value()) {
-                const auto &section = *descriptor.frame_section;
-                const auto &wire = *descriptor.wire_schema;
-                if (wire.frame_roots.has_value()) {
-                    const auto string_regions =
-                        build_string_regions(section);
-                    FrameWalkContext ctx(section, wire);
-                    auto output = read_value_at(
-                        ctx, *mem, wire.frame_roots->output,
-                        section.output_layout, section.workflow_output_base,
-                        string_regions);
-                    if (output.has_value()) {
-                        workflow_output = std::move(*output);
-                    } else {
-                        run_ok = false;
-                        run_status = RunTerminalStatus::Failed;
-                        run_failure_kind = WorkflowFailureKind::EvaluationFailed;
-                        run_failure_code =
-                            std::string{wasm_diag::kOutputDecodeFailed};
-                        run_failure_message =
-                            "run_workflow_session: P6-frame workflow output "
-                            "failed to decode";
-                    }
-                }
-            } else if (tuple != nullptr &&
-                       tuple->output_ptr.value != 0 && tuple->output_len > 0) {
-                // WireJson: the output is raw JSON bytes at
-                // (output_ptr, output_len). Both are untrusted u32 run2
-                // return values, so widen before adding and bound the range
-                // against the actual memory before touching it; a forged
-                // tuple must never make the host read past the linear
-                // memory.
-                const auto output_end =
-                    static_cast<std::size_t>(tuple->output_ptr.value) +
-                    static_cast<std::size_t>(tuple->output_len);
-                if (output_end > mem->size()) {
+            const auto &section = descriptor.frame_section;
+            const auto &wire = descriptor.wire_schema;
+            if (wire.frame_roots.has_value()) {
+                const auto string_regions =
+                    build_string_regions(section);
+                FrameWalkContext ctx(section, wire);
+                auto output = read_value_at(
+                    ctx, *mem, wire.frame_roots->output,
+                    section.output_layout, section.workflow_output_base,
+                    string_regions);
+                if (output.has_value()) {
+                    workflow_output = std::move(*output);
+                } else {
                     run_ok = false;
                     run_status = RunTerminalStatus::Failed;
                     run_failure_kind = WorkflowFailureKind::EvaluationFailed;
                     run_failure_code =
                         std::string{wasm_diag::kOutputDecodeFailed};
                     run_failure_message =
-                        "run_workflow_session: WireJson workflow output "
-                        "range exceeds linear memory";
-                } else {
-                    const std::string output_json(
-                        reinterpret_cast<const char *>(
-                            mem->data() + tuple->output_ptr.value),
-                        tuple->output_len);
-                    auto parsed = value_from_json(output_json);
-                    if (parsed.has_value()) {
-                        workflow_output = std::move(*parsed);
-                    } else {
-                        run_ok = false;
-                        run_status = RunTerminalStatus::Failed;
-                        run_failure_kind = WorkflowFailureKind::EvaluationFailed;
-                        run_failure_code =
-                            std::string{wasm_diag::kOutputDecodeFailed};
-                        run_failure_message =
-                            "run_workflow_session: WireJson workflow output "
-                            "failed to parse";
-                    }
+                        "run_workflow_session: P6-frame workflow output "
+                        "failed to decode";
                 }
             }
         }
@@ -2496,16 +1867,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         node_facts.output = std::move(node_outputs[i]);
 
         // WH-5c.4 P2-D: a failed node writes no node-event record (only
-        // successful completions are written), and an opaque node never
-        // writes to the trace ring.  So a failed opaque node's states are
-        // empty: no source recorded the states it visited before failing.
-        // Populate them from the agent's static walk so the lifecycle hooks
-        // fire for the failed node.  P2-G: the static walk is the linear
-        // goto chain (runner_walk_names); a branching agent's untaken branch
-        // states are not in the walk (under-report), and a failed node may
-        // not have reached every walk state (over-report).  This is the best
-        // available source for opaque nodes.  A P6 node that failed mid-run
-        // keeps its trace-ring states (non-empty, so this arm is skipped).
+        // successful completions are written), and a node that fails
+        // mid-run may not have reached every trace-ring state.  So a
+        // failed node's states may be incomplete: populate them from the
+        // agent's static walk so the lifecycle hooks fire for the failed
+        // node.  P2-G: the static walk is the linear goto chain
+        // (runner_walk_names); a branching agent's untaken branch states
+        // are not in the walk (under-report), and a failed node may not
+        // have reached every walk state (over-report).  This is the best
+        // available source for a failed node's states.
         if (node_facts.states.empty() &&
             failed_node_index.has_value() && i == *failed_node_index) {
             const auto &failed_node_desc = descriptor.nodes[i];

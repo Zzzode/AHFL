@@ -25,9 +25,8 @@
 //     memory unconditionally and would crash on a memory-less module);
 //   * every guest pointer the module hands back is bounds-checked against the
 //     live page (m3ApiCheckMem discipline), including the import param frame;
-//   * every func import must be ahfl_cap.cap_<decimal> with the opaque
-//     (i32,i32)->(i32,i32,i32) or the section-9 (i32)->(i32,i32,i32) shape;
-//     anything else is InstanceUnavailable;
+//   * every func import must be ahfl_cap.cap_<decimal> with the bridge
+//     (i32)->(i32,i32) shape; anything else is InstanceUnavailable;
 //   * a host ImportAbort (or a C++ exception escaping the callback across the C
 //     boundary) unwinds run2 as Run2HostAborted via a distinct sentinel trap;
 //   * wasm3 trap pointers map to Run2Trapped by exact pointer identity.
@@ -103,7 +102,7 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
     // read-only rodata region [256,1024) the Data section initialized.
     [[nodiscard]] std::expected<std::span<std::uint8_t>,
                                 core_wasm_resume_engine::EngineError>
-    mutable_whole_memory();
+    mutable_whole_memory() override;
 
     // WH-2 additive: invoke the module's `runv() -> (i32,i32)` P6-frame entry.
     // Found lazily on first call (m3_FindFunction compiles eagerly, surfacing a

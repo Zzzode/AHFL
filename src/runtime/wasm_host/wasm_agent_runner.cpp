@@ -5,13 +5,13 @@
 //
 //   1. A SEPARATE effects-free instance drives the step-walk
 //      (run_agent_step_walk). state_entered_hook fires LIVE per step.
-//   2. The CANONICAL instance runs runv (P6-frame) or run2 (WireJson) exactly
-//      once. capability_invoked_hook / capability_result_observer fire LIVE at
+//   2. The CANONICAL instance runs runv (P6-frame) exactly once.
+//      capability_invoked_hook / capability_result_observer fire LIVE at
 //      its imports.
 //
 // WH-4 fix-forward D-C: BOTH instances reuse the WH-3 capability_import
 // executor (make_capability_import_callback) -- the single production import
-// path for the opaque (wire-JSON) AND bridge (P4-D control-block) lanes. The
+// path for the bridge (P4-D control-block) lane. The
 // module is A2-admitted ONCE (make_verified_core_wasm_schema_module); the
 // admitted module + descriptor frame_section + a source_symbol->canonical_name
 // resolver feed both callbacks. The canonical instance's invoker fires hooks
@@ -100,13 +100,8 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 pack_p6_agent_input(Wasm3ResumeEngine &engine,
                     const bd::CoreWasmExecutionDescriptor &descriptor,
                     const Value &input) {
-    if (!descriptor.frame_section.has_value() ||
-        !descriptor.wire_schema.has_value()) {
-        return "P6-frame agent missing frame_section or wire_schema";
-    }
-
     auto verified =
-        irc::make_verified_wire_schema_table(*descriptor.wire_schema);
+        irc::make_verified_wire_schema_table(descriptor.wire_schema);
     if (!verified.table.has_value()) {
         return "failed to verify wire schema for P6-frame agent input";
     }
@@ -128,7 +123,7 @@ pack_p6_agent_input(Wasm3ResumeEngine &engine,
               page->begin() + irc::kP6CollectionBackingBase,
               std::uint8_t{0});
 
-    auto packed = pack_p6_input(*page, *descriptor.frame_section, *binding,
+    auto packed = pack_p6_input(*page, descriptor.frame_section, *binding,
                                 input);
     if (!packed.has_value()) {
         return "failed to pack P6-frame agent input";
@@ -143,15 +138,11 @@ pack_p6_agent_input(Wasm3ResumeEngine &engine,
 read_p6_agent_output(Wasm3ResumeEngine &engine,
                      const bd::CoreWasmExecutionDescriptor &descriptor,
                      std::uint32_t value_ptr) {
-    if (!descriptor.frame.has_value() ||
-        !descriptor.frame_section.has_value() ||
-        !descriptor.wire_schema.has_value()) {
-        return std::nullopt;
-    }
-
-    const auto &lane = *descriptor.frame;
+    const auto &lane = descriptor.frame;
     const auto authorized_base =
-        lane.final_kind == "computed" ? lane.output_base : lane.input_base;
+        (lane.final_kind == "computed" || lane.final_kind == "capability")
+            ? lane.output_base
+            : lane.input_base;
     if (value_ptr != authorized_base) {
         return std::nullopt;
     }
@@ -161,8 +152,8 @@ read_p6_agent_output(Wasm3ResumeEngine &engine,
         return std::nullopt;
     }
 
-    const auto &section = *descriptor.frame_section;
-    const auto &wire = *descriptor.wire_schema;
+    const auto &section = descriptor.frame_section;
+    const auto &wire = descriptor.wire_schema;
     if (!wire.frame_roots.has_value()) {
         return std::nullopt;
     }
@@ -191,8 +182,6 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             "run_wasm_agent: descriptor is a workflow, not an agent");
     }
 
-    const bool is_p6 =
-        descriptor.frame_contract == bd::CoreWasmFrameContract::P6Frame;
     const bool has_imports = !descriptor.imports.empty();
 
     // === A2-admit the module ONCE (if capability-bearing) ===
@@ -302,12 +291,9 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     walk_desc.agent_name = descriptor.agent_name;
     walk_desc.states = descriptor.states;
     walk_desc.initial_state = descriptor.initial_state;
-    walk_desc.is_p6_frame = is_p6;
-    if (is_p6 && descriptor.frame_section.has_value() &&
-        descriptor.wire_schema.has_value()) {
-        walk_desc.frame_section = &*descriptor.frame_section;
-        walk_desc.wire_schema = &*descriptor.wire_schema;
-    }
+    walk_desc.is_p6_frame = true;
+    walk_desc.frame_section = &descriptor.frame_section;
+    walk_desc.wire_schema = &descriptor.wire_schema;
 
     // These MUST outlive the step-walk callback: the CapabilityImportConfig
     // holds references to them, and the callback is invoked during
@@ -315,26 +301,21 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     CapabilityImportState walk_import_state;
     CapabilityInvocationContext walk_context;
     walk_context.agent_id = AgentId{0};
-    irc::CoreFrameLayoutSection walk_default_section;
 
     auto walk_factory =
         [&admitted, &descriptor, &name_resolver, &effective_states_invoker,
-         &walk_import_state, &walk_context, &walk_default_section,
-         has_imports, is_p6](Wasm3ResumeEngine &engine) -> eng::ImportCallback {
+         &walk_import_state, &walk_context,
+         has_imports](Wasm3ResumeEngine &engine) -> eng::ImportCallback {
         if (!has_imports || !admitted.module.has_value()) {
             return [](const eng::ImportObservation &)
                        -> eng::ImportCallbackResult {
                 return eng::ImportAbort{};
             };
         }
-        const irc::CoreFrameLayoutSection &frame_section =
-            is_p6 && descriptor.frame_section.has_value()
-                ? *descriptor.frame_section
-                : walk_default_section;
         CapabilityImportConfig cap_config{
             .engine = engine,
             .module = *admitted.module,
-            .frame_section = frame_section,
+            .frame_section = descriptor.frame_section,
             .invoker = effective_states_invoker,
             .context = walk_context,
             .name_resolver = name_resolver,
@@ -376,7 +357,6 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     CapabilityImportState canonical_import_state;
     CapabilityInvocationContext canonical_context;
     canonical_context.agent_id = AgentId{0};
-    irc::CoreFrameLayoutSection canonical_default_section;
 
     eng::ImportCallback canonical_callback;
     if (!has_imports) {
@@ -385,14 +365,10 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                 return eng::ImportAbort{};
             };
     } else {
-        const irc::CoreFrameLayoutSection &frame_section =
-            is_p6 && descriptor.frame_section.has_value()
-                ? *descriptor.frame_section
-                : canonical_default_section;
         CapabilityImportConfig cap_config{
             .engine = engine,
             .module = *admitted.module,
-            .frame_section = frame_section,
+            .frame_section = descriptor.frame_section,
             .invoker = wrapped_invoker,
             .context = canonical_context,
             .name_resolver = name_resolver,
@@ -410,61 +386,11 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             "run_wasm_agent: fresh_instance failed for canonical run");
     }
 
-    // Pack / write the input.
-    eng::GuestPointer entry_ptr{};
-    std::uint32_t entry_len = 0;
-
-    if (is_p6) {
-        if (auto err = pack_p6_agent_input(engine, descriptor, input);
-            err.has_value()) {
-            return std::unexpected("run_wasm_agent: " + *err);
-        }
-        // runv takes no arguments; the input is packed at the fixed P6 base.
-    } else {
-        // WireJson: serialize the input and write via the module's allocator.
-        auto input_json = serialize_value_for_wire_json(input);
-        if (!input_json.has_value()) {
-            return std::unexpected(
-                "run_wasm_agent: input is not wire-encodable");
-        }
-
-        // FB-1 construct-heap aliasing guard: a module with outlined-fn
-        // aggregate constructs (construct_heap_enabled) initializes heap_next
-        // at construct_heap_base and RESETS it there on every computed-handler
-        // entry. On a fresh canonical instance the host's first alloc() would
-        // land the input frame exactly at construct_heap_base, and the first
-        // handler reset would overwrite the input JSON with construct scratch,
-        // corrupting the identity-final output the run2 tuple points back at.
-        // The Node embedded host avoids this by driving step() on the SAME
-        // instance before writeInput(), advancing heap_next past the
-        // construct-scratch high-water. The D1 dual-mode discipline walks on a
-        // SEPARATE effects-free instance, so the canonical instance starts
-        // fresh; replay the walk's probed heap_next advancement here.
-        if (walk->heap_next_after_walk != 0) {
-            auto current = engine.alloc_then_write({});
-            if (current.has_value() &&
-                walk->heap_next_after_walk > current->value) {
-                const auto advance =
-                    walk->heap_next_after_walk - current->value;
-                std::vector<std::uint8_t> scratch(advance, 0);
-                auto advanced = engine.alloc_then_write(scratch);
-                if (!advanced.has_value()) {
-                    return std::unexpected(
-                        "run_wasm_agent: heap_next advancement failed");
-                }
-            }
-        }
-
-        const auto input_span = std::span<const std::uint8_t>(
-            reinterpret_cast<const std::uint8_t *>(input_json->data()),
-            input_json->size());
-        auto ptr = engine.alloc_then_write(input_span);
-        if (!ptr.has_value()) {
-            return std::unexpected(
-                "run_wasm_agent: alloc_then_write failed for input");
-        }
-        entry_ptr = *ptr;
-        entry_len = static_cast<std::uint32_t>(input_json->size());
+    // Pack the P6-frame input at the fixed aggregate input base. runv takes
+    // no arguments; the input is packed at the fixed P6 base.
+    if (auto err = pack_p6_agent_input(engine, descriptor, input);
+        err.has_value()) {
+        return std::unexpected("run_wasm_agent: " + *err);
     }
 
     // Invoke the canonical entry point.
@@ -479,136 +405,56 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     std::string run_failure_message;
     bool run_ok = false;
 
-    if (is_p6) {
-        auto outcome = engine.invoke_runv();
-        if (!outcome.has_value()) {
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = wasm_diag::kTrap;
-            run_failure_message =
-                "run_wasm_agent: invoke_runv failed (engine error)";
-        } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = wasm_diag::kHostAbort;
-            run_failure_message =
-                "run_wasm_agent: runv host-aborted (capability import "
-                "failure)";
-            // P2-1: use the CapabilityImportError ENUM NAME, not the raw int.
-            if (canonical_import_state.last_error.has_value()) {
-                run_failure_message += " (CapabilityImportError=";
-                run_failure_message += std::string(
-                    to_string(*canonical_import_state.last_error));
-                // WH-5c.1: surface the precise arg-decode sub-reason,
-                // mirroring the workflow session path.
-                if (*canonical_import_state.last_error ==
-                        CapabilityImportError::ArgDecodeFailed &&
-                    canonical_import_state.last_arg_decode_sub_reason
-                        .has_value()) {
-                    run_failure_message += ": ";
-                    run_failure_message += std::string(to_string(
-                        *canonical_import_state.last_arg_decode_sub_reason));
-                }
-                run_failure_message += ")";
+    auto outcome = engine.invoke_runv();
+    if (!outcome.has_value()) {
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = wasm_diag::kTrap;
+        run_failure_message =
+            "run_wasm_agent: invoke_runv failed (engine error)";
+    } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = wasm_diag::kHostAbort;
+        run_failure_message =
+            "run_wasm_agent: runv host-aborted (capability import "
+            "failure)";
+        // P2-1: use the CapabilityImportError ENUM NAME, not the raw int.
+        if (canonical_import_state.last_error.has_value()) {
+            run_failure_message += " (CapabilityImportError=";
+            run_failure_message += std::string(
+                to_string(*canonical_import_state.last_error));
+            // WH-5c.1: surface the precise arg-decode sub-reason,
+            // mirroring the workflow session path.
+            if (*canonical_import_state.last_error ==
+                    CapabilityImportError::ArgDecodeFailed &&
+                canonical_import_state.last_arg_decode_sub_reason
+                    .has_value()) {
+                run_failure_message += ": ";
+                run_failure_message += std::string(to_string(
+                    *canonical_import_state.last_arg_decode_sub_reason));
             }
-        } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = wasm_diag::kTrap;
-            run_failure_message = "run_wasm_agent: runv trapped";
-        } else {
-            const auto &runv = std::get<RunvResult>(*outcome);
-            run_ok = (runv.raw_status == 0);
-            if (run_ok) {
-                output_value =
-                    read_p6_agent_output(engine, descriptor,
-                                         runv.value_ptr.value);
-            } else {
-                run_status = RunTerminalStatus::Failed;
-                run_failure_kind = WorkflowFailureKind::NodeFailed;
-                run_failure_code = wasm_diag::kRunFailed;
-                run_failure_message =
-                    "run_wasm_agent: runv returned non-zero status " +
-                    std::to_string(runv.raw_status);
-            }
+            run_failure_message += ")";
         }
+    } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = wasm_diag::kTrap;
+        run_failure_message = "run_wasm_agent: runv trapped";
     } else {
-        auto outcome = engine.invoke_run2(entry_ptr, entry_len);
-        if (!outcome.has_value()) {
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = wasm_diag::kTrap;
-            run_failure_message =
-                "run_wasm_agent: invoke_run2 failed (engine error)";
-        } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = wasm_diag::kHostAbort;
-            run_failure_message =
-                "run_wasm_agent: run2 host-aborted (capability import "
-                "failure)";
-            // P2-1: use the CapabilityImportError ENUM NAME, not the raw int.
-            if (canonical_import_state.last_error.has_value()) {
-                run_failure_message += " (CapabilityImportError=";
-                run_failure_message += std::string(
-                    to_string(*canonical_import_state.last_error));
-                // WH-5c.1: surface the precise arg-decode sub-reason,
-                // mirroring the workflow session path.
-                if (*canonical_import_state.last_error ==
-                        CapabilityImportError::ArgDecodeFailed &&
-                    canonical_import_state.last_arg_decode_sub_reason
-                        .has_value()) {
-                    run_failure_message += ": ";
-                    run_failure_message += std::string(to_string(
-                        *canonical_import_state.last_arg_decode_sub_reason));
-                }
-                run_failure_message += ")";
-            }
-        } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
-            run_status = RunTerminalStatus::Failed;
-            run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = wasm_diag::kTrap;
-            run_failure_message = "run_wasm_agent: run2 trapped";
-            // WH-5c.1: surface the human-readable capability failure that
-            // caused the trap (mirrors the workflow session path).
-            if (canonical_import_state.last_capability_error.has_value()) {
-                run_failure_message += " (";
-                run_failure_message += *canonical_import_state.last_capability_error;
-                run_failure_message += ")";
-            }
+        const auto &runv = std::get<RunvResult>(*outcome);
+        run_ok = (runv.raw_status == 0);
+        if (run_ok) {
+            output_value =
+                read_p6_agent_output(engine, descriptor,
+                                     runv.value_ptr.value);
         } else {
-            const auto &tuple = std::get<eng::Run2ResultTuple>(*outcome);
-            run_ok = (tuple.raw_status == 0);
-            if (run_ok && tuple.output_ptr.value != 0 &&
-                tuple.output_len > 0) {
-                auto mem = engine.read_whole_memory();
-                if (mem.has_value()) {
-                    const std::string output_json(
-                        reinterpret_cast<const char *>(
-                            mem->data() + tuple.output_ptr.value),
-                        tuple.output_len);
-                    auto parsed = value_from_json(output_json);
-                    if (parsed.has_value()) {
-                        output_value = std::move(*parsed);
-                    }
-                }
-            } else if (!run_ok) {
-                // WH-4b: a Pending (raw_status==2) capability call on the
-                // agent lane lands here and is classified as NodeFailed.
-                // Agent-lane suspend is NOT a CLI contract (the CLI runs
-                // workflows; --recovery-store drives WorkflowRuntime), the
-                // agent runner has no recovery-snapshot consumer, and the
-                // conformance census has zero pending mocks (no alignment
-                // pressure). Agent-lane suspend belongs to WH-7/WH-8 (the
-                // REPL/DAP agent-runner contract); see the design doc
-                // §12.6.10.
-                run_status = RunTerminalStatus::Failed;
-                run_failure_kind = WorkflowFailureKind::NodeFailed;
-                run_failure_code = wasm_diag::kRunFailed;
-                run_failure_message =
-                    "run_wasm_agent: run2 returned non-zero status " +
-                    std::to_string(tuple.raw_status);
-            }
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = wasm_diag::kRunFailed;
+            run_failure_message =
+                "run_wasm_agent: runv returned non-zero status " +
+                std::to_string(runv.raw_status);
         }
     }
 

@@ -15,6 +15,7 @@
 namespace ahfl::runtime::core_wire_canonical_size {
 namespace {
 
+using ahfl::ir::core::CoreWireSchemaClosure;
 using ahfl::ir::core::CoreWireSchemaDecimal;
 using ahfl::ir::core::CoreWireSchemaDuration;
 using ahfl::ir::core::CoreWireSchemaEnum;
@@ -84,7 +85,8 @@ using ahfl::ir::core::CoreWirePayloadKind;
         return !s->length_bounds.has_value();
     }
     if (std::holds_alternative<CoreWireSchemaDecimal>(shape) ||
-        std::holds_alternative<CoreWireSchemaDuration>(shape)) {
+        std::holds_alternative<CoreWireSchemaDuration>(shape) ||
+        std::holds_alternative<CoreWireSchemaClosure>(shape)) {
         return true;
     }
     if (const auto *seq = std::get_if<CoreWireSchemaSequence>(&shape)) {
@@ -235,7 +237,8 @@ size_of(const CoreWireSchemaShape &shape, const std::vector<std::optional<std::u
         return bound ? std::expected<std::uint64_t, MaxCanonicalSizeError>(*bound) : overflow;
     }
     if (std::holds_alternative<CoreWireSchemaDecimal>(shape) ||
-        std::holds_alternative<CoreWireSchemaDuration>(shape)) {
+        std::holds_alternative<CoreWireSchemaDuration>(shape) ||
+        std::holds_alternative<CoreWireSchemaClosure>(shape)) {
         return unbounded; // defensive (verbatim spelling has no cap)
     }
     if (const auto *opt = std::get_if<CoreWireSchemaOption>(&shape)) {

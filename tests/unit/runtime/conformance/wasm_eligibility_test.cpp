@@ -47,7 +47,6 @@ using ahfl::conformance::WasmEligibilityClassification;
 using ahfl::conformance::WasmEligibilityVerdict;
 using ahfl::conformance::wasm_eligibility_divergence;
 using ahfl::conformance::wasm_eligibility_verdict_name;
-using ahfl::backends::CoreWasmFrameContract;
 
 int g_failures = 0;
 
@@ -165,13 +164,6 @@ struct CaseVerdict {
     WasmEligibilityVerdict verdict;
     std::string_view code; // empty for runnable
     std::string_view reason_substring;
-    // The exact frame contract the emitted descriptor must carry. Pins the
-    // p6-frame SET independently of the Node runner. KR6.6 identity-final
-    // frame lane: every agent with at least one identity or computed final
-    // (and a wire-representable boundary) is a P6-frame module, so P6Frame
-    // is the default. Only agents whose finals are ALL opaque capability
-    // calls stay on WireJson (runv has no capability-final arm).
-    CoreWasmFrameContract frame_contract{CoreWasmFrameContract::P6Frame};
 };
 
 void test_committed_catalogue(const std::filesystem::path &repo_root) {
@@ -183,22 +175,17 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"e1_identity_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // Capability-final-only agent: runv has no capability-final arm, so the
         // agent stays on the WireJson lane.
-        {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::WireJson},
-        {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::WireJson},
+        {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // Capability-final-only workflow: every node is a capability call, so
         // the workflow stays on the WireJson lane.
-        {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::WireJson},
+        {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // WH-5c.5 GAP 4: three-node identity+capability+identity workflow; the
         // per-node output stash table makes every node output host-observable.
         // The workflow stays on WireJson: its identity agents forward the
         // borrowed wire frame without a P6 frame plan.
-        {"wh5c5_gap4_stash_parity.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::WireJson},
-        {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::WireJson},
+        {"wh5c5_gap4_stash_parity.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7: landed KR6.6 (P6) computation slices emit cleanly on the agent
         // lane with an identity final forwarding the borrowed wire frame.
         {"p6_scalar_cond.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
@@ -224,20 +211,17 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"p6_f64_arith.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"p6_f64_compare.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // KR6.6 P6 f64 collection element ladder: List<Float> element load/store
         // through the dedicated F64 scalar kind on the P6 frame lane.
         {"p6_f64_collection.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"p6_implies.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_match_binding_payload.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_match_expr.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
@@ -259,28 +243,23 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"v2a_computed_aggregate.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2a_computed_enum.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2a_computed_if_let_return.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2a_computed_payload_enum.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2a_computed_scalar.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // KR6.7 corpus widening (FB-5): the V2-B String/computed-final and
         // bounded-arena fixtures now run as manifest-driven p6-frame cases
         // (String PtrLen projection / rodata literals / bounded list packing).
@@ -291,35 +270,29 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"v2b_bounded_string.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2b_computed_string.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2b_list_nested_string_arena.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2b_list_string_arena.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"v2b_string_passthrough.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // The bounded-String durable-resume replay workflow is the opaque
         // WireJson two-node capability DAG (same lane as e3_capability_workflow).
         {"e3_capability_workflow_resume.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::WireJson},
+         ""},
         // KR6.7 corpus widening (FB-5): expectation-lane FB-1/FB-3 cases whose
         // user pure-fn / first-class-closure constructs have no checked-in
         // blessing. The modules emit cleanly on the P6-frame lane (identity
@@ -336,8 +309,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"kr66_string_concat.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"fb3_nested_activation.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_lambda_flow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7 corpus widening (FB-5) slice E: the FB-4 effect-classification
@@ -350,8 +322,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"fb4_effect_clause_pure_body.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical
@@ -359,17 +330,14 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // frame. Their descriptor MUST carry P6Frame -- this exact-set pin means
         // a codegen change that drops (or adds) the frame sections is caught
         // here even without Node installed.
-        {"p6_aggregate.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::P6Frame},
-        {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::P6Frame},
+        {"p6_aggregate.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // Two same-typed input lists: the per-edge placement regression is a
         // p6-frame module like p6_collection (two disjoint backing placements).
         {"p6_frame_two_containers.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // Frame-bridge v2 rung V2-C: a direct agent invokes a multi-argument
         // capability from a non-final handler through the additive
         // (i32)->(i32,i32) control-block bridge, then materializes a computed
@@ -378,30 +346,26 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"v2c_multi_arg_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // V2-C fix-forward: two computed non-final handlers each invoke the same
         // capability (two dense sites sharing one import ordinal); reachability
         // must keep both handlers and the module stays P6Frame.
         {"v2c_bridge_chain.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // V2-C fix-forward: a producing pattern-arena match followed by an
         // ordered bridge statement outside the arms (route then call).
         {"v2c_route_then_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // V2-C fix-forward: one tag-only-enum bridge argument; still a P6Frame
         // bridge module, with a single non-Struct argument wrapped {"value":..}.
         {"v2c_single_enum_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
         // cleanly on the orchestration lane (funcref table + closure env). Its
         // expectation-lane observation (no checked-in blessing) is
@@ -416,13 +380,11 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"enum_variant_e2e.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         {"if_let_e2e.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // V2-D emission half 2: a multi-agent DAG whose packaged runners carry
         // computed-goto routing, scalar/tag-enum capability-result -> context
         // stores, in-handler bridges and a constructed SummaryInput now emits
@@ -430,8 +392,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"e2e_multi_agent.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // WH-5b.2: hybrid P6-bridge + opaque workflow DAG. The module emits
         // P6Frame (3 nodes, 2 imports); the bridge PENDING arm suspends the
         // workflow at the first bridge node. Runnable on the orchestration
@@ -440,8 +401,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"wh5b_bridge_pending_suspend.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // WH-5c.1: P6-packaged agent whose non-final handler constructs an
         // aggregate with a String field from the input frame and passes it to
         // a bridge capability. The module emits P6Frame; the relocated
@@ -451,16 +411,14 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"wh5c_construct_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // WH-5c.2: two P6 nodes reusing ONE packaged agent instance. The
         // module emits P6Frame; Approach B assigns one node-frame block +
         // runner per P6 node so the fan-out lowers and both nodes run.
         {"wh5c_instance_reuse_fanout.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // WH-5c.4 (GAP 2): an opaque-lane capability-final agent that
         // constructs the capability argument in-module. The module emits
         // P6Frame with a P4D_TO_JSON self-transcode for the constructed O_k
@@ -471,8 +429,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"wh5c4_construct_cap_final.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // WH-5c.4 P0-3: a construct-capability terminal whose upstream is an
         // opaque capability-final node. The construct node carries BOTH a
         // JSON_TO_P4D input crossing AND a P4D_TO_JSON self-transcode; the
@@ -482,8 +439,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"wh5c4_p03_opaque_upstream.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
         // WH-5c.7: the 9-shape rich wire-type matrix (Int/String/Decimal/
         // Duration/Set/Map/Option/Unit/Float) round-trips through the P6
         // frame packer/reader and the computed-final + workflow-level
@@ -491,8 +447,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"wh5c7_rich_input_matrix.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
-         "",
-         CoreWasmFrameContract::P6Frame},
+         ""},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);
@@ -505,9 +460,6 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
                   std::string{expectation.sidecar});
         check(!classification.reason.empty(),
               std::string{"runnable carries a reason: "} + std::string{expectation.sidecar});
-        check(classification.frame_contract == expectation.frame_contract,
-              std::string{"runnable frame_contract pin (WireJson vs P6Frame): "} +
-                  std::string{expectation.sidecar});
     }
 
     // No committed case is blocked on this lane: the last one

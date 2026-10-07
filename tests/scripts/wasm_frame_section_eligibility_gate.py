@@ -2,17 +2,16 @@
 """RFC 0026 P6-7 rung A corpus-wide frame-section eligibility gate.
 
 The P4-D frame lane (`ahfl.core-layout.v1` + the boundary-root block of
-`ahfl.wire-schema.v1`) is the UNIFORM execution lane for every agent whose
-finals are identity or computed (runv returns the borrowed input base for
-identity, the fixed output base for computed). Outlined fns and closures
-do not disqualify an agent (KR6.6), and identity finals are first-class
-p6-frame terminals. Agents whose finals are ALL opaque capability calls
-stay on the WireJson lane (runv has no capability-final arm).
+`ahfl.wire-schema.v1`) is the UNIFORM execution lane for EVERY agent after
+the dual-track elimination: runv is the sole entry point, all capability
+imports use the bridge functype (i32)->(i32,i32), and there is no WireJson
+lane. Outlined fns, closures, and capability finals are all first-class
+P6-frame constructs.
 
 This gate emits EVERY tests/golden/wasm fixture and asserts:
   * the core-layout frame custom section appears in EXACTLY the pinned frame
-    fixtures (every identity/computed-final agent with a wire-representable
-    boundary) and in no other successfully emitted module;
+    fixtures (every agent with a wire-representable boundary) and in no
+    other successfully emitted module;
   * every successful emission is deterministic (two runs byte-identical).
 
 It is a structural gate, not execution evidence.
@@ -25,13 +24,15 @@ from pathlib import Path
 
 # The ONLY fixtures allowed to carry the ahfl.core-layout.v1 frame section.
 # Anything else emitting one is a byte-identity / lane-mixing regression.
-# KR6.6 identity-final frame lane: every agent with at least one identity or
-# computed final (and a wire-representable boundary) is a P6-frame module.
-# Agents whose finals are ALL opaque capability calls stay on WireJson.
+# RFC 0026 dual-track elimination: EVERY agent is a P6-frame module — the
+# WireJson lane is gone, so capability/FB agents carry the section too.
 FRAME_FIXTURES = frozenset(
     {
         # E1 identity agent: the canonical identity-final module.
         "e1_identity_agent",
+        # E2 capability agent: the canonical capability-final module (the
+        # bridge protocol is the sole capability calling convention).
+        "e2_capability_agent",
         # P6 scalar/computation fixtures with identity or computed finals.
         "p6_aggregate",
         "p6_cascade",
@@ -105,6 +106,10 @@ FRAME_FIXTURES = frozenset(
         "fb4_construct_only_closure",
         "fb4_effect_clause_pure_body",
         "fb4_effectful_fn",
+        # FB-4 Int64 capability ABI: the bridge protocol supports Int64 via
+        # spill slots, so this is a valid P6-frame agent (the old opaque
+        # rejection was deleted with the WireJson lane).
+        "fb4_int64_capability_abi",
     }
 )
 

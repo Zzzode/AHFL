@@ -7,7 +7,7 @@
 //      step/current_state/transition_count (the agent_session step-walk).
 //      state_entered_hook fires LIVE per host-driven step. Effects-replies on
 //      this instance are discarded.
-//   2. The CANONICAL instance runs runv (P6-frame) or run2 (WireJson) exactly
+//   2. The CANONICAL instance runs runv (P6-frame) exactly
 //      once with the real executor. capability_invoked_hook /
 //      capability_result_observer fire LIVE at its imports.
 //

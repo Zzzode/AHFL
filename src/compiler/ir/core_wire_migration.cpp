@@ -245,8 +245,8 @@ migrate_type_ref_to_wire_binding(const ir::TypeRef &type,
 
     auto projected = project_core_wire_schema(scratch, {capability_id});
     if (!projected.ok()) {
-        // Never/Fn/Closure/non-String-Map and any other C1 fail-closed reason
-        // surface here as the projector's own diagnostics.
+        // Never/Fn/Closure and any other C1 fail-closed reason surface here
+        // as the projector's own diagnostics.
         result.diagnostics = std::move(projected.diagnostics);
         if (result.diagnostics.empty()) {
             result.diagnostics.push_back(

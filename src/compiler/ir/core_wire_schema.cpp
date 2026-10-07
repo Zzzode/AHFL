@@ -309,11 +309,14 @@ class SchemaBuilder {
                  std::move(range));
             return std::nullopt;
         };
-        const auto ws_Closure = [&](const CoreVtClosure &) -> std::optional<CoreWireSchemaShape> {
-            fail(wire_schema::kUnsupported,
-                 "closure values are not supported by value_json",
-                 std::move(range));
-            return std::nullopt;
+        const auto ws_Closure = [&](const CoreVtClosure &)
+            -> std::optional<CoreWireSchemaShape> {
+            // RFC 0026 P6-8a: closures are first-class P6 values. The wire
+            // schema carries a marker so the frame-layout consistency
+            // verifier can match it against CoreLayoutClosure; an embedded
+            // host rejects it at pack time (closures are not
+            // JSON-constructible).
+            return CoreWireSchemaClosure{};
         };
 #define HANDLE_CORE_VT(Name, Wire) ws_##Name,
         return std::visit(
@@ -378,14 +381,11 @@ class SchemaBuilder {
                      decl.source_range);
                 return std::nullopt;
             }
-            if (value.args[0].value >= scratch_types_.size() ||
-                !std::holds_alternative<CoreVtString>(
-                    scratch_types_[value.args[0].value].node)) {
-                fail(wire_schema::kUnsupportedMapKey,
-                     "value_json supports only String keys for Map wire schemas",
-                     decl.source_range);
-                return std::nullopt;
-            }
+            // RFC 0026 dual-track elimination: the wire schema is the host's
+            // frame-binding authority, not a value_json serializer. Any
+            // wire-representable scalar/string key (Int, Bool, String, ...)
+            // projects; the frame packer/reader already walk key/value
+            // generically through the layout/wire child pairs.
             const auto key = project_type(value.args[0], decl.source_range);
             const auto mapped = project_type(value.args[1], decl.source_range);
             if (!key.has_value() || !mapped.has_value()) {
@@ -521,6 +521,7 @@ class SchemaBuilder {
                        [](CoreWireSchemaDuration &) {},
                        [](CoreWireSchemaTimestamp &) {},
                        [](CoreWireSchemaUuid &) {},
+                       [](CoreWireSchemaClosure &) {},
                        [&](CoreWireSchemaOption &s) { fix(s.value); },
                        [&](CoreWireSchemaSequence &s) { fix(s.element); },
                        [&](CoreWireSchemaMap &s) {
@@ -788,6 +789,7 @@ class LocalSchemaVerifier {
                 [](const CoreWireSchemaDuration &) { return true; },
                 [](const CoreWireSchemaTimestamp &) { return true; },
                 [](const CoreWireSchemaUuid &) { return true; },
+                [](const CoreWireSchemaClosure &) { return true; },
                 [&](const CoreWireSchemaOption &value) { return callback(value.value); },
                 [&](const CoreWireSchemaSequence &value) { return callback(value.element); },
                 [&](const CoreWireSchemaMap &value) {
@@ -859,6 +861,7 @@ class LocalSchemaVerifier {
                 [](const CoreWireSchemaDuration &) { return true; },
                 [](const CoreWireSchemaTimestamp &) { return true; },
                 [](const CoreWireSchemaUuid &) { return true; },
+                [](const CoreWireSchemaClosure &) { return true; },
                 [&](const CoreWireSchemaOption &value) {
                     if (!valid_id(value.value)) {
                         return false;
@@ -894,15 +897,10 @@ class LocalSchemaVerifier {
                     return false;
                 },
                 [&](const CoreWireSchemaMap &value) {
-                    if (!valid_id(value.key) || !valid_id(value.value)) {
-                        return false;
-                    }
-                    if (!std::holds_alternative<CoreWireSchemaString>(
-                            table_.nodes[value.key.value].shape)) {
-                        fail("wire-schema Map key is not String");
-                        return false;
-                    }
-                    return true;
+                    // RFC 0026 dual-track elimination: any wire-representable
+                    // key shape is admitted (Int, Bool, String, ...); the
+                    // layout/wire consistency check gates the physical side.
+                    return valid_id(value.key) && valid_id(value.value);
                 },
                 [&](const CoreWireSchemaStruct &value) {
                     if (value.wire_name.empty() || !names_unique(value.fields, true)) {
@@ -1196,6 +1194,7 @@ class SchemaEncoder {
                 [&](const CoreWireSchemaDuration &) { byte(6); },
                 [&](const CoreWireSchemaTimestamp &) { byte(7); },
                 [&](const CoreWireSchemaUuid &) { byte(8); },
+                [&](const CoreWireSchemaClosure &) { byte(15); },
                 [&](const CoreWireSchemaOption &value) {
                     byte(9);
                     u32(value.value.value);
@@ -1621,6 +1620,9 @@ class SchemaDecoder {
             break;
         case 8:
             node.shape = CoreWireSchemaUuid{};
+            break;
+        case 15:
+            node.shape = CoreWireSchemaClosure{};
             break;
         case 9: {
             CoreWireSchemaOption value;

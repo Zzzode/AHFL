@@ -323,8 +323,8 @@ int main() {
             emit_fixture_full(repo / "tests/golden/wasm/p6_frame_two_containers.ahfl");
         check(emitted.has_value() && emitted->ok(), "emit two-containers fixture");
         if (emitted.has_value() && emitted->ok() && emitted->artifact.has_value() &&
-            emitted->descriptor.has_value() && emitted->descriptor->frame.has_value()) {
-            const auto &lane = *emitted->descriptor->frame;
+            emitted->descriptor.has_value()) {
+            const auto &lane = emitted->descriptor->frame;
             check(lane.placements.size() == 2,
                   "descriptor names two per-edge container placements");
             if (lane.placements.size() == 2) {
@@ -893,10 +893,9 @@ int main() {
             check(bridge->descriptor.has_value(), "v2c module carries a descriptor");
             if (bridge->descriptor.has_value()) {
                 const auto &imports = bridge->descriptor->imports;
-                check(imports.size() == 1 && imports[0].mode == "bridge",
-                      "v2c module's single capability import is tagged mode=bridge");
-                check(bridge->descriptor->frame.has_value() &&
-                          bridge->descriptor->frame->bridge_call_sites.size() == 1,
+                check(imports.size() == 1,
+                      "v2c module carries exactly one capability import");
+                check(bridge->descriptor->frame.bridge_call_sites.size() == 1,
                       "v2c descriptor lane names exactly one bridge call site");
             }
         }

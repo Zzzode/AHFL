@@ -290,7 +290,11 @@ void test_workflow_session_failure_facade(
     std::size_t failure_count = 0;
     bool failure_has_range = false;
     for (const auto &diag : result.diagnostics.entries()) {
-        if (diag.code.has_value() && *diag.code == "wasm.run-failed") {
+        // RFC 0026 dual-track elimination: the P6 bridge lane traps on a
+        // capability ERROR (the graceful arm is PENDING only), so the
+        // session failure surfaces as wasm.trap, not wasm.run-failed.
+        if (diag.code.has_value() &&
+            (*diag.code == "wasm.trap" || *diag.code == "wasm.run-failed")) {
             ++failure_count;
             failure_has_range = diag.range.has_value();
         }
@@ -713,9 +717,9 @@ void test_agent_host_abort(const std::filesystem::path &repo_root) {
     }
 
     // The invoker returns a Value of the WRONG type (Int instead of
-    // OutputFrame). The capability_import executor validates the result
-    // against the result binding, fails with ResultSchemaInvalid, and
-    // host-aborts.
+    // OutputFrame). The bridge callback's pack_bridge_result_value fails
+    // to pack the Int as the result schema, fails with
+    // BridgeResultPackFailed, and host-aborts.
     wr::WasmAgentRunnerConfig config;
     config.invoker = [](const CapabilityInvocationContext &,
                         const std::string &,
@@ -756,9 +760,9 @@ void test_agent_host_abort(const std::filesystem::path &repo_root) {
             check(diag.message.find("CapabilityImportError=") !=
                       std::string::npos,
                   "agent_host_abort.enum_name_in_message");
-            check(diag.message.find("ResultSchemaInvalid") !=
+            check(diag.message.find("BridgeResultPackFailed") !=
                       std::string::npos,
-                  "agent_host_abort.enum_name_is_ResultSchemaInvalid");
+                  "agent_host_abort.enum_name_is_BridgeResultPackFailed");
             break;
         }
     }
@@ -1010,8 +1014,11 @@ void test_shared_import_attribution(const std::filesystem::path &repo_root) {
 
 void test_branching_wirejson_rejection(
     const std::filesystem::path &repo_root) {
-    // A WireJson agent whose walk terminal is a ComputedGotoAction must be
-    // rejected at codegen time with wasm.UNSUPPORTED_ORCHESTRATION.
+    // RFC 0026 dual-track elimination: a WireJson agent whose walk terminal is
+    // a ComputedGotoAction was formerly rejected at codegen time. With the
+    // opaque WireJson lane gone, every agent is P6 and the P6 bridge runner is
+    // a full state-machine interpreter that handles ComputedGotoAction, so the
+    // workflow now runs to completion.
     const auto source =
         repo_root / "tests/golden/wasm/p2_13_branching_wirejson.ahfl";
     std::string error;
@@ -1042,22 +1049,19 @@ void test_branching_wirejson_rejection(
 
     auto result = runtime.run(
         "wasm::p2_13_branching_wirejson::BranchWorkflow", std::move(*input));
-    // The workflow must be rejected (not Completed) because the agent's
-    // walk terminal is a ComputedGotoAction.
-    check(result.status() != ahfl::runtime::WorkflowStatus::Completed,
-          "branch.rejected");
+    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "branch.completed");
 
-    // The diagnostic must carry wasm.compile-failed (the facade maps
-    // codegen rejection to a compile error).
-    bool found_compile_failed = false;
-    for (const auto &diag : result.diagnostics.entries()) {
-        if (diag.code.has_value() &&
-            *diag.code == "wasm.compile-failed") {
-            found_compile_failed = true;
-            break;
-        }
+    // The agent returns `input` in the Done state, so the output equals the
+    // input.
+    const auto *output = result.output();
+    check(output != nullptr, "branch.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"wasm::p2_13_branching_wirejson::Frame","urgent":true,"value":"test"})",
+              "branch.output_value");
     }
-    check(found_compile_failed, "branch.found_diagnostic");
 }
 
 // ==== 7. P1-7: v2c bridge fixtures through WH-3 executor on wasm3 ====
@@ -1236,206 +1240,6 @@ void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
     }
 }
 
-// ==== 9. WH-5c.5 GAP 4: fail-closed mutation pins ====
-//
-// The per-node output stash table (design 12.15.19) writes each opaque
-// node's output (ptr, len) into a fixed host-known page table indexed by
-// schedule_pos. The host range-checks every stash entry and decodes the
-// JSON bytes. A corrupt / forged entry MUST fail closed with
-// kOutputDecodeFailed -- never a silent NoneValue. These pins corrupt the
-// stash table (or the JSON it points to) via the post_run2_memory_mutator
-// test seam and assert the host decodes the corruption as a hard failure.
-//
-// e3_identity_workflow: 2 opaque nodes, no imports.
-//   stash_base = 1024 (kNodeEventLogBase, imports empty)
-//   stash_extent = 8 * 2 = 16
-//   heap_base = 1024 + 16 = 1040
-//   slot 0 (first):  [1024..1032)  ptr@1024 len@1028
-//   slot 1 (second): [1032..1040)  ptr@1032 len@1036
-
-void check_decode_failed(const ahfl::runtime::WorkflowResult &result,
-                         std::string_view label) {
-    check(result.status() == ahfl::runtime::WorkflowStatus::EvalError,
-          std::string(label) + ".eval_error");
-    check(result.report.status == ahfl::runtime::RunTerminalStatus::Failed,
-          std::string(label) + ".report_failed");
-    check(!result.report.output.has_value(),
-          std::string(label) + ".no_output");
-    bool found = false;
-    for (const auto &diag : result.diagnostics.entries()) {
-        if (diag.code.has_value() &&
-            *diag.code == "wasm.output-decode-failed") {
-            found = true;
-            break;
-        }
-    }
-    check(found, std::string(label) + ".found_diagnostic");
-}
-
-void test_gap4_forged_stash_ptr(const std::filesystem::path &repo_root) {
-    // Pin (a): forge stash slot 0's ptr to point outside the 64 KiB page.
-    // ptr=65000, len=60000 -> out_end=125000 > 65536. The host range-checks
-    // ptr+len <= 65536 and MUST fail closed.
-    const auto source =
-        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
-    std::string error;
-    auto program = conf::compile_conformance_source(source, error);
-    check(program.has_value(), "gap4_forged.compile");
-    if (!program.has_value()) {
-        return;
-    }
-
-    wr::WasmWorkflowRuntimeConfig config;
-    config.post_run2_memory_mutator = [](std::span<std::uint8_t> mem) {
-        constexpr std::uint32_t kSlot0 = 1024;
-        constexpr std::uint32_t kForgedPtr = 65000;
-        constexpr std::uint32_t kForgedLen = 60000;
-        std::memcpy(mem.data() + kSlot0, &kForgedPtr, 4);
-        std::memcpy(mem.data() + kSlot0 + 4, &kForgedLen, 4);
-    };
-
-    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
-    auto input = value_from_json(
-        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
-    check(input.has_value(), "gap4_forged.input");
-    if (!input.has_value()) {
-        return;
-    }
-
-    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
-                              std::move(*input));
-    check_decode_failed(result, "gap4_forged");
-}
-
-void test_gap4_zero_stash_slot(const std::filesystem::path &repo_root) {
-    // Pin (b): zero out stash slot 0 (ptr=0, len=0). The host checks
-    // ptr != 0 && len != 0 and MUST fail closed.
-    const auto source =
-        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
-    std::string error;
-    auto program = conf::compile_conformance_source(source, error);
-    check(program.has_value(), "gap4_zero.compile");
-    if (!program.has_value()) {
-        return;
-    }
-
-    wr::WasmWorkflowRuntimeConfig config;
-    config.post_run2_memory_mutator = [](std::span<std::uint8_t> mem) {
-        constexpr std::uint32_t kSlot0 = 1024;
-        constexpr std::uint32_t kZero = 0;
-        std::memcpy(mem.data() + kSlot0, &kZero, 4);
-        std::memcpy(mem.data() + kSlot0 + 4, &kZero, 4);
-    };
-
-    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
-    auto input = value_from_json(
-        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
-    check(input.has_value(), "gap4_zero.input");
-    if (!input.has_value()) {
-        return;
-    }
-
-    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
-                              std::move(*input));
-    check_decode_failed(result, "gap4_zero");
-}
-
-void test_gap4_corrupted_json(const std::filesystem::path &repo_root) {
-    // Pin (c): corrupt the JSON bytes that stash slot 0 points to. Read the
-    // ptr from the slot (the guest wrote it during run2), then overwrite the
-    // first byte with 0xFF. value_from_json rejects the garbage and the host
-    // MUST fail closed.
-    const auto source =
-        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
-    std::string error;
-    auto program = conf::compile_conformance_source(source, error);
-    check(program.has_value(), "gap4_corrupt.compile");
-    if (!program.has_value()) {
-        return;
-    }
-
-    wr::WasmWorkflowRuntimeConfig config;
-    config.post_run2_memory_mutator = [](std::span<std::uint8_t> mem) {
-        constexpr std::uint32_t kSlot0 = 1024;
-        std::uint32_t ptr = 0;
-        std::memcpy(&ptr, mem.data() + kSlot0, 4);
-        // The guest wrote a valid ptr >= heap_base (1040). Corrupt the
-        // first JSON byte so value_from_json rejects it.
-        if (ptr != 0 && ptr < mem.size()) {
-            mem[ptr] = 0xFF;
-        }
-    };
-
-    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
-    auto input = value_from_json(
-        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
-    check(input.has_value(), "gap4_corrupt.input");
-    if (!input.has_value()) {
-        return;
-    }
-
-    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
-                              std::move(*input));
-    check_decode_failed(result, "gap4_corrupt");
-}
-
-void test_gap4_identity_slot0_safety(
-    const std::filesystem::path &repo_root) {
-    // Safety pin: after an identity run, [1024,1032) parses as stash slot 0
-    // (non-zero ptr, len, ptr >= heap_base=1040). The host decodes the
-    // stash, not event records. The workflow completes successfully with
-    // the correct output -- proving the slot-0/event-header overlap is safe
-    // (identity workflows never write the event header).
-    const auto source =
-        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
-    std::string error;
-    auto program = conf::compile_conformance_source(source, error);
-    check(program.has_value(), "gap4_safety.compile");
-    if (!program.has_value()) {
-        return;
-    }
-
-    std::uint32_t slot0_ptr = 0;
-    std::uint32_t slot0_len = 0;
-    wr::WasmWorkflowRuntimeConfig config;
-    config.post_run2_memory_mutator =
-        [&slot0_ptr, &slot0_len](std::span<std::uint8_t> mem) {
-            constexpr std::uint32_t kSlot0 = 1024;
-            std::memcpy(&slot0_ptr, mem.data() + kSlot0, 4);
-            std::memcpy(&slot0_len, mem.data() + kSlot0 + 4, 4);
-        };
-
-    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
-    auto input = value_from_json(
-        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
-    check(input.has_value(), "gap4_safety.input");
-    if (!input.has_value()) {
-        return;
-    }
-
-    auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
-                              std::move(*input));
-    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
-          "gap4_safety.completed");
-
-    // The stash slot at [1024,1032) must be a valid entry: non-zero ptr,
-    // non-zero len, ptr >= heap_base (1040), ptr+len <= 65536.
-    check(slot0_ptr != 0, "gap4_safety.slot0_ptr_nonzero");
-    check(slot0_len != 0, "gap4_safety.slot0_len_nonzero");
-    check(slot0_ptr >= 1040, "gap4_safety.slot0_ptr_above_heap");
-    check(std::uint64_t{slot0_ptr} + std::uint64_t{slot0_len} <= 65536,
-          "gap4_safety.slot0_within_page");
-
-    const auto *output = result.output();
-    check(output != nullptr, "gap4_safety.has_output");
-    if (output != nullptr) {
-        const auto json = value_to_json(*output);
-        check(json ==
-                  R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
-              "gap4_safety.output_value");
-    }
-}
-
 } // namespace
 
 // ==== WH-6 fix-forward: compile-diagnostic source rendering ====
@@ -1564,10 +1368,6 @@ int main() {
     test_shared_import_attribution(repo_root);
     test_branching_wirejson_rejection(repo_root);
     test_v2c_bridge_fixtures(repo_root);
-    test_gap4_forged_stash_ptr(repo_root);
-    test_gap4_zero_stash_slot(repo_root);
-    test_gap4_corrupted_json(repo_root);
-    test_gap4_identity_slot0_safety(repo_root);
     test_compile_diag_no_locator(repo_root);
     test_compile_diag_locator_bounds_guard(repo_root);
 

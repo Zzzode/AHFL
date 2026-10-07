@@ -56,6 +56,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string_view>
 #include <variant>
@@ -81,6 +82,35 @@ namespace host_codes = core_wasm_resume_host_codes;
 // Everything one resume needs. Key material is BORROWED for the call (the
 // store itself never retains it); the store root and work namespace name the
 // REAL IntegrityPayloadStore this driver drives.
+
+// Packs the entry frame (wire JSON) into the entry node's P4-D I block and
+// returns the (ptr, len) pair for invoke_run2. The bridge lane requires the
+// entry frame at the node's fixed input region, not a bump allocation.
+using EntryFramePacker = std::function<std::expected<std::pair<engine::GuestPointer, std::uint32_t>,
+                                                     engine::EngineError>(
+    engine::CoreWasmResumeEngine &engine, std::span<const std::uint8_t> entry_json)>;
+
+// Packs a wire-JSON result into the P4-D bridge result block identified by
+// the control-block pointer in obs.scalar_arg. The packer resolves the bridge
+// call site, decodes the JSON against the call site's result binding, packs
+// the value into the fixed result block, and returns the ImportReply carrying
+// (AHFL_CAP_OK, result_base).
+using BridgeResultPacker =
+    std::function<engine::ImportCallbackResult(engine::CoreWasmResumeEngine &engine,
+                                               const engine::ImportObservation &obs,
+                                               const csm::VerifiedCoreWasmCallSite &call_site,
+                                               std::span<const std::uint8_t> result_json)>;
+
+// Decodes the P4-D bridge arguments from the control block identified by
+// obs.scalar_arg and computes the wire-canonical arg_hash. The bridge lane
+// has no wire-JSON param frame (the args live in the P4-D control block), so
+// the controller needs the pre-computed hash to cross-check against the
+// ledgered memo/pending. Returns nullopt on a decode failure.
+using BridgeArgHasher =
+    std::function<std::optional<std::uint64_t>(engine::CoreWasmResumeEngine &engine,
+                                               const engine::ImportObservation &obs,
+                                               const csm::VerifiedCoreWasmCallSite &call_site)>;
+
 struct ResumeRequest {
     const csm::VerifiedCoreWasmSchemaModule *module{nullptr};
     // The exact digest-admitted artifact bytes handed to the engine. They are
@@ -107,6 +137,14 @@ struct ResumeRequest {
     // returns ReadyForLive; the read/recover/dedup authority lands in D2b-3,
     // which then fails closed at this driver's blocked live frontier).
     rc::GatedResumeOptions gated_options{};
+    // RFC 0026 dual-track elimination: the bridge lane packs P4-D frames at
+    // fixed addresses (the entry node's I block and the bridge result blocks).
+    // The packers are the engine-agnostic seam: the caller (which has the
+    // frame layout section + wire schema from the codegen descriptor) provides
+    // the P4-D packing logic; this driver stays free of wasm_host dependencies.
+    EntryFramePacker pack_entry_frame{};
+    BridgeResultPacker pack_bridge_result{};
+    BridgeArgHasher bridge_arg_hasher{};
 };
 
 // A completed replay: the run2 raw status word and the verbatim forwarded

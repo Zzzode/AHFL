@@ -2,25 +2,19 @@
 
 // RFC 0026 KR6.8 WH-3: the capability-import executor. The production
 // ImportCallback the engine delivers every ahfl_cap import to. It resolves the
-// call site from the import ordinal, decodes the arguments (opaque lane: wire
-// JSON envelope; bridge lane: P4-D span walk), invokes the capability through
-// the ContextualCapabilityInvoker, and returns the ImportReply carrying the raw
-// ahfl_cap_status verbatim (the engine never classifies; the guest's compiled
-// code is the classifier, exactly as run2's raw_status is carried verbatim and
-// classified by the D1b controller).
+// call site from the import ordinal, decodes the arguments (bridge lane: P4-D
+// span walk), invokes the capability through the ContextualCapabilityInvoker,
+// and returns the ImportReply carrying the raw ahfl_cap_status verbatim (the
+// engine never classifies; the guest's compiled code is the classifier,
+// exactly as run2's raw_status is carried verbatim and classified by the D1b
+// controller).
 //
-// Two lanes (the engine admits both functypes at fresh_instance):
-//   * opaque  (i32,i32)->(i32,i32,i32): the module writes a wire-JSON argument
-//     envelope at (ptr,len); the host decodes it, invokes, serializes the
-//     result to wire JSON, alloc_then_writes it, and replies
-//     (status, result_ptr, result_len). The module's compiled code has graceful
-//     ERROR/PENDING arms.
-//   * bridge (i32)->(i32,i32): the single arg is the control-block pointer; the
-//     host walks the dense P4-D argument spans (spill/root classification +
-//     region authorization, mirroring the JS oracle's bridgeParamKind /
-//     readBridgeArgValue), invokes, packs the result at the call site's
-//     disjoint result placement, and replies (status, result_base). Any non-zero
-//     status traps the module (the bridge has no graceful ERROR/PENDING arm).
+// Bridge lane (i32)->(i32,i32): the single arg is the control-block pointer;
+// the host walks the dense P4-D argument spans (spill/root classification +
+// region authorization, mirroring the JS oracle's bridgeParamKind /
+// readBridgeArgValue), invokes, packs the result at the call site's disjoint
+// result placement, and replies (status, result_base). Any non-zero status
+// traps the module (the bridge has no graceful ERROR/PENDING arm).
 //
 // ImportAbort stays HOST-DECISION-failure-only (unknown call site, unknown
 // capability, bad control block, arg decode failure, engine fault): a
@@ -70,15 +64,6 @@ enum class CapabilityImportError {
     BridgeWireSchemaMismatch,
     /// A bridge argument span failed the P4-D walk (bounds/schema/region).
     ArgDecodeFailed,
-    /// The opaque-lane param JSON failed schema-bound decode against the
-    /// wire-schema param binding. Pre-effect: the capability is NEVER invoked.
-    ParamSchemaInvalid,
-    /// The opaque-lane result value failed schema-bound validation against the
-    /// wire-schema result binding. Post-effect: the capability WAS invoked and
-    /// returned Success, but the host rejects the result as a host fault.
-    ResultSchemaInvalid,
-    /// The opaque-lane result value is not wire-encodable (a closure).
-    ResultEncodeFailed,
     /// The bridge result failed the P4-D pack.
     BridgeResultPackFailed,
     /// The engine's alloc_then_write failed.
@@ -157,10 +142,8 @@ struct CapabilityImportConfig {
 };
 
 /// Factory: build the ImportCallback the engine delivers every ahfl_cap import
-/// to. The callback handles both lanes (opaque + bridge) transparently: the
-/// engine's trampoline sets param_frame only for the 2-param opaque lane, so
-/// param_frame.size() > 0 selects opaque and param_frame.size() == 0 selects
-/// bridge.
+/// to. All imports use the bridge lane (i32)->(i32,i32); the callback resolves
+/// the bridge call site and handles the capability invocation.
 [[nodiscard]] core_wasm_resume_engine::ImportCallback
 make_capability_import_callback(CapabilityImportConfig config);
 
@@ -173,26 +156,6 @@ make_capability_import_callback(CapabilityImportConfig config);
 resolve_import_call_site(
     const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &module,
     std::uint32_t import_ordinal);
-
-/// WH-4b: the decoded opaque-lane arguments for an import. The session
-/// memo-replay layer uses this to cross-check a memo hit's arg_hash without
-/// invoking the capability (the invoker is never called on a memo hit, so the
-/// arg_hash must be computed from the import observation itself).
-struct OpaqueImportArgs {
-    std::uint64_t source_symbol{0};
-    std::vector<runtime::Value> args;
-};
-
-/// WH-4b: decode the opaque-lane argument envelope for an import. Resolves the
-/// call site, finds the capability in the wire schema, parses the envelope,
-/// and schema-bound decodes the single arity-1 argument. Returns nullopt on
-/// any resolution / parse / decode failure (fail-closed: the caller treats it
-/// as a replay divergence, never a live re-invoke).
-[[nodiscard]] std::optional<OpaqueImportArgs>
-decode_opaque_import_args(
-    const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &module,
-    std::uint32_t import_ordinal,
-    std::span<const std::uint8_t> param_frame);
 
 /// WH-5b.2: the resolved bridge call site for an import observation. The
 /// session memo-replay layer uses this to capture (origination) and inject
@@ -246,7 +209,7 @@ decode_bridge_import_args(
 /// shape to live placement.
 [[nodiscard]] core_wasm_resume_engine::ImportCallbackResult
 pack_bridge_result_value(
-    Wasm3ResumeEngine &engine,
+    core_wasm_resume_engine::CoreWasmResumeEngine &engine,
     const ir::core::CoreFrameLayoutSection &section,
     const core_wasm_schema_module::VerifiedCoreWasmCallSite &call_site,
     const ir::core::CoreFrameBridgeCallSite &site,

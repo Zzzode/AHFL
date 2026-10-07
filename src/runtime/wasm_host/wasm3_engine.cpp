@@ -63,14 +63,6 @@ constexpr std::uint8_t kLimitsFlagIs64 = 0x02; // memory64: not admissible
 constexpr std::string_view kCapabilityModuleName = "ahfl_cap";
 constexpr std::string_view kCapabilityFieldPrefix = "cap_";
 
-// WH-5b.3: the deterministic encoding-boundary transcode import family. A
-// transcode import is a pure codec adapter (no capability, no memo, no
-// hooks, no events) with the EXACT sealed functype (i32,i32)->(i32,i32,i32).
-// It shares the opaque-lane raw ABI, so the trampoline dispatches it
-// unchanged; the session routes it by ordinal before the memo/replay path.
-constexpr std::string_view kTranscodeModuleName = "ahfl_xcode";
-constexpr std::string_view kTranscodeFieldPrefix = "xcode_";
-
 // A bounds-checked cursor over the module bytes. Every read is checked, so a
 // malformed or truncated module yields std::nullopt and never over-reads.
 class Cursor {
@@ -339,13 +331,6 @@ namespace detail {
 struct Wasm3EngineImpl {
     struct ImportBinding {
         std::uint32_t ordinal{0}; // position in the ahfl_cap import table
-        std::uint32_t param_count{0}; // 1 (section-9 probe / bridge) or 2 (opaque)
-        // WH-3: the import functype's RESULT arity. 3 for the opaque
-        // (i32,i32)->(i32,i32,i32) tuple lane; 2 for the bridge
-        // (i32)->(i32,i32) lane. The trampoline writes exactly this many
-        // result slots (sp[0..result_count)); on the 2-result lane the
-        // reply's result_ptr carries the bridge result_base semantics.
-        std::uint32_t result_count{0};
     };
 
     IM3Environment env{nullptr};
@@ -410,33 +395,16 @@ struct Wasm3EngineImpl {
         const std::uint32_t memory_size = m3_GetMemorySize(runtime);
         const auto *memory_bytes = static_cast<const std::uint8_t *>(mem);
 
-        // wasm3 raw ABI: results at sp[0..result_count), args at
-        // sp[result_count..]. The arg base is therefore the binding's result
-        // arity, NOT a hardcoded 3 (the bridge lane has 2 results).
-        const std::uint32_t arg_base = binding->result_count;
-        std::span<const std::uint8_t> param_frame;
-        if (binding->param_count == 2) {
-            const auto ptr = static_cast<std::uint32_t>(sp[arg_base]);
-            const auto len = static_cast<std::uint32_t>(sp[arg_base + 1]);
-            // m3ApiCheckMem discipline: the module-supplied param frame must
-            // lie entirely inside the page. An out-of-bounds frame fails
-            // closed as a trap (the module, not the host, is at fault).
-            if (ptr > memory_size || len > memory_size - ptr) {
-                return m3Err_trapOutOfBoundsMemoryAccess;
-            }
-            param_frame = std::span<const std::uint8_t>(memory_bytes + ptr, len);
-        }
-        // param_count == 1: the single arg is an opaque scalar (the section-9
-        // probe shape, or the bridge control-block pointer); the param frame
-        // is empty.
+        // wasm3 raw ABI: results at sp[0..2), args at sp[2..]. The sole
+        // accepted import functype is the bridge (i32)->(i32,i32), so the arg
+        // base is always 2 and the param frame is always empty (bridge args
+        // live in the P4-D control block, not the import frame).
+        constexpr std::uint32_t arg_base = 2;
 
         eng::ImportObservation observation;
         observation.import_ordinal = binding->ordinal;
-        // The single i32 arg of a 1-param import (bridge control-block pointer
-        // / section-9 scalar); for a 2-param import this is the frame pointer
-        // (also the start of param_frame) and is not authoritative.
+        // The single i32 arg is the bridge control-block pointer.
         observation.scalar_arg = static_cast<std::uint32_t>(sp[arg_base]);
-        observation.param_frame = param_frame;
         observation.whole_memory =
             std::span<const std::uint8_t>(memory_bytes, memory_size);
 
@@ -454,15 +422,11 @@ struct Wasm3EngineImpl {
         }
 
         const auto &frame = std::get<eng::ImportReply>(reply);
-        // Write exactly the import functype's result slots. The raw status is
-        // carried verbatim (the engine never classifies); the opaque lane's
-        // third slot is the result frame length, the bridge lane's second slot
-        // is the result_base (no length word on a 2-result functype).
+        // Write the bridge functype's two result slots. The raw status is
+        // carried verbatim (the engine never classifies); the second slot is
+        // the result_base (no length word on the 2-result bridge functype).
         sp[0] = frame.raw_status;
         sp[1] = frame.result_ptr.value;
-        if (binding->result_count == 3) {
-            sp[2] = frame.result_len;
-        }
         return m3Err_none;
     }
 };
@@ -515,23 +479,14 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     }
 
     // Import classification + functype validation. Every func import must be
-    // ahfl_cap.cap_<decimal> with one of the two sealed lane functypes:
-    //   * opaque: (i32,i32)->(i32,i32,i32) or (i32)->(i32,i32,i32) (3 results);
-    //   * bridge: (i32)->(i32,i32) (2 results; WH-3).
-    // or ahfl_xcode.xcode_<decimal> (WH-5b.3) with the EXACT sealed functype
-    // (i32,i32)->(i32,i32,i32) -- the same raw ABI as the opaque lane, but a
-    // separate namespace so the session can route it as a pure codec adapter
-    // (never a capability, never memo, never an event record).
+    // ahfl_cap.cap_<decimal> with the bridge (i32)->(i32,i32) signature.
     std::vector<detail::Wasm3EngineImpl::ImportBinding> bindings;
     bindings.reserve(parsed->imports.size());
     for (const auto &import : parsed->imports) {
-        const bool is_cap = import.module_name == kCapabilityModuleName;
-        const bool is_xcode = import.module_name == kTranscodeModuleName;
-        if (!is_cap && !is_xcode) {
+        if (import.module_name != kCapabilityModuleName) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        const std::string_view prefix =
-            is_cap ? kCapabilityFieldPrefix : kTranscodeFieldPrefix;
+        const std::string_view prefix = kCapabilityFieldPrefix;
         if (import.field_name.size() <= prefix.size() ||
             import.field_name.compare(0, prefix.size(), prefix) != 0) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
@@ -555,24 +510,12 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
         if (!results_i32 || !params_i32) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        if (is_xcode) {
-            // WH-5b.3: the transcode functype is sealed to EXACTLY
-            // (i32,i32)->(i32,i32,i32). No 1-param variant, no 2-result variant.
-            if (type.params.size() != 2 || type.results.size() != 3) {
-                return std::unexpected(eng::EngineError::InstanceUnavailable);
-            }
-        } else {
-            const bool opaque_lane = type.results.size() == 3 &&
-                                     !type.params.empty() && type.params.size() <= 2;
-            const bool bridge_lane = type.results.size() == 2 && type.params.size() == 1;
-            if (!opaque_lane && !bridge_lane) {
-                return std::unexpected(eng::EngineError::InstanceUnavailable);
-            }
+        const bool bridge_lane = type.results.size() == 2 && type.params.size() == 1;
+        if (!bridge_lane) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
         bindings.push_back(detail::Wasm3EngineImpl::ImportBinding{
             .ordinal = static_cast<std::uint32_t>(bindings.size()),
-            .param_count = static_cast<std::uint32_t>(type.params.size()),
-            .result_count = static_cast<std::uint32_t>(type.results.size()),
         });
     }
 
@@ -615,17 +558,11 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     // 5. Link every capability import with its raw trampoline. `bindings` is
     //    fully built, so its element addresses are stable for the session
     //    (committed to the Impl below before any invocation). The wasm3 raw
-    //    signature is results-then-(params): the opaque 3-result lane is
-    //    "iii(ii)"/"iii(i)", the bridge 2-result lane is "ii(i)". A
-    //    transcode import shares the opaque "iii(ii)" lane but links under
-    //    its own "ahfl_xcode" module namespace.
+    //    signature is results-then-(params): the bridge 2-result lane is
+    //    "ii(i)", the sole accepted import functype after the WireJson lane
+    //    elimination.
     for (std::size_t i = 0; i < parsed->imports.size(); ++i) {
-        const char *signature = nullptr;
-        if (bindings[i].result_count == 3) {
-            signature = bindings[i].param_count == 2 ? "iii(ii)" : "iii(i)";
-        } else {
-            signature = "ii(i)";
-        }
+        const char *signature = "ii(i)";
         if (m3_LinkRawFunctionEx(impl_->module,
                                  parsed->imports[i].module_name.c_str(),
                                  parsed->imports[i].field_name.c_str(), signature,
@@ -643,14 +580,24 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
 
-    // 7. Export surface: run2 (i32,i32)->(i32,i32,i32) and alloc (i32)->i32.
-    //    m3_FindFunction compiles eagerly, so an unresolved import or a body
-    //    that does not compile fails here, at fresh_instance.
-    if (m3_FindFunction(&impl_->run2, impl_->runtime, "run2") != nullptr ||
-        !export_has_i32_signature(impl_->run2, 2, 3) ||
-        m3_FindFunction(&impl_->alloc, impl_->runtime, "alloc") != nullptr ||
+    // 7. Export surface: alloc (i32)->i32 is required for every module.
+    //    run2 (i32,i32)->(i32,i32,i32) is the workflow scheduler entry and is
+    //    only present on workflow modules; agent modules export runv (found
+    //    lazily on the first invoke_runv) instead. m3_FindFunction compiles
+    //    eagerly, so an unresolved import or a body that does not compile
+    //    fails here, at fresh_instance.
+    if (m3_FindFunction(&impl_->alloc, impl_->runtime, "alloc") != nullptr ||
         !export_has_i32_signature(impl_->alloc, 1, 1)) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    // run2 is optional: a module without it is an agent module that drives
+    // the state machine through step/current_state/runv instead.
+    if (m3_FindFunction(&impl_->run2, impl_->runtime, "run2") == nullptr) {
+        if (!export_has_i32_signature(impl_->run2, 2, 3)) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+    } else {
+        impl_->run2 = nullptr; // no run2 export (agent module)
     }
 
     // 8. Commit: the session is live.
@@ -718,6 +665,9 @@ Wasm3ResumeEngine::alloc_then_write(std::span<const std::uint8_t> bytes) {
 std::expected<eng::Run2Outcome, eng::EngineError>
 Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_len) {
     if (!impl_->instantiated || impl_->run_started) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    if (impl_->run2 == nullptr) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
     impl_->run_started = true;

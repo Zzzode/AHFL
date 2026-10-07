@@ -625,7 +625,7 @@ find_frame(const ahfl::json::JsonValue &stack_trace_response, int frame_id) {
     return -1;
 }
 
-// T3 fixture: two nodes on ONE identity-final agent (caps [], WireJson lane)
+// T3 fixture: two nodes on ONE identity-final agent (caps [], P6 frame lane)
 // with distinguishable outputs. The agent transforms the input (x + 1), so a
 // chain (first <- input, second <- first) yields x=1 then x=2. The Done state
 // returns the transformed input, so evaluate("output") after each node's
@@ -831,11 +831,12 @@ constexpr std::string_view kSharedLineMixedInputJson =
     R"({"_type":"dap::shared_line_mixed::Payload","tag":"start"})";
 
 // T6b fixture (F6.1 UNANIMOUS): two distinct no-cap identity-final agents
-// (caps [] -> WireJson lane), one node per agent with an after-dependency,
-// and BOTH agents' flow declarations (and Done handlers) on ONE physical
-// line. Every record on the shared line classifies to the same WireJson
-// verdict, so the classifier must collapse them to that single verdict —
-// proving unanimous records do not trip the shared-line branch.
+// (caps [] -> P6 frame lane, post-mortem), one node per agent with an
+// after-dependency, and BOTH agents' flow declarations (and Done handlers)
+// on ONE physical line. Every record on the shared line classifies to the
+// same post-mortem verdict, so the classifier must collapse them to that
+// single verdict — proving unanimous records do not trip the shared-line
+// branch.
 constexpr std::string_view kSharedLineUnanimousWorkflowSource = R"(module dap::shared_line_unanimous;
 
 struct Data {
@@ -2384,9 +2385,9 @@ int main() {
             (void)server.handle_request(disc_req);
         }
 
-        // Part C: WireJson lane → POST-MORTEM (verified:false + WireJson
-        // lane message). The vars workflow uses an identity-final agent
-        // with no bridge calls, so the codegen assigns WireJson.
+        // Part C: identity-final agent (caps []) → POST-MORTEM (verified:false
+        // + no-capability-boundary message). The vars workflow uses an
+        // identity-final agent with no bridge calls.
         {
             const auto fixture = write_vars_workflow_fixture();
 
@@ -2416,8 +2417,8 @@ int main() {
 
             {
                 std::lock_guard lock(frames_mutex);
-                check(frame_has_breakpoint_event(frames, false, "WireJson"),
-                      "WireJson-lane state breakpoint classified as POST-MORTEM");
+                check(frame_has_breakpoint_event(frames, false, "no capability boundary"),
+                      "P6 no-cap state breakpoint classified as POST-MORTEM (part C)");
             }
 
             // The POST-MORTEM breakpoint pauses after the run completes
@@ -2742,7 +2743,7 @@ int main() {
     }
 
     // T3 (F2): per-node interleaving of node_completed then state hooks.
-    // Two nodes on ONE identity-final agent (caps [], WireJson lane) with
+    // Two nodes on ONE identity-final agent (caps [], P6 frame lane) with
     // distinguishable literal inputs (x:1 vs x:2). A line breakpoint on the
     // Done state line fires post-mortem for each node. At the FIRST stopped,
     // the stack carries node `first` and evaluate("output") returns x == 1;
@@ -3086,9 +3087,9 @@ int main() {
               "T6a: terminated after disconnect");
     }
 
-    // T6b (F6.1 UNANIMOUS): two no-cap agents (WireJson lane) with both
+    // T6b (F6.1 UNANIMOUS): two no-cap agents (P6, post-mortem) with both
     // Done handlers on ONE physical line. Every record on the shared line
-    // classifies to the same WireJson verdict, so the classifier collapses
+    // classifies to the same post-mortem verdict, so the classifier collapses
     // them to that single verdict — the shared-line branch must NOT fire.
     {
         const auto fixture = write_shared_line_unanimous_workflow_fixture();
@@ -3122,31 +3123,31 @@ int main() {
 
         {
             std::lock_guard lock(frames_mutex);
-            constexpr std::string_view kWireJsonMessage =
-                "state hooks are post-run on the WireJson lane (no trace "
-                "ring); pauses after run completes (post-mortem)";
-            bool saw_wire_json = false;
+            constexpr std::string_view kPostMortemMessage =
+                "state has no capability boundary in its runner; pauses "
+                "after run completes (post-mortem)";
+            bool saw_post_mortem = false;
             bool saw_shared_line = false;
             for (const auto &frame : frames) {
                 if (frame.find(R"("event":"breakpoint")") == std::string::npos) {
                     continue;
                 }
-                if (frame.find(kWireJsonMessage) != std::string::npos &&
+                if (frame.find(kPostMortemMessage) != std::string::npos &&
                     frame.find(R"("verified":false)") != std::string::npos) {
-                    saw_wire_json = true;
+                    saw_post_mortem = true;
                 }
                 if (frame.find("line is shared by multiple") !=
                     std::string::npos) {
                     saw_shared_line = true;
                 }
             }
-            check(saw_wire_json,
-                  "T6b: unanimous shared line collapses to the WireJson verdict");
+            check(saw_post_mortem,
+                  "T6b: unanimous shared line collapses to the post-mortem verdict");
             check(!saw_shared_line,
                   "T6b: unanimous shared line does NOT trip the shared-line branch");
         }
 
-        // The WireJson lane runs to completion (post-mortem pauses only);
+        // The no-cap agents run to completion (post-mortem pauses only);
         // disconnect bounded and wait for terminated.
         const auto start = std::chrono::steady_clock::now();
         ahfl::dap::DapMessage disc_req;

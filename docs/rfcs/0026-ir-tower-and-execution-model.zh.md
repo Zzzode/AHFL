@@ -724,7 +724,7 @@ Implementation Plan 对应分片承载。
     `project_core_wire_schema` 从 verified `CoreProgram` + 严格递增去重的 capability selection 投影 flat
     `CoreWireSchemaTable`(15-shape variant arena、node-id 索引、per-cap params+result);`const CoreProgram&`
     + scratch value-type arena(P4-C `instantiate_member_template_into` 零改 program);reserve-before-descend
-    可环;fail-closed:Never/Fn/Closure→`kUnsupported`、非-String Map key→`kUnsupportedMapKey`、
+    可环;fail-closed:Never/Fn/Closure→`kUnsupported`、
     非 canonical/OOR selection→`kInvalidSelection`、unverified Core→`kInvalidCore`。`verify_core_wire_schema_table`
     = local 图不变量 + 确定性 Core reprojection 等值;`encode_core_wire_schema_table` = magic `AHFLWS` +
     canonical LEB128(**不追加 wasm custom section,transport 属 B1**)。

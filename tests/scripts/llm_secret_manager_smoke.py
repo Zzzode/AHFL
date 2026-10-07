@@ -564,14 +564,12 @@ exports = [
 std = { source = "sysroot" }
 """
 
-# A legal, fully compilable producer. `BadMap` returns std::collections::Map with
-# a non-String key (`Map<Int, Int>`), which is a legal AHFL type but NOT
-# projectable to a wire schema (core.wire.UNSUPPORTED_MAP_KEY). The workflow never
-# calls BadMap; the descriptor merely binds it, so admission fails purely on the
-# projection, proving "legal producer + independent wire-projection failure".
+# A legal, fully compilable producer. `BadFn` returns a first-class fn type,
+# which is a legal AHFL type but NOT projectable to a wire schema
+# (core.wire.UNSUPPORTED). The workflow never calls BadFn; the descriptor
+# merely binds it, so admission fails purely on the projection, proving
+# "legal producer + independent wire-projection failure".
 _A1_PACKAGE_SOURCE = """module smoke::main;
-
-import std::collections as collections;
 
 pub struct Request {
     value: String;
@@ -586,7 +584,7 @@ pub struct Response {
 }
 
 pub capability Echo(request: Request) -> Response;
-pub capability BadMap(n: Int) -> collections::Map<Int, Int>(4);
+pub capability BadFn(n: Int) -> Fn() -> Int;
 
 pub agent EchoAgent {
     input: Request;
@@ -724,14 +722,14 @@ def run_two_phase_admission_case(
 
 
 def run_a1_non_projectable_binding_case(ahflc, run_dir):
-    # A1: the descriptor binds `smoke::main::BadMap`, whose Map<Int, Int> response
+    # A1: the descriptor binds `smoke::main::BadFn`, whose fn response
     # is not projectable to a wire schema. Phase A migration rejects it before any
     # secret/network work — Vault and LLM counters stay 0.
     bindings = {
         "schema": "ahfl.runtime_capability_bindings.v0",
         "bindings": [
             {
-                "capability": "smoke::main::BadMap",
+                "capability": "smoke::main::BadFn",
                 "transport": "http",
                 # The URL path carries a unique marker so the no-echo assertion
                 # proves the projection diagnostic never reflects descriptor
@@ -760,7 +758,7 @@ def run_a1_non_projectable_binding_case(ahflc, run_dir):
             "A1 non-projectable binding unexpectedly succeeded\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
-    expected = "core.wire.UNSUPPORTED_MAP_KEY"
+    expected = "core.wire.UNSUPPORTED"
     if expected not in combined_output:
         raise AssertionError(
             f"A1 missing projection diagnostic {expected!r}:\n{combined_output}"

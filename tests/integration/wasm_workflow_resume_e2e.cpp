@@ -1100,17 +1100,19 @@ void test_e4_memo_round_trip(const std::filesystem::path &repo_root,
                 }
                 // arg_hash is set (non-zero for a non-empty arg vector).
                 check(entry.arg_hash != 0, "e4.tuple.arg_hash_nonzero");
-                // ExactSidecar source tag (the wasm lane always sets it).
+                // RFC 0026 dual-track elimination: the bridge lane stores
+                // NativeOnly at origination (the result is a P4-D binary
+                // frame, not JSON). The persistence layer serializes the
+                // native Value to wire JSON; on reload the entry becomes
+                // ExactSidecar with wire-JSON authoritative_json (verified
+                // by the Process B cold-start resume below).
                 check(entry.source ==
-                          ahfl::runtime::PersistedMemoResultSource::ExactSidecar,
-                      "e4.tuple.exact_sidecar");
-                // The authoritative wire JSON is present and non-empty.
-                check(entry.authoritative_json.has_value(),
-                      "e4.tuple.has_authoritative_json");
-                if (entry.authoritative_json.has_value()) {
-                    check(!entry.authoritative_json->empty(),
-                          "e4.tuple.authoritative_json_nonempty");
-                }
+                          ahfl::runtime::PersistedMemoResultSource::NativeOnly,
+                      "e4.tuple.native_only");
+                // NativeOnly carries no authoritative_json (the wire JSON is
+                // minted at persistence time, not at origination).
+                check(!entry.authoritative_json.has_value(),
+                      "e4.tuple.no_authoritative_json_at_origination");
                 // The result presence bit is set.
                 check(entry.result_present.has_value(),
                       "e4.tuple.has_result_present");
@@ -1998,18 +2000,18 @@ void test_p2a_shared_cap_resume_identity(
                     check(entry.arg_hash != *state_a->second_arg_hash,
                           "p2a.tuple.arg_hash_differs_from_second");
                 }
-                // 5. Source: ExactSidecar.
+                // 5. Source: NativeOnly (RFC 0026 dual-track elimination:
+                // the bridge lane stores the P4-D frame result at
+                // origination; the persistence layer mints the wire-JSON
+                // sidecar on save, so the in-memory entry is NativeOnly).
                 check(entry.source ==
                           ahfl::runtime::PersistedMemoResultSource::
-                              ExactSidecar,
-                      "p2a.tuple.exact_sidecar");
-                // 6. authoritative_json: present, non-empty.
-                check(entry.authoritative_json.has_value(),
-                      "p2a.tuple.has_authoritative_json");
-                if (entry.authoritative_json.has_value()) {
-                    check(!entry.authoritative_json->empty(),
-                          "p2a.tuple.authoritative_json_nonempty");
-                }
+                              NativeOnly,
+                      "p2a.tuple.native_only");
+                // 6. authoritative_json: absent at origination (minted at
+                // persistence time; the reloaded entry is ExactSidecar).
+                check(!entry.authoritative_json.has_value(),
+                      "p2a.tuple.no_authoritative_json_at_origination");
                 // 7. result_present: present, true.
                 check(entry.result_present.has_value(),
                       "p2a.tuple.has_result_present");

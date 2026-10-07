@@ -95,13 +95,8 @@ std::vector<std::uint8_t> func_type(const std::vector<std::uint8_t> &params,
     return out;
 }
 
-// The canonical ahfl_cap tuple signature (i32,i32)->(i32,i32,i32).
-std::vector<std::uint8_t> capability_tuple_type() {
-    return func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f});
-}
-
-// WH-2: the bridge ahfl_cap signature (i32)->(i32,i32). The transport admission
-// accepts this alongside the opaque 3-result tuple (decision doc section 11.3).
+// The sole ahfl_cap bridge signature (i32)->(i32,i32). After the WireJson
+// lane elimination, this is the ONLY accepted import functype.
 std::vector<std::uint8_t> bridge_signature_type() {
     return func_type({0x7f}, {0x7f, 0x7f});
 }
@@ -131,7 +126,7 @@ CoreWireSchemaTable single_int_table(std::uint64_t source_symbol = 42) {
 // Knobs for the canonical module builder. Each negative test flips exactly one.
 struct ModuleSpec {
     // Type section: the func-type entries, and whether to emit the section at all.
-    std::vector<std::vector<std::uint8_t>> types = {capability_tuple_type()};
+    std::vector<std::vector<std::uint8_t>> types = {bridge_signature_type()};
     bool emit_type = true;
     bool duplicate_type = false;
     // Import section: (source_symbol, typeidx) per ahfl_cap import; emit toggle.
@@ -313,11 +308,11 @@ void test_wire_schema_module_inspector() {
     // --- positive control: an UNREFERENCED type entry whose param/result bytes
     // are arbitrary/invalid value-type bytes still frames fine (framing-only, no
     // Wasm type validation); only the cap-import-referenced entry must be the
-    // exact tuple. typeidx 0 (tuple) is referenced; typeidx 1 carries garbage
-    // value-type bytes and is never referenced. ------------------------------
+    // bridge signature. typeidx 0 (bridge) is referenced; typeidx 1 carries
+    // garbage value-type bytes and is never referenced. ----------------------
     {
         ModuleSpec spec;
-        spec.types = {capability_tuple_type(),
+        spec.types = {bridge_signature_type(),
                       func_type({0x01 /* not a valid value type */}, {0xfe})};
         spec.imports = {{42, 0}};
         spec.target_table = encode_table(single_int_table());
@@ -328,19 +323,19 @@ void test_wire_schema_module_inspector() {
               "c3.positive.unreferenced_type_arbitrary_value_bytes_ok");
     }
 
-    // --- positive control: the tuple signature at a NON-zero index (index 1);
-    // the reader accepts any in-range typeidx whose signature is the exact tuple,
-    // never hardcoding an index. ---------------------------------------------
+    // --- positive control: the bridge signature at a NON-zero index (index 1);
+    // the reader accepts any in-range typeidx whose signature is the bridge
+    // type, never hardcoding an index. ---------------------------------------
     {
         ModuleSpec spec;
         spec.types = {func_type({0x7f}, {0x7f}) /* i32->i32 filler */,
-                      capability_tuple_type() /* index 1 = tuple */};
+                      bridge_signature_type() /* index 1 = bridge */};
         spec.imports = {{42, 1}};
         spec.target_table = encode_table(single_int_table());
         const auto module = build_module(spec);
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
-        check(result.ok(), "c3.positive.tuple_signature_at_nonzero_typeidx");
+        check(result.ok(), "c3.positive.bridge_signature_at_nonzero_typeidx");
     }
 
     // --- positive control: unknown non-target customs before the target + a
@@ -438,7 +433,7 @@ void test_wire_schema_module_inspector() {
     // --- NEGATIVE control for typeidx authority: entries 0..3 fillers, index 4
     // is a WRONG tuple (result arity 1), and the import references typeidx 4. The
     // failure is the signature gate, not OOR — the true counterpart to the
-    // typeidx-1 exact-tuple positive control. --------------------------------
+    // typeidx-1 bridge positive control. --------------------------------------
     {
         ModuleSpec spec;
         spec.types = {func_type({0x7f}, {0x7f}), func_type({0x7f}, {0x7f}),
@@ -449,12 +444,12 @@ void test_wire_schema_module_inspector() {
         const auto module = build_module(spec);
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
-        check(fails_with(result, "does not use the ahfl_cap tuple or bridge signature"),
+        check(fails_with(result, "does not use the ahfl_cap bridge signature"),
               "c3.negative.typeidx4_wrong_signature");
     }
 
-    // --- WH-2 positive: the bridge (i32)->(i32,i32) functype is accepted
-    // alongside the opaque 3-result tuple (decision doc section 11.3). --------
+    // --- WH-2 positive: the bridge (i32)->(i32,i32) functype is the sole
+    // accepted ahfl_cap import signature. ------------------------------------
     {
         ModuleSpec spec;
         spec.types = {bridge_signature_type()};
@@ -466,8 +461,8 @@ void test_wire_schema_module_inspector() {
         check(result.ok(), "c3.positive.bridge_functype_accepted");
     }
 
-    // --- WH-2 negative: a functype that is NEITHER the opaque tuple NOR the
-    // bridge signature (e.g. (i32)->(i32), one result) is rejected. ----------
+    // --- WH-2 negative: a functype that is NOT the bridge signature
+    // (e.g. (i32)->(i32), one result) is rejected. ----------------------------
     {
         ModuleSpec spec;
         spec.types = {func_type({0x7f}, {0x7f}) /* i32->i32 */};
@@ -477,8 +472,8 @@ void test_wire_schema_module_inspector() {
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
         check(fails_with(result,
-                         "does not use the ahfl_cap tuple or bridge signature"),
-              "c3.negative.neither_tuple_nor_bridge_rejected");
+                         "does not use the ahfl_cap bridge signature"),
+              "c3.negative.non_bridge_signature_rejected");
     }
 
     // --- negative: non-func type form (0x50 instead of 0x60). ----------------
@@ -510,7 +505,7 @@ void test_wire_schema_module_inspector() {
     // --- resource: Import count = UINT32_MAX with a short payload. -------------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         std::vector<std::uint8_t> import_body;
         put_uleb(import_body, UINT32_MAX);
         import_body.push_back(0x01);
@@ -524,7 +519,7 @@ void test_wire_schema_module_inspector() {
     // --- negative: custom name length non-canonical (overlong LEB). ----------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         put_section(module, 2, import_payload({{42, 0}}));
         put_section(module, 0, std::vector<std::uint8_t>{0x81, 0x00, 'a'});
         const auto result = make_wire_binding_from_core_wasm(
@@ -536,7 +531,7 @@ void test_wire_schema_module_inspector() {
     // --- negative: custom name length exceeds its section bounds. -------------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         put_section(module, 2, import_payload({{42, 0}}));
         std::vector<std::uint8_t> body;
         put_uleb(body, 100);
@@ -659,7 +654,7 @@ void test_wire_schema_module_inspector() {
     // --- negative: an import whose module name is not ahfl_cap. ---------------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         std::vector<std::uint8_t> import_body;
         put_uleb(import_body, 1);
         const std::string module_name = "wasi_snapshot"; // not ahfl_cap
@@ -682,7 +677,7 @@ void test_wire_schema_module_inspector() {
     // --- negative: an import with a non-function kind (global, 0x03). ---------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         std::vector<std::uint8_t> import_body;
         put_uleb(import_body, 1);
         const std::string module_name = "ahfl_cap";
@@ -761,14 +756,14 @@ void test_wire_schema_module_inspector() {
         const auto module = build_module(spec);
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
-        check(fails_with(result, "does not use the ahfl_cap tuple or bridge signature"),
+        check(fails_with(result, "does not use the ahfl_cap bridge signature"),
               "c3.negative.import_typeidx_out_of_range");
     }
 
     // --- negative: non-canonical cap_ decimal (leading zero). ----------------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         std::vector<std::uint8_t> import_body;
         put_uleb(import_body, 1);
         const std::string module_name = "ahfl_cap";
@@ -808,7 +803,7 @@ void test_wire_schema_module_inspector() {
         // Raw field cap_18446744073709551616 = UINT64_MAX + 1: the decimal parse
         // overflow branch rejects it; the rest of the module/table is valid.
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         std::vector<std::uint8_t> import_body;
         put_uleb(import_body, 1);
         const std::string module_name = "ahfl_cap";
@@ -846,7 +841,7 @@ void test_wire_schema_module_inspector() {
         table.capabilities.push_back(b);
 
         ModuleSpec spec;
-        spec.types = {capability_tuple_type()};
+        spec.types = {bridge_signature_type()};
         spec.imports = {{100, 0}, {999, 0}}; // ordinal 1 SWAPPED (999 != 200)
         spec.target_table = encode_table(table);
         const auto module = build_module(spec);
@@ -856,7 +851,7 @@ void test_wire_schema_module_inspector() {
               "c3.negative.two_cap_swapped_ordinal1_fails_requesting_ordinal0");
 
         ModuleSpec ok_spec;
-        ok_spec.types = {capability_tuple_type()};
+        ok_spec.types = {bridge_signature_type()};
         ok_spec.imports = {{100, 0}, {200, 0}};
         ok_spec.target_table = encode_table(table);
         const auto ok_module = build_module(ok_spec);
@@ -927,7 +922,7 @@ void test_wire_schema_module_inspector() {
     // any diagnostic. The marker is genuinely present in the input bytes. -------
     {
         std::vector<std::uint8_t> module{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-        put_section(module, 1, type_payload({capability_tuple_type()}));
+        put_section(module, 1, type_payload({bridge_signature_type()}));
         std::vector<std::uint8_t> import_body;
         put_uleb(import_body, 1);
         const std::string module_name = "ahfl_cap";

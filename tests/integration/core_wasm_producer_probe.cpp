@@ -360,9 +360,9 @@ int main(int argc, char **argv) {
     // (width 32/64) of the input and output nominals. The host mirrors
     // these facts instead of re-deriving offsets; it pins the expected
     // semantic values itself (a node-only lane, NOT a census case).
-    if (emitted.descriptor.has_value() && emitted.descriptor->frame.has_value() &&
-        emitted.descriptor->frame->final_kind == "computed") {
-        const auto &frame = *emitted.descriptor->frame;
+    if (emitted.descriptor.has_value() &&
+        emitted.descriptor->frame.final_kind == "computed") {
+        const auto &frame = emitted.descriptor->frame;
         auto emit_leaves = [&](auto &&self, ir::core::CoreLayoutId id,
                                std::uint64_t base, std::string &acc,
                                bool &first) -> void {
@@ -434,8 +434,8 @@ int main(int argc, char **argv) {
         //     offsets inside ONE element subtree.
         // Layout-only facts; the host pins the string contents and the arena
         // accounting itself.
-        if (emitted.descriptor->frame_section.has_value()) {
-            const auto &section = *emitted.descriptor->frame_section;
+        {
+            const auto &section = emitted.descriptor->frame_section;
             auto ptrlen_slots = [&](auto &&self, ir::core::CoreLayoutId id,
                                    std::uint64_t base,
                                    std::vector<std::uint64_t> &out) -> void {

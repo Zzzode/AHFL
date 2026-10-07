@@ -135,219 +135,6 @@ void test_import_free_workflow_shared_fixture() {
     }
 }
 
-// 3. The opaque 2-param capability import, A2-admitted, end-to-end. run2
-//    forwards its entry (ptr,len) to the import; the callback's param_frame
-//    must be the exact entry bytes (proving the trampoline reads args at
-//    sp[3..], the raw-ABI slot discipline), and the callback allocs a result
-//    frame NESTED inside invoke_run2 (re-entrant m3_Call) and returns it.
-void test_opaque_import_a2_admitted() {
-    const auto symbol = 42;
-    auto bytes = wht::with_a2_admission(wht::capability_module(symbol, 2), symbol);
-
-    // The SAME bytes must pass A2 admission (the production driver's order is
-    // A2 -> F3 -> engine).
-    auto admitted = csm::make_verified_core_wasm_schema_module(
-        std::span<const std::uint8_t>(bytes));
-    check(admitted.ok(), "opaque.A2 admission succeeds");
-
-    ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-    const auto entry = entry_bytes();
-    bool callback_ran = false;
-    std::uint32_t observed_ordinal = 999;
-    std::vector<std::uint8_t> observed_param;
-
-    auto instantiated = engine.fresh_instance(
-        std::span<const std::uint8_t>(bytes),
-        [&](const eng::ImportObservation &obs) -> eng::ImportCallbackResult {
-            callback_ran = true;
-            observed_ordinal = obs.import_ordinal;
-            observed_param.assign(obs.param_frame.begin(), obs.param_frame.end());
-            // Nested alloc inside the import callback (re-entrant m3_Call).
-            const std::vector<std::uint8_t> result = {0xCA, 0xFE};
-            auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
-            if (!rp) {
-                return eng::ImportAbort{};
-            }
-            return eng::ImportReply{.result_ptr = *rp, .result_len = 2};
-        });
-    check(instantiated.has_value(), "opaque.fresh_instance");
-
-    auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry));
-    check(ptr.has_value(), "opaque.alloc_then_write entry");
-
-    auto outcome = engine.invoke_run2(*ptr, static_cast<std::uint32_t>(entry.size()));
-    check(outcome.has_value(), "opaque.invoke_run2");
-    check(callback_ran, "opaque.import callback ran");
-    check(observed_ordinal == 0, "opaque.import_ordinal == 0");
-    check(observed_param == entry, "opaque.param_frame == entry bytes (sp[3..] slot discipline)");
-
-    if (outcome) {
-        const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
-        check(tuple != nullptr, "opaque.outcome is a tuple");
-        if (tuple != nullptr) {
-            check(tuple->raw_status == 0, "opaque.raw_status == 0 (verbatim)");
-            check(tuple->output_len == 2, "opaque.output_len == result len");
-            // The result frame the callback allocated must hold the reply bytes.
-            auto mem = engine.read_whole_memory();
-            check(mem.has_value(), "opaque.read_whole_memory after invoke");
-            if (mem) {
-                check(std::memcmp(mem->data() + tuple->output_ptr.value, "\xCA\xFE", 2) == 0,
-                      "opaque.result bytes at output_ptr");
-            }
-        }
-    }
-}
-
-// 4. The section-9 single-arg (i32)->(i32,i32,i32) import: the trampoline must
-//    NOT bounds-check the scalar arg as a memory frame (param_frame is empty),
-//    and the tuple round-trips the reply. run2 forwards the entry pointer (a
-//    real guest address) as the single scalar arg; if the trampoline
-//    misread it as a (ptr,len) pair it would trap.
-void test_single_arg_import_slot_discipline() {
-    const auto bytes = wht::capability_module(7, 1);
-    ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-
-    bool callback_ran = false;
-    auto instantiated = engine.fresh_instance(
-        std::span<const std::uint8_t>(bytes),
-        [&](const eng::ImportObservation &obs) -> eng::ImportCallbackResult {
-            callback_ran = true;
-            check(obs.import_ordinal == 0, "single-arg.ordinal == 0");
-            check(obs.param_frame.empty(),
-                  "single-arg.param_frame empty (scalar, not a memory frame)");
-            const std::vector<std::uint8_t> result = {0x01, 0x02, 0x03};
-            auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
-            if (!rp) {
-                return eng::ImportAbort{};
-            }
-            return eng::ImportReply{.result_ptr = *rp, .result_len = 3};
-        });
-    check(instantiated.has_value(), "single-arg.fresh_instance");
-
-    const auto entry = entry_bytes();
-    auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry));
-    check(ptr.has_value(), "single-arg.alloc_then_write");
-
-    auto outcome = engine.invoke_run2(*ptr, static_cast<std::uint32_t>(entry.size()));
-    check(outcome.has_value(), "single-arg.invoke_run2 (no trap on scalar arg)");
-    check(callback_ran, "single-arg.callback ran");
-    if (outcome) {
-        const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
-        check(tuple != nullptr && tuple->raw_status == 0 && tuple->output_len == 3,
-              "single-arg.tuple round-trip (0, ptr, 3)");
-    }
-}
-
-// 4b. WH-3 opaque-lane ABI matrix: the engine carries ImportReply.raw_status
-//     verbatim into the import's first result slot; the classifier module (the
-//     compiled guest's graceful arms) classifies it. Every scenario drives the
-//     REAL wasm3 interpreter through the engine port.
-void test_opaque_abi_matrix() {
-    const auto symbol = 42;
-    const std::vector<std::uint8_t> result = {0xCA, 0xFE, 0xBA, 0xBE};
-
-    // One scenario: script the import reply's raw_status / ptr / len, run the
-    // classifier, and assert the run2 tuple.
-    auto run_scenario = [&](std::uint32_t raw_status, bool null_ptr,
-                            std::uint32_t want_status, std::uint32_t want_len,
-                            const std::string &tag) {
-        auto bytes = wht::opaque_classifier_module(symbol);
-        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-        auto inst = engine.fresh_instance(
-            std::span<const std::uint8_t>(bytes),
-            [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-                if (null_ptr) {
-                    return eng::ImportReply{.raw_status = raw_status,
-                                            .result_ptr = eng::GuestPointer{0},
-                                            .result_len = 0};
-                }
-                auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
-                if (!rp) {
-                    return eng::ImportAbort{};
-                }
-                return eng::ImportReply{.raw_status = raw_status,
-                                        .result_ptr = *rp,
-                                        .result_len = static_cast<std::uint32_t>(result.size())};
-            });
-        check(inst.has_value(), tag + ".fresh_instance");
-        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        check(ptr.has_value(), tag + ".alloc entry");
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value(), tag + ".invoke_run2");
-        if (out) {
-            const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
-            check(tuple != nullptr, tag + ".outcome is a tuple (not trap/abort)");
-            if (tuple != nullptr) {
-                check(tuple->raw_status == want_status, tag + ".raw_status");
-                check(tuple->output_len == want_len, tag + ".output_len");
-            }
-        }
-    };
-
-    // OK (0) + valid frame -> (0, ptr, 4): the success path forwards the frame.
-    run_scenario(/*raw_status=*/0, /*null_ptr=*/false, /*want_status=*/0,
-                 /*want_len=*/4, "abi.ok_valid");
-    // OK (0) + null ptr -> (1, 0, 0): fail-closed on a missing frame.
-    run_scenario(0, true, 1, 0, "abi.ok_null");
-    // OK (0) + zero-len (non-null ptr, len 0) -> (1, 0, 0).
-    // (null_ptr=false allocs a 4-byte frame; the zero-len case is covered by
-    // the classifier's len==0 arm via a dedicated scenario below.)
-    {
-        auto bytes = wht::opaque_classifier_module(symbol);
-        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-        auto inst = engine.fresh_instance(
-            std::span<const std::uint8_t>(bytes),
-            [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-                auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
-                if (!rp) {
-                    return eng::ImportAbort{};
-                }
-                // OK but zero-length frame.
-                return eng::ImportReply{.raw_status = 0, .result_ptr = *rp, .result_len = 0};
-            });
-        check(inst.has_value(), "abi.ok_zero_len.fresh_instance");
-        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        auto out = engine.invoke_run2(*ptr, 8);
-        if (out) {
-            const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
-            check(tuple != nullptr && tuple->raw_status == 1 && tuple->output_len == 0,
-                  "abi.ok_zero_len -> (1,0,0)");
-        }
-    }
-    // ERROR (1) + valid frame -> (1, 0, 0): the graceful ERROR arm.
-    run_scenario(1, false, 1, 0, "abi.error");
-    // PENDING (2) + null ptr -> (2, 0, 0): the graceful PENDING arm (latch set).
-    run_scenario(2, true, 2, 0, "abi.pending_null");
-    // PENDING (2) + non-null ptr -> (1, 0, 0): a pending reply with a frame is
-    // an error (the pending contract is null-frame-only).
-    run_scenario(2, false, 1, 0, "abi.pending_nonnull");
-    // Unknown 77 + valid frame -> (1, 0, 0): the guest fail-closed rule.
-    run_scenario(77, false, 1, 0, "abi.unknown");
-}
-
-// 4c. WH-3 opaque-lane latch re-entry guard: a classifier module with the
-//     latch pre-armed traps at run2 entry (unreachable -> Run2Trapped). This is
-//     the re-entry guard a PENDING+null reply arms (the engine is one-shot per
-//     session, so the guard is exercised by pre-arming the latch global).
-void test_opaque_latch_reentry() {
-    auto bytes = wht::opaque_classifier_module(42, /*latch_init=*/1);
-    ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-    bool callback_ran = false;
-    auto inst = engine.fresh_instance(
-        std::span<const std::uint8_t>(bytes),
-        [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            callback_ran = true;
-            return eng::ImportReply{};
-        });
-    check(inst.has_value(), "latch.fresh_instance (pre-armed latch)");
-    auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-    check(ptr.has_value(), "latch.alloc entry");
-    auto out = engine.invoke_run2(*ptr, 8);
-    check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
-          "latch.pre-armed -> Run2Trapped (re-entry guard)");
-    check(!callback_ran, "latch.import never called (entry guard traps first)");
-}
-
 // 4d. WH-3 bridge lane: the (i32)->(i32,i32) import is admitted by the engine,
 //     the trampoline carries raw_status into the first result slot and the
 //     result pointer into the second, and the bridge classifier traps on any
@@ -466,28 +253,13 @@ void test_trap_mapping() {
         check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
               "trap.oob-load -> Run2Trapped");
     }
-    {
-        const auto bytes = wht::oob_param_module();
-        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-        auto inst = engine.fresh_instance(
-            std::span<const std::uint8_t>(bytes),
-            [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-                return eng::ImportReply{}; // never reached: trampoline OOB-checks first
-            });
-        check(inst.has_value(), "trap.oob-param.fresh_instance");
-        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        check(ptr.has_value(), "trap.oob-param.alloc");
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
-              "trap.oob-param -> Run2Trapped (fail closed)");
-    }
 }
 
 // 6. Host-abort mapping: an ImportAbort callback and a throwing callback both
 //    unwind run2 as Run2HostAborted (distinct from a wasm trap).
 void test_host_abort_mapping() {
     {
-        const auto bytes = wht::capability_module(1, 2);
+        const auto bytes = wht::capability_module(1);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
         auto inst = engine.fresh_instance(
             std::span<const std::uint8_t>(bytes),
@@ -501,7 +273,7 @@ void test_host_abort_mapping() {
               "abort.ImportAbort -> Run2HostAborted");
     }
     {
-        const auto bytes = wht::capability_module(1, 2);
+        const auto bytes = wht::capability_module(1);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
         auto inst = engine.fresh_instance(
             std::span<const std::uint8_t>(bytes),
@@ -835,19 +607,23 @@ void test_bad_memory_rejected() {
     }
 }
 
-// 11. A missing run2 or alloc export is rejected at fresh_instance.
+// 11. A missing alloc export is rejected at fresh_instance. A missing run2
+//     export is accepted: agent modules drive the state machine through
+//     step/current_state/runv instead of the workflow scheduler entry.
 void test_missing_exports_rejected() {
     {
+        // No run2: accepted (agent module).
         const auto bytes = wht::identity_module(1, /*emit_run2=*/false);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
         auto inst = engine.fresh_instance(std::span<const std::uint8_t>(bytes),
                                           [](const eng::ImportObservation &) {
                                               return eng::ImportAbort{};
                                           });
-        check(!inst.has_value() && inst.error() == eng::EngineError::InstanceUnavailable,
-              "missing-export.no run2 -> InstanceUnavailable");
+        check(inst.has_value(),
+              "missing-export.no run2 -> accepted (agent module)");
     }
     {
+        // No alloc: rejected (every module needs the bump allocator).
         const auto bytes = wht::identity_module(1, /*emit_run2=*/true, /*emit_alloc=*/false);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
         auto inst = engine.fresh_instance(std::span<const std::uint8_t>(bytes),
@@ -859,123 +635,12 @@ void test_missing_exports_rejected() {
     }
 }
 
-// WH-5b.3 AC12: a module with a custom import (module name, field name,
-// functype). The run2 body calls the import so the engine links it. Used to
-// verify the ahfl_xcode sealed-functype admission check.
-[[nodiscard]] std::vector<std::uint8_t>
-xcode_import_module(std::string_view mod_name, std::string_view field_name,
-                    std::span<const std::uint8_t> params,
-                    std::span<const std::uint8_t> results) {
-    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    // Type section: type 0 = the import functype, type 1 = run2
-    // (i32,i32)->(i32,i32,i32), type 2 = alloc (i32)->i32.
-    std::vector<std::uint8_t> import_type;
-    import_type.push_back(0x60);
-    wht::put_uleb(import_type, params.size());
-    import_type.insert(import_type.end(), params.begin(), params.end());
-    wht::put_uleb(import_type, results.size());
-    import_type.insert(import_type.end(), results.begin(), results.end());
-    const auto run2_type = wht::func_type({wht::kI32, wht::kI32},
-                                           {wht::kI32, wht::kI32, wht::kI32});
-    const auto alloc_type = wht::func_type({wht::kI32}, {wht::kI32});
-    wht::put_section(m, 1, wht::rts::type_payload({import_type, run2_type, alloc_type}));
-    // Import section: function 0 (type 0).
-    std::vector<std::uint8_t> import_payload;
-    wht::put_uleb(import_payload, 1);
-    wht::put_uleb(import_payload, mod_name.size());
-    import_payload.insert(import_payload.end(), mod_name.begin(), mod_name.end());
-    wht::put_uleb(import_payload, field_name.size());
-    import_payload.insert(import_payload.end(), field_name.begin(), field_name.end());
-    import_payload.push_back(0x00); // func import
-    wht::put_uleb(import_payload, 0); // type 0
-    wht::put_section(m, 2, import_payload);
-    // Function section: defined functions 1 (run2, type 1) and 2 (alloc, type 2).
-    wht::put_section(m, 3, wht::function_section({1, 2}));
-    wht::put_section(m, 5, wht::memory_section(1));
-    wht::put_section(m, 6, wht::global_i32_mut(static_cast<std::int32_t>(wht::kHeapBase)));
-    // Exports: run2 -> function 1, alloc -> function 2.
-    wht::put_section(m, 7, wht::standard_exports(1, 2));
-    // run2 body: call the import (func index 0) and return its results.
-    std::vector<std::uint8_t> run2_body = wht::locals_decl({});
-    wht::put_op_uleb(run2_body, wht::kOpLocalGet, 0);
-    wht::put_op_uleb(run2_body, wht::kOpLocalGet, 1);
-    wht::put_op_uleb(run2_body, wht::kOpCall, 0);
-    run2_body.push_back(wht::kOpEnd);
-    wht::append_standard_code(m, run2_body);
-    return m;
-}
-
-// WH-5b.3 AC12: the ahfl_xcode sealed-functype admission check. The engine
-// must accept ahfl_xcode.xcode_<decimal> with EXACTLY (i32,i32)->(i32,i32,i32)
-// and reject every variant (wrong namespace, wrong prefix, non-decimal
-// ordinal, empty ordinal, wrong param count, wrong result count).
-void test_xcode_admission_sealed_functype() {
-    using wht::kI32;
-    const std::vector<std::uint8_t> sealed_params{kI32, kI32};
-    const std::vector<std::uint8_t> sealed_results{kI32, kI32, kI32};
-    auto try_admit = [](std::string_view mod, std::string_view field,
-                        std::span<const std::uint8_t> params,
-                        std::span<const std::uint8_t> results) {
-        const auto bytes = xcode_import_module(mod, field, params, results);
-        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
-        auto inst = engine.fresh_instance(
-            std::span<const std::uint8_t>(bytes),
-            [](const eng::ImportObservation &) {
-                return eng::ImportReply{.raw_status = 0};
-            });
-        return inst.has_value();
-    };
-    // Accepted: the exact sealed shape.
-    check(try_admit("ahfl_xcode", "xcode_0", sealed_params, sealed_results),
-          "xcode-admit.xcode_0 sealed functype accepted");
-    check(try_admit("ahfl_xcode", "xcode_42", sealed_params, sealed_results),
-          "xcode-admit.xcode_42 accepted");
-    // Rejected: wrong namespace.
-    check(!try_admit("ahfl_cap", "xcode_0", sealed_params, sealed_results),
-          "xcode-admit.ahfl_cap namespace rejected");
-    check(!try_admit("ahfl_xcod", "xcode_0", sealed_params, sealed_results),
-          "xcode-admit.typo namespace rejected");
-    // Rejected: wrong field prefix.
-    check(!try_admit("ahfl_xcode", "cap_0", sealed_params, sealed_results),
-          "xcode-admit.cap_ prefix rejected");
-    check(!try_admit("ahfl_xcode", "xcode", sealed_params, sealed_results),
-          "xcode-admit.xcode (no underscore) rejected");
-    // Rejected: non-decimal ordinal.
-    check(!try_admit("ahfl_xcode", "xcode_abc", sealed_params, sealed_results),
-          "xcode-admit.non-decimal ordinal rejected");
-    check(!try_admit("ahfl_xcode", "xcode_1a", sealed_params, sealed_results),
-          "xcode-admit.hex-like ordinal rejected");
-    // Rejected: empty ordinal.
-    check(!try_admit("ahfl_xcode", "xcode_", sealed_params, sealed_results),
-          "xcode-admit.empty ordinal rejected");
-    // Rejected: wrong param count (1-param variant).
-    const std::vector<std::uint8_t> one_param{kI32};
-    check(!try_admit("ahfl_xcode", "xcode_0", one_param, sealed_results),
-          "xcode-admit.1-param rejected");
-    // Rejected: wrong result count (2-result variant).
-    const std::vector<std::uint8_t> two_results{kI32, kI32};
-    check(!try_admit("ahfl_xcode", "xcode_0", sealed_params, two_results),
-          "xcode-admit.2-result rejected");
-    // Rejected: 4 results.
-    const std::vector<std::uint8_t> four_results{kI32, kI32, kI32, kI32};
-    check(!try_admit("ahfl_xcode", "xcode_0", sealed_params, four_results),
-          "xcode-admit.4-result rejected");
-    // Rejected: non-i32 param (i64).
-    static constexpr std::uint8_t kI64 = 0x7e;
-    const std::vector<std::uint8_t> i64_params{kI32, kI64};
-    check(!try_admit("ahfl_xcode", "xcode_0", i64_params, sealed_results),
-          "xcode-admit.i64 param rejected");
-}
 
 } // namespace
 
 int main() {
     test_identity_end_to_end();
     test_import_free_workflow_shared_fixture();
-    test_opaque_import_a2_admitted();
-    test_single_arg_import_slot_discipline();
-    test_opaque_abi_matrix();
-    test_opaque_latch_reentry();
     test_bridge_lane();
     test_trap_mapping();
     test_host_abort_mapping();
@@ -989,8 +654,6 @@ int main() {
     test_unbound_import_rejected();
     test_bad_memory_rejected();
     test_missing_exports_rejected();
-    // WH-5b.3 AC12: ahfl_xcode sealed-functype admission.
-    test_xcode_admission_sealed_functype();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

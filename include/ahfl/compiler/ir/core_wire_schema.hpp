@@ -62,6 +62,15 @@ struct CoreWireSchemaUuid {
     [[nodiscard]] friend bool operator==(const CoreWireSchemaUuid &,
                                          const CoreWireSchemaUuid &) noexcept = default;
 };
+// RFC 0026 P6-8a: a closure is a first-class P6 value (the
+// `(func_index, env_ptr)` word pair plus an indirect env struct). The wire
+// schema carries it as a marker so the frame-layout consistency verifier can
+// match it against CoreLayoutClosure; an embedded host rejects it at pack
+// time (closures are not JSON-constructible).
+struct CoreWireSchemaClosure {
+    [[nodiscard]] friend bool operator==(const CoreWireSchemaClosure &,
+                                         const CoreWireSchemaClosure &) noexcept = default;
+};
 
 struct CoreWireSchemaOption {
     CoreWireSchemaNodeId value{};
@@ -125,8 +134,9 @@ using CoreWireSchemaShape =
     std::variant<CoreWireSchemaUnit, CoreWireSchemaBool, CoreWireSchemaInt,
                  CoreWireSchemaFloat, CoreWireSchemaString, CoreWireSchemaDecimal,
                  CoreWireSchemaDuration, CoreWireSchemaTimestamp, CoreWireSchemaUuid,
-                 CoreWireSchemaOption, CoreWireSchemaSequence, CoreWireSchemaMap,
-                 CoreWireSchemaStruct, CoreWireSchemaEnum, CoreWireSchemaTuple>;
+                 CoreWireSchemaClosure, CoreWireSchemaOption, CoreWireSchemaSequence,
+                 CoreWireSchemaMap, CoreWireSchemaStruct, CoreWireSchemaEnum,
+                 CoreWireSchemaTuple>;
 
 struct CoreWireSchemaNode {
     CoreWireSchemaShape shape{CoreWireSchemaUnit{}};
@@ -179,7 +189,6 @@ inline constexpr std::string_view kInvalidCore = "core.wire.INVALID_CORE";
 inline constexpr std::string_view kInvalidSelection = "core.wire.INVALID_SELECTION";
 inline constexpr std::string_view kInvalid = "core.wire.INVALID";
 inline constexpr std::string_view kUnsupported = "core.wire.UNSUPPORTED";
-inline constexpr std::string_view kUnsupportedMapKey = "core.wire.UNSUPPORTED_MAP_KEY";
 inline constexpr std::string_view kOverflow = "core.wire.OVERFLOW";
 } // namespace wire_schema
 

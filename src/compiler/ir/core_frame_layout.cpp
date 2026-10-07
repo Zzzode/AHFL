@@ -43,7 +43,7 @@ constexpr std::array<std::uint8_t, 6> kMagic{'A', 'H', 'F', 'L', 'C', 'L'};
 // heap's aligned start address) as a presence-gated trailing block, so the
 // host can authorize [construct_heap_base, 65536) for String concat result
 // payloads. v3 payloads stay decodable with a zero construct_heap_base.
-constexpr std::uint8_t kVersion = 4;
+constexpr std::uint8_t kVersion = 5;
 constexpr std::uint8_t kMinVersion = 1;
 constexpr std::uint8_t kTargetWasm32 = 0;
 
@@ -89,13 +89,6 @@ class Encoder {
              !section.node_blocks.empty() || section.entry_payload_base != 0 ||
              section.entry_payload_capacity != 0 || section.workflow_output_base != 0 ||
              section.state_trace_base != 0 || section.state_trace_capacity != 0 ||
-             !section.transcode_sites.empty() ||
-             section.transcode_shadow_base != 0 ||
-             section.transcode_shadow_extent != 0 ||
-             section.transcode_payload_base != 0 ||
-             section.transcode_payload_capacity != 0 ||
-             section.transcode_entry_shadow_base != 0 ||
-             section.transcode_entry_shadow_extent != 0 ||
              section.construct_heap_base != 0)) {
             diagnostics_.push_back(
                 fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
@@ -192,6 +185,10 @@ class Encoder {
                     u32(site.spill_base);
                     u32(site.spill_extent);
                 }
+                // v5: capability-final marker.
+                if (section.format_version >= 5) {
+                    u8(site.is_final ? 1u : 0u);
+                }
             }
             // V2-D: the presence-gated workflow node-packaging extension.
             if (!section.node_blocks.empty()) {
@@ -215,30 +212,6 @@ class Encoder {
                 }
                 u32(section.state_trace_base);
                 u32(section.state_trace_capacity);
-                // WH-5b.3: the presence-gated transcode extension (shadow
-                // spans + the dense transcode_sites table). A workflow with no
-                // crossed lane edge carries no sites and keeps its exact bytes.
-                if (!section.transcode_sites.empty()) {
-                    u8(1);
-                    u32(section.transcode_shadow_base);
-                    u32(section.transcode_shadow_extent);
-                    u32(section.transcode_payload_base);
-                    u32(section.transcode_payload_capacity);
-                    u32(section.transcode_entry_shadow_base);
-                    u32(section.transcode_entry_shadow_extent);
-                    u32_size(section.transcode_sites.size());
-                    for (const CoreFrameTranscodeSite &site : section.transcode_sites) {
-                        u32(site.import_ordinal);
-                        u8(static_cast<std::uint8_t>(site.direction));
-                        u8(static_cast<std::uint8_t>(site.source));
-                        u32(site.source_node_ordinal);
-                        u32(site.target_node_ordinal);
-                        id(site.layout);
-                        // WH-5c.4 P1-2: the dense capability parameter index
-                        // (Source::CapabilityParam only; 0 otherwise).
-                        u32(site.param_ordinal);
-                    }
-                }
             }
             // KR6.6: the presence-gated construct-heap base extension. A
             // module without String concat carries a zero base and keeps its
@@ -597,77 +570,6 @@ class Decoder {
                 }
                 section.state_trace_base = *trace_base;
                 section.state_trace_capacity = *trace_capacity;
-                // WH-5b.3: the optional trailing transcode extension.
-                if (!cursor_.at_end()) {
-                    const auto present = cursor_.u8();
-                    if (!present.has_value() || *present != 1) {
-                        result.diagnostics.push_back(
-                            fail("frame-layout transcode tag is malformed"));
-                        return result;
-                    }
-                    const auto shadow_base = cursor_.u32();
-                    const auto shadow_extent = cursor_.u32();
-                    const auto payload_base = cursor_.u32();
-                    const auto payload_capacity = cursor_.u32();
-                    const auto entry_shadow_base = cursor_.u32();
-                    const auto entry_shadow_extent = cursor_.u32();
-                    if (!shadow_base || !shadow_extent || !payload_base ||
-                        !payload_capacity || !entry_shadow_base ||
-                        !entry_shadow_extent) {
-                        result.diagnostics.push_back(
-                            fail("frame-layout transcode shadow span is malformed"));
-                        return result;
-                    }
-                    section.transcode_shadow_base = *shadow_base;
-                    section.transcode_shadow_extent = *shadow_extent;
-                    section.transcode_payload_base = *payload_base;
-                    section.transcode_payload_capacity = *payload_capacity;
-                    section.transcode_entry_shadow_base = *entry_shadow_base;
-                    section.transcode_entry_shadow_extent = *entry_shadow_extent;
-                    const auto site_count = cursor_.u32();
-                    if (!site_count.has_value() || !bounded_count(*site_count) ||
-                        *site_count == 0) {
-                        result.diagnostics.push_back(
-                            fail("frame-layout transcode-site count is malformed"));
-                        return result;
-                    }
-                    section.transcode_sites.reserve(*site_count);
-                    for (std::uint32_t i = 0; i < *site_count; ++i) {
-                        CoreFrameTranscodeSite site;
-                        const auto import_ordinal = cursor_.u32();
-                        const auto direction = cursor_.u8();
-                        const auto source = cursor_.u8();
-                        const auto source_node = cursor_.u32();
-                        const auto target_node = cursor_.u32();
-                        const auto layout = cursor_.id();
-                        const auto param_ordinal = cursor_.u32();
-                        if (!import_ordinal || !direction || !source ||
-                            !source_node || !target_node || !layout.has_value() ||
-                            !param_ordinal) {
-                            bad("frame-layout transcode-site record is truncated");
-                            return result;
-                        }
-                        if (*direction >
-                                static_cast<std::uint8_t>(
-                                    CoreFrameTranscodeSite::Direction::JsonToP4D) ||
-                            *source >
-                                static_cast<std::uint8_t>(
-                                    CoreFrameTranscodeSite::Source::CapabilityParam)) {
-                            bad("frame-layout transcode-site carries an unknown direction or source");
-                            return result;
-                        }
-                        site.import_ordinal = *import_ordinal;
-                        site.direction =
-                            static_cast<CoreFrameTranscodeSite::Direction>(*direction);
-                        site.source =
-                            static_cast<CoreFrameTranscodeSite::Source>(*source);
-                        site.source_node_ordinal = *source_node;
-                        site.target_node_ordinal = *target_node;
-                        site.layout = *layout;
-                        site.param_ordinal = *param_ordinal;
-                        section.transcode_sites.push_back(std::move(site));
-                    }
-                }
             }
             // KR6.6: the optional presence-gated construct-heap base
             // extension (String concat result region). A v3 payload ends
@@ -1058,6 +960,15 @@ class Decoder {
                 }
                 site.spill_base = *spill_base;
                 site.spill_extent = *spill_extent;
+            }
+            // v5: capability-final marker.
+            if (section.format_version >= 5) {
+                const auto is_final = cursor_.u8();
+                if (!is_final.has_value()) {
+                    bad("frame-layout bridge call-site is_final marker is truncated");
+                    return false;
+                }
+                site.is_final = (*is_final != 0);
             }
             section.bridge_call_sites.push_back(std::move(site));
         }
@@ -1558,104 +1469,13 @@ class Decoder {
                 return false;
             }
         }
-        // WH-5b.3: the transcode shadow region, its String payload arena, and
-        // the entry shadow are disjoint in-page spans whose presence is
-        // REQUIRED by the site directions that use them, not merely declared:
-        //   * every JSON_TO_P4D site needs the reused shadow landing area (at
-        //     least the site's aligned layout size) and the payload arena (the
-        //     planner emits one pool share per JSON_TO_P4D site);
-        //   * every P4D_TO_JSON ENTRY site needs the host-packed entry shadow;
-        //   * a P4D_TO_JSON NODE_OUTPUT site reads the producer's O_k and
-        //     needs no host span.
-        // A section whose sites need a span but carries a zeroed base/extent is
-        // rejected here so a corrupt or foreign module can never make the host
-        // pack a frame at guest address zero. A span that is present but not
-        // required by any site is still checked for disjointness.
-        bool needs_shadow = false;
-        bool needs_payload = false;
-        bool needs_entry_shadow = false;
-        std::uint64_t needed_shadow_extent = 0;
-        std::uint64_t needed_entry_shadow_extent = 0;
-        for (const CoreFrameTranscodeSite &site : section.transcode_sites) {
-            if (!valid_id(section.table, site.layout)) {
-                fail_local("a transcode site names an out-of-range layout root");
-                return false;
-            }
-            const std::uint64_t needed =
-                align8(section.table.layouts[site.layout.value].size);
-            if (site.direction == CoreFrameTranscodeSite::Direction::JsonToP4D) {
-                needs_shadow = true;
-                needs_payload = true;
-                needed_shadow_extent = std::max(needed_shadow_extent, needed);
-            } else if (site.source == CoreFrameTranscodeSite::Source::Entry) {
-                needs_entry_shadow = true;
-                needed_entry_shadow_extent =
-                    std::max(needed_entry_shadow_extent, needed);
-            }
-            // A P4D_TO_JSON NodeOutput or CapabilityParam site reads the
-            // producer's own O_k block and needs NO host span (CapabilityParam
-            // is the construct-terminal self-transcode: its source is the
-            // node's constructed O_k, identical in placement to NodeOutput).
-        }
-        auto check_transcode_span =
-            [&](bool required, std::uint64_t base, std::uint64_t extent,
-                std::uint64_t min_extent, const char *message,
-                const char *present_message) -> bool {
-            if (!required) {
-                // Not required by any site: an absent span is fine, but a
-                // present one must still be a nonzero, 8-aligned, disjoint
-                // in-page region.
-                if (extent == 0) {
-                    return true;
-                }
-                if (base == 0 || base % 8u != 0) {
-                    fail_local(present_message);
-                    return false;
-                }
-                // add() emits the page-bounds/overlap diagnostic itself.
-                if (!add(base, extent)) {
-                    return false;
-                }
-                return true;
-            }
-            if (base == 0 || base % 8u != 0 || extent < min_extent) {
-                fail_local(message);
-                return false;
-            }
-            // add() emits the page-bounds/overlap diagnostic itself.
-            if (!add(base, extent)) {
-                return false;
-            }
-            return true;
-        };
-        if (!check_transcode_span(
-                needs_shadow, section.transcode_shadow_base,
-                section.transcode_shadow_extent, needed_shadow_extent,
-                "a JSON_TO_P4D transcode site needs a nonzero, 8-aligned shadow "
-                "region that fits its P4-D layout",
-                "a transcode shadow span is present without a JSON_TO_P4D site "
-                "and must be nonzero, 8-aligned, and disjoint inside the fixed "
-                "page") ||
-            !check_transcode_span(
-                needs_payload, section.transcode_payload_base,
-                section.transcode_payload_capacity, 1,
-                "a JSON_TO_P4D transcode site needs a nonzero, 8-aligned "
-                "payload arena",
-                "a transcode payload arena is present without a JSON_TO_P4D "
-                "site and must be nonzero, 8-aligned, and disjoint inside the "
-                "fixed page") ||
-            !check_transcode_span(
-                needs_entry_shadow, section.transcode_entry_shadow_base,
-                section.transcode_entry_shadow_extent,
-                needed_entry_shadow_extent,
-                "a P4D_TO_JSON ENTRY transcode site needs a nonzero, "
-                "8-aligned entry shadow that fits its P4-D layout",
-                "a transcode entry shadow is present without a P4D_TO_JSON "
-                "ENTRY site and must be nonzero, 8-aligned, and disjoint inside "
-                "the fixed page")) {
-            return false;
-        }
         for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
+            // A capability-final site's result placement is the node's O_k
+            // block, which is already a disjoint node-block span above.
+            // Skip it to avoid a false overlap.
+            if (site.is_final) {
+                continue;
+            }
             if (!add(site.result_base, site.result_extent) ||
                 (site.result_payload_capacity != 0 &&
                  !add(site.result_payload_base, site.result_payload_capacity))) {
@@ -1851,6 +1671,9 @@ class ConsistencyChecker {
                     const auto *s = std::get_if<CoreLayoutBytes>(&layout.shape);
                     ok(s != nullptr && s->byte_count == 16);
                 },
+                [&](const CoreWireSchemaClosure &) {
+                    ok(std::holds_alternative<CoreLayoutClosure>(layout.shape));
+                },
                 [&](const CoreWireSchemaOption &schema) {
                     const auto *e = std::get_if<CoreLayoutEnum>(&layout.shape);
                     if (e == nullptr || e->variant_payload_layouts.size() != 2) {
@@ -1917,11 +1740,11 @@ class ConsistencyChecker {
                         ok(false, "frame layout/wire map capacities disagree");
                         return;
                     }
-                    if (!std::holds_alternative<CoreLayoutPtrLen>(
-                            layouts_.layouts[c->element.value].shape)) {
-                        ok(false, "frame layout/wire map key is not a String PtrLen");
-                        return;
-                    }
+                    // RFC 0026 dual-track elimination: the key layout/wire pair
+                    // is verified by the recursive children check below (Int↔I32,
+                    // Bool↔I32, String↔PtrLen, ...). The old String-PtrLen-only
+                    // gate rejected Int-keyed Maps that the P4-D frame and the
+                    // packer/reader already handle generically.
                     result.valid = true;
                     // Push value before key so key is popped first (left-to-right).
                     result.children.emplace_back(*c->value, schema.value);
@@ -2123,6 +1946,7 @@ verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
                     [](const CoreWireSchemaDuration &) { return true; },
                     [](const CoreWireSchemaTimestamp &) { return true; },
                     [](const CoreWireSchemaUuid &) { return true; },
+                    [](const CoreWireSchemaClosure &) { return true; },
                     [](const CoreWireSchemaMap &) { return true; },
                     [](const CoreWireSchemaUnit &) { return false; },
                     [](const CoreWireSchemaBool &) { return false; },

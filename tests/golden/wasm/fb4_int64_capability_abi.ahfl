@@ -1,15 +1,12 @@
 module wasm::fb4_int64_capability_abi;
 
-// RFC 0026 FB-4 fix-forward: the capability import has the FIXED functype
-// (i32,i32) -> (i32,i32,i32) (opaque frame ptr + length in, status + frame ptr
-// + length out). An unbounded Int is Int64 in the P6 layout, so an
-// Int -> Int capability called from an outlined fn would emit local.get of an
-// i64 argument (and bind an i32 result into an i64 local), producing an
-// invalid wasm module with no diagnostic (fail-open). The in-fn capability
-// planner must reject the Int64 scalar at plan time with
-// wasm.UNSUPPORTED_CAPABILITY_FRAME and write no module. Bool (i32) and the
-// agent's opaque frame (Ptr) still cross; only 64-bit / multi-word scalars are
-// rejected.
+// RFC 0026 FB-4 / dual-track elimination: the capability import uses the
+// bridge functype (i32)->(i32,i32) (control-block ptr in, status + result
+// ptr out). An unbounded Int is Int64 in the P6 layout; the bridge protocol
+// supports Int64 arguments and results via spill slots, so an Int -> Int
+// capability called from an outlined fn is a valid P6-frame agent. The old
+// opaque functype (i32,i32)->(i32,i32,i32) and its Int64 rejection were
+// deleted with the WireJson lane.
 
 capability Ping(x: Int) -> Int;
 

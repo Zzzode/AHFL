@@ -86,47 +86,13 @@ struct CoreFrameBridgeCallSite {
     /// absent (zero) on a decoded v2 payload.
     std::uint32_t spill_base{0};
     std::uint32_t spill_extent{0};
+    /// V5: a capability-final bridge call site. The result placement is the
+    /// node's O_k block (already a disjoint node-block span), so the workflow
+    /// span-overlap check skips this site's result_base/result_extent.
+    bool is_final{false};
 
     [[nodiscard]] friend bool operator==(const CoreFrameBridgeCallSite &,
                                          const CoreFrameBridgeCallSite &) noexcept = default;
-};
-
-/// Sentinel for a transcode site whose target is the workflow output slot
-/// (not a scheduled node).
-constexpr std::uint32_t kTranscodeWorkflowOutput =
-    std::numeric_limits<std::uint32_t>::max();
-
-/// WH-5b.3: one crossed-lane edge's deterministic host transcode site. The
-/// scheduler inserts exactly one `ahfl_xcode.xcode_<N>` call per crossed edge
-/// (target lane != source encoding); the host handler is a pure codec adapter
-/// that NEVER invokes a capability, touches memo, fires capability hooks, or
-/// writes an event record.
-struct CoreFrameTranscodeSite {
-    /// The `ahfl_xcode.xcode_<N>` wasm function index (import ordinal).
-    std::uint32_t import_ordinal{0};
-    enum class Direction : std::uint8_t { P4DToJson, JsonToP4D };
-    Direction direction{Direction::P4DToJson};
-    // WH-5c.4 P1-2: CapabilityParam marks a construct-capability terminal's
-    // P4D_TO_JSON self-transcode (the source is the capability's PARAM type,
-    // i.e. the in-module construct result, not the node's OUTPUT boundary
-    // root). The host mints a capability-param binding ONLY for this source;
-    // it never infers one from a capability-bearing node (SSOT). param_ordinal
-    // is the dense parameter index (0 for the single-param construct shape).
-    enum class Source : std::uint8_t { Entry, NodeOutput, CapabilityParam };
-    Source source{Source::Entry};
-    /// Dense parameter index (Source::CapabilityParam only; 0 otherwise).
-    std::uint32_t param_ordinal{0};
-    /// Schedule ordinal of the producing node (Source::NodeOutput only).
-    std::uint32_t source_node_ordinal{0};
-    /// Schedule ordinal of the consuming node, or kTranscodeWorkflowOutput
-    /// when the transcode targets the workflow output slot.
-    std::uint32_t target_node_ordinal{0};
-    /// The P4-D layout root the host reads (P4DToJson) or packs (JsonToP4D)
-    /// against.
-    CoreLayoutId layout{};
-
-    [[nodiscard]] friend bool operator==(const CoreFrameTranscodeSite &,
-                                         const CoreFrameTranscodeSite &) noexcept = default;
 };
 
 /// The decoded `ahfl.core-layout.v1` payload.
@@ -208,26 +174,6 @@ struct CoreFrameLayoutSection {
     /// all-opaque workflow.
     std::uint32_t state_trace_base{0};
     std::uint32_t state_trace_capacity{0};
-
-    // ------------------------------------------------------------------
-    // WH-5b.3: the deterministic encoding-boundary transcode extension.
-    // A hybrid P6+opaque workflow inserts one `ahfl_xcode.xcode_<N>` import
-    // call per crossed lane edge. The JSON_TO_P4D direction lands its P4-D
-    // INLINE frame in a single reused static shadow region; String payload
-    // bytes bump-allocate in the disjoint payload arena (append-only within a
-    // run, so an earlier consumer's PtrLen stays valid). The entry shadow
-    // holds the host-packed INLINE P4-D entry (never normalized) for a
-    // P4D_TO_JSON ENTRY crossing. All spans are zero on a module with no
-    // transcode sites. Encoded as a trailing presence-gated block inside the
-    // workflow extension, so a non-transcode workflow keeps its exact bytes.
-    // ------------------------------------------------------------------
-    std::vector<CoreFrameTranscodeSite> transcode_sites;
-    std::uint32_t transcode_shadow_base{0};
-    std::uint32_t transcode_shadow_extent{0};
-    std::uint32_t transcode_payload_base{0};
-    std::uint32_t transcode_payload_capacity{0};
-    std::uint32_t transcode_entry_shadow_base{0};
-    std::uint32_t transcode_entry_shadow_extent{0};
 
     // ------------------------------------------------------------------
     // KR6.6 String-concatenation extension. The runtime bump heap's base

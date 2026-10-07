@@ -186,9 +186,25 @@ static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
     program.types.push_back(std::move(frame));
     const CoreValueTypeId frame_value{0};
     const CoreValueTypeId unit_value{1};
+    const CoreValueTypeId int_value{2};
     program.value_types.push_back(
         CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}});
     program.value_types.push_back(CoreValueType{CoreVtUnit{}});
+    program.value_types.push_back(
+        CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 0)}});
+    // The Frame struct must be non-empty: the P6 frame-layout verification
+    // rejects zero-sized workflow node input/output roots. A single integer
+    // field gives the struct a 4-byte layout without affecting the identity
+    // agents (they return the whole frame, not individual fields).
+    auto &frame_decl = program.types[0];
+    frame_decl.fields = {"n"};
+    frame_decl.field_nominal_types = {CoreTypeId{}};
+    frame_decl.field_has_default = {false};
+    CoreMemberTypeTemplateNode field_template;
+    field_template.kind = CoreMemberTypeTemplateKind::Concrete;
+    field_template.concrete = int_value;
+    frame_decl.member_type_templates = {field_template};
+    frame_decl.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
 
     const auto add_identity_agent = [&](std::string name, std::size_t symbol_id) {
         const auto agent_id = CoreAgentId{static_cast<std::uint32_t>(program.agents.size())};
@@ -310,10 +326,15 @@ static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
 // packaged capability-bearing instance (packaged_instances stays 1; a repeated
 // capability across nodes is legal), node i reading node i-1's output (node 0
 // reads the workflow input). Drives the node-event + stash region's compile-time
-// capacity boundary (WH-5c.5: every node is opaque, so 48 bytes/node; N=1343
-// fits the 64 KiB page at heap_base 65496; N=1344 is RESOURCE_EXHAUSTED) through
-// the real public emitter, exercising the actual plan carriers + preflight, not a
-// copied formula.
+// capacity boundary (WH-5c.5) through the real public emitter, exercising the
+// actual plan carriers + preflight, not a copied formula. After the WireJson
+// lane elimination every node is P6 with a bridge call, so the per-node cost is
+// dominated by the 2048-byte bridge result String pool: 40 (event record) + 16
+// (bridge control block) + 32 (node block I/scratch/O) + 2056 (bridge result
+// placement + pool) + 16 (state trace) = 2160 bytes/node. Fixed overhead is
+// 3096 (event base/header + entry payload arena + workflow output + trace
+// header). N=6: 16056 <= 16384 (kP6CollectionBackingBase), so the module emits;
+// N=7: 18216 > 16384, so it fails closed with RESOURCE_EXHAUSTED.
 static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t node_count) {
     using namespace ahfl::ir;
     using namespace ahfl::ir::core;
@@ -391,270 +412,6 @@ static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t
     workflow.return_region =
         yielding_region(CoreExprId{node_count}, CoreValueId{node_count});
     program.workflows.clear();
-    program.workflows.push_back(std::move(workflow));
-    return program;
-}
-
-// WH-5c.4 P0-3: a workflow whose construct-capability terminal has an OPAQUE
-// upstream. The Producer is a capability-final opaque node (Echo rides the
-// wire-JSON lane); the ConstructAgent is a P6 construct-terminal that builds
-// its capability arg from the Producer's output field. The construct node
-// needs BOTH a JSON_TO_P4D input crossing (opaque output -> P4-D input) AND a
-// P4D_TO_JSON self-transcode (constructed Request -> wire-JSON). Before the
-// P0-3 fix the scheduler table was one slot per node (last-write-wins), so one
-// site was silently dropped.
-static ahfl::ir::core::CoreProgram make_p03_opaque_upstream_program() {
-    using namespace ahfl::ir;
-    using namespace ahfl::ir::core;
-    CoreProgram program;
-
-    // type 0: Request (one Int field "value"), type 1: Reply (one Int field
-    // "answer").
-    for (const char *tname : {"app::Request", "app::Reply"}) {
-        CoreTypeDecl decl;
-        decl.kind = CoreTypeDecl::Kind::Struct;
-        decl.name = tname;
-        decl.fields = {"value"};
-        decl.field_nominal_types = {CoreTypeId{}};
-        decl.field_has_default = {false};
-        decl.field_type_template_roots = {
-            CoreMemberTypeTemplateNodeId{0}};
-        decl.member_type_templates = {CoreMemberTypeTemplateNode{
-            CoreMemberTypeTemplateKind::Concrete,
-            CoreValueTypeId{1},
-            0,
-            CoreTypeId{},
-            std::nullopt,
-            {},
-            CoreMemberTypeTemplateNodeId{}}};
-        program.types.push_back(std::move(decl));
-    }
-    const CoreValueTypeId request_vt{0};
-    const CoreValueTypeId int_vt{1};
-    const CoreValueTypeId reply_vt{2};
-    program.value_types.push_back(CoreValueType{
-        CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}}); // vt0 Request
-    program.value_types.push_back(
-        CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
-    program.value_types.push_back(CoreValueType{
-        CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Reply
-
-    // cap0: Echo(Request) -> Request (opaque upstream).
-    CoreCapabilityDecl echo;
-    echo.name = "Echo";
-    echo.symbol_ref = {SymbolRefKind::Capability, "app::Echo", "Echo", "app",
-                       350};
-    echo.param_types = {request_vt};
-    echo.return_type = request_vt;
-    program.capabilities.push_back(std::move(echo));
-
-    // cap1: DraftReply(Request) -> Reply (construct terminal).
-    CoreCapabilityDecl draft_reply;
-    draft_reply.name = "DraftReply";
-    draft_reply.symbol_ref = {SymbolRefKind::Capability, "app::DraftReply",
-                              "DraftReply", "app", 351};
-    draft_reply.param_types = {request_vt};
-    draft_reply.return_type = reply_vt;
-    program.capabilities.push_back(std::move(draft_reply));
-
-    const CoreValueTypeId unit_vt{3};
-    program.value_types.push_back(CoreValueType{CoreVtUnit{}}); // vt3 Unit
-
-    // --- Agent 0: Producer (opaque capability-final) ---
-    {
-        CoreAgentDecl agent;
-        agent.name = "Producer";
-        agent.symbol_ref = {SymbolRefKind::Agent, "app::Producer", "Producer",
-                            "app", 360};
-        agent.states = {"Done", "Start"};
-        agent.initial = CoreStateId{1};
-        agent.finals = {CoreStateId{0}};
-        agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
-        agent.input_type = CoreTypeId{0};
-        agent.output_type = CoreTypeId{0};
-        agent.context_kind = CoreAgentDecl::ContextKind::Unit;
-        agent.capabilities = {CoreCapabilityId{0}};
-        program.agents.push_back(std::move(agent));
-
-        CoreFlowDecl flow;
-        flow.target = CoreAgentId{0};
-        flow.agent_name = "Producer";
-        // expr0: input path (Request).
-        CorePathExpr input;
-        input.root = CorePathRoot::Input;
-        input.root_name = "input";
-        input.root_type = CoreTypeId{0};
-        flow.storage.exprs.push_back(
-            CoreExpr{std::move(input), std::nullopt, request_vt});
-        flow.storage.value_count = 2;
-        flow.storage.value_types = {request_vt, request_vt};
-        CoreFlowState done;
-        done.state = CoreStateId{0};
-        done.state_name = "Done";
-        done.body.statements.push_back(
-            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
-        done.body.statements.push_back(
-            CoreStmt{CoreCapabilityCallStmt{CoreValueId{1},
-                                            CoreCapabilityId{0}, "Echo",
-                                            {CoreValueId{0}}},
-                     std::nullopt});
-        done.body.statements.push_back(
-            CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
-        flow.states.push_back(std::move(done));
-        CoreFlowState start;
-        start.state = CoreStateId{1};
-        start.state_name = "Start";
-        start.body.statements.push_back(
-            CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
-        flow.states.push_back(std::move(start));
-        program.flows.push_back(std::move(flow));
-
-        CoreInstanceDecl instance;
-        instance.id = CoreInstanceId{0};
-        instance.instance_key = "_inst_Producer";
-        instance.origin = program.agents[0].symbol_ref;
-        instance.dispatch_types = {request_vt, unit_vt, request_vt};
-        instance.payload = CoreAgentInstance{
-            CoreAgentId{0}, CoreTypeId{0},
-            CoreAgentDecl::ContextKind::Unit, CoreTypeId{}, CoreTypeId{0}};
-        program.instances.push_back(std::move(instance));
-    }
-
-    // --- Agent 1: ConstructAgent (construct-capability terminal, P6) ---
-    {
-        CoreAgentDecl agent;
-        agent.name = "ConstructAgent";
-        agent.symbol_ref = {SymbolRefKind::Agent, "app::ConstructAgent",
-                            "ConstructAgent", "app", 361};
-        agent.states = {"Done", "Start"};
-        agent.initial = CoreStateId{1};
-        agent.finals = {CoreStateId{0}};
-        agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
-        agent.input_type = CoreTypeId{0};
-        agent.output_type = CoreTypeId{1};
-        agent.context_kind = CoreAgentDecl::ContextKind::Unit;
-        agent.capabilities = {CoreCapabilityId{1}};
-        program.agents.push_back(std::move(agent));
-
-        CoreFlowDecl flow;
-        flow.target = CoreAgentId{1};
-        flow.agent_name = "ConstructAgent";
-        // expr0: input.value (field projection, Int).
-        CorePathExpr field;
-        field.root = CorePathRoot::Input;
-        field.root_name = "input";
-        field.root_type = CoreTypeId{0};
-        field.members = {"value"};
-        field.projection = {CoreProjectionStep{
-            CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{}}};
-        field.projection_resolved = true;
-        flow.storage.exprs.push_back(
-            CoreExpr{std::move(field), std::nullopt, int_vt});
-        // expr1: construct Request{value: v0} (Request).
-        flow.storage.exprs.push_back(CoreExpr{
-            CoreConstructExpr{"app::Request", "", false, CoreTypeId{0},
-                              CoreVariantId{}, true,
-                              {CoreConstructArg{CoreFieldId{0},
-                                                CoreValueId{0}}}},
-            std::nullopt, request_vt});
-        flow.storage.value_count = 3;
-        flow.storage.value_types = {int_vt, request_vt, reply_vt};
-        // Done: let v0 = input.value; let v1 = construct; v2 = DraftReply(v1);
-        //       return v2.
-        CoreFlowState done;
-        done.state = CoreStateId{0};
-        done.state_name = "Done";
-        done.body.statements.push_back(
-            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
-        done.body.statements.push_back(
-            CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
-        done.body.statements.push_back(
-            CoreStmt{CoreCapabilityCallStmt{CoreValueId{2},
-                                            CoreCapabilityId{1},
-                                            "DraftReply",
-                                            {CoreValueId{1}}},
-                     std::nullopt});
-        done.body.statements.push_back(
-            CoreStmt{CoreReturnStmt{true, CoreValueId{2}}, std::nullopt});
-        flow.states.push_back(std::move(done));
-        CoreFlowState start;
-        start.state = CoreStateId{1};
-        start.state_name = "Start";
-        start.body.statements.push_back(
-            CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
-        flow.states.push_back(std::move(start));
-        program.flows.push_back(std::move(flow));
-
-        CoreInstanceDecl instance;
-        instance.id = CoreInstanceId{1};
-        instance.instance_key = "_inst_ConstructAgent";
-        instance.origin = program.agents[1].symbol_ref;
-        instance.dispatch_types = {request_vt, unit_vt, reply_vt};
-        instance.payload = CoreAgentInstance{
-            CoreAgentId{1}, CoreTypeId{0},
-            CoreAgentDecl::ContextKind::Unit, CoreTypeId{}, CoreTypeId{1}};
-        program.instances.push_back(std::move(instance));
-    }
-
-    // --- Workflow: Producer(input) -> ConstructAgent(producer) ---
-    CoreWorkflowDecl workflow;
-    workflow.id = CoreWorkflowId{0};
-    workflow.name = "OpaqueUpstream";
-    workflow.symbol_ref = {SymbolRefKind::Workflow, "app::OpaqueUpstream",
-                           "OpaqueUpstream", "app", 362};
-    workflow.input_type = CoreTypeId{0};
-    workflow.output_type = CoreTypeId{1};
-    workflow.storage.value_count = 3;
-    workflow.storage.value_types = {request_vt, request_vt, reply_vt};
-    // expr0: WorkflowInput (Request).
-    CorePathExpr wf_input;
-    wf_input.root = CorePathRoot::WorkflowInput;
-    wf_input.root_name = "input";
-    wf_input.root_type = CoreTypeId{0};
-    workflow.storage.exprs.push_back(
-        CoreExpr{std::move(wf_input), std::nullopt, request_vt});
-    // expr1: WorkflowNodeOutput node 0 (Request, the Producer's output).
-    CorePathExpr producer_out;
-    producer_out.root = CorePathRoot::WorkflowNodeOutput;
-    producer_out.root_name = "producer";
-    producer_out.root_type = CoreTypeId{0};
-    producer_out.workflow_node = CoreWorkflowNodeId{0};
-    workflow.storage.exprs.push_back(
-        CoreExpr{std::move(producer_out), std::nullopt, request_vt});
-    // expr2: WorkflowNodeOutput node 1 (Reply, the ConstructAgent's output).
-    CorePathExpr construct_out;
-    construct_out.root = CorePathRoot::WorkflowNodeOutput;
-    construct_out.root_name = "construct";
-    construct_out.root_type = CoreTypeId{1};
-    construct_out.workflow_node = CoreWorkflowNodeId{1};
-    workflow.storage.exprs.push_back(
-        CoreExpr{std::move(construct_out), std::nullopt, reply_vt});
-
-    const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
-        auto region = std::make_unique<CoreRegion>();
-        region->statements.push_back(
-            CoreStmt{CoreLetStmt{value, expr}, std::nullopt});
-        region->statements.push_back(
-            CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
-        return region;
-    };
-    CoreWorkflowNode producer_node;
-    producer_node.id = CoreWorkflowNodeId{0};
-    producer_node.node_name = "producer";
-    producer_node.target_instance = CoreInstanceId{0};
-    producer_node.input_region =
-        yielding_region(CoreExprId{0}, CoreValueId{0});
-    workflow.nodes.push_back(std::move(producer_node));
-    CoreWorkflowNode construct_node;
-    construct_node.id = CoreWorkflowNodeId{1};
-    construct_node.node_name = "construct";
-    construct_node.target_instance = CoreInstanceId{1};
-    construct_node.after = {CoreWorkflowNodeId{0}};
-    construct_node.input_region =
-        yielding_region(CoreExprId{1}, CoreValueId{1});
-    workflow.nodes.push_back(std::move(construct_node));
-    workflow.return_region =
-        yielding_region(CoreExprId{2}, CoreValueId{2});
     program.workflows.push_back(std::move(workflow));
     return program;
 }
@@ -1198,21 +955,28 @@ int main() {
             check(returns_arg_zero && !has_frame_memory_op,
                   "E1 run identity alias is structurally local.get 0 with no frame memory op");
 
-            const auto run2_body = first.ok()
+            // runv is the LAST defined function. The E1 identity agent has
+            // zero compiled handlers (an identity final and a goto need no
+            // handler body), so the code section is 6 fixed ABI + runv = 7
+            // functions and runv is at index 6. Its identity arm returns
+            // (OK=0, kP6AggregateInputBase=1024) — the borrowed input frame,
+            // no copy. The body must contain that return and no direct frame
+            // load/store.
+            const auto runv_body = first.ok()
                                        ? wasm_function_body(first.artifact->bytes, 6)
                                        : std::optional<std::vector<std::uint8_t>>{};
-            const bool run2_identity =
-                run2_body && contains_bytes(*run2_body,
-                                            {0x41, 0x00, 0x20, 0x00,
-                                             0x20, 0x01, 0x0f});
-            const bool run2_has_frame_memory_op =
-                run2_body && std::any_of(run2_body->begin(),
-                                         run2_body->end(),
+            const bool runv_identity =
+                runv_body && contains_bytes(*runv_body,
+                                            {0x41, 0x00, 0x41, 0x80,
+                                             0x08, 0x0f});
+            const bool runv_has_frame_memory_op =
+                runv_body && std::any_of(runv_body->begin(),
+                                         runv_body->end(),
                                          [](std::uint8_t op) {
                                              return op >= 0x28 && op <= 0x3e;
                                          });
-            check(run2_identity && !run2_has_frame_memory_op,
-                  "E2 run2 identity path returns OK,input_ptr,input_len without frame access");
+            check(runv_identity && !runv_has_frame_memory_op,
+                  "E1 runv identity path returns OK,input_base without frame access");
 
             auto tampered = *layout.table;
             tampered.target.pointer_size = 8;
@@ -1349,34 +1113,68 @@ int main() {
             const auto import_section =
                 first.ok() ? wasm_section(first.artifact->bytes, 2)
                            : std::optional<std::vector<std::uint8_t>>{};
+            // RFC 0026 dual-track elimination: the capability import uses the
+            // bridge functype (i32)->(i32,i32) — control-block ptr in, status +
+            // result-root ptr out. The old opaque tuple (i32,i32)->(i32,i32,i32)
+            // was deleted with the WireJson lane. The bridge type is the last
+            // type in the table (index 5 for a no-fn/no-closure agent: 4 fixed +
+            // runv at 4, bridge at 5).
             check(import_section &&
                       contains_bytes(*import_section,
                                      {0x01, 0x08, 'a', 'h', 'f', 'l', '_', 'c', 'a', 'p',
-                                      0x06, 'c', 'a', 'p', '_', '4', '2', 0x00, 0x04}) &&
+                                      0x06, 'c', 'a', 'p', '_', '4', '2', 0x00, 0x05}) &&
                       contains_bytes(first.artifact->bytes,
-                                     {0x60, 0x02, 0x7f, 0x7f,
-                                      0x03, 0x7f, 0x7f, 0x7f}),
-                  "E2 binary encodes exact ahfl_cap module/field/multi-value type");
+                                     {0x60, 0x01, 0x7f,
+                                      0x02, 0x7f, 0x7f}),
+                  "E2 binary encodes exact ahfl_cap module/field/bridge type");
             check(first.ok() &&
                       std::find(first.artifact->exports.begin(),
                                 first.artifact->exports.end(),
-                                "run2") != first.artifact->exports.end(),
-                  "E2 appends run2 without removing legacy exports");
+                                "runv") != first.artifact->exports.end() &&
+                      std::find(first.artifact->exports.begin(),
+                                first.artifact->exports.end(),
+                                "run2") == first.artifact->exports.end(),
+                  "E2 exports runv without the deleted agent run2 entry");
 
             const auto legacy_run = first.ok()
                                         ? wasm_function_body(first.artifact->bytes, 5)
                                         : std::optional<std::vector<std::uint8_t>>{};
-            const auto run2 = first.ok()
+            const auto runv = first.ok()
                                   ? wasm_function_body(first.artifact->bytes, 6)
                                   : std::optional<std::vector<std::uint8_t>>{};
             check(legacy_run == std::optional<std::vector<std::uint8_t>>{
                                     std::vector<std::uint8_t>{0x00, 0x00, 0x0b}},
                   "E2 capability artifact legacy run traps before every effect");
-            check(run2 && contains_bytes(*run2, {0x23, 0x04, 0x04, 0x40, 0x00, 0x0b}) &&
-                      contains_bytes(*run2, {0x20, 0x00, 0x20, 0x01, 0x10, 0x00}) &&
-                      contains_bytes(*run2, {0x41, 0x01, 0x24, 0x04}) &&
-                      contains_bytes(*run2, {0x41, 0x02, 0x41, 0x00, 0x41, 0x00, 0x0f}),
-                  "E2 run2 checks pending latch first, calls import once, and latches PENDING");
+            // RFC 0026 dual-track elimination: runv (defined-function index 6,
+            // the last entry) drives the state walk then emits the bridge call
+            // at the capability final. It writes the 4-word bridge control
+            // block (call_site_id, arg_count, arg ptr, arg len — four
+            // i32.store align=2 offset=0), calls the bridge import once (call
+            // 0), traps on PENDING (the agent lane has no scheduler to
+            // suspend), and returns (OK, result_ptr) on success. There is no
+            // pending-latch global.get (the workflow runner owns suspension).
+            const auto count_bytes =
+                [](const std::vector<std::uint8_t> &body,
+                   std::initializer_list<std::uint8_t> needle) {
+                    std::size_t count = 0;
+                    auto it = body.begin();
+                    while ((it = std::search(it, body.end(), needle.begin(),
+                                             needle.end())) != body.end()) {
+                        ++count;
+                        it += needle.size();
+                    }
+                    return count;
+                };
+            check(runv && count_bytes(*runv, {0x36, 0x02, 0x00}) == 4 &&
+                      contains_bytes(*runv, {0x10, 0x00}) &&
+                      contains_bytes(*runv, {0x20, 0x01, 0x41, 0x02, 0x46,
+                                             0x04, 0x40, 0x00, 0x0b}) &&
+                      contains_bytes(*runv, {0x20, 0x01, 0x41, 0x00, 0x46, 0x04,
+                                             0x40, 0x41, 0x00, 0x20, 0x02, 0x0f,
+                                             0x0b}) &&
+                      !contains_bytes(*runv, {0x23, 0x04}),
+                  "E2 runv writes the bridge control block, calls the bridge "
+                  "import once, and traps on PENDING");
             check(same_e1_program(program, snapshot) && *layout.table == layout_snapshot,
                   "E2 emission does not mutate Core or the P4-D side artifact");
 
@@ -1431,11 +1229,15 @@ int main() {
             // stripped) decodes and re-encodes through the C1 authority; the
             // trailing placement and the byte-identical pre-B1 prefix are locked
             // by wasm_e2_binary_gate.py.
+            // RFC 0026 E4-B1 + KR6.8 WH-4 D-C + dual-track elimination: the
+            // E2 capability artifact carries three custom sections: the
+            // ahfl.core-layout.v1 P6-frame layout, the AHFLXM exec-manifest
+            // (D-C, for capability agents), and the wire-schema section.
             const auto e2_custom = first.ok()
                                        ? wire_schema_custom_section(first.artifact->bytes)
                                        : WireSchemaCustomSection{};
-            check(e2_custom.custom_count == 2 && e2_custom.table_bytes.has_value(),
-                  "E2 artifact carries AHFLXM + wire-schema custom sections");
+            check(e2_custom.custom_count == 3 && e2_custom.table_bytes.has_value(),
+                  "E2 artifact carries core-layout + AHFLXM + wire-schema custom sections");
 
             if (e2_custom.table_bytes.has_value()) {
                 const auto decoded = ahfl::ir::core::decode_core_wire_schema_table(
@@ -1492,12 +1294,13 @@ int main() {
 
             // Least-privilege: the extra unreachable capability appears in
             // neither the imports nor the decoded wire-schema table. The
-            // AHFLXM + wire-schema custom sections are still present.
+            // core-layout + AHFLXM + wire-schema custom sections are still
+            // present.
             const auto least_custom = least.ok()
                                           ? wire_schema_custom_section(least.artifact->bytes)
                                           : WireSchemaCustomSection{};
-            check(least_custom.custom_count == 2 && least_custom.table_bytes.has_value(),
-                  "E2 least-privilege artifact still carries AHFLXM + wire-schema sections");
+            check(least_custom.custom_count == 3 && least_custom.table_bytes.has_value(),
+                  "E2 least-privilege artifact still carries core-layout + AHFLXM + wire-schema sections");
             if (least_custom.table_bytes.has_value()) {
                 const auto decoded = ahfl::ir::core::decode_core_wire_schema_table(
                     std::span<const std::uint8_t>(*least_custom.table_bytes));
@@ -1517,36 +1320,25 @@ int main() {
 
         // RFC 0026 E4-B1: a capability whose reachable type closure is verified
         // Core + layoutable but NOT wire-transportable fails closed with no
-        // artifact. Here app::Output gains a Map<Int,Int> field (Int keys are
-        // legal Core but the wire value_json encoder supports only String map
-        // keys), so the wire projector rejects the transitive closure. The agent
-        // shell stays a plain struct; only the field closure is unprojectable.
+        // artifact. Here app::Output gains a fn field (first-class callables
+        // are legal Core + layoutable as the 8-byte closure word pair, but the
+        // wire projector rejects them with core.wire.UNSUPPORTED), so the wire
+        // projector rejects the transitive closure. The agent shell stays a
+        // plain struct; only the field closure is unprojectable.
         auto unprojectable = make_e2_core_program();
-        const CoreTypeId map_type_id{
-            static_cast<std::uint32_t>(unprojectable.types.size())};
-        CoreTypeDecl map_decl;
-        map_decl.kind = CoreTypeDecl::Kind::Struct;
-        map_decl.name = "std::collections::Map";
-        map_decl.role = CoreNominalRole::Map;
-        map_decl.type_param_count = 2;
-        map_decl.variances = {CoreVariance::Invariant, CoreVariance::Covariant};
-        unprojectable.types.push_back(std::move(map_decl));
-        const CoreValueTypeId int_vt{
+        const CoreValueTypeId fn_vt{
             static_cast<std::uint32_t>(unprojectable.value_types.size())};
-        unprojectable.value_types.push_back(CoreValueType{CoreVtInt{}});
-        const CoreValueTypeId map_vt{
-            static_cast<std::uint32_t>(unprojectable.value_types.size())};
-        unprojectable.value_types.push_back(CoreValueType{
-            CoreVtNominal{map_type_id, {int_vt, int_vt}, std::uint64_t{4}}});
-        // app::Output (types[1]) gains one Map<Int,Int> field "items".
+        unprojectable.value_types.push_back(
+            CoreValueType{CoreVtFn{{}, CoreValueTypeId{0}}});
+        // app::Output (types[1]) gains one fn field "callback".
         auto &output = unprojectable.types[1];
-        output.fields = {"items"};
-        output.field_nominal_types = {map_type_id};
+        output.fields = {"callback"};
+        output.field_nominal_types = {CoreTypeId{}};
         output.field_has_default = {false};
-        CoreMemberTypeTemplateNode items_template;
-        items_template.kind = CoreMemberTypeTemplateKind::Concrete;
-        items_template.concrete = map_vt;
-        output.member_type_templates = {std::move(items_template)};
+        CoreMemberTypeTemplateNode callback_template;
+        callback_template.kind = CoreMemberTypeTemplateKind::Concrete;
+        callback_template.concrete = fn_vt;
+        output.member_type_templates = {std::move(callback_template)};
         output.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
 
         const auto unprojectable_verified = verify_core_program(unprojectable);
@@ -1559,27 +1351,26 @@ int main() {
                       {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                 : ahfl::backends::CoreWasmCodegenResult{};
         check(unprojectable_verified.ok() && unprojectable_layout.ok(),
-              "E2 Map<Int,Int>-field fixture is verified Core + P4-D layout");
+              "E2 fn-field fixture is verified Core + P4-D layout");
         check(unprojectable_verified.ok() && unprojectable_layout.ok() &&
                   !unprojectable_result.artifact.has_value() &&
                   has_codegen_code(unprojectable_result,
-                                   ahfl::backends::core_wasm_diag::kInvalidCapabilityAbi),
+                                   ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame),
               "E2 rejects a wire-unprojectable reachable capability with no artifact");
-        // The INVALID_CAPABILITY_ABI diagnostic attributes the underlying
-        // projector code so the failure is not conflated with an index-domain
-        // ABI overflow.
-        bool cites_map_key = false;
+        // The UNSUPPORTED_CAPABILITY_FRAME diagnostic surfaces the underlying
+        // wire projector's rejection message so the failure is not conflated
+        // with an index-domain ABI overflow (kInvalidCapabilityAbi).
+        bool cites_unsupported = false;
         for (const auto &diagnostic : unprojectable_result.diagnostics) {
             if (diagnostic.code ==
-                    ahfl::backends::core_wasm_diag::kInvalidCapabilityAbi &&
-                diagnostic.message.find(std::string(
-                    ahfl::ir::core::wire_schema::kUnsupportedMapKey)) !=
+                    ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame &&
+                diagnostic.message.find("function values are not supported") !=
                     std::string::npos) {
-                cites_map_key = true;
+                cites_unsupported = true;
             }
         }
-        check(cites_map_key,
-              "E2 unprojectable diagnostic cites the underlying core.wire.UNSUPPORTED_MAP_KEY");
+        check(cites_unsupported,
+              "E2 unprojectable diagnostic cites the underlying wire projector rejection");
 
         auto wide_symbol = make_e2_core_program();
         wide_symbol.capabilities[0].symbol_ref.id =
@@ -1909,16 +1700,18 @@ int main() {
                   valid_layouts.table == valid_layout_snapshot,
               "E3-C2 emits deterministic workflow bytes without mutating layout or expanding authority");
 
-        // RFC 0026 E4-B2-C: the no-capability E3 identity-workflow fixture
-        // (import_count == 0) carries NO custom section (neither AHFLXM nor
-        // AHFLWS). Assert on the section walk, not merely on imports.empty(). A
-        // capability workflow does carry them (covered by the E4-B2-C case below).
+        // RFC 0026 dual-track elimination: every workflow is P6-frame, so a
+        // no-capability identity workflow carries the core-layout + wire-schema
+        // custom sections (but NOT the AHFLXM exec-manifest, which is
+        // capability-only). Assert on the section walk, not merely on
+        // imports.empty(). A capability workflow carries all three (covered by
+        // the E4-B2-C case below).
         const auto e3_custom = valid_result.ok()
                                    ? wire_schema_custom_section(valid_result.artifact->bytes)
                                    : WireSchemaCustomSection{};
-        check(valid_result.ok() && e3_custom.custom_count == 0 &&
-                  !e3_custom.table_bytes.has_value(),
-              "no-capability E3 identity workflow (import_count==0) carries no custom section");
+        check(valid_result.ok() && e3_custom.custom_count == 2 &&
+                  e3_custom.table_bytes.has_value(),
+              "no-capability E3 identity workflow carries core-layout + wire-schema custom sections");
 
         auto bad_workflow_layout = *valid_layouts.table;
         bad_workflow_layout.target.pointer_size = 8;
@@ -1957,27 +1750,30 @@ int main() {
                 return byte >= 0x28 && byte <= 0x3e;
             });
         };
-        // WH-5c.5: the scheduler (run2) now emits the per-node output stash
-        // stores -- two i32.store (0x36) pairs per opaque node. It must still
-        // emit no loads and no stores other than i32.store (no frame memory
-        // ops, no wider stores).
-        const auto has_only_i32_stores = [](const std::vector<std::uint8_t> &body) {
-            return std::none_of(body.begin(), body.end(), [](std::uint8_t byte) {
-                return (byte >= 0x28 && byte <= 0x35) || (byte >= 0x37 && byte <= 0x3e);
-            });
-        };
-        const bool runners_are_frame_opaque =
-            first_runner.has_value() && second_runner.has_value() &&
-            has_no_memory_ops(*first_runner) &&
-            has_no_memory_ops(*second_runner) &&
-            workflow_run.has_value() && has_no_memory_ops(*workflow_run) &&
-            workflow_run2.has_value() && has_only_i32_stores(*workflow_run2);
         const bool schedule_calls_in_order =
             workflow_run2.has_value() &&
             small_fixture_call_indices(*workflow_run2) ==
                 std::vector<std::uint32_t>{4, 5};
-        check(traps_before_effect && runners_are_frame_opaque && schedule_calls_in_order,
-              "E3-C2 workflow step/state trap and identity runners dispatch without frame memory operations");
+        // RFC 0026 dual-track elimination: the P6 workflow runner's identity
+        // arm copies the input frame to the node's O_k block (i32.load +
+        // i32.store word-by-word bulk copy), and the run2 scheduler loads
+        // each runner's output for the per-node stash. The old WireJson
+        // lane's runners were frame-opaque and its run2 emitted only
+        // i32.store; the P6 lane legitimately touches frame memory with
+        // i32.load + i32.store in both. The run function stays a trap.
+        const auto has_only_i32_load_store = [](const std::vector<std::uint8_t> &body) {
+            return std::none_of(body.begin(), body.end(), [](std::uint8_t byte) {
+                return (byte >= 0x29 && byte <= 0x35) || (byte >= 0x37 && byte <= 0x3e);
+            });
+        };
+        const bool runners_are_p6_frame =
+            first_runner.has_value() && second_runner.has_value() &&
+            has_only_i32_load_store(*first_runner) &&
+            has_only_i32_load_store(*second_runner) &&
+            workflow_run.has_value() && has_no_memory_ops(*workflow_run) &&
+            workflow_run2.has_value() && has_only_i32_load_store(*workflow_run2);
+        check(traps_before_effect && runners_are_p6_frame && schedule_calls_in_order,
+              "E3-C2 workflow step/state trap and P6 identity runners dispatch with frame copy");
 
         handoff::PackageMetadata workflow_metadata;
         workflow_metadata.entry_target = handoff::ExecutableRef{
@@ -2044,16 +1840,23 @@ int main() {
             CoreStmt{CoreYieldStmt{true, join_value}, std::nullopt});
         branch_workflow.nodes.push_back(std::move(join));
         const auto branch_join_result = emit_workflow(branch_join);
+        // The branch_join workflow has 3 P6 nodes (2 parallel roots + 1 join),
+        // so runner_count = 3 and run2 is at code-section index 5 + 3 = 8
+        // (the original E3 workflow has 2 nodes and run2 at index 7).
         const auto branch_run2 = branch_join_result.artifact.has_value()
-                                     ? wasm_function_body(branch_join_result.artifact->bytes, 7)
+                                     ? wasm_function_body(branch_join_result.artifact->bytes, 8)
                                      : std::nullopt;
+        // RFC 0026 dual-track elimination: each P6 node has its own runner
+        // function (the old WireJson lane deduped runners by instance; the
+        // P6 lane emits one runner per node). The 3-node branch_join workflow
+        // therefore calls runners 4, 5, 6 in schedule order.
         check(verify_core_program(branch_join).ok() && branch_join_result.ok() &&
                   branch_join_result.artifact->packaged_agent_instances ==
                       std::vector<CoreInstanceId>{CoreInstanceId{0}, CoreInstanceId{1}} &&
                   branch_run2.has_value() &&
                   small_fixture_call_indices(*branch_run2) ==
-                      std::vector<std::uint32_t>{4, 5, 4},
-              "E3-C2 emits declaration-order parallel roots plus a join and dedups instance runners");
+                      std::vector<std::uint32_t>{4, 5, 6},
+              "E3-C2 emits declaration-order parallel roots plus a join with per-node runners");
 
         auto wrong_type = make_e3_workflow_program();
         CoreTypeDecl other;
@@ -2123,9 +1926,9 @@ int main() {
                 std::vector<std::string>{"ahfl_cap.cap_350"};
         check(verify_core_program(capability_agent).ok() &&
                   capability_result.ok() && capability_imports &&
-                  capability_custom.custom_count == 2 &&
+                  capability_custom.custom_count == 3 &&
                   capability_custom.table_bytes.has_value(),
-              "E4-B2-C emits a capability-bearing workflow with import + AHFLXM + AHFLWS");
+              "E4-B2-C emits a capability-bearing workflow with import + core-layout + AHFLXM + AHFLWS");
 
         // Opcode/index-level structural contract for the capability workflow.
         // `wasm_function_body` indexes Code-section defined bodies (0-based,
@@ -2141,12 +1944,12 @@ int main() {
         const auto cap_alloc = capability_result.artifact.has_value()
                                    ? wasm_function_body(capability_result.artifact->bytes, 0)
                                    : std::nullopt;
-        // Latch-first: run2 begins with the locals prologue {01,05,7f} (one i32
-        // local group of 5) immediately followed by the pending-latch gate
+        // Latch-first: run2 begins with the locals prologue {01,09,7f} (one i32
+        // local group of 9) immediately followed by the pending-latch gate
         // global.get 5 / if / unreachable / end. This proves it is the FIRST
         // instruction, not merely present somewhere in the body.
         const std::vector<std::uint8_t> latch_prefix = {
-            0x01, 0x05, 0x7f, 0x23, 0x05, 0x04, 0x40, 0x00, 0x0b};
+            0x01, 0x09, 0x7f, 0x23, 0x05, 0x04, 0x40, 0x00, 0x0b};
         const bool latch_first =
             cap_run2.has_value() && cap_run2->size() >= latch_prefix.size() &&
             std::equal(latch_prefix.begin(), latch_prefix.end(), cap_run2->begin());
@@ -2186,15 +1989,17 @@ int main() {
 
         // RFC 0026 E4-B2-C + WH-5c.5 node-event + stash region capacity
         // boundary through the real public emitter (scaled Core builder,
-        // single reused capability instance). Every node is opaque, so the
-        // low-page budget is 48 bytes/node (40-byte event record + 8-byte
-        // stash slot, design 12.15.19.4): heap_base = align_up(1032 + 48*N,
-        // 8). N=1343: 65496 <= 65536, so the module emits with no
-        // RESOURCE/BINARY diagnostic. N=1344: 65544 > 65536, so it fails
+        // single reused capability instance). After the WireJson lane
+        // elimination every node is P6 with a bridge call, so the per-node
+        // cost is 2160 bytes (40 event record + 16 bridge control + 32 node
+        // block + 2056 bridge result placement/pool + 16 state trace) and the
+        // fixed overhead is 3096. N=6: 16056 <= 16384
+        // (kP6CollectionBackingBase), so the module emits with no
+        // RESOURCE/BINARY diagnostic. N=7: 18216 > 16384, so it fails
         // closed with EXACTLY wasm.RESOURCE_EXHAUSTED (carrying a
         // SourceRange, design 12.15.19.8) and no artifact (never a
         // misreported BINARY_OVERFLOW).
-        const auto fits = make_n_node_capability_workflow(1343);
+        const auto fits = make_n_node_capability_workflow(6);
         const auto fits_layouts = compute_core_layouts(fits);
         const auto fits_result =
             (verify_core_program(fits).ok() && fits_layouts.ok() &&
@@ -2208,9 +2013,9 @@ int main() {
                                     backends::core_wasm_diag::kResourceExhausted) &&
                   !has_codegen_code(fits_result,
                                     backends::core_wasm_diag::kBinaryOverflow),
-              "WH-5c.5 N=1343 event+stash region fits the 64 KiB page and emits");
+              "WH-5c.5 N=6 P6 node-block region fits the 64 KiB page and emits");
 
-        const auto exceeds = make_n_node_capability_workflow(1344);
+        const auto exceeds = make_n_node_capability_workflow(7);
         const auto exceeds_layouts = compute_core_layouts(exceeds);
         const auto exceeds_result =
             (verify_core_program(exceeds).ok() && exceeds_layouts.ok() &&
@@ -2230,7 +2035,7 @@ int main() {
                 backends::core_wasm_diag::kResourceExhausted &&
             exceeds_result.diagnostics.front().source_range.has_value();
         check(exceeds_exact,
-              "WH-5c.5 N=1344 fails closed with exactly one SourceRange RESOURCE_EXHAUSTED");
+              "WH-5c.5 N=7 fails closed with exactly one SourceRange RESOURCE_EXHAUSTED");
 
         auto workflow_capability = make_e3_workflow_program();
         CoreCapabilityDecl workflow_cap;
@@ -2293,51 +2098,45 @@ int main() {
         using namespace ahfl::ir::core;
         namespace backends = ahfl::backends;
 
-        // The exact 557-byte E1 artifact blessed at the KR6.6 identity-final
-        // frame-lane landing. The scaffold is additive; any drift here means
-        // an existing emit path moved.
-        constexpr std::uint8_t kP60E1Snapshot[557] = {
-            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x22, 0x06, 0x60,
+        // The exact 473-byte E1 artifact after the WireJson lane
+        // elimination: run2 removed, runv added, defined-function base
+        // shifted from 7 to 6. The scaffold is additive; any drift here
+        // means an existing emit path moved.
+        constexpr std::uint8_t kP60E1Snapshot[473] = {
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x1a, 0x05, 0x60,
             0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f,
-            0x00, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f, 0x03,
-            0x7f, 0x7f, 0x7f, 0x60, 0x00, 0x02, 0x7f, 0x7f, 0x03, 0x09, 0x08, 0x01,
-            0x02, 0x00, 0x00, 0x00, 0x03, 0x04, 0x05, 0x05, 0x03, 0x01, 0x00, 0x01,
-            0x06, 0x1b, 0x05, 0x7f, 0x01, 0x41, 0x01, 0x0b, 0x7f, 0x01, 0x41, 0x00,
-            0x0b, 0x7f, 0x00, 0x41, 0x01, 0x0b, 0x7f, 0x01, 0x41, 0x80, 0x08, 0x0b,
-            0x7f, 0x01, 0x41, 0x00, 0x0b, 0x07, 0x6d, 0x0a, 0x06, 0x6d, 0x65, 0x6d,
-            0x6f, 0x72, 0x79, 0x02, 0x00, 0x05, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00,
-            0x00, 0x07, 0x64, 0x65, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00, 0x01, 0x03,
-            0x72, 0x75, 0x6e, 0x00, 0x05, 0x04, 0x72, 0x75, 0x6e, 0x32, 0x00, 0x06,
-            0x04, 0x73, 0x74, 0x65, 0x70, 0x00, 0x04, 0x0d, 0x63, 0x75, 0x72, 0x72,
-            0x65, 0x6e, 0x74, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x65, 0x00, 0x02, 0x10,
-            0x74, 0x72, 0x61, 0x6e, 0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x63,
-            0x6f, 0x75, 0x6e, 0x74, 0x03, 0x01, 0x10, 0x61, 0x68, 0x66, 0x6c, 0x5f,
-            0x61, 0x62, 0x69, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x03,
-            0x02, 0x04, 0x72, 0x75, 0x6e, 0x76, 0x00, 0x07, 0x0a, 0xfd, 0x01, 0x08,
-            0x11, 0x01, 0x01, 0x7f, 0x23, 0x03, 0x21, 0x01, 0x23, 0x03, 0x20, 0x00,
-            0x6a, 0x24, 0x03, 0x20, 0x01, 0x0b, 0x03, 0x00, 0x01, 0x0b, 0x04, 0x00,
-            0x23, 0x00, 0x0b, 0x0a, 0x00, 0x41, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46,
-            0x72, 0x0b, 0x24, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x04, 0x7f, 0x41,
-            0x00, 0x05, 0x23, 0x00, 0x41, 0x01, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x24,
-            0x00, 0x23, 0x01, 0x41, 0x01, 0x6a, 0x24, 0x01, 0x41, 0x00, 0x05, 0x00,
-            0x0b, 0x0b, 0x0b, 0x2f, 0x01, 0x01, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41,
-            0x00, 0x24, 0x01, 0x41, 0x03, 0x21, 0x02, 0x02, 0x40, 0x03, 0x40, 0x10,
-            0x03, 0x0d, 0x01, 0x20, 0x02, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x02,
-            0x41, 0x01, 0x6b, 0x21, 0x02, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b,
-            0x20, 0x00, 0x0b, 0x43, 0x01, 0x04, 0x7f, 0x23, 0x04, 0x04, 0x40, 0x00,
-            0x0b, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00, 0x24, 0x01, 0x41, 0x03, 0x21,
-            0x05, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03, 0x0d, 0x01, 0x20, 0x05, 0x45,
-            0x04, 0x40, 0x00, 0x0b, 0x20, 0x05, 0x41, 0x01, 0x6b, 0x21, 0x05, 0x10,
-            0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x23, 0x00, 0x41, 0x00, 0x46, 0x04,
-            0x40, 0x41, 0x00, 0x20, 0x00, 0x20, 0x01, 0x0f, 0x0b, 0x00, 0x0b, 0x3c,
+            0x00, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x00, 0x02, 0x7f, 0x7f,
+            0x03, 0x08, 0x07, 0x01, 0x02, 0x00, 0x00, 0x00, 0x03, 0x04, 0x05, 0x03,
+            0x01, 0x00, 0x01, 0x06, 0x1b, 0x05, 0x7f, 0x01, 0x41, 0x01, 0x0b, 0x7f,
+            0x01, 0x41, 0x00, 0x0b, 0x7f, 0x00, 0x41, 0x01, 0x0b, 0x7f, 0x01, 0x41,
+            0x80, 0x08, 0x0b, 0x7f, 0x01, 0x41, 0x00, 0x0b, 0x07, 0x66, 0x09, 0x06,
+            0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x05, 0x61, 0x6c, 0x6c,
+            0x6f, 0x63, 0x00, 0x00, 0x07, 0x64, 0x65, 0x61, 0x6c, 0x6c, 0x6f, 0x63,
+            0x00, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x05, 0x04, 0x73, 0x74, 0x65,
+            0x70, 0x00, 0x04, 0x0d, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f,
+            0x73, 0x74, 0x61, 0x74, 0x65, 0x00, 0x02, 0x10, 0x74, 0x72, 0x61, 0x6e,
+            0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74,
+            0x03, 0x01, 0x10, 0x61, 0x68, 0x66, 0x6c, 0x5f, 0x61, 0x62, 0x69, 0x5f,
+            0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x03, 0x02, 0x04, 0x72, 0x75,
+            0x6e, 0x76, 0x00, 0x06, 0x0a, 0xb9, 0x01, 0x07, 0x11, 0x01, 0x01, 0x7f,
+            0x23, 0x03, 0x21, 0x01, 0x23, 0x03, 0x20, 0x00, 0x6a, 0x24, 0x03, 0x20,
+            0x01, 0x0b, 0x03, 0x00, 0x01, 0x0b, 0x04, 0x00, 0x23, 0x00, 0x0b, 0x0a,
+            0x00, 0x41, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x72, 0x0b, 0x24, 0x00,
+            0x23, 0x00, 0x41, 0x00, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x05, 0x23, 0x00,
+            0x41, 0x01, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x24, 0x00, 0x23, 0x01, 0x41,
+            0x01, 0x6a, 0x24, 0x01, 0x41, 0x00, 0x05, 0x00, 0x0b, 0x0b, 0x0b, 0x2f,
             0x01, 0x01, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00, 0x24, 0x01, 0x41,
+            0x03, 0x21, 0x02, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03, 0x0d, 0x01, 0x20,
+            0x02, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x02, 0x41, 0x01, 0x6b, 0x21,
+            0x02, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x20, 0x00, 0x0b, 0x3c,
+            0x01, 0x03, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00, 0x24, 0x01, 0x41,
             0x03, 0x21, 0x00, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03, 0x0d, 0x01, 0x20,
             0x00, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x00, 0x41, 0x01, 0x6b, 0x21,
             0x00, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x23, 0x00, 0x41, 0x00,
             0x46, 0x04, 0x40, 0x41, 0x00, 0x41, 0x80, 0x08, 0x0f, 0x0b, 0x00, 0x0b,
             0x00, 0x34, 0x13, 0x61, 0x68, 0x66, 0x6c, 0x2e, 0x63, 0x6f, 0x72, 0x65,
             0x2d, 0x6c, 0x61, 0x79, 0x6f, 0x75, 0x74, 0x2e, 0x76, 0x31, 0x41, 0x48,
-            0x46, 0x4c, 0x43, 0x4c, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01,
+            0x46, 0x4c, 0x43, 0x4c, 0x05, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01,
             0x06, 0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x01, 0x00, 0x80, 0x02, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x13, 0x61, 0x68, 0x66,
             0x6c, 0x2e, 0x77, 0x69, 0x72, 0x65, 0x2d, 0x73, 0x63, 0x68, 0x65, 0x6d,
@@ -2461,12 +2260,13 @@ int main() {
         };
 
         // P6-2: a scalar computation handler compiles to its OWN `() -> i32`
-        // wasm FUNCTION. The seven fixed ABI functions occupy indices 0..6
-        // (import_count == 0 here), so the first compiled handler is index 7;
+        // wasm FUNCTION. The six fixed ABI functions occupy indices 0..5
+        // (import_count == 0 here; the old run2 slot at index 6 was deleted
+        // with the WireJson lane), so the first compiled handler is index 6;
         // `step()` becomes a thin `call`-based dispatch ladder whose body no
         // longer contains the arithmetic. `scalar_handler_body` is the single
         // accessor every P6 assertion below reads.
-        constexpr std::uint32_t kFirstHandlerFunction = 7;
+        constexpr std::uint32_t kFirstHandlerFunction = 6;
         const auto scalar_handler_body = [](const std::vector<std::uint8_t> &bytes) {
             return wasm_function_body(bytes, kFirstHandlerFunction);
         };
@@ -4280,9 +4080,11 @@ int main() {
                   "P6-2 trap-only handler compiles to a trapping function");
         }
 
-        // A P6-shaped region that carries a capability EFFECT must NOT enter the
-        // computation lane: effects stay on the KR6.5 orchestration classification
-        // (kUnsupportedCapabilityFrame, never the P6 scaffold prefix).
+        // A P6-shaped region that carries a capability EFFECT lowers through
+        // the bridge lane: an in-handler capability call in a non-final state
+        // is a valid bridge call site, not a P6 scalar computation. After the
+        // WireJson lane elimination every capability call uses the bridge
+        // contract, so the emission succeeds and the artifact carries runv.
         {
             auto program = make_e2_core_program();
             auto &e2_flow = program.flows[0];
@@ -4324,17 +4126,15 @@ int main() {
                 program, *layout.table,
                 {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
             // RFC 0026 P6-7 frame-bridge v2 (rung V2-C): an in-handler
-            // capability statement in an opaque (non-frame) agent is still an
-            // effect — but its wire shape is the E2 single-Struct-arg tuple
-            // contract, not the multi/aggregated-arg bridge contract. This
-            // hand-built fixture passes a bare whole-frame aggregate root (the
-            // opaque tuple lane accepts an aggregate i32 ADDRESS only in FB
-            // outlined-fn bodies), so it must fail closed on the capability
-            // ABI rather than silently emit a bridge module.
-            check(!emitted.artifact.has_value() &&
-                      has_codegen_code(
-                          emitted,
-                          backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+            // capability statement is a bridge call site. The bare Input
+            // root is the whole-frame aggregate address (a legal bridge
+            // argument span), and the zero-sized struct is forwarded as
+            // (frame_base, 0) — a valid no-op argument. The emission
+            // succeeds and the artifact carries the runv export.
+            check(emitted.ok() && emitted.artifact.has_value() &&
+                      std::find(emitted.artifact->exports.begin(),
+                                emitted.artifact->exports.end(),
+                                "runv") != emitted.artifact->exports.end(),
                   "P6 gate classifies an effectful region as orchestration, not computation");
         }
 
@@ -4944,78 +4744,6 @@ int main() {
                   "state and capability");
         }
 
-        // WH-5c.4 P0-3 emission pin: a construct-capability terminal with an
-        // opaque upstream carries BOTH a JSON_TO_P4D input crossing (opaque
-        // producer output -> P4-D input) AND a P4D_TO_JSON self-transcode
-        // (constructed Request -> wire-JSON). Before the fix the scheduler
-        // table was one slot per node (last-write-wins), so one site was
-        // silently dropped. The two-slot table keeps both.
-        {
-            using namespace ahfl::ir;
-            using namespace ahfl::ir::core;
-            auto program = make_p03_opaque_upstream_program();
-            check(verify_core_program(program).ok() &&
-                      compute_core_layouts(program).ok(),
-                  "WH-5c.4 P0-3: opaque-upstream fixture is verified Core "
-                  "with a layout");
-            const auto layouts = compute_core_layouts(program);
-            const auto emitted = backends::emit_core_wasm(
-                program, *layouts.table,
-                {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi});
-            check(emitted.artifact.has_value(),
-                  "WH-5c.4 P0-3: opaque-upstream construct-terminal workflow "
-                  "emits cleanly");
-            // Find the construct node's schedule position from the descriptor.
-            std::uint32_t construct_schedule_pos = 0;
-            bool found_construct = false;
-            if (emitted.descriptor.has_value()) {
-                for (const auto &node : emitted.descriptor->nodes) {
-                    if (node.name == "construct") {
-                        construct_schedule_pos = node.schedule_pos;
-                        found_construct = true;
-                        break;
-                    }
-                }
-            }
-            check(found_construct,
-                  "WH-5c.4 P0-3: the descriptor names the construct node");
-            // The descriptor's frame_section must carry BOTH transcode sites
-            // targeting the construct node.
-            if (emitted.descriptor.has_value() &&
-                emitted.descriptor->frame_section.has_value()) {
-                const auto &sites =
-                    emitted.descriptor->frame_section->transcode_sites;
-                bool has_json_to_p4d = false;
-                bool has_p4d_to_json = false;
-                for (const auto &site : sites) {
-                    if (site.target_node_ordinal !=
-                        construct_schedule_pos) {
-                        continue;
-                    }
-                    if (site.direction ==
-                        CoreFrameTranscodeSite::Direction::JsonToP4D) {
-                        has_json_to_p4d = true;
-                    }
-                    if (site.direction ==
-                            CoreFrameTranscodeSite::Direction::P4DToJson &&
-                        site.source ==
-                            CoreFrameTranscodeSite::Source::CapabilityParam) {
-                        has_p4d_to_json = true;
-                    }
-                }
-                check(has_json_to_p4d,
-                      "WH-5c.4 P0-3: JSON_TO_P4D input crossing targets the "
-                      "construct node");
-                check(has_p4d_to_json,
-                      "WH-5c.4 P0-3: P4D_TO_JSON CapabilityParam self-"
-                      "transcode targets the construct node");
-            } else {
-                check(false,
-                      "WH-5c.4 P0-3: the workflow descriptor carries a frame "
-                      "section");
-            }
-        }
-
         // WH-5c.4 P2-A: a workflow-packaged agent that composes an in-handler
         // bridge call (non-final Start) with a construct-capability terminal
         // (final Done) is rejected at plan-build time. The exec manifest
@@ -5396,12 +5124,11 @@ int main() {
                 check(closure.size == 8 && closure.align == 4 && shape != nullptr &&
                           shape->environment.has_value(),
                       "P6-8a the D2 closure layout is the word pair plus an env struct");
-                // And it is NOT a P6 value: the projection leaf read fails closed.
+                // RFC 0026 P6-8a (KR6.6): closures are now first-class P6
+                // values, so the projection leaf emits successfully.
                 const auto emitted = emit_agent(program, *layout.table);
-                check(!emitted.artifact.has_value() &&
-                          has_codegen_code(emitted,
-                                           backends::core_wasm_diag::kUnsupportedOrchestration),
-                      "P6-8a a closure projection leaf fails closed (no P6 closure value)");
+                check(emitted.artifact.has_value(),
+                      "P6-8a a closure projection leaf emits (P6 closure value)");
             }
         }
 
@@ -5481,8 +5208,8 @@ int main() {
             flow.storage.value_count = 2;
             flow.storage.value_types = {CoreValueTypeId{0}, enum_vt};
             // Pattern 0 = a WILDCARD; pattern 1 = `High(_)` over one tuple
-            // payload slot. No arm binding is involved, so the only gate that can
-            // reject is the pattern-site one under test.
+            // payload slot. No arm binding is involved; the wildcard sub-pattern
+            // never loads the two-word closure payload.
             flow.storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
             flow.storage.patterns.push_back(CorePattern{
                 CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {CorePatternId{0}}, {}, false},
@@ -5504,18 +5231,17 @@ int main() {
             match.fallback_region->statements.push_back(
                 CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
             start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
-            // The enum layout finalises (tag i32 + an 8-byte closure payload), so
-            // the rejection is the PATTERN-SITE gate's own, never the layout
-            // verifier swallowing the case first.
+            // The enum layout finalises (tag i32 + an 8-byte closure payload).
+            // Closures are now first-class P6 values, so the pattern-site gate
+            // admits the slot and the wildcard sub-pattern emits without ever
+            // loading the two-word payload.
             const auto layout = compute_core_layouts(program);
             check(verify_core_program(program).ok() && layout.ok() && layout.table.has_value(),
                   "P6-8a closure-payload enum match fixture is verified Core with a layout");
             if (layout.table.has_value()) {
                 const auto emitted = emit_agent(program, *layout.table);
-                check(!emitted.artifact.has_value() &&
-                          has_codegen_code(emitted,
-                                           backends::core_wasm_diag::kUnsupportedOrchestration),
-                      "P6-8a a closure payload sub-pattern fails closed (no half-closure latch)");
+                check(emitted.artifact.has_value(),
+                      "P6-8a a closure payload wildcard sub-pattern emits (P6 closure value)");
             }
         }
     }

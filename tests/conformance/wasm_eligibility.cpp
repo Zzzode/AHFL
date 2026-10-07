@@ -110,12 +110,10 @@ blocked(std::string_view code, std::string message) {
     return classification;
 }
 
-[[nodiscard]] WasmEligibilityClassification runnable(
-    std::size_t artifact_bytes, ahfl::backends::CoreWasmFrameContract frame_contract) {
+[[nodiscard]] WasmEligibilityClassification runnable(std::size_t artifact_bytes) {
     WasmEligibilityClassification classification;
     classification.verdict = WasmEligibilityVerdict::RunnableOrchestration;
     classification.artifact_bytes = artifact_bytes;
-    classification.frame_contract = frame_contract;
     // The reason names the lane the case actually cleared. It is a stable,
     // case-independent string: the E1-E3 orchestration subset plus the landed
     // P6 computation slices are what "runs today" means, so the classifier
@@ -179,10 +177,7 @@ WasmEligibilityClassification classify_wasm_eligibility(const LoadedConformanceC
         const auto &first = emitted.diagnostics.front();
         return blocked(first.code, first.message);
     }
-    const auto frame_contract = emitted.descriptor.has_value()
-                                    ? emitted.descriptor->frame_contract
-                                    : ahfl::backends::CoreWasmFrameContract::WireJson;
-    return runnable(emitted.artifact->bytes.size(), frame_contract);
+    return runnable(emitted.artifact->bytes.size());
 }
 
 std::optional<std::string>
@@ -279,10 +274,7 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     } else if (declared.node_observation_skip != required_skip) {
         return "manifest's engines.wasm.node_observation_skip declaration does not match the "
                "computed emit outcome (verdict " +
-               std::string{wasm_eligibility_verdict_name(verdict)} + ", frame_contract " +
-               (computed.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame
-                    ? "p6_frame"
-                    : "wire_json") +
+               std::string{wasm_eligibility_verdict_name(verdict)} +
                ") -- the Node differential skip set is pinned by this declaration";
     }
 

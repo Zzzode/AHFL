@@ -19,6 +19,7 @@ namespace {
 
 using ahfl::ir::core::CoreWirePayloadKind;
 using ahfl::ir::core::CoreWireSchemaBool;
+using ahfl::ir::core::CoreWireSchemaClosure;
 using ahfl::ir::core::CoreWireSchemaDecimal;
 using ahfl::ir::core::CoreWireSchemaDuration;
 using ahfl::ir::core::CoreWireSchemaEnum;
@@ -280,6 +281,13 @@ class Decoder {
             return WireDecodeResult::failure("wire-codec: malformed UUID spelling");
         }
         return WireDecodeResult::success(std::move(*uuid));
+    }
+
+    [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &,
+                                                const CoreWireSchemaClosure &) {
+        // Closures are first-class P6 values but are not JSON-constructible;
+        // an embedded host must never pack one from a wire payload.
+        return WireDecodeResult::failure("wire-codec: closure values are not JSON-constructible");
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -673,6 +681,12 @@ class Validator {
                 "wire-codec: UUID must be exactly 32 lowercase hex chars");
         }
         return SchemaValidationResult::ok();
+    }
+
+    [[nodiscard]] SchemaValidationResult check_shape(const Value &,
+                                                     const CoreWireSchemaClosure &) {
+        return SchemaValidationResult::fail(
+            "wire-codec: closure values are not JSON-constructible");
     }
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,

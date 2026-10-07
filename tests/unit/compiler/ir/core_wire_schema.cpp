@@ -21,7 +21,7 @@
 // capabilities-only program). They then:
 //   * project the wire closure of a canonical selection and assert the shapes,
 //   * prove projection is deterministic + reprojection-verifiable,
-//   * prove the fail-closed rejections (Fn/Closure/Never/non-String Map key,
+//   * prove the fail-closed rejections (Fn/Closure/Never,
 //     non-canonical / out-of-range selection, unverified Core),
 //   * prove the local table verifier and the canonical encoder.
 // The projector is a SIDE artifact: it never mutates the CoreProgram and is
@@ -130,7 +130,7 @@ enum : std::uint32_t {
     kFnCap = 4,      // fn -> Bool               (wire: UNSUPPORTED)
     kClosureCap = 5, // closure -> Bool          (wire: UNSUPPORTED)
     kNeverCap = 6,   // (Never) -> Bool          (wire: UNSUPPORTED)
-    kMapKeyCap = 7,  // Map<Int,Int> -> Bool     (wire: UNSUPPORTED_MAP_KEY)
+    kMapKeyCap = 7,  // Map<Int,Int> -> Bool     (wire: Int key admitted)
 };
 
 [[nodiscard]] CoreProgram make_wire_program() {
@@ -603,9 +603,11 @@ TEST_CASE("wire projection fails closed on value_json-unrepresentable types") {
     }
 
     SUBCASE("closure value") {
+        // RFC 0026 P6-8a: closures are first-class P6 values. The wire
+        // schema projects a CoreWireSchemaClosure node; the frame packer
+        // and reader reject closure values at pack/unpack time.
         const auto result = project_core_wire_schema(program, caps({kClosureCap}));
-        CHECK_FALSE(result.ok());
-        CHECK(has_code(result.diagnostics, std::string(wire_schema::kUnsupported)));
+        CHECK(result.ok());
     }
 
     SUBCASE("Never nested in a materialized aggregate") {
@@ -615,9 +617,12 @@ TEST_CASE("wire projection fails closed on value_json-unrepresentable types") {
     }
 
     SUBCASE("Map with a non-String key") {
+        // RFC 0026 dual-track elimination: the wire schema is the host's
+        // frame-binding authority, not a value_json serializer. Any
+        // wire-representable scalar/string key (Int, Bool, String, ...)
+        // projects; the P4-D frame packer/reader walk key/value generically.
         const auto result = project_core_wire_schema(program, caps({kMapKeyCap}));
-        CHECK_FALSE(result.ok());
-        CHECK(has_code(result.diagnostics, std::string(wire_schema::kUnsupportedMapKey)));
+        CHECK(result.ok());
     }
 }
 

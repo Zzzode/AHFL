@@ -108,11 +108,8 @@ struct CoreWasmNodeDescriptor {
     std::uint32_t runner{0};       // index into CoreWasmExecutionDescriptor::agents
     std::string name;              // source-level node name (display / hooks)
     bool has_capability{false};
-    // WH-5b.1: P6-packaged node (fixed I_k/C_k/scratch_k/O_k frame block).
-    // Opaque capability-final nodes are false. When true, p6_block_ordinal is
-    // the node_blocks / dense_node_*_layouts / frame_roots.node_* index (P6-only
-    // dense order). When false, p6_block_ordinal is unused.
-    bool is_p6{false};
+    // The node's dense index into node_blocks / frame_roots.node_* arrays
+    // (P6-dense order). Every node is P6 after the WireJson lane elimination.
     std::uint32_t p6_block_ordinal{0};
     // First capability ordinal + source symbol (for event-record cross-check).
     // A P6 bridge node can call multiple capabilities; all_capabilities carries
@@ -131,11 +128,6 @@ struct CoreWasmCapabilityImport {
     std::uint32_t ordinal{0};
     std::string field;          // wasm import field, e.g. "cap_7"
     std::string canonical_name; // canonical capability name
-    /// RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): the import's functype
-    /// protocol. "opaque" is the fixed (i32,i32)->(i32,i32,i32) tuple final
-    /// forward; "bridge" is the additive (i32)->(i32,i32) control-block frame
-    /// bridge. One capability has exactly one mode per module.
-    std::string mode{"opaque"};
 };
 
 /// RFC 0026 P6-7: one input-reached bounded container's disjoint backing
@@ -180,15 +172,16 @@ struct CoreWasmBridgeCallSite {
 };
 
 /// RFC 0026 P6-7: the P6-frame facts an embedded host needs to pack input and
-/// read output. Populated iff `frame_contract == P6Frame`. The layout table and
-/// wire schema themselves ride in the module's custom sections; this carries
-/// only the fixed-region coordinates and final-kind discriminator the host
-/// cross-checks against them.
+/// read output. Every module is P6-frame after the WireJson lane elimination.
+/// The layout table and wire schema themselves ride in the module's custom
+/// sections; this carries only the fixed-region coordinates and final-kind
+/// discriminator the host cross-checks against them.
 struct CoreWasmFrameLane {
     /// "identity" finals return the borrowed input base; "computed" finals
-    /// materialize into the output base. The sole authority for which base
-    /// runv's value_ptr may name.
-    std::string final_kind; // "identity" / "computed"
+    /// materialize into the output base; "capability" finals place the bridge
+    /// result at the output base. The sole authority for which base runv's
+    /// value_ptr may name.
+    std::string final_kind; // "identity" / "computed" / "capability"
     std::uint32_t input_base{0};
     std::uint32_t input_size{0};
     std::uint32_t output_base{0};
@@ -216,26 +209,8 @@ struct CoreWasmFrameLane {
     std::uint32_t construct_heap_base{0};
 };
 
-/// The input/output frame contract an embedded host must honor.
-enum class CoreWasmFrameContract {
-    /// The run2 boundary carries opaque canonical value_json BYTES: the host
-    /// writes the scenario's canonical input bytes and reads the output bytes
-    /// verbatim (identity passthrough or a forwarded capability result). The
-    /// canonical observation is fully reconstructable.
-    WireJson,
-    /// A P6-frame module (RFC 0026 P6-7): a computation handler projects raw
-    /// P4-D input-frame bytes or returns a computed final. It carries the
-    /// `ahfl.core-layout.v1` and boundary-root wire-schema sections and exports
-    /// `runv() -> (status, value_ptr)`. The host packs canonical input JSON
-    /// into the fixed P4-D regions, calls runv, and walks the returned frame
-    /// with the verified layout + wire binding to render canonical output.
-    /// (Descriptor spelling: "p6_frame".)
-    P6Frame,
-};
-
 struct CoreWasmExecutionDescriptor {
     bool is_workflow{false};
-    CoreWasmFrameContract frame_contract{CoreWasmFrameContract::WireJson};
 
     // Agent lane.
     std::string agent_name;          // canonical entry agent name
@@ -257,17 +232,17 @@ struct CoreWasmExecutionDescriptor {
     // Both lanes: reachable capability imports in ordinal order.
     std::vector<CoreWasmCapabilityImport> imports;
 
-    // RFC 0026 P6-7: populated iff frame_contract == P6Frame.
-    std::optional<CoreWasmFrameLane> frame;
+    // RFC 0026 P6-7: every module is P6-frame after the WireJson lane
+    // elimination, so these are always populated.
+    CoreWasmFrameLane frame;
     // RFC 0026 P6-7: the verified boundary tables a generic embedded host packs
-    // input from and encodes output against, populated iff frame_contract ==
-    // P6Frame. They mirror the module's `ahfl.core-layout.v1` /
-    // `ahfl.wire-schema.v1` custom sections (same bytes the sections encode), so
-    // the descriptor needs no separate trust channel; the host may re-admit the
-    // sections independently. These are descriptor-rendering inputs, not part of
-    // the wire ABI proper.
-    std::optional<ir::core::CoreFrameLayoutSection> frame_section;
-    std::optional<ir::core::CoreWireSchemaTable> wire_schema;
+    // input from and encodes output against. They mirror the module's
+    // `ahfl.core-layout.v1` / `ahfl.wire-schema.v1` custom sections (same bytes
+    // the sections encode), so the descriptor needs no separate trust channel;
+    // the host may re-admit the sections independently. These are
+    // descriptor-rendering inputs, not part of the wire ABI proper.
+    ir::core::CoreFrameLayoutSection frame_section;
+    ir::core::CoreWireSchemaTable wire_schema;
 
     // Node-event buffer layout (identity for both lanes; the ABI SSOT).
     std::uint32_t event_log_base{0};

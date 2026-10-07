@@ -162,182 +162,13 @@ std::uint32_t setup_bridge_control_block(wh::Wasm3ResumeEngine &engine,
     return kControlBase;
 }
 
-// ==== opaque lane tests ====
-
-// 1. Opaque OK: the mock returns Success with IntValue(42); the executor
-//    serializes "42", alloc_then_writes it, and replies (0, ptr, 2).
-void test_opaque_ok() {
-    constexpr std::uint64_t kSymbol = 100;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
-    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
-    check(admitted.ok(), "opaque ok: A2 admission");
-
-    wh::Wasm3ResumeEngine engine;
-    auto inst = engine.fresh_instance(
-        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            return eng::ImportReply{};
-        });
-    check(inst.has_value(), "opaque ok: engine instantiated");
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    mock.result.value = runtime::Value{runtime::IntValue{42}};
-    auto invoker = mock.as_invoker();
-
-    wh::CapabilityImportState state;
-    ir::core::CoreFrameLayoutSection section; // unused by opaque lane
-    runtime::CapabilityInvocationContext context;
-    wh::CapabilityImportConfig config{
-        .engine = engine,
-        .module = *admitted.module,
-        .frame_section = section,
-        .invoker = invoker,
-        .context = context,
-        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
-        .state = state,
-    };
-    auto callback = wh::make_capability_import_callback(std::move(config));
-
-    // The arg envelope for 1 Int param: {"value":42}
-    const std::string arg_json = "{\"value\":42}";
-    eng::ImportObservation obs;
-    obs.import_ordinal = 0;
-    obs.param_frame = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
-    auto mem = engine.read_whole_memory();
-    check(mem.has_value(), "opaque ok: read memory");
-    obs.whole_memory = *mem;
-
-    auto reply = callback(obs);
-    check(std::holds_alternative<eng::ImportReply>(reply), "opaque ok: reply is ImportReply");
-    if (const auto *r = std::get_if<eng::ImportReply>(&reply)) {
-        check(r->raw_status == 0, "opaque ok: raw_status == 0");
-        check(r->result_ptr.value != 0, "opaque ok: result_ptr != 0");
-        check(r->result_len == 2, "opaque ok: result_len == 2");
-        auto mem2 = engine.read_whole_memory();
-        std::string result_json(
-            mem2->begin() + r->result_ptr.value,
-            mem2->begin() + r->result_ptr.value + r->result_len);
-        check(result_json == "42", "opaque ok: result == '42'");
-    }
-    check(mock.call_count == 1, "opaque ok: invoker called once");
-    check(mock.last_name == "test_cap", "opaque ok: capability name");
-    check(!state.last_error.has_value(), "opaque ok: no error");
-}
-
-// 2. Opaque ERROR: the mock returns Error; the executor replies (1, 0, 0) — a
-//    raw non-OK reply, NOT an ImportAbort.
-void test_opaque_error() {
-    constexpr std::uint64_t kSymbol = 101;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
-    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
-    check(admitted.ok(), "opaque error: A2 admission");
-
-    wh::Wasm3ResumeEngine engine;
-    auto inst = engine.fresh_instance(
-        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            return eng::ImportReply{};
-        });
-    check(inst.has_value(), "opaque error: engine instantiated");
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Error;
-    auto invoker = mock.as_invoker();
-
-    wh::CapabilityImportState state;
-    ir::core::CoreFrameLayoutSection section;
-    runtime::CapabilityInvocationContext context;
-    wh::CapabilityImportConfig config{
-        .engine = engine,
-        .module = *admitted.module,
-        .frame_section = section,
-        .invoker = invoker,
-        .context = context,
-        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
-        .state = state,
-    };
-    auto callback = wh::make_capability_import_callback(std::move(config));
-
-    const std::string arg_json = "{\"value\":42}";
-    eng::ImportObservation obs;
-    obs.import_ordinal = 0;
-    obs.param_frame = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
-    auto mem = engine.read_whole_memory();
-    obs.whole_memory = *mem;
-
-    auto reply = callback(obs);
-    check(std::holds_alternative<eng::ImportReply>(reply),
-          "opaque error: reply is ImportReply (not ImportAbort)");
-    if (const auto *r = std::get_if<eng::ImportReply>(&reply)) {
-        check(r->raw_status == 1, "opaque error: raw_status == 1");
-        check(r->result_ptr.value == 0, "opaque error: result_ptr == 0");
-        check(r->result_len == 0, "opaque error: result_len == 0");
-    }
-    check(mock.call_count == 1, "opaque error: invoker called once");
-    check(!state.last_error.has_value(), "opaque error: no host-decision error");
-}
-
-// 3. Opaque PENDING: the mock returns Pending; the executor replies (2, 0, 0)
-//    — a raw non-OK reply, NOT an ImportAbort.
-void test_opaque_pending() {
-    constexpr std::uint64_t kSymbol = 102;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
-    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
-    check(admitted.ok(), "opaque pending: A2 admission");
-
-    wh::Wasm3ResumeEngine engine;
-    auto inst = engine.fresh_instance(
-        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            return eng::ImportReply{};
-        });
-    check(inst.has_value(), "opaque pending: engine instantiated");
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Pending;
-    auto invoker = mock.as_invoker();
-
-    wh::CapabilityImportState state;
-    ir::core::CoreFrameLayoutSection section;
-    runtime::CapabilityInvocationContext context;
-    wh::CapabilityImportConfig config{
-        .engine = engine,
-        .module = *admitted.module,
-        .frame_section = section,
-        .invoker = invoker,
-        .context = context,
-        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
-        .state = state,
-    };
-    auto callback = wh::make_capability_import_callback(std::move(config));
-
-    const std::string arg_json = "{\"value\":42}";
-    eng::ImportObservation obs;
-    obs.import_ordinal = 0;
-    obs.param_frame = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
-    auto mem = engine.read_whole_memory();
-    obs.whole_memory = *mem;
-
-    auto reply = callback(obs);
-    check(std::holds_alternative<eng::ImportReply>(reply),
-          "opaque pending: reply is ImportReply (not ImportAbort)");
-    if (const auto *r = std::get_if<eng::ImportReply>(&reply)) {
-        check(r->raw_status == 2, "opaque pending: raw_status == 2");
-        check(r->result_ptr.value == 0, "opaque pending: result_ptr == 0");
-        check(r->result_len == 0, "opaque pending: result_len == 0");
-    }
-    check(mock.call_count == 1, "opaque pending: invoker called once");
-    check(!state.last_error.has_value(), "opaque pending: no host-decision error");
-}
-
 // ==== bridge lane tests ====
 
 // 4. Bridge OK: the mock returns Success with IntValue(42); the executor packs
 //    it at the result base and replies (0, result_base, result_extent).
 void test_bridge_ok() {
     constexpr std::uint64_t kSymbol = 200;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "bridge ok: A2 admission");
 
@@ -405,7 +236,7 @@ void test_bridge_ok() {
 //    ERROR arm).
 void test_bridge_error() {
     constexpr std::uint64_t kSymbol = 201;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "bridge error: A2 admission");
 
@@ -462,7 +293,7 @@ void test_bridge_error() {
 // 6. ImportAbort on unknown import ordinal: no call site matches.
 void test_abort_unknown_ordinal() {
     constexpr std::uint64_t kSymbol = 300;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort ordinal: A2 admission");
 
@@ -511,7 +342,7 @@ void test_abort_unknown_ordinal() {
 // 7. ImportAbort on unknown capability name: the name_resolver returns nullopt.
 void test_abort_unknown_name() {
     constexpr std::uint64_t kSymbol = 301;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort name: A2 admission");
 
@@ -522,12 +353,13 @@ void test_abort_unknown_name() {
         });
     check(inst.has_value(), "abort name: engine instantiated");
 
+    auto section = make_bridge_section(kSymbol);
+
     ScriptedInvoker mock;
     mock.result.status = runtime::CapabilityCallStatus::Success;
     auto invoker = mock.as_invoker();
 
     wh::CapabilityImportState state;
-    ir::core::CoreFrameLayoutSection section;
     runtime::CapabilityInvocationContext context;
     wh::CapabilityImportConfig config{
         .engine = engine,
@@ -540,11 +372,15 @@ void test_abort_unknown_name() {
     };
     auto callback = wh::make_capability_import_callback(std::move(config));
 
-    const std::string arg_json = "{\"value\":42}";
+    // Set up the control block + spill arg in the engine's memory.
+    const auto block_ptr = setup_bridge_control_block(engine, 42);
+    check(block_ptr == kControlBase, "abort name: control block set up");
+
+    // Build the observation (bridge lane: param_frame is empty).
     eng::ImportObservation obs;
     obs.import_ordinal = 0;
-    obs.param_frame = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
+    obs.scalar_arg = block_ptr;
+    obs.param_frame = {};
     auto mem = engine.read_whole_memory();
     obs.whole_memory = *mem;
 
@@ -561,7 +397,7 @@ void test_abort_unknown_name() {
 //    outside the control-block region.
 void test_abort_bridge_block_oob() {
     constexpr std::uint64_t kSymbol = 302;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge oob: A2 admission");
 
@@ -611,7 +447,7 @@ void test_abort_bridge_block_oob() {
 //    call_site_id word disagrees with its dense block address.
 void test_abort_bridge_site_id_mismatch() {
     constexpr std::uint64_t kSymbol = 303;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge id: A2 admission");
 
@@ -662,95 +498,11 @@ void test_abort_bridge_site_id_mismatch() {
     check(mock.call_count == 0, "abort bridge id: invoker not called");
 }
 
-// ==== P2-6: missing executor abort-path tests ====
-
-// Build a module with A2 admission sections whose wire schema has a String
-// result type (node 1) instead of the default Int (node 0). The opaque lane's
-// result validation accepts any-length String (unbounded), so the executor
-// reaches the alloc_then_write step — used by the oversized-frame test.
-[[nodiscard]] std::vector<std::uint8_t>
-with_a2_admission_string_result(std::vector<std::uint8_t> module_bytes,
-                                std::uint64_t source_symbol) {
-    wht::put_section(module_bytes, 0,
-                wht::custom_payload("ahfl.wasm-exec-manifest.v1",
-                                   wht::exec_manifest_body(
-                                       7, {{.workflow_node_id = 1,
-                                            .cap_call_count = 1,
-                                            .capability = 0,
-                                            .source_symbol = source_symbol}})));
-    wht::put_section(module_bytes, 0,
-                wht::custom_payload("ahfl.wire-schema.v1",
-                                   wht::encode_schema(wht::schema_table(
-                                       {ir::core::CoreWireSchemaNode{
-                                           ir::core::CoreWireSchemaString{}}},
-                                       {wht::CapSpec{
-                                           .cap_id = 0,
-                                           .symbol = source_symbol,
-                                           .result = ir::core::CoreWireSchemaNodeId{1}}}))));
-    return module_bytes;
-}
-
-// 11. Opaque oversized frame: the mock returns Success with a StringValue whose
-//     JSON serialization exceeds the fixed single-page capacity (65536). The
-//     executor validates the result (String, unbounded), serializes it to
-//     65537 bytes, and rejects the alloc_then_write as EngineAllocFailed.
-//     Post-effect: the invoker WAS called.
-void test_abort_opaque_oversized_frame() {
-    constexpr std::uint64_t kSymbol = 401;
-    auto bytes = with_a2_admission_string_result(
-        wht::capability_module(kSymbol, 2), kSymbol);
-    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
-    check(admitted.ok(), "abort oversized: A2 admission");
-
-    wh::Wasm3ResumeEngine engine;
-    auto inst = engine.fresh_instance(
-        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            return eng::ImportReply{};
-        });
-    check(inst.has_value(), "abort oversized: engine instantiated");
-
-    ScriptedInvoker mock;
-    mock.result.status = runtime::CapabilityCallStatus::Success;
-    // 65535 chars -> JSON is 65537 bytes > 65536 (fixed single-page capacity).
-    mock.result.value = runtime::Value{runtime::StringValue{std::string(65535, 'x')}};
-    auto invoker = mock.as_invoker();
-
-    wh::CapabilityImportState state;
-    ir::core::CoreFrameLayoutSection section;
-    runtime::CapabilityInvocationContext context;
-    wh::CapabilityImportConfig config{
-        .engine = engine,
-        .module = *admitted.module,
-        .frame_section = section,
-        .invoker = invoker,
-        .context = context,
-        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
-        .state = state,
-    };
-    auto callback = wh::make_capability_import_callback(std::move(config));
-
-    const std::string arg_json = "{\"value\":42}";
-    eng::ImportObservation obs;
-    obs.import_ordinal = 0;
-    obs.param_frame = std::span<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
-    auto mem = engine.read_whole_memory();
-    obs.whole_memory = *mem;
-
-    auto reply = callback(obs);
-    check(std::holds_alternative<eng::ImportAbort>(reply),
-          "abort oversized: reply is ImportAbort");
-    check(state.last_error.has_value() &&
-              *state.last_error == wh::CapabilityImportError::EngineAllocFailed,
-          "abort oversized: error is EngineAllocFailed");
-    check(mock.call_count == 1, "abort oversized: invoker called once (post-effect)");
-}
-
 // 12. Bridge arg_count mismatch: the control block's arg_count word disagrees
 //     with the site's arity. Pre-effect: the invoker is NEVER called.
 void test_abort_bridge_arg_count() {
     constexpr std::uint64_t kSymbol = 402;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge arg_count: A2 admission");
 
@@ -806,7 +558,7 @@ void test_abort_bridge_arg_count() {
 //     invoker is NEVER called.
 void test_abort_bridge_stride() {
     constexpr std::uint64_t kSymbol = 403;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge stride: A2 admission");
 
@@ -860,7 +612,7 @@ void test_abort_bridge_stride() {
 //     dense block address. Pre-effect: the invoker is NEVER called.
 void test_abort_bridge_expected_addr() {
     constexpr std::uint64_t kSymbol = 404;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge expected_addr: A2 admission");
 
@@ -915,7 +667,7 @@ void test_abort_bridge_expected_addr() {
 //     disagrees with the site's arity. Pre-effect: the invoker is NEVER called.
 void test_abort_bridge_wire_schema_arity() {
     constexpr std::uint64_t kSymbol = 405;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge ws-arity: A2 admission");
 
@@ -973,7 +725,7 @@ void test_abort_bridge_wire_schema_arity() {
 //     spill region. Pre-effect: the invoker is NEVER called.
 void test_abort_bridge_span_region() {
     constexpr std::uint64_t kSymbol = 406;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge span-region: A2 admission");
 
@@ -1035,7 +787,7 @@ void test_abort_bridge_span_region() {
 //      Pre-effect: the invoker is NEVER called.
 void test_abort_bridge_null_descriptor() {
     constexpr std::uint64_t kSymbol = 407;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge null-descriptor: A2 admission");
 
@@ -1096,7 +848,7 @@ void test_abort_bridge_null_descriptor() {
 //      is NEVER called.
 void test_abort_bridge_length_mismatch() {
     constexpr std::uint64_t kSymbol = 408;
-    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol), kSymbol);
     auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
     check(admitted.ok(), "abort bridge length-mismatch: A2 admission");
 
@@ -1155,16 +907,12 @@ void test_abort_bridge_length_mismatch() {
 } // anonymous namespace
 
 int main() {
-    test_opaque_ok();
-    test_opaque_error();
-    test_opaque_pending();
     test_bridge_ok();
     test_bridge_error();
     test_abort_unknown_ordinal();
     test_abort_unknown_name();
     test_abort_bridge_block_oob();
     test_abort_bridge_site_id_mismatch();
-    test_abort_opaque_oversized_frame();
     test_abort_bridge_arg_count();
     test_abort_bridge_stride();
     test_abort_bridge_expected_addr();

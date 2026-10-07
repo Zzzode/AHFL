@@ -525,6 +525,12 @@ read_value_at(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
             format_duration_spelling(static_cast<std::int64_t>(*wide)));
     }
 
+    // Closure: a first-class P6 value but not JSON-readable by an embedded
+    // host; reject rather than read half a two-word value.
+    if (std::holds_alternative<ir::core::CoreWireSchemaClosure>(w->shape)) {
+        return std::unexpected(FrameReadError::ShapeMismatch);
+    }
+
     // Map: inline (ptr,len) header, key/value pairs at the placement (or the
     // module-written base). Each entry occupies one stride: key at offset 0,
     // value at value_offset (WH-5c.7 mechanism (f)).
@@ -597,13 +603,14 @@ encode_p6_output(std::span<const std::uint8_t> page,
                  const ir::core::CoreFrameLayoutSection &section,
                  const ir::core::VerifiedWireSchemaBinding &output_binding,
                  std::uint32_t value_ptr, P6FinalKind final_kind) {
-    // Runv root authorization: a computed final's value_ptr must equal the
-    // output base; an identity final's the input base. The discriminator comes
-    // from the admitted descriptor/frame section, never inferred.
+    // Runv root authorization: a computed or capability final's value_ptr must
+    // equal the output base; an identity final's the input base. The
+    // discriminator comes from the admitted descriptor/frame section, never
+    // inferred.
     const std::uint32_t authorized_base =
-        final_kind == P6FinalKind::Computed
-            ? ir::core::kP6AggregateOutputBase
-            : ir::core::kP6AggregateInputBase;
+        final_kind == P6FinalKind::Identity
+            ? ir::core::kP6AggregateInputBase
+            : ir::core::kP6AggregateOutputBase;
     if (value_ptr != authorized_base) {
         return std::unexpected(FrameReadError::RunvRootUnauthorized);
     }

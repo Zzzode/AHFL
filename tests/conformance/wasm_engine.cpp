@@ -17,7 +17,6 @@ namespace ahfl::conformance {
 namespace {
 
 namespace json = ahfl::json;
-using ahfl::backends::CoreWasmFrameContract;
 namespace irc = ahfl::ir::core;
 
 [[nodiscard]] std::unique_ptr<json::JsonValue> jstr(std::string value) {
@@ -38,16 +37,6 @@ namespace irc = ahfl::ir::core;
         return "pending";
     }
     return "error";
-}
-
-[[nodiscard]] const char *frame_contract_name(CoreWasmFrameContract contract) {
-    switch (contract) {
-    case CoreWasmFrameContract::WireJson:
-        return "wire_json";
-    case CoreWasmFrameContract::P6Frame:
-        return "p6_frame";
-    }
-    return "wire_json";
 }
 
 // Builds the scenario + capability-mock section. The frame values cross the
@@ -119,9 +108,6 @@ build_imports(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
         node->set("ordinal", juint(import_descriptor.ordinal));
         node->set("field", jstr(import_descriptor.field));
         node->set("name", jstr(import_descriptor.canonical_name));
-        // V2-C: "bridge" imports use the additive (i32)->(i32,i32)
-        // control-block functype; "opaque" is the E2 tuple forward.
-        node->set("mode", jstr(import_descriptor.mode));
         imports->push(std::move(node));
     }
     return imports;
@@ -172,21 +158,18 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
         node_node->set("capability_ordinal", juint(node.capability_ordinal));
         node_node->set("source_symbol", juint(node.source_symbol));
         // WH-5b.3: the P6-dense block ordinal the host uses to resolve a
-        // transcode site's node boundary root (node_inputs/node_outputs are
-        // P6-dense, parallel to node_blocks). False/0 on an opaque node.
-        node_node->set("is_p6", json::JsonValue::make_bool(node.is_p6));
+        // node's boundary root (node_inputs/node_outputs are P6-dense,
+        // parallel to node_blocks).
         node_node->set("p6_block_ordinal", juint(node.p6_block_ordinal));
         nodes->push(std::move(node_node));
     }
     lane->set("nodes", std::move(nodes));
 
     // V2-D: the per-packaged-runner node-frame blocks and the entry/output
-    // coordinates the p6 workflow host packs/encodes against. Present only for
-    // a p6-frame workflow (the section carries the same records).
-    if (descriptor.frame_section.has_value() &&
-        !descriptor.frame_section->node_blocks.empty()) {
+    // coordinates the p6 workflow host packs/encodes against.
+    if (!descriptor.frame_section.node_blocks.empty()) {
         auto blocks = json::JsonValue::make_array();
-        for (const auto &block : descriptor.frame_section->node_blocks) {
+        for (const auto &block : descriptor.frame_section.node_blocks) {
             auto b = json::JsonValue::make_object();
             b->set("input_base", juint(block.input_base));
             b->set("input_size", juint(block.input_size));
@@ -203,13 +186,13 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
         }
         lane->set("node_blocks", std::move(blocks));
         lane->set("entry_payload_base",
-                  juint(descriptor.frame_section->entry_payload_base));
+                  juint(descriptor.frame_section.entry_payload_base));
         lane->set("entry_payload_capacity",
-                  juint(descriptor.frame_section->entry_payload_capacity));
+                  juint(descriptor.frame_section.entry_payload_capacity));
         lane->set("state_trace_base",
-                  juint(descriptor.frame_section->state_trace_base));
+                  juint(descriptor.frame_section.state_trace_base));
         lane->set("state_trace_capacity",
-                  juint(descriptor.frame_section->state_trace_capacity));
+                  juint(descriptor.frame_section.state_trace_capacity));
     }
     return lane;
 }
@@ -354,6 +337,7 @@ jwire_node(const irc::CoreWireSchemaNode &wire_node) {
             [&](const irc::CoreWireSchemaDuration &) { node->set("t", jstr("duration")); },
             [&](const irc::CoreWireSchemaTimestamp &) { node->set("t", jstr("timestamp")); },
             [&](const irc::CoreWireSchemaUuid &) { node->set("t", jstr("uuid")); },
+            [&](const irc::CoreWireSchemaClosure &) { node->set("t", jstr("closure")); },
             [&](const irc::CoreWireSchemaOption &o) {
                 node->set("t", jstr("option"));
                 node->set("value", juint(o.value.value));
@@ -408,7 +392,7 @@ jwire_node(const irc::CoreWireSchemaNode &wire_node) {
 
 [[nodiscard]] std::unique_ptr<json::JsonValue>
 build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
-    const auto &lane = *descriptor.frame;
+    const auto &lane = descriptor.frame;
     auto node = json::JsonValue::make_object();
     node->set("final_kind", jstr(lane.final_kind));
     node->set("input_base", juint(lane.input_base));
@@ -458,7 +442,7 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
         bridge_sites->push(std::move(s));
     }
     node->set("bridge_call_sites", std::move(bridge_sites));
-    const auto &section = *descriptor.frame_section;
+    const auto &section = descriptor.frame_section;
     auto placements = json::JsonValue::make_array();
     for (const auto &placement : section.placements) {
         auto p = json::JsonValue::make_object();
@@ -480,44 +464,6 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
     // KR6.6: the runtime construct-heap base (String concat result region).
     // Zero on a module without String concat.
     node->set("construct_heap_base", juint(lane.construct_heap_base));
-    // WH-5b.3: the deterministic encoding-boundary transcode sites and the
-    // shadow/payload regions the host codec adapter packs/reads against.
-    // All spans are zero on a module with no transcode sites.
-    auto transcode_sites = json::JsonValue::make_array();
-    for (const auto &site : section.transcode_sites) {
-        auto s = json::JsonValue::make_object();
-        s->set("import_ordinal", juint(site.import_ordinal));
-        s->set("direction",
-               jstr(site.direction ==
-                            irc::CoreFrameTranscodeSite::Direction::P4DToJson
-                        ? "p4d_to_json"
-                        : "json_to_p4d"));
-        s->set("source",
-               jstr(site.source ==
-                            irc::CoreFrameTranscodeSite::Source::Entry
-                        ? "entry"
-                        : site.source ==
-                                    irc::CoreFrameTranscodeSite::Source::NodeOutput
-                              ? "node_output"
-                              : "capability_param"));
-        s->set("param_ordinal", juint(site.param_ordinal));
-        s->set("source_node_ordinal", juint(site.source_node_ordinal));
-        s->set("target_node_ordinal", juint(site.target_node_ordinal));
-        s->set("layout", juint(site.layout.value));
-        transcode_sites->push(std::move(s));
-    }
-    node->set("transcode_sites", std::move(transcode_sites));
-    node->set("transcode_shadow_base", juint(section.transcode_shadow_base));
-    node->set("transcode_shadow_extent",
-              juint(section.transcode_shadow_extent));
-    node->set("transcode_payload_base",
-              juint(section.transcode_payload_base));
-    node->set("transcode_payload_capacity",
-              juint(section.transcode_payload_capacity));
-    node->set("transcode_entry_shadow_base",
-              juint(section.transcode_entry_shadow_base));
-    node->set("transcode_entry_shadow_extent",
-              juint(section.transcode_entry_shadow_extent));
     return node;
 }
 
@@ -579,7 +525,6 @@ render_descriptor(const ConformanceCase &manifest,
     root->set("case", jstr(manifest.source));
     root->set("entry", jstr(manifest.entry));
     root->set("kind", jstr(manifest.kind == CaseKind::Workflow ? "workflow" : "agent"));
-    root->set("frame_contract", jstr(frame_contract_name(descriptor.frame_contract)));
     root->set("imports", build_imports(descriptor));
 
     auto event = json::JsonValue::make_object();
@@ -591,14 +536,11 @@ render_descriptor(const ConformanceCase &manifest,
     root->set("heap_base", juint(descriptor.heap_base));
     root->set("workflow_node_count", juint(descriptor.workflow_node_count));
 
-    // RFC 0026 P6-7 rung E: a p6-frame module carries the verified layout lane
-    // and boundary wire schema the Node host packs/encodes from.
-    if (descriptor.frame.has_value() && descriptor.frame_section.has_value()) {
-        root->set("frame_lane", build_frame_lane(descriptor));
-    }
-    if (descriptor.wire_schema.has_value()) {
-        root->set("wire_schema", build_wire_schema(*descriptor.wire_schema));
-    }
+    // RFC 0026 P6-7 rung E: every module is P6-frame, so the descriptor
+    // always carries the verified layout lane and boundary wire schema the
+    // Node host packs/encodes from.
+    root->set("frame_lane", build_frame_lane(descriptor));
+    root->set("wire_schema", build_wire_schema(descriptor.wire_schema));
 
     if (descriptor.is_workflow) {
         root->set("workflow_lane", build_workflow_lane(descriptor));

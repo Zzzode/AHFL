@@ -37,7 +37,7 @@ namespace ahfl::runtime::wasm_host {
 /// The P6-frame final-kind discriminator for runv root authorization. Sourced
 /// by the driver from the codegen C++ descriptor's frame lane (decision doc
 /// section 11.2), never inferred from layout ids or constants.
-enum class P6FinalKind { Identity, Computed };
+enum class P6FinalKind { Identity, Computed, Capability };
 
 /// Typed fail-closed error family for the P6-frame reader + output encoding.
 /// Every error is a fixed enum code; no diagnostic echoes page bytes, decoded

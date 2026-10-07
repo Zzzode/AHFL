@@ -434,21 +434,6 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 FB-4 fix-forward: an Int -> Int (Int64) in-fn capability cannot
-    # match the fixed (i32,i32)->(i32,i32,i32) capability tuple functype. It must
-    # be rejected at plan time with UNSUPPORTED_CAPABILITY_FRAME and emit no
-    # module (previously an invalid module was emitted with no diagnostic).
-    add_test(NAME ahfl.wasm.fb4_int64_capability_abi_reject
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_int64_capability_abi_reject.py"
-                $<TARGET_FILE:ahfl_core_wasm_producer_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_int64_capability_abi.ahfl"
-    )
-    set_tests_properties(ahfl.wasm.fb4_int64_capability_abi_reject PROPERTIES
-        PASS_REGULAR_EXPRESSION "FB-4 Int64 in-fn capability ABI compile-reject lane passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;structural"
-    )
 
     # RFC 0026 FB-4 fix-forward: capability import planning is scoped to the one
     # compiled agent. A pure agent in a multi-agent program must plan zero
@@ -868,12 +853,17 @@ if(AHFL_ENABLE_BACKEND_WASM)
 
     # KR6.5 E3: the e3_package_cli_binary_gate survives as the structural
     # producer probe; the e3 same-frontend and wasmtime lanes are retired.
+    # RFC 0026 dual-track elimination: the direct producer must emit the SAME
+    # source the CLI's manifest resolves (main.ahfl, module wasm_e3::main),
+    # not the golden fixture (module wasm::e3_workflow) — the wire-schema
+    # section now carries the module name, so a source mismatch breaks the
+    # byte-identity assertion.
     add_test(NAME ahfl.wasm.e3_package_cli_binary_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_cli_gate.py"
                 $<TARGET_FILE:ahflc>
                 $<TARGET_FILE:ahfl_core_wasm_e3_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/integration/wasm_e3_workflow/main.ahfl"
                 "${PROJECT_SOURCE_DIR}/tests/integration/wasm_e3_workflow/ahfl.toml"
     )
     set_tests_properties(ahfl.wasm.e3_package_cli_binary_gate PROPERTIES
@@ -897,21 +887,19 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: a workflow node
-    # whose agent's only computed content is a scalar computed-goto preamble
-    # feeding an opaque capability final must fail closed
-    # (wasm.UNSUPPORTED_WORKFLOW_FRAME) until the V2-D computed-runner
-    # emission lands; the opaque static-walk runner would otherwise emit an
-    # identity arm that completes the node without invoking the capability.
+    # RFC 0026 dual-track elimination: a workflow node whose agent's only
+    # computed content is a scalar computed-goto preamble feeding a capability
+    # final now emits successfully on the P6 bridge runner lane (the opaque
+    # static-walk runner that would have skipped the capability is gone).
     # The baseline bare-goto capability workflow stays emitted with one
-    # import, so the predicate does not sweep the opaque lane.
+    # import, so the predicate does not sweep the capability lane.
     add_test(NAME ahfl.wasm.v2d_computed_goto_preamble_reject
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2d_computed_goto_preamble_reject.py"
                 $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
     )
     set_tests_properties(ahfl.wasm.v2d_computed_goto_preamble_reject PROPERTIES
-        PASS_REGULAR_EXPRESSION "V2-D scalar computed-goto preamble fail-closed compile-reject lane passed"
+        PASS_REGULAR_EXPRESSION "V2-D scalar computed-goto preamble P6-bridge emission lane passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )

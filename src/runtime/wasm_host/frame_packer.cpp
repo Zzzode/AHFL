@@ -605,6 +605,12 @@ pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         return {};
     }
 
+    // Closure: a first-class P6 value but not JSON-constructible by an
+    // embedded host; reject rather than pack half a two-word value.
+    if (std::holds_alternative<ir::core::CoreWireSchemaClosure>(w->shape)) {
+        return std::unexpected(FramePackError::ValueNotWireEncodable);
+    }
+
     // Map: inline (ptr,len) header, key/value pairs at the declared placement.
     // Each entry occupies one stride: key at offset 0, value at value_offset
     // (WH-5c.7 mechanism (f)).

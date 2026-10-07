@@ -515,14 +515,6 @@ DebugSession::classify_record_liveness_locked(const StateLineRecord &record) con
         return {false, "workflow descriptor unavailable"};
     }
 
-    // WireJson lane: all state hooks are post-run.
-    if (descriptor->frame_contract !=
-        ahfl::backends::CoreWasmFrameContract::P6Frame) {
-        return {false,
-                "state hooks are post-run on the WireJson lane (no trace "
-                "ring); pauses after run completes (post-mortem)"};
-    }
-
     // P6 lane: find the agent whose walk contains this state. F4.3: filter
     // by the record's agent_name so two agents sharing a state name don't
     // cross-match (the old code matched the first agent with the state).

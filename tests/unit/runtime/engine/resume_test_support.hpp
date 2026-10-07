@@ -19,6 +19,7 @@
 #include "base/json/json_value.hpp"
 #include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp"
+#include "runtime/engine/core_wasm_resume_host.hpp"
 #include "runtime/engine/core_wasm_resume_record.hpp"
 #include "runtime/engine/core_wasm_schema_module.hpp"
 #include "runtime/engine/core_wire_codec.hpp"
@@ -33,6 +34,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -251,7 +253,7 @@ inline std::vector<std::uint8_t> memory_section_payload(std::uint32_t min_pages)
 
 inline std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    put_section(m, 1, type_payload({func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f})}));
+    put_section(m, 1, type_payload({func_type({0x7f}, {0x7f, 0x7f})}));
     std::vector<std::pair<std::uint64_t, std::uint32_t>> imports;
     for (const auto &c : spec.caps) {
         imports.emplace_back(c.symbol, 0u);
@@ -462,6 +464,25 @@ inline std::vector<ManifestNodeSpec> module_node_specs(const VerifiedCoreWasmSch
             spec.capability = cs.call_site->capability().value;
             spec.source_symbol = cs.call_site->source_symbol();
             ++call_site;
+        } else if (spec.cap_call_count == 0) {
+            // P6 bridge node: A2 admission mints one call site per UNIQUE
+            // capability in bridge_sites. The node's primary capability is
+            // the first unique one; the cursor advances for each unique.
+            const auto sites = node.node->bridge_sites();
+            if (!sites.empty()) {
+                auto cs = mod.resolve(csm::ManifestCallSiteIndex{call_site});
+                spec.capability = cs.call_site->capability().value;
+                spec.source_symbol = cs.call_site->source_symbol();
+                std::unordered_set<std::uint32_t> seen;
+                for (const auto &site : sites) {
+                    spec.bridge_sites.push_back(ManifestBridgeSiteSpec{
+                        site.ordinal, site.call_site_id,
+                        site.capability.value, site.source_symbol});
+                    if (seen.insert(site.capability.value).second) {
+                        ++call_site;
+                    }
+                }
+            }
         }
         specs.push_back(spec);
     }
@@ -495,8 +516,15 @@ inline CoreWasmResumeRecord make_suspended_record(const VerifiedCoreWasmSchemaMo
         ResumeNode n;
         n.workflow_node_id = CoreWorkflowNodeId{s.workflow_node_id};
         n.schedule_pos = static_cast<std::uint32_t>(i);
-        n.node_kind = s.cap_call_count == 1 ? NodeKind::Capability : NodeKind::Identity;
-        if (s.cap_call_count == 1) {
+        // P6 bridge nodes (cap_call_count == 0 + non-empty bridge_sites) are
+        // scheduler-boundary identity (cap_call_count 0) but carry in-runner
+        // bridge imports, so they hold memo/pending state. node_kind stays
+        // Identity (the coordinate gate checks cap_call_count == 0 for
+        // Identity and uses is_p6_bridge_node() to admit memo/pending).
+        const bool is_cap_node = (s.cap_call_count == 1);
+        const bool is_p6_bridge = !s.bridge_sites.empty();
+        n.node_kind = is_cap_node ? NodeKind::Capability : NodeKind::Identity;
+        if (is_cap_node || is_p6_bridge) {
             const std::uint64_t arg_hash = param_arg_hash(mod, call_site, param_json);
             if (i != specs.size() - 1) {
                 ResumeMemoEntry m;
@@ -628,6 +656,41 @@ is_dedup_backend_error(const rc::ResumeStepError &e,
     return std::holds_alternative<
                ahfl::runtime::durable_effect_authority::DurableEffectBackendError>(e) &&
            std::get<ahfl::runtime::durable_effect_authority::DurableEffectBackendError>(e) == want;
+}
+
+// Test-double packers for the FakeResumeEngine unit tests. The FakeResumeEngine
+// simulates a wasm3 engine with a hand-built script; it does not interpret P4-D
+// frames, so the packers bump-allocate the JSON bytes verbatim (the opaque-lane
+// convention). The real P4-D packing is exercised by the wasm3 e2e test, which
+// provides production packers built on the wasm_host frame_packer.
+namespace host = ahfl::runtime::core_wasm_resume_host;
+namespace eng = ahfl::runtime::core_wasm_resume_engine;
+
+inline host::EntryFramePacker make_bump_entry_packer() {
+    return [](eng::CoreWasmResumeEngine &engine,
+              std::span<const std::uint8_t> entry_json)
+               -> std::expected<std::pair<eng::GuestPointer, std::uint32_t>,
+                                eng::EngineError> {
+        auto ptr = engine.alloc_then_write(entry_json);
+        if (!ptr.has_value()) {
+            return std::unexpected(ptr.error());
+        }
+        return std::make_pair(*ptr, static_cast<std::uint32_t>(entry_json.size()));
+    };
+}
+
+inline host::BridgeResultPacker make_bump_result_packer() {
+    return [](eng::CoreWasmResumeEngine &engine,
+              const eng::ImportObservation &,
+              const csm::VerifiedCoreWasmCallSite &,
+              std::span<const std::uint8_t> result_json) -> eng::ImportCallbackResult {
+        auto ptr = engine.alloc_then_write(result_json);
+        if (!ptr.has_value()) {
+            return eng::ImportAbort{};
+        }
+        return eng::ImportReply{0, *ptr,
+                                static_cast<std::uint32_t>(result_json.size())};
+    };
 }
 
 } // namespace ahfl::runtime::resume_test_support

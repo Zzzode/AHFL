@@ -177,6 +177,34 @@ build_bridge_string_regions(const ir::core::CoreFrameLayoutSection &section,
             {section.construct_heap_base,
              ir::core::kCoreWasmFixedLinearMemoryCapacityBytes});
     }
+    // RFC 0026 dual-track elimination: a capability-final's construct terminal
+    // builds its argument at the node's O_k block (workflow lane) or the
+    // agent output frame (agent lane). String leaves inside that argument must
+    // be authorized.
+    if (!section.node_blocks.empty()) {
+        for (const auto &block : section.node_blocks) {
+            if (block.output_size > 0) {
+                const auto output_end = checked_add_u32(
+                    block.output_base, static_cast<std::uint64_t>(block.output_size));
+                if (output_end.has_value()) {
+                    regions.push_back({block.output_base, *output_end});
+                }
+            }
+        }
+    } else {
+        const auto output_layout_size =
+            (section.output_layout.value < section.table.layouts.size())
+                ? section.table.layouts[section.output_layout.value].size
+                : 0;
+        if (output_layout_size > 0) {
+            const auto output_end = checked_add_u32(
+                ir::core::kP6AggregateOutputBase,
+                static_cast<std::uint64_t>(output_layout_size));
+            if (output_end.has_value()) {
+                regions.push_back({ir::core::kP6AggregateOutputBase, *output_end});
+            }
+        }
+    }
     return regions;
 }
 
@@ -192,7 +220,9 @@ build_bridge_root_regions(const ir::core::CoreFrameLayoutSection &section,
     std::vector<StringRegion> regions;
 
     if (!section.node_blocks.empty()) {
-        // Workflow lane: every packaged node's input/context/scratch span.
+        // Workflow lane: every packaged node's input/context/scratch/output
+        // span. The output block is included because a capability-final's
+        // construct terminal builds its argument at the node's O_k block.
         for (const auto &block : section.node_blocks) {
             const auto input_end =
                 checked_add_u32(block.input_base, static_cast<std::uint64_t>(block.input_size));
@@ -213,10 +243,16 @@ build_bridge_root_regions(const ir::core::CoreFrameLayoutSection &section,
                     regions.push_back({block.scratch_base, *scratch_end});
                 }
             }
+            const auto output_end =
+                checked_add_u32(block.output_base, static_cast<std::uint64_t>(block.output_size));
+            if (output_end.has_value()) {
+                regions.push_back({block.output_base, *output_end});
+            }
         }
     } else {
         // Agent lane: the packed input frame, the fixed context frame, the
-        // constructor scratch arena.
+        // constructor scratch arena, and the output frame (a capability-final's
+        // construct terminal builds its argument at the output base).
         const auto input_layout_size =
             (section.input_layout.value < section.table.layouts.size())
                 ? section.table.layouts[section.input_layout.value].size
@@ -230,6 +266,17 @@ build_bridge_root_regions(const ir::core::CoreFrameLayoutSection &section,
             {ir::core::kP6AggregateContextBase, ir::core::kP6AggregateScratchBase});
         regions.push_back(
             {ir::core::kP6AggregateScratchBase, ir::core::kP6AggregateOutputBase});
+        const auto output_layout_size =
+            (section.output_layout.value < section.table.layouts.size())
+                ? section.table.layouts[section.output_layout.value].size
+                : 0;
+        if (output_layout_size > 0) {
+            const auto output_end = checked_add_u32(
+                ir::core::kP6AggregateOutputBase, static_cast<std::uint64_t>(output_layout_size));
+            if (output_end.has_value()) {
+                regions.push_back({ir::core::kP6AggregateOutputBase, *output_end});
+            }
+        }
     }
 
     // Every OTHER call site's disjoint result placement.
@@ -244,108 +291,6 @@ build_bridge_root_regions(const ir::core::CoreFrameLayoutSection &section,
         }
     }
     return regions;
-}
-
-// The opaque lane: the module wrote a wire-JSON argument envelope at
-// (ptr, len); the host decodes it under the wire-schema param binding,
-// invokes the capability, validates the result under the result binding,
-// serializes it to wire JSON, alloc_then_writes it, and replies
-// (status, result_ptr, result_len).
-[[nodiscard]] eng::ImportCallbackResult
-handle_opaque(const CapabilityImportConfig &config,
-              const sm::VerifiedCoreWasmCallSite &call_site,
-              const eng::ImportObservation &obs) {
-    const auto param_binding = call_site.param_binding();
-    const auto &wire = param_binding.table();
-    const auto *cap = find_capability(wire, call_site.source_symbol());
-    if (cap == nullptr) {
-        config.state.last_error = CapabilityImportError::CapabilityNotInWireSchema;
-        return eng::ImportAbort{};
-    }
-
-    const auto name = config.name_resolver(call_site.source_symbol());
-    if (!name.has_value()) {
-        config.state.last_error = CapabilityImportError::CapabilityNameUnknown;
-        return eng::ImportAbort{};
-    }
-
-    // Schema-bound decode of the wire-JSON argument envelope. A2 admission
-    // guarantees exactly-one-parameter (the opaque lane is always arity-1),
-    // so the envelope is either a bare struct JSON (Struct param) or a
-    // {"value":...} wrapper (non-Struct param).
-    const std::string_view json_text(
-        reinterpret_cast<const char *>(obs.param_frame.data()), obs.param_frame.size());
-    auto parsed_env = parse_args_from_wire_json(json_text, wire, cap->params);
-    if (!parsed_env.has_value() || parsed_env->args.size() != 1) {
-        config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
-        return eng::ImportAbort{};
-    }
-
-    // Schema-bound decode: rejects JSON that does not match the param binding.
-    // Pre-effect: the capability is NEVER invoked on a param-schema violation.
-    auto decoded = wire_codec::decode_json(*parsed_env->args[0], param_binding);
-    if (!decoded.ok()) {
-        config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
-        return eng::ImportAbort{};
-    }
-
-    // Invoke the capability with the single arity-1 decoded parameter.
-    // P2-2: set the per-call source_symbol so the session layer resolves the
-    // owning agent/node per-import, not by name-keyed first-wins.
-    config.context.source_capability_symbol_id = call_site.source_symbol();
-    // WH-5c.6: record the resolved symbol so the session can attach the
-    // capability declaration's SourceRange to a failure diagnostic.
-    config.state.last_source_symbol = call_site.source_symbol();
-    std::vector<runtime::Value> args;
-    args.push_back(std::move(*decoded.value));
-    auto result = config.invoker(config.context, *name, args);
-    const auto raw_status = map_status_to_raw(result.status);
-
-    if (result.status != runtime::CapabilityCallStatus::Success) {
-        // A capability that executed but failed/pending is a raw non-OK reply,
-        // never an abort (2026-09-30 decision, Option A). Pending has a graceful
-        // guest arm (suspend); every other non-OK status traps the guest by
-        // design, so record the human-readable failure for the trap diagnostic.
-        if (result.status != runtime::CapabilityCallStatus::Pending) {
-            std::string message = "capability '" + *name + "' failed with status " +
-                                  std::string(capability_call_status_name(result.status));
-            if (!result.error_message.empty()) {
-                message += ": ";
-                message += result.error_message;
-            }
-            config.state.last_capability_error = std::move(message);
-        }
-        return eng::ImportReply{raw_status, eng::GuestPointer{0}, 0};
-    }
-
-    // Schema-bound validate of the result against the result binding.
-    // Post-effect: the capability WAS invoked and returned Success, but the
-    // host rejects the result as a host fault (never a capability fault).
-    auto value =
-        std::move(result.value).value_or(runtime::Value{runtime::NoneValue{}});
-    auto validated = wire_codec::validate_value(value, call_site.result_binding());
-    if (!validated.valid) {
-        config.state.last_error = CapabilityImportError::ResultSchemaInvalid;
-        return eng::ImportAbort{};
-    }
-
-    // Serialize the result to wire JSON.
-    auto body = runtime::serialize_value_for_wire_json(value);
-    if (!body.has_value()) {
-        config.state.last_error = CapabilityImportError::ResultEncodeFailed;
-        return eng::ImportAbort{};
-    }
-
-    // alloc_then_write the result frame.
-    const std::span<const std::uint8_t> bytes(
-        reinterpret_cast<const std::uint8_t *>(body->data()), body->size());
-    auto ptr = config.engine.alloc_then_write(bytes);
-    if (!ptr.has_value()) {
-        config.state.last_error = CapabilityImportError::EngineAllocFailed;
-        return eng::ImportAbort{};
-    }
-
-    return eng::ImportReply{raw_status, *ptr, static_cast<std::uint32_t>(body->size())};
 }
 
 // The bridge lane: the single arg is the control-block pointer; the host walks
@@ -481,12 +426,6 @@ std::string_view to_string(CapabilityImportError error) noexcept {
         return "BridgeWireSchemaMismatch";
     case CapabilityImportError::ArgDecodeFailed:
         return "ArgDecodeFailed";
-    case CapabilityImportError::ParamSchemaInvalid:
-        return "ParamSchemaInvalid";
-    case CapabilityImportError::ResultSchemaInvalid:
-        return "ResultSchemaInvalid";
-    case CapabilityImportError::ResultEncodeFailed:
-        return "ResultEncodeFailed";
     case CapabilityImportError::BridgeResultPackFailed:
         return "BridgeResultPackFailed";
     case CapabilityImportError::EngineAllocFailed:
@@ -529,36 +468,6 @@ resolve_import_call_site(const sm::VerifiedCoreWasmSchemaModule &module,
         }
     }
     return std::nullopt;
-}
-
-std::optional<OpaqueImportArgs>
-decode_opaque_import_args(const sm::VerifiedCoreWasmSchemaModule &module,
-                          std::uint32_t import_ordinal,
-                          std::span<const std::uint8_t> param_frame) {
-    auto call_site = resolve_import_call_site(module, import_ordinal);
-    if (!call_site.has_value()) {
-        return std::nullopt;
-    }
-    const auto param_binding = call_site->param_binding();
-    const auto &wire = param_binding.table();
-    const auto *cap = find_capability(wire, call_site->source_symbol());
-    if (cap == nullptr) {
-        return std::nullopt;
-    }
-    const std::string_view json_text(
-        reinterpret_cast<const char *>(param_frame.data()), param_frame.size());
-    auto parsed_env = parse_args_from_wire_json(json_text, wire, cap->params);
-    if (!parsed_env.has_value() || parsed_env->args.size() != 1) {
-        return std::nullopt;
-    }
-    auto decoded = wire_codec::decode_json(*parsed_env->args[0], param_binding);
-    if (!decoded.ok()) {
-        return std::nullopt;
-    }
-    OpaqueImportArgs result;
-    result.source_symbol = call_site->source_symbol();
-    result.args.push_back(std::move(*decoded.value));
-    return result;
 }
 
 // WH-5b.2: exposed for the session memo-replay layer (see the header comment).
@@ -725,7 +634,7 @@ decode_bridge_import_args(
 }
 
 eng::ImportCallbackResult
-pack_bridge_result_value(Wasm3ResumeEngine &engine,
+pack_bridge_result_value(eng::CoreWasmResumeEngine &engine,
                          const ir::core::CoreFrameLayoutSection &section,
                          const sm::VerifiedCoreWasmCallSite &call_site,
                          const ir::core::CoreFrameBridgeCallSite &site,
@@ -772,22 +681,15 @@ make_capability_import_callback(CapabilityImportConfig config) {
                -> eng::ImportCallbackResult {
         // WH-5c.6: each import attempt starts with no attributed source
         // symbol. The symbol is recorded only AFTER call-site resolution
-        // succeeds (handle_opaque/handle_bridge), so a failure on this call
-        // before that point can never blame a symbol left over from an
-        // earlier (possibly successful) call.
+        // succeeds (handle_bridge), so a failure on this call before that
+        // point can never blame a symbol left over from an earlier
+        // (possibly successful) call.
         config.state.last_source_symbol = std::nullopt;
         // Resolve the call site from the import ordinal.
         auto call_site = resolve_import_call_site(config.module, obs.import_ordinal);
         if (!call_site.has_value()) {
             config.state.last_error = CapabilityImportError::CallSiteNotFound;
             return eng::ImportAbort{};
-        }
-
-        // Lane detection: the engine's trampoline sets param_frame only for the
-        // 2-param opaque lane, so param_frame.size() > 0 selects opaque and
-        // param_frame.size() == 0 selects bridge.
-        if (!obs.param_frame.empty()) {
-            return handle_opaque(config, *call_site, obs);
         }
         return handle_bridge(config, *call_site, obs);
     };

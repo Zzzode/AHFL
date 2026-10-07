@@ -8,12 +8,20 @@ import sys
 from pathlib import Path
 
 # RFC 0026 E4-B1: the E2 capability artifact is the byte-identical pre-B1 module
-# (its complete old bytes) followed by exactly one trailing wire-schema custom
-# section. The pre-B1 module was independently locked at this length/digest, so
-# the gate asserts full-prefix equality against it rather than re-deriving the
-# boundary from the known-section walk.
-E2_PREFIX_LEN = 435
-E2_PREFIX_MD5 = "52cc6848ff4875be32a4adc455bcbae2"
+# (its complete old bytes) followed by trailing custom sections. The pre-B1
+# module was independently locked at this length/digest, so the gate asserts
+# full-prefix equality against it rather than re-deriving the boundary from the
+# known-section walk.
+#
+# RFC 0026 dual-track elimination: the opaque WireJson lane is gone. The E2
+# capability agent is now a P6-frame module like E1: run2 is deleted (runv is
+# the sole agent entry point) and the sole capability import uses the bridge
+# functype (i32)->(i32,i32) instead of the old opaque tuple
+# (i32,i32)->(i32,i32,i32). The type section grew from 5 to 6 entries (the
+# bridge type is appended after runv), and the export catalogue swapped run2
+# for runv.
+E2_PREFIX_LEN = 418
+E2_PREFIX_MD5 = "85a489ff92290f1a31fd0daa6ff744b6"
 WIRE_SCHEMA_SECTION_NAME = "ahfl.wire-schema.v1"
 WIRE_SCHEMA_TABLE_MAGIC = b"AHFLWS"
 
@@ -55,10 +63,11 @@ def sections(data: bytes) -> tuple[dict[int, bytes], int, bytes]:
     offset, wire-schema-section payload). Fails closed if the wire-schema
     section is absent or if any known section follows a custom section.
 
-    KR6.8 WH-4 D-C: capability agents now carry TWO custom sections: the
-    AHFLXM exec-manifest (ahfl.wasm-exec-manifest.v1) followed by the
-    wire-schema section (ahfl.wire-schema.v1). The first-custom-section start
-    offset is still the end of the locked pre-B1 prefix."""
+    Capability agents carry THREE custom sections: the P6 core-layout
+    (ahfl.core-layout.v1), the AHFLXM exec-manifest
+    (ahfl.wasm-exec-manifest.v1), and the wire-schema section
+    (ahfl.wire-schema.v1). The first-custom-section start offset is still
+    the end of the locked pre-B1 prefix."""
     if data[:8] != b"\0asm\x01\0\0\0":
         fail("CLI output is not wasm v1")
     result: dict[int, bytes] = {}
@@ -231,14 +240,20 @@ def main(argv: list[str]) -> int:
     if version_end != version_offset + 1:
         fail("wire-schema table format version is not a canonical single-byte LEB")
 
+    # Type section: 4 fixed ABI types, then the runv type ()->(i32,i32) at
+    # index 4, then the bridge import type (i32)->(i32,i32) at index 5. The
+    # old type 4 (i32,i32)->(i32,i32,i32) was the run2/opaque-capability tuple,
+    # deleted with the WireJson lane.
     types = function_types(parsed[1])
-    if len(types) != 5 or types[4] != ([0x7F, 0x7F], [0x7F, 0x7F, 0x7F]):
-        fail("run2/ahfl_cap multi-value function type mismatch")
+    if (len(types) != 6
+            or types[4] != ([], [0x7F, 0x7F])
+            or types[5] != ([0x7F], [0x7F, 0x7F])):
+        fail("runv/bridge function type mismatch")
     imported = imports(parsed[2])
     if len(imported) != 1:
         fail(f"expected one reachable capability import, got {imported}")
     module, field, kind, type_index = imported[0]
-    if module != "ahfl_cap" or not field.startswith("cap_") or kind != 0 or type_index != 4:
+    if module != "ahfl_cap" or not field.startswith("cap_") or kind != 0 or type_index != 5:
         fail(f"ahfl_cap import contract mismatch: {imported[0]}")
     try:
         int(field.removeprefix("cap_"))
@@ -248,25 +263,29 @@ def main(argv: list[str]) -> int:
     exported = exports(parsed[7])
     names = [item[0] for item in exported]
     expected = [
-        "memory", "alloc", "dealloc", "run", "run2", "step",
-        "current_state", "transition_count", "ahfl_abi_version",
+        "memory", "alloc", "dealloc", "run", "step",
+        "current_state", "transition_count", "ahfl_abi_version", "runv",
     ]
     if names != expected:
-        fail(f"append-only E2 export catalogue/order mismatch: {names}")
+        fail(f"E2 export catalogue/order mismatch: {names}")
     by_name = {name: (kind_value, index) for name, kind_value, index in exported}
-    if by_name["run"] != (0, 6) or by_name["run2"] != (0, 7):
-        fail("import-aware run/run2 function indices are wrong")
+    if by_name["run"] != (0, 6) or by_name["runv"] != (0, 7):
+        fail("import-aware run/runv function indices are wrong")
 
     legacy_run = code_body(parsed[10], 5)
     if legacy_run != b"\x00\x00\x0b":
         fail("capability artifact legacy run does not trap before effects")
-    run2 = code_body(parsed[10], 6)
-    if b"\x23\x04\x04\x40\x00\x0b" not in run2:
-        fail("run2 does not check pending_latched before orchestration")
-    if b"\x20\x00\x20\x01\x10\x00" not in run2:
-        fail("run2 does not forward opaque ptr/len to the sole import")
-    if b"\x41\x01\x24\x04" not in run2:
-        fail("run2 does not latch valid PENDING")
+    runv = code_body(parsed[10], 6)
+    # Bridge call: the import returns (status, result_ptr) via multi-value;
+    # runv pops them in reverse order (result_ptr then status).
+    if b"\x21\x02\x21\x01" not in runv:
+        fail("runv does not pop the bridge (status, result_ptr) return")
+    # PENDING on the agent lane traps (no scheduler to suspend).
+    if b"\x20\x01\x41\x02\x46\x04\x40\x00\x0b" not in runv:
+        fail("runv does not trap on PENDING (agent lane)")
+    # OK: return (AHFL_CAP_OK=0, result_ptr).
+    if b"\x20\x01\x41\x00\x46\x04\x40\x41\x00\x20\x02\x0f" not in runv:
+        fail("runv does not return (OK, result_ptr) on bridge success")
 
     print("all KR6.5 E2 binary/structural gates passed (not execution evidence)")
     return 0

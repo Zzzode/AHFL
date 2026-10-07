@@ -145,6 +145,14 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
         return std::span<const std::uint8_t>(memory_);
     }
 
+    [[nodiscard]] std::expected<std::span<std::uint8_t>, eng::EngineError>
+    mutable_whole_memory() override {
+        if (!instantiated_) {
+            return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        return std::span<std::uint8_t>(memory_);
+    }
+
     [[nodiscard]] std::expected<eng::GuestPointer, eng::EngineError>
     alloc_then_write(std::span<const std::uint8_t> bytes) override {
         if (!instantiated_) {
@@ -415,6 +423,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -491,6 +501,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -548,6 +560,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -620,6 +634,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -679,6 +695,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -721,6 +739,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(FakeScript{});
         // No store is needed: the gate fails before open_snapshot.
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -763,6 +783,8 @@ int main(int argc, char **argv) {
             check(seeded.has_value(), "seed.gen1");
         }
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -806,6 +828,8 @@ int main(int argc, char **argv) {
             check(seeded.has_value(), "seed.gen1");
         }
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -852,6 +876,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -902,6 +928,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -944,6 +972,8 @@ int main(int argc, char **argv) {
         // No store is needed: the binding gate fails before open_snapshot and
         // before the engine is touched.
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(swapped_bytes);
         request.engine = &engine;
@@ -999,6 +1029,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -1055,6 +1087,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;
@@ -1105,6 +1139,8 @@ int main(int argc, char **argv) {
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
         request.module = &mod;
         request.module_bytes = std::span<const std::uint8_t>(module_bytes);
         request.engine = &engine;

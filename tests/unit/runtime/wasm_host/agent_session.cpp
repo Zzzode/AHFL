@@ -124,13 +124,6 @@ void test_p6frame_identity_agent(const std::filesystem::path &repo_root) {
 
     const auto &desc = emitted->descriptor;
     check(!desc.is_workflow, "p6frame_id.not_workflow");
-    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
-          "p6frame_id.frame_contract");
-    check(desc.frame_section.has_value(), "p6frame_id.has_frame_section");
-    check(desc.wire_schema.has_value(), "p6frame_id.has_wire_schema");
-    if (!desc.frame_section.has_value() || !desc.wire_schema.has_value()) {
-        return;
-    }
     check(desc.states.size() == 2, "p6frame_id.state_count");
     check(desc.initial_state == 1, "p6frame_id.initial_state"); // Start = id 1
 
@@ -139,8 +132,8 @@ void test_p6frame_identity_agent(const std::filesystem::path &repo_root) {
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
     walk_desc.is_p6_frame = true;
-    walk_desc.frame_section = &*desc.frame_section;
-    walk_desc.wire_schema = &*desc.wire_schema;
+    walk_desc.frame_section = &desc.frame_section;
+    walk_desc.wire_schema = &desc.wire_schema;
 
     std::vector<std::string> hook_states;
     wh::StateEnteredHook hook =
@@ -192,13 +185,6 @@ void test_p6frame_agent(const std::filesystem::path &repo_root) {
 
     const auto &desc = emitted->descriptor;
     check(!desc.is_workflow, "p6frame.not_workflow");
-    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
-          "p6frame.frame_contract");
-    check(desc.frame_section.has_value(), "p6frame.has_frame_section");
-    check(desc.wire_schema.has_value(), "p6frame.has_wire_schema");
-    if (!desc.frame_section.has_value() || !desc.wire_schema.has_value()) {
-        return;
-    }
     check(desc.states.size() == 2, "p6frame.state_count");
     check(desc.initial_state == 1, "p6frame.initial_state"); // Start = id 1
 
@@ -207,8 +193,8 @@ void test_p6frame_agent(const std::filesystem::path &repo_root) {
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
     walk_desc.is_p6_frame = true;
-    walk_desc.frame_section = &*desc.frame_section;
-    walk_desc.wire_schema = &*desc.wire_schema;
+    walk_desc.frame_section = &desc.frame_section;
+    walk_desc.wire_schema = &desc.wire_schema;
 
     std::vector<std::string> hook_states;
     wh::StateEnteredHook hook =
@@ -259,20 +245,13 @@ void test_hook_liveness(const std::filesystem::path &repo_root) {
     }
 
     const auto &desc = emitted->descriptor;
-    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
-          "liveness.frame_contract");
-    check(desc.frame_section.has_value(), "liveness.has_frame_section");
-    check(desc.wire_schema.has_value(), "liveness.has_wire_schema");
-    if (!desc.frame_section.has_value() || !desc.wire_schema.has_value()) {
-        return;
-    }
     wh::AgentWalkDescriptor walk_desc;
     walk_desc.agent_name = desc.agent_name;
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
     walk_desc.is_p6_frame = true;
-    walk_desc.frame_section = &*desc.frame_section;
-    walk_desc.wire_schema = &*desc.wire_schema;
+    walk_desc.frame_section = &desc.frame_section;
+    walk_desc.wire_schema = &desc.wire_schema;
 
     // The hook mutates a counter; we verify it fired during the walk (not
     // after) by checking the counter is non-zero when the walk returns.

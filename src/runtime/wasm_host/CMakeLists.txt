@@ -15,8 +15,8 @@
 # WH-3 adds the capability-import executor (capability_import.cpp): the
 # production ImportCallback the engine delivers every ahfl_cap import to. It
 # composes the engine (alloc_then_write / mutable_whole_memory), the packer +
-# reader (bridge lane P4-D walk), and the wire-value SSOT (opaque lane JSON
-# envelope), and invokes capabilities through the ContextualCapabilityInvoker.
+# reader (bridge lane P4-D walk), and the wire-value SSOT, and invokes
+# capabilities through the ContextualCapabilityInvoker.
 #
 # WH-4 adds the state-trace decoder (state_trace_decoder.cpp), the observation
 # emitter (observation_emitter.cpp), the agent step-walk session
@@ -31,7 +31,7 @@
 # on the canonical instance, wrapping the WH-3 capability_import executor with
 # the D1 hook-firing discipline (import-boundary state_entered + post-run
 # node_completed); the agent runner drives an AGENT module with the D1
-# dual-mode discipline (step-walk on a separate instance + canonical runv/run2);
+# dual-mode discipline (step-walk on a separate instance + canonical runv);
 # the workflow runtime is a thin facade over the workflow session that accepts
 # the shared WasmRuntimeHooks (hook signatures identical to WorkflowRuntimeConfig).
 #
@@ -41,18 +41,12 @@
 # memo, pending coordinate) on a suspend run and to classify + serve the memo /
 # inject the frontier on a resume run. It is pure state: the session wrapper owns
 # the engine / binding / diagnostic machinery and drives the recorder.
-#
-# WH-5b.3 adds the encoding-boundary transcode handler (transcode.cpp): the
-# production ImportCallback the engine delivers every ahfl_xcode import to. It
-# is a pure deterministic codec adapter (P4-D frame <-> wire JSON) that never
-# invokes a capability, touches memo, fires hooks, or writes an event record.
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
     frame_packer.cpp
     frame_reader.cpp
     p6_frame_driver.cpp
     capability_import.cpp
-    transcode.cpp
     state_trace_decoder.cpp
     observation_emitter.cpp
     agent_session.cpp
