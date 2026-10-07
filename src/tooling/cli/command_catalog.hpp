@@ -47,9 +47,17 @@ enum class CommandKind {
     EmitTerraform,
     EmitWasm,
     ValidateAssurance,
-    VerifyFormal,
     _Count, // sentinel — must be last
 };
+
+// RFC 0028: formal verification stage in the default compilation pipeline.
+// `Off`   — structural IR invariants only (pre-RFC behavior).
+// `Light` — structural + subset eligibility + SMT-BMC (Z3, when present) +
+//           size-gated, timeout-bounded NuSMV BMC (when present); degrades to
+//           a note + success when an external engine is absent or times out.
+// `Full`  — structural + SMT-BMC + full SMV model checking, fail-closed on
+//           missing NuSMV, timeout, or refutation (production/CI gate).
+enum class VerificationMode { Off, Light, Full };
 
 struct CommandLineOptions {
     std::optional<CommandKind> selected_command;
@@ -111,6 +119,10 @@ struct CommandLineOptions {
     bool format_check_requested{false};
     bool public_api_semver_gate_requested{false};
     bool package_publish_dry_run_requested{false};
+    // RFC 0028: formal verification stage. Raw CLI string ("off|light|full"),
+    // parsed on-demand. nullopt = per-command default (light for check/run,
+    // off for everything else).
+    std::optional<std::string_view> verify_mode;
     std::vector<std::string_view> positional;
 };
 
@@ -135,7 +147,6 @@ enum class ActionGroup {
     Dump,
     Package,
     Registry,
-    Verify,
     Validate
 };
 
@@ -172,5 +183,16 @@ core_backend_for_command(std::optional<CommandKind> command);
 
 void set_command_option(CommandLineOptions &options, CommandKind command);
 void print_usage(std::ostream &out);
+
+// RFC 0028: parse the --verify=<off|light|full> string into the enum.
+// Returns nullopt for unrecognized values.
+[[nodiscard]] std::optional<VerificationMode> parse_verification_mode(std::string_view text);
+
+// RFC 0028: resolve the per-command default verification mode.
+// check/run default to light; everything else defaults to off.
+[[nodiscard]] VerificationMode default_verification_mode(std::optional<CommandKind> command);
+
+// RFC 0028: true when the formal verification stage is active (mode != Off).
+[[nodiscard]] bool formal_stage_active(VerificationMode mode);
 
 } // namespace ahfl::cli

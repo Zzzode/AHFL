@@ -27,7 +27,7 @@
 当前仓库中的 formal backend 入口是：
 
 - `ahflc emit-smv <file>`
-- `ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] <file>`
+- `ahflc check --verify=full [--model-checker <path>] [--formal-model-out <model.smv>] <file>` (RFC 0028; 旧 `check --verify=full` 已删除)
 
 其处理链路固定为：
 
@@ -38,7 +38,7 @@
 5. `validate`
 6. `emit-smv`
 
-`verify-formal` 在同一条前置链路之后生成 SMV 文件，并把该文件传给 SMV 兼容 model checker。默认情况下模型文件位于临时目录并在 checker 返回后删除；如果传入 `--formal-model-out <model.smv>`，则模型写入该路径并保留，供 CI artifact 或本地复现使用。`--formal-backend` 选择 backend capability matrix 条目；当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证，`spin` / `tlaplus` 会以 `checker_status: verification_unsupported` 退出。nuXmv/NuSMV checker 由 `--model-checker`、`AHFL_SMV_CHECKER`、backend-specific 环境变量和 PATH 中的 `NuSMV`、`nuXmv`、`nuxmv`、`nusmv` 选择。
+`check --verify=full` 在同一条前置链路之后生成 SMV 文件，并把该文件传给 SMV 兼容 model checker。默认情况下模型文件位于临时目录并在 checker 返回后删除；如果传入 `--formal-model-out <model.smv>`，则模型写入该路径并保留，供 CI artifact 或本地复现使用。`--formal-backend` 选择 backend capability matrix 条目；当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证，`spin` / `tlaplus` 会以 `checker_status: verification_unsupported` 退出。nuXmv/NuSMV checker 由 `--model-checker`、`AHFL_SMV_CHECKER`、backend-specific 环境变量和 PATH 中的 `NuSMV`、`nuXmv`、`nuxmv`、`nusmv` 选择。
 
 `emit-smv` 不直接消费 parse tree，也不直接从源码字符串做二次解析；它只基于 validate 通过后的语义模型和稳定 IR 做 lowering。
 
@@ -51,7 +51,7 @@
 - `ASSIGN`
 - `LTLSPEC`
 
-`verify-formal` 不改变 SMV lowering 语义；它只把 `emit-smv` 的产物交给外部 checker，并把 `is true` / `is false` 的 specification 结果转成 CLI success 或 failure。若生成的模型包含 `LTLSPEC`，但 checker 没有返回任何 specification 结果，或者返回结果数量少于生成的 `LTLSPEC` 数量，则该情况视为 checker integration error，而不是验证成功。CLI/report 会输出稳定 `checker_status`：`missing_binary`、`verification_unsupported`、`checker_error` 或成功/失败路径上的 `available`。同一报告还会输出 `state_space_estimate`、`state_space_agents`、`state_space_transitions` 与 tractability 判断；该估计来自 IR `AgentDecl` 的 states/transitions/capabilities，是验证前的规模预警，不是 checker 的完整 reachable-state 统计。NuSMV/nuXmv 输出 parser 以 fixture matrix 覆盖 true、false/counterexample、parse/type error 和 timeout；CLI 外部进程路径通过 `--checker-timeout-seconds` 强制 timeout，卡死的 checker 会被杀掉并以 `checker_status: checker_error`、`checker_timed_out: true` 报告，不会被折叠成普通 unknown output。
+`check --verify=full` 不改变 SMV lowering 语义；它只把 `emit-smv` 的产物交给外部 checker，并把 `is true` / `is false` 的 specification 结果转成 CLI success 或 failure。若生成的模型包含 `LTLSPEC`，但 checker 没有返回任何 specification 结果，或者返回结果数量少于生成的 `LTLSPEC` 数量，则该情况视为 checker integration error，而不是验证成功。CLI/report 会输出稳定 `checker_status`：`missing_binary`、`verification_unsupported`、`checker_error` 或成功/失败路径上的 `available`。同一报告还会输出 `state_space_estimate`、`state_space_agents`、`state_space_transitions` 与 tractability 判断；该估计来自 IR `AgentDecl` 的 states/transitions/capabilities，是验证前的规模预警，不是 checker 的完整 reachable-state 统计。NuSMV/nuXmv 输出 parser 以 fixture matrix 覆盖 true、false/counterexample、parse/type error 和 timeout；CLI 外部进程路径通过 `--checker-timeout-seconds` 强制 timeout，卡死的 checker 会被杀掉并以 `checker_status: checker_error`、`checker_timed_out: true` 报告，不会被折叠成普通 unknown output。
 
 当前逻辑边界固定为：
 
@@ -335,7 +335,7 @@ failure / recovery lifecycle 当前以 node phase 枚举、环境 fault input �
 
 ## Counterexample Source Mapping
 
-`emit-smv` 会在模型头部输出 `-- AHFL_MAP <symbol> => <AHFL description>` 注释。`verify-formal` 解析 checker 反例时，会把出现在 counterexample trace 中的 SMV symbol 映射回 workflow node、agent state、call event、effect event 或 observation owner。若 IR 节点携带 source range，description 会附带 source offset 范围，例如 `@ <source>:begin-end`。
+`emit-smv` 会在模型头部输出 `-- AHFL_MAP <symbol> => <AHFL description>` 注释。`check --verify=full` 解析 checker 反例时，会把出现在 counterexample trace 中的 SMV symbol 映射回 workflow node、agent state、call event、effect event 或 observation owner。若 IR 节点携带 source range，description 会附带 source offset 范围，例如 `@ <source>:begin-end`。
 
 在 contract/export 冻结下，shared observation model 的职责也已经固定：
 
@@ -383,7 +383,7 @@ Issue 16 之后，formal backend 相关实现必须遵守以下约束：
 2. bounded boolean/integer expression 已直接 lower 到 SMV，unbounded embedded observation 已收敛为 environment assumption
 3. `called(k)` 已绑定到 flow call event，call/effect event 已派生 committed/failed 子事件
 4. effect event、effect/recovery obligation、failure/recovery phase hook 已进入 SMV 有限控制模型
-5. `verify-formal` 已能从 counterexample trace 映射回 AHFL symbol owner 和可用 source offset
-6. `verify-formal` 已把 IR state-space estimator 接入用户可见报告，输出 agent 数、状态空间估计、transition 数和 tractability warning
+5. `check --verify=full` 已能从 counterexample trace 映射回 AHFL symbol owner 和可用 source offset
+6. `check --verify=full` 已把 IR state-space estimator 接入用户可见报告，输出 agent 数、状态空间估计、transition 数和 tractability warning
 7. NuSMV/nuXmv 输出 parser 已有 true/false/error/timeout fixture matrix，CLI 外部 checker 进程 timeout 已有 fake checker 回归，timeout 会进入确定 failure path
 8. `emit-ir` / `emit-ir-json` / `emit-smv` 已通过统一 backend driver 分发

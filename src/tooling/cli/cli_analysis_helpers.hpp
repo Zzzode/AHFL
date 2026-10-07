@@ -68,8 +68,15 @@ emit_core_backend(std::optional<CommandKind> effective_command,
 
 [[nodiscard]] int validate_assurance_program(const ahfl::ir::Program &program);
 
-[[nodiscard]] int verify_formal_program(const ahfl::ir::Program &program,
-                                        const CommandLineOptions &options);
+// RFC 0028: formal verification stage in the default compilation pipeline.
+// Runs subset eligibility + SMT-BMC + SMV model checking at the given mode.
+// Light degrades to a note + success on missing solver / timeout; full is
+// fail-closed. Returns true on pass, false on refutation/failure.
+[[nodiscard]] bool run_pipeline_formal_verification(const ahfl::ir::Program &program,
+                                                    const CommandLineOptions &options,
+                                                    VerificationMode mode,
+                                                    std::ostream &out,
+                                                    std::ostream &err);
 
 // RFC 0017 slice 3: `ahflc emit smt` — render the program's contract data
 // predicates to an SMT-LIB 2 document on `out`. No solver is invoked.

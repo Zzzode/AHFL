@@ -70,8 +70,8 @@ int main() {
           "action_group_from_token: dump");
     check(ahfl::cli::action_group_from_token("registry") == ahfl::cli::ActionGroup::Registry,
           "action_group_from_token: registry");
-    check(ahfl::cli::action_group_from_token("verify") == ahfl::cli::ActionGroup::Verify,
-          "action_group_from_token: verify");
+    check(!ahfl::cli::action_group_from_token("verify").has_value(),
+          "action_group_from_token: verify returns nullopt (RFC 0028: command removed)");
     check(ahfl::cli::action_group_from_token("validate") == ahfl::cli::ActionGroup::Validate,
           "action_group_from_token: validate");
     check(!ahfl::cli::action_group_from_token("check").has_value(),
@@ -258,11 +258,13 @@ int main() {
     {
         ahfl::cli::CommandLineOptions options;
         constexpr std::string_view args[] = {
-            "verify", "--checker-timeout-seconds", "2", "app.ahfl"};
+            "check", "--verify=full", "--checker-timeout-seconds", "2", "app.ahfl"};
         const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
         check(!parse_result.has_value(), "parse_options: checker timeout has no immediate exit");
-        check(options.selected_command == ahfl::cli::CommandKind::VerifyFormal,
-              "parse_options: checker timeout preserves verify command");
+        check(options.selected_command == ahfl::cli::CommandKind::Check,
+              "parse_options: checker timeout preserves check command");
+        check(options.verify_mode.has_value() && *options.verify_mode == "full",
+              "parse_options: --verify=full captured");
         check(options.checker_timeout_seconds.has_value() &&
                   *options.checker_timeout_seconds == "2",
               "parse_options: --checker-timeout-seconds captured");
@@ -337,7 +339,7 @@ int main() {
               "parse_options: emit provider artifact is rejected");
     }
 
-    // resolve_subcommand — dump, verify, validate
+    // resolve_subcommand — dump, validate
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "ast") ==
               ahfl::cli::CommandKind::DumpAst,
           "resolve: dump ast");
@@ -352,9 +354,6 @@ int main() {
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Registry, "resolve") ==
               ahfl::cli::CommandKind::RegistryResolve,
           "resolve: registry resolve");
-    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Verify, "formal") ==
-              ahfl::cli::CommandKind::VerifyFormal,
-          "resolve: verify formal");
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Validate, "assurance") ==
               ahfl::cli::CommandKind::ValidateAssurance,
           "resolve: validate assurance");
@@ -379,8 +378,37 @@ int main() {
           "short_name: DumpAst -> ast");
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::DumpLockfile) == "lockfile",
           "short_name: DumpLockfile -> lockfile");
-    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::VerifyFormal) == "formal",
-          "short_name: VerifyFormal -> formal");
+
+    // RFC 0028: --verify mode parsing and per-command defaults
+    check(ahfl::cli::parse_verification_mode("off") == ahfl::cli::VerificationMode::Off,
+          "parse_verification_mode: off");
+    check(ahfl::cli::parse_verification_mode("light") == ahfl::cli::VerificationMode::Light,
+          "parse_verification_mode: light");
+    check(ahfl::cli::parse_verification_mode("full") == ahfl::cli::VerificationMode::Full,
+          "parse_verification_mode: full");
+    check(!ahfl::cli::parse_verification_mode("bogus").has_value(),
+          "parse_verification_mode: bogus returns nullopt");
+    check(ahfl::cli::default_verification_mode(ahfl::cli::CommandKind::Check) ==
+              ahfl::cli::VerificationMode::Light,
+          "default_verification_mode: check -> light");
+    check(ahfl::cli::default_verification_mode(ahfl::cli::CommandKind::RunWorkflow) ==
+              ahfl::cli::VerificationMode::Light,
+          "default_verification_mode: run -> light");
+    check(ahfl::cli::default_verification_mode(ahfl::cli::CommandKind::EmitIr) ==
+              ahfl::cli::VerificationMode::Off,
+          "default_verification_mode: emit ir -> off");
+    check(ahfl::cli::default_verification_mode(ahfl::cli::CommandKind::Format) ==
+              ahfl::cli::VerificationMode::Off,
+          "default_verification_mode: fmt -> off");
+    check(ahfl::cli::default_verification_mode(std::nullopt) ==
+              ahfl::cli::VerificationMode::Light,
+          "default_verification_mode: bare command -> light");
+    check(!ahfl::cli::formal_stage_active(ahfl::cli::VerificationMode::Off),
+          "formal_stage_active: off -> false");
+    check(ahfl::cli::formal_stage_active(ahfl::cli::VerificationMode::Light),
+          "formal_stage_active: light -> true");
+    check(ahfl::cli::formal_stage_active(ahfl::cli::VerificationMode::Full),
+          "formal_stage_active: full -> true");
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return pass_count == test_count ? 0 : 1;

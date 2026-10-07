@@ -17,7 +17,7 @@ if [ -z "${checker}" ] || [ ! -x "${checker}" ]; then
     exit 77
 fi
 
-"${ahflc}" verify \
+"${ahflc}" check --verify=full \
     --model-checker "${checker}" \
     --bmc-depth "${depth}" \
     "${fixture}"

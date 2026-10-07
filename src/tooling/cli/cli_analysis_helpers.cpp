@@ -267,10 +267,13 @@ int validate_assurance_program(const ahfl::ir::Program &program) {
 }
 
 // ---------------------------------------------------------------------------
-// verify_formal_program
+// run_pipeline_formal_verification (RFC 0028)
 // ---------------------------------------------------------------------------
 
-int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOptions &options) {
+namespace {
+
+[[nodiscard]] ahfl::formal::FormalCheckerOptions
+build_formal_checker_options(const CommandLineOptions &options, VerificationMode mode) {
     ahfl::formal::FormalCheckerOptions formal_options;
     if (options.formal_backend.has_value()) {
         if (auto backend = ahfl::formal::parse_model_checker_kind(*options.formal_backend);
@@ -304,37 +307,156 @@ int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOpt
         }
     }
 
-    const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
+    // RFC 0028: light mode is bounded BMC (depth 20, 30s timeout) by default.
+    if (mode == VerificationMode::Light) {
+        formal_options.bmc_use_bmc_engine = true;
+        if (!options.bmc_depth.has_value()) {
+            formal_options.bmc_depth = 20;
+        }
+        if (!options.checker_timeout_seconds.has_value()) {
+            formal_options.checker_timeout = std::chrono::seconds{30};
+        }
+    }
 
-    // RFC 0017 slice 1: warn per contract data-predicate clause that leaves the
-    // verifiable subset. Such clauses are abstracted by the SMV/BMC path rather
-    // than proven, so surfacing them keeps "verification passed" honest.
+    return formal_options;
+}
+
+} // namespace
+
+bool run_pipeline_formal_verification(const ahfl::ir::Program &program,
+                                      const CommandLineOptions &options,
+                                      VerificationMode mode,
+                                      std::ostream &out,
+                                      std::ostream &err) {
+    const bool light = mode == VerificationMode::Light;
+
+    // 1. Subset eligibility (always) — warn for clauses outside the verifiable
+    //    subset so "verification passed" stays honest.
     const auto eligibility = ahfl::formal::analyze_contract_subset_eligibility(program);
     for (const auto &clause : eligibility.ineligible) {
-        std::cerr << "warning[" << ahfl::error_codes::formal::NotInVerifiedSubset.full_code()
-                  << "]: "
-                  << ahfl::messages::formal::NotInVerifiedSubset.format_with(
-                         ahfl::ir::contract_clause_kind_name(clause.kind),
-                         clause.target_name,
-                         ahfl::formal::describe_rejection(clause.rejection))
-                  << '\n';
+        err << "warning[" << ahfl::error_codes::formal::NotInVerifiedSubset.full_code()
+            << "]: "
+            << ahfl::messages::formal::NotInVerifiedSubset.format_with(
+                   ahfl::ir::contract_clause_kind_name(clause.kind),
+                   clause.target_name,
+                   ahfl::formal::describe_rejection(clause.rejection))
+            << '\n';
     }
 
-    ahfl::formal::print_formal_verification_report(
-        result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);
-
-    // RFC 0017 slice 8: run the SMT-BMC data-predicate path alongside the SMV
-    // temporal path and present both conclusions. A genuine refutation fails
-    // the command; a missing solver / no goals is a skip, never a false pass.
+    // 2. SMT-BMC path (light and full). Unsupported = no encodable goals, the
+    //    silent fast path (no Z3 launch).
     const auto smt_result = ahfl::formal::run_smt_bmc(program, {});
-    if (smt_result.status != ahfl::formal::SmtBmcStatus::Unsupported) {
-        const bool smt_failed = ahfl::formal::smt_bmc_result_is_failure(smt_result);
-        ahfl::formal::print_smt_bmc_report(smt_result, smt_failed ? std::cerr : std::cout);
+    const bool smt_had_goals = smt_result.status != ahfl::formal::SmtBmcStatus::Unsupported;
+    const bool smt_failed = ahfl::formal::smt_bmc_result_is_failure(smt_result);
+
+    if (smt_had_goals) {
+        if (smt_failed) {
+            // A genuine refutation fails in every mode that ran the engine.
+            ahfl::formal::print_smt_bmc_report(smt_result, err);
+            return false;
+        }
+        if (smt_result.status == ahfl::formal::SmtBmcStatus::SolverUnavailable) {
+            err << "note: SMT-BMC skipped (Z3 not found)\n";
+        } else if (smt_result.status == ahfl::formal::SmtBmcStatus::Unknown) {
+            if (light) {
+                err << "note: SMT-BMC timed out or returned unknown; skipped in light mode\n";
+            }
+            // full: report below but do not fail (only Unsafe fails).
+        }
     }
 
-    const bool smv_ok = ahfl::formal::is_formal_verification_success(result);
-    const bool smt_ok = !ahfl::formal::smt_bmc_result_is_failure(smt_result);
-    return (smv_ok && smt_ok) ? 0 : 1;
+    // 3. SMV path.
+    auto formal_options = build_formal_checker_options(options, mode);
+
+    // Light mode: state-space gate before launching NuSMV. An oversized state
+    // space degrades to a note + skip (not a failure).
+    bool smv_skipped_oversized = false;
+    if (light) {
+        const auto estimate = ahfl::formal::estimate_state_space(program);
+        if (!estimate.likely_tractable) {
+            err << "note: state space too large for default bounded verification; "
+                   "use --verify=full\n";
+            smv_skipped_oversized = true;
+        }
+    }
+
+    ahfl::formal::FormalVerificationResult smv_result;
+    if (!smv_skipped_oversized) {
+        smv_result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
+    }
+
+    const bool smv_ok = smv_skipped_oversized ||
+                        ahfl::formal::is_formal_verification_success(smv_result);
+    const bool smv_had_specs = smv_result.expected_specification_count > 0;
+
+    if (!smv_ok) {
+        if (light) {
+            // Light mode degradation: missing checker / timeout / error → note + pass.
+            if (smv_result.status ==
+                ahfl::formal::FormalVerificationStatus::CheckerUnavailable) {
+                err << "note: SMV verification skipped (NuSMV/nuXmv not found)\n";
+            } else if (smv_result.status ==
+                       ahfl::formal::FormalVerificationStatus::CheckerError) {
+                if (smv_result.checker_timed_out) {
+                    err << "note: SMV bounded verification timed out after "
+                        << smv_result.checker_timeout.count()
+                        << "s; use --verify=full\n";
+                } else {
+                    err << "note: SMV verification encountered an error in light mode; "
+                           "use --verify=full\n";
+                }
+            } else if (smv_result.status ==
+                       ahfl::formal::FormalVerificationStatus::Failed) {
+                // A genuine refutation fails in light mode too, with counterexample.
+                ahfl::formal::print_formal_verification_report(smv_result, err);
+                return false;
+            } else if (smv_result.status ==
+                       ahfl::formal::FormalVerificationStatus::VerificationUnsupported) {
+                err << "note: SMV verification unsupported: " << smv_result.error_message
+                    << '\n';
+            }
+        } else {
+            // Full mode: fail-closed on anything that is not Passed.
+            ahfl::formal::print_formal_verification_report(smv_result, err);
+            return false;
+        }
+    }
+
+    // 4. Report. All formal-stage output goes to stderr: the stage is a
+    //    diagnostic pass, not a command, and stdout must stay clean for
+    //    machine-parseable command output (e.g. `run --output-format json`).
+    (void)out;
+    if (light) {
+        if (options.explain_requested) {
+            if (smt_had_goals) {
+                ahfl::formal::print_smt_bmc_report(smt_result, err);
+            }
+            if (!smv_skipped_oversized && smv_had_specs) {
+                ahfl::formal::print_formal_verification_report(smv_result, err);
+            }
+        }
+
+        // One summary line on success (only when there was something to check).
+        if (smt_had_goals || smv_had_specs) {
+            err << "ok: formal verification passed (light: "
+                << smt_result.proven_count << " data goal(s), "
+                << smv_result.expected_specification_count << " temporal specification(s)";
+            if (smv_result.bounded_model_checking && smv_had_specs) {
+                err << " bounded";
+            }
+            err << ")\n";
+        }
+    } else {
+        // Full mode: the existing detailed reports, unchanged.
+        if (smt_had_goals) {
+            ahfl::formal::print_smt_bmc_report(smt_result, err);
+        }
+        if (!smv_skipped_oversized) {
+            ahfl::formal::print_formal_verification_report(smv_result, err);
+        }
+    }
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------

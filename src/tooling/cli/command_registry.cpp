@@ -211,14 +211,6 @@ constexpr CommandSpec kCommandSpecs[] = {
                    119,
                    123,
                    14),
-    routed_command(CommandKind::VerifyFormal,
-                   "verify-formal",
-                   ActionGroup::Verify,
-                   "formal",
-                   124,
-                   120,
-                   124,
-                   15),
 };
 
 // Compile-time verification: array index must equal enum value for O(1) lookup.
@@ -490,8 +482,6 @@ std::optional<ActionGroup> action_group_from_token(std::string_view token) {
         return ActionGroup::Package;
     if (token == "registry")
         return ActionGroup::Registry;
-    if (token == "verify")
-        return ActionGroup::Verify;
     if (token == "validate")
         return ActionGroup::Validate;
     return std::nullopt;
@@ -522,6 +512,33 @@ std::string command_short_name(CommandKind command) {
         return std::string(spec->action_target);
     }
     return std::string(spec->token);
+}
+
+// RFC 0028: formal verification stage.
+std::optional<VerificationMode> parse_verification_mode(std::string_view text) {
+    if (text == "off")
+        return VerificationMode::Off;
+    if (text == "light")
+        return VerificationMode::Light;
+    if (text == "full")
+        return VerificationMode::Full;
+    return std::nullopt;
+}
+
+VerificationMode default_verification_mode(std::optional<CommandKind> command) {
+    if (!command.has_value())
+        return VerificationMode::Light;
+    switch (*command) {
+    case CommandKind::Check:
+    case CommandKind::RunWorkflow:
+        return VerificationMode::Light;
+    default:
+        return VerificationMode::Off;
+    }
+}
+
+bool formal_stage_active(VerificationMode mode) {
+    return mode != VerificationMode::Off;
 }
 
 } // namespace ahfl::cli

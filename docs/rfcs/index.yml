@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-10-04"
+updated: "2026-10-07"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -163,3 +163,9 @@ rfcs:
     file: "0027-query-frontend-and-ir-ssot.zh.md"
     area: ["compiler", "ir", "tooling"]
     stability: "experimental"
+  - rfc: "0028"
+    title: "Formal Verification in the Default Compilation Pipeline"
+    status: "implemented"
+    file: "0028-default-pipeline-formal-verification.zh.md"
+    area: ["compiler", "tooling", "formal"]
+    stability: "developer-facing"

@@ -72,7 +72,7 @@ docs/spec/
 ├── assurance/
 │   ├── capability-effect-profile.zh.md   # effect block 字段语义 + obligation 合成
 │   ├── production-gate.zh.md             # validate-assurance 规则
-│   └── formal-verification-gate.zh.md    # verify-formal + SMV backend 契约
+│   └── formal-verification-gate.zh.md    # --verify + SMV backend 契约
 └── formal/
     └── temporal-semantics.zh.md      # 时序表达式语义 + SMV backend 映射（从 design/ 提升为规范）
 ```
@@ -92,7 +92,7 @@ docs/spec/
 | `native/native-language.zh.md` | native 扩展全部规范 | core 已定义的规则 |
 | `assurance/capability-effect-profile.zh.md` | effect block 字段语义 + obligation 合成 | production gate 规则细节 |
 | `assurance/production-gate.zh.md` | validate-assurance 的全部硬门禁规则 | formal verification |
-| `assurance/formal-verification-gate.zh.md` | verify-formal + SMV backend 契约 | production gate |
+| `assurance/formal-verification-gate.zh.md` | --verify + SMV backend 契约 | production gate |
 | `formal/temporal-semantics.zh.md` | 时序表达式形式语义 + SMV 映射 | EBNF（在 core/04） |
 
 ## 3. Core vs Native 边界划定
@@ -173,7 +173,7 @@ docs/spec/
 | 目标 | Assurance 目标 | `assurance/README`（新增，作为 assurance 子目录索引） |
 | Capability Effect Profile | effect block 字段语义 | `assurance/capability-effect-profile.zh.md` |
 | Production Gate 规则 | validate-assurance 门禁 | `assurance/production-gate.zh.md` |
-| Formal Verification Gate | verify-formal + SMV 契约 | `assurance/formal-verification-gate.zh.md` |
+| Formal Verification Gate | --verify + SMV 契约 | `assurance/formal-verification-gate.zh.md` |
 | Obligation Synthesis | obligation 合成 | `assurance/capability-effect-profile.zh.md` §obligation |
 | Assurance Bundle | bundle 格式 | `assurance/production-gate.zh.md` §bundle |
 | Formal Model Profile | formal model 抽象层 | `formal/temporal-semantics.zh.md` §profile |

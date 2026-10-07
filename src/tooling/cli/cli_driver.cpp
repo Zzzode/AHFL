@@ -2392,15 +2392,34 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.model_checker.has_value() && effective_command_ != CommandKind::VerifyFormal) {
-        std::cerr << "error: --model-checker is only supported with verify-formal\n";
+    // RFC 0028: validate --verify and resolve whether the formal stage is active.
+    // The seven formal-flag guards below are re-pointed from "verify-formal only"
+    // to "formal stage active" (resolved --verify != off).
+    if (options_.verify_mode.has_value() &&
+        !parse_verification_mode(*options_.verify_mode).has_value()) {
+        std::cerr << "error: --verify expects off, light, or full (got '"
+                  << *options_.verify_mode << "')\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+    const auto formal_stage_inactive = [&]() -> bool {
+        if (options_.verify_mode.has_value()) {
+            if (auto parsed = parse_verification_mode(*options_.verify_mode);
+                parsed.has_value()) {
+                return !formal_stage_active(*parsed);
+            }
+        }
+        return !formal_stage_active(default_verification_mode(effective_command_));
+    };
+
+    if (options_.model_checker.has_value() && formal_stage_inactive()) {
+        std::cerr << "error: --model-checker requires --verify=light or --verify=full\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.checker_timeout_seconds.has_value() &&
-        effective_command_ != CommandKind::VerifyFormal) {
-        std::cerr << "error: --checker-timeout-seconds is only supported with verify-formal\n";
+    if (options_.checker_timeout_seconds.has_value() && formal_stage_inactive()) {
+        std::cerr << "error: --checker-timeout-seconds requires --verify=light or --verify=full\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2412,8 +2431,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.formal_backend.has_value() && effective_command_ != CommandKind::VerifyFormal) {
-        std::cerr << "error: --formal-backend is only supported with verify-formal\n";
+    if (options_.formal_backend.has_value() && formal_stage_inactive()) {
+        std::cerr << "error: --formal-backend requires --verify=light or --verify=full\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2426,15 +2445,15 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.formal_model_out.has_value() && effective_command_ != CommandKind::VerifyFormal) {
-        std::cerr << "error: --formal-model-out is only supported with verify-formal\n";
+    if (options_.formal_model_out.has_value() && formal_stage_inactive()) {
+        std::cerr << "error: --formal-model-out requires --verify=light or --verify=full\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.bmc_depth.has_value() && effective_command_ != CommandKind::VerifyFormal &&
+    if (options_.bmc_depth.has_value() && formal_stage_inactive() &&
         effective_command_ != CommandKind::EmitSmv) {
-        std::cerr << "error: --bmc-depth is only supported with verify-formal or emit smv\n";
+        std::cerr << "error: --bmc-depth requires --verify=light/full or emit smv\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2445,11 +2464,9 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.bmc_boundary_invariants.has_value() &&
-        effective_command_ != CommandKind::VerifyFormal &&
+    if (options_.bmc_boundary_invariants.has_value() && formal_stage_inactive() &&
         effective_command_ != CommandKind::EmitSmv) {
-        std::cerr << "error: --bmc-boundary-invariants is only supported with verify-formal or "
-                     "emit smv\n";
+        std::cerr << "error: --bmc-boundary-invariants requires --verify=light/full or emit smv\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2503,8 +2520,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.explain_requested && effective_command_ != CommandKind::VerifyFormal) {
-        std::cerr << "error: --explain is only supported with verify-formal\n";
+    if (options_.explain_requested && formal_stage_inactive()) {
+        std::cerr << "error: --explain requires --verify=light or --verify=full\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -4025,6 +4042,27 @@ ExitCode CliDriver::run_analysis(const InputT &input,
     memory_report_ =
         build_memory_report_snapshot(*analysis_input, source_file, type_check_result, ir_program);
 
+    // RFC 0028: formal verification stage in the default compilation pipeline.
+    // Runs after IR lowering + structural verification, before the command tail.
+    // light (default for check/run) degrades gracefully; full is fail-closed.
+    {
+        const auto verify_mode = [&]() -> VerificationMode {
+            if (options_.verify_mode.has_value()) {
+                if (auto parsed = parse_verification_mode(*options_.verify_mode);
+                    parsed.has_value()) {
+                    return *parsed;
+                }
+            }
+            return default_verification_mode(effective_command_);
+        }();
+        if (formal_stage_active(verify_mode)) {
+            if (!run_pipeline_formal_verification(
+                    ir_program, options_, verify_mode, std::cout, std::cerr)) {
+                return ExitCode::CompileError;
+            }
+        }
+    }
+
     if (effective_command_ == CommandKind::RunWorkflow) {
         auto run_options = options_;
         if (!run_options.workflow_name.has_value()) {
@@ -4100,11 +4138,6 @@ ExitCode CliDriver::run_analysis(const InputT &input,
                                                                : ExitCode::CompileError;
         }
 
-        if (effective_command_ == CommandKind::VerifyFormal) {
-            return verify_formal_program(ir_program, options_) == 0 ? ExitCode::Success
-                                                                    : ExitCode::CompileError;
-        }
-
         if (effective_command_.has_value() && handles_package_command(*effective_command_)) {
             if (const auto command_status =
                     ahfl::cli::dispatch_package_command(*effective_command_,
@@ -4140,14 +4173,6 @@ ExitCode CliDriver::run_analysis(const InputT &input,
         }
         return validate_assurance_program(ir_program) == 0 ? ExitCode::Success
                                                            : ExitCode::CompileError;
-    }
-
-    if (effective_command_ == CommandKind::VerifyFormal) {
-        if (options_.optimize_requested) {
-            run_requested_semantic_optimization_pipeline(ir_program, options_, std::cerr);
-        }
-        return verify_formal_program(ir_program, options_) == 0 ? ExitCode::Success
-                                                                : ExitCode::CompileError;
     }
 
     if (effective_command_ == CommandKind::EmitSmt) {

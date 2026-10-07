@@ -32,27 +32,29 @@ set_tests_properties(ahflc.dump_types.example PROPERTIES
 )
 
 # Loan-origination showcase: a 6-module manifest package. The check test runs
-# the full frontend over all modules; the verify test uses the fake pass
-# checker (no NuSMV dependency) so it proves the SMV backend processes the
-# specs without a real solver; the dump-types test asserts the workflow type
+# the full frontend over all modules; the check --verify=full test uses the
+# fake pass checker (no NuSMV dependency) so it proves the SMV backend
+# processes the specs without a real solver; the dump-types test asserts the
+# workflow type
 # is registered in the type environment.
 set(AHFL_LOAN_ORIGINATION_MANIFEST "${AHFL_EXAMPLES_DIR}/loan-origination/ahfl.toml")
 
 add_test(NAME ahflc.check.loan_origination
     COMMAND $<TARGET_FILE:ahflc> check
+            --verify=off
             --manifest "${AHFL_LOAN_ORIGINATION_MANIFEST}"
             --sysroot "${PROJECT_SOURCE_DIR}"
 )
 
-add_test(NAME ahflc.verify_formal.loan_origination
-    COMMAND $<TARGET_FILE:ahflc> verify
+add_test(NAME ahflc.check.verify_full.loan_origination
+    COMMAND $<TARGET_FILE:ahflc> check --verify=full
             --manifest "${AHFL_LOAN_ORIGINATION_MANIFEST}"
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             --formal-model-out
             "${CMAKE_CURRENT_BINARY_DIR}/formal/loan_origination.verify.smv"
             --sysroot "${PROJECT_SOURCE_DIR}"
 )
-set_tests_properties(ahflc.verify_formal.loan_origination PROPERTIES
+set_tests_properties(ahflc.check.verify_full.loan_origination PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
 )
 
@@ -711,14 +713,14 @@ ahfl_add_check_test(
     "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
 )
 
-add_test(NAME ahflc.verify_formal.fake_pass
-    COMMAND $<TARGET_FILE:ahflc> verify
+add_test(NAME ahflc.check.verify_full.fake_pass
+    COMMAND $<TARGET_FILE:ahflc> check --verify=full
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             --formal-model-out
             "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_flow_workflow_semantics.verify.smv"
             "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
 )
-set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
+set_tests_properties(ahflc.check.verify_full.fake_pass PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
 )
 
@@ -726,27 +728,27 @@ set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
 # (go_bmc; check_ltlspec_bmc -k K; check_invar_bmc -a een-sorensson -k K). The
 # fake checker parses that script and emits the exact NuSMV 2.6.0 bounded
 # verdict lines, so this test is ungated by a real solver.
-add_test(NAME ahflc.verify_formal.fake_bmc_pass
-    COMMAND $<TARGET_FILE:ahflc> verify
+add_test(NAME ahflc.check.verify_full.fake_bmc_pass
+    COMMAND $<TARGET_FILE:ahflc> check --verify=full
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_bmc_pass.sh"
             --bmc-depth 3
             "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
 )
-set_tests_properties(ahflc.verify_formal.fake_bmc_pass PROPERTIES
+set_tests_properties(ahflc.check.verify_full.fake_bmc_pass PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed with 12 bounded specification\\(s\\)"
 )
 
 # KR7.2: real NuSMV/nuXmv bounded model checking under --bmc-depth. Always
 # registered so `ctest -R bmc` selects it; the driver exits 77 (ctest SKIP)
 # when no executable checker was configured via AHFL_SMV_CHECKER.
-add_test(NAME ahflc.verify_formal.real_smv_bmc
+add_test(NAME ahflc.check.verify_full.real_smv_bmc
     COMMAND "${PROJECT_SOURCE_DIR}/tests/scripts/run_real_smv_bmc.sh"
             "$<TARGET_FILE:ahflc>"
             "${AHFL_SMV_CHECKER}"
             "10"
             "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
 )
-set_tests_properties(ahflc.verify_formal.real_smv_bmc PROPERTIES
+set_tests_properties(ahflc.check.verify_full.real_smv_bmc PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
     SKIP_RETURN_CODE 77
 )
@@ -755,30 +757,30 @@ set_tests_properties(ahflc.verify_formal.real_smv_bmc PROPERTIES
 # verifiable subset and must warn formal.NOT_IN_VERIFIED_SUBSET, while the
 # sibling arithmetic predicate stays unflagged. Uses the fake pass checker so
 # verification itself succeeds regardless of a real solver being present.
-add_test(NAME ahflc.verify_formal.not_in_verified_subset_warning
-    COMMAND $<TARGET_FILE:ahflc> verify
+add_test(NAME ahflc.check.verify_full.not_in_verified_subset_warning
+    COMMAND $<TARGET_FILE:ahflc> check --verify=full
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             "${AHFL_TESTS_DIR}/golden/formal/warn_not_in_verified_subset.ahfl"
 )
-set_tests_properties(ahflc.verify_formal.not_in_verified_subset_warning PROPERTIES
+set_tests_properties(ahflc.check.verify_full.not_in_verified_subset_warning PROPERTIES
     PASS_REGULAR_EXPRESSION "warning\\[formal.NOT_IN_VERIFIED_SUBSET\\]: contract requires clause for 'formal::not_in_subset_semantics::SubsetAgent'"
 )
 
-add_test(NAME ahflc.verify_formal.state_space_report
-    COMMAND $<TARGET_FILE:ahflc> verify
+add_test(NAME ahflc.check.verify_full.state_space_report
+    COMMAND $<TARGET_FILE:ahflc> check --verify=full
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
 )
-set_tests_properties(ahflc.verify_formal.state_space_report PROPERTIES
+set_tests_properties(ahflc.check.verify_full.state_space_report PROPERTIES
     PASS_REGULAR_EXPRESSION "state_space_estimate: 4"
 )
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path")
 
-add_test(NAME ahflc.verify_formal.missing_binary
+add_test(NAME ahflc.check.verify_full.missing_binary
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify;--formal-backend;nuxmv;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=check;--verify=full;--formal-backend;nuxmv;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=checker_status: missing_binary"
             "-DUNSET_ENV=AHFL_SMV_CHECKER;AHFL_NUXMV_PATH;AHFL_NUSMV_PATH"
@@ -786,133 +788,200 @@ add_test(NAME ahflc.verify_formal.missing_binary
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.verify_formal.unsupported_backend
+add_test(NAME ahflc.check.verify_full.unsupported_backend
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify;--formal-backend;spin;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=check;--verify=full;--formal-backend;spin;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=checker_status: verification_unsupported"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.verify_formal.checker_error
+add_test(NAME ahflc.check.verify_full.checker_error
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_error.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=check;--verify=full;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_error.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=checker_status: checker_error"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.verify_formal.checker_timeout
+add_test(NAME ahflc.check.verify_full.checker_timeout
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_timeout.sh;--checker-timeout-seconds;1;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=check;--verify=full;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_timeout.sh;--checker-timeout-seconds;1;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=checker_timed_out: true"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
-set_tests_properties(ahflc.verify_formal.checker_timeout PROPERTIES
+set_tests_properties(ahflc.check.verify_full.checker_timeout PROPERTIES
     TIMEOUT 8
 )
 
-add_test(NAME ahflc.verify_formal.fake_fail
+add_test(NAME ahflc.check.verify_full.fake_fail
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=check;--verify=full;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=formal verification failed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.verify_formal.fake_fail_explain
+add_test(NAME ahflc.check.verify_full.fake_fail_explain
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify;--explain;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=check;--verify=full;--explain;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=counterexample explanation"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 if(AHFL_SMV_CHECKER)
-    add_test(NAME ahflc.verify_formal.real_smv
-        COMMAND $<TARGET_FILE:ahflc> verify
+    add_test(NAME ahflc.check.verify_full.real_smv
+        COMMAND $<TARGET_FILE:ahflc> check --verify=full
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_real_smv_control.verify.smv"
                 "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
     )
-    set_tests_properties(ahflc.verify_formal.real_smv PROPERTIES
+    set_tests_properties(ahflc.check.verify_full.real_smv PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
     )
 
-    add_test(NAME ahflc.verify_formal.real_smv_observation_assumptions
-        COMMAND $<TARGET_FILE:ahflc> verify
+    add_test(NAME ahflc.check.verify_full.real_smv_observation_assumptions
+        COMMAND $<TARGET_FILE:ahflc> check --verify=full
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_expr_temporal.verify.smv"
                 "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     )
-    set_tests_properties(ahflc.verify_formal.real_smv_observation_assumptions PROPERTIES
+    set_tests_properties(ahflc.check.verify_full.real_smv_observation_assumptions PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
     )
 
-    add_test(NAME ahflc.verify_formal.real_smv_effect_events
-        COMMAND $<TARGET_FILE:ahflc> verify
+    add_test(NAME ahflc.check.verify_full.real_smv_effect_events
+        COMMAND $<TARGET_FILE:ahflc> check --verify=full
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_effects.verify.smv"
                 "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
     )
-    set_tests_properties(ahflc.verify_formal.real_smv_effect_events PROPERTIES
+    set_tests_properties(ahflc.check.verify_full.real_smv_effect_events PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
     )
 
-    add_test(NAME ahflc.verify_formal.real_smv_bounded_data_semantics
-        COMMAND $<TARGET_FILE:ahflc> verify
+    add_test(NAME ahflc.check.verify_full.real_smv_bounded_data_semantics
+        COMMAND $<TARGET_FILE:ahflc> check --verify=full
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_bounded_data_semantics.verify.smv"
                 "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
     )
-    set_tests_properties(ahflc.verify_formal.real_smv_bounded_data_semantics PROPERTIES
+    set_tests_properties(ahflc.check.verify_full.real_smv_bounded_data_semantics PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
     )
 
-    add_test(NAME ahflc.verify_formal.real_smv_counterexample
+    add_test(NAME ahflc.check.verify_full.real_smv_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
+                "-DAHFLC_ARGS=check;--verify=full;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
                 "-DEXPECTED_REGEX=counterexample AHFL mapping"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
 
-    add_test(NAME ahflc.verify_formal.real_smv_bounded_data_counterexample
+    add_test(NAME ahflc.check.verify_full.real_smv_bounded_data_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
+                "-DAHFLC_ARGS=check;--verify=full;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
                 "-DEXPECTED_REGEX=formal verification failed"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
 endif()
 
-# RFC 0017 slice 8: the SMT-BMC data path refutes a contract and fails verify
-# even though the (fake) SMV temporal path passes. Requires a real Z3 solver.
+# RFC 0017 slice 8: the SMT-BMC data path refutes a contract and fails
+# check --verify=full even though the (fake) SMV temporal path passes.
+# Requires a real Z3 solver.
 if(AHFL_Z3_SOLVER)
-    add_test(NAME ahflc.verify_formal.smt_bmc_refutation
+    add_test(NAME ahflc.check.verify_full.smt_bmc_refutation
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh;${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
+                "-DAHFLC_ARGS=check;--verify=full;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh;${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
                 "-DEXPECTED_REGEX=smt_bmc_refuted"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
-    set_tests_properties(ahflc.verify_formal.smt_bmc_refutation PROPERTIES
+    set_tests_properties(ahflc.check.verify_full.smt_bmc_refutation PROPERTIES
         ENVIRONMENT "AHFL_Z3_PATH=${AHFL_Z3_SOLVER}"
     )
 endif()
+
+# ===========================================================================
+# RFC 0028: formal verification in the default compilation pipeline
+# ===========================================================================
+
+# Light mode degrades to a note + success when NuSMV is missing.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/formal/light-no-checker")
+add_test(NAME ahflc.check.light.missing_binary
+    COMMAND $<TARGET_FILE:ahflc> check
+            "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+)
+set_tests_properties(ahflc.check.light.missing_binary PROPERTIES
+    PASS_REGULAR_EXPRESSION "note: SMV verification skipped"
+    ENVIRONMENT "AHFL_SMV_CHECKER=;AHFL_NUXMV_PATH=;AHFL_NUSMV_PATH=;PATH=${CMAKE_CURRENT_BINARY_DIR}/formal/light-no-checker"
+)
+
+# Light mode is silent on a program with no contracts/workflows (zero-spec
+# fast path + SMT-BMC Unsupported).
+add_test(NAME ahflc.check.light.no_properties
+    COMMAND $<TARGET_FILE:ahflc> check
+            "${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+)
+set_tests_properties(ahflc.check.light.no_properties PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    FAIL_REGULAR_EXPRESSION "formal verification|SMV verification|SMT-BMC|note:.*verification"
+)
+
+# --verify=off restores pre-RFC behavior (no formal stage at all).
+add_test(NAME ahflc.check.verify_off
+    COMMAND $<TARGET_FILE:ahflc> check --verify=off
+            "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+)
+set_tests_properties(ahflc.check.verify_off PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    FAIL_REGULAR_EXPRESSION "formal verification|SMV verification|SMT-BMC|note:.*verification"
+)
+
+# --verify=bogus is a usage error.
+add_test(NAME ahflc.check.verify_bogus
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify=bogus;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=error: --verify expects off, light, or full"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+# --model-checker with --verify=off is a usage error (flag requires active stage).
+add_test(NAME ahflc.check.model_checker_verify_off
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify=off;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=error: --model-checker requires --verify=light or --verify=full"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+# Light mode fails on a genuine refutation (fake checker emitting is false).
+add_test(NAME ahflc.check.light.refutation
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_bmc_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=formal verification failed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
 
 ahfl_add_package_output_test(
     ahflc.emit_ir_json.flow_workflow_semantics

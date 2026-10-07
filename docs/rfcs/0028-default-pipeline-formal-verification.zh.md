@@ -1,7 +1,7 @@
 ---
 rfc: "0028"
 title: "Formal Verification in the Default Compilation Pipeline"
-status: "draft"
+status: "implemented"
 area: ["compiler", "tooling", "formal"]
 stability: "developer-facing"
 created: "2026-10-07"
@@ -426,3 +426,8 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
   is fail-closed; `verify-formal` deleted in the same big-bang change. External-solver
   dependency named as the Principle 6 constraint blocking fail-closed-by-default;
   internal-BMC / RFC 0018 embedding is the removal trigger.
+- 2026-10-07: Implemented. Formal stage landed in `run_analysis` after IR structural
+  verification; `verify-formal` command deleted; all call sites migrated to
+  `check --verify=full`; light-mode tests added (missing binary, no properties,
+  verify=off, bogus value, model-checker with verify=off, BMC refutation). Full
+  test suite green (580/580; one known-flaky LLM smoke under parallel load).

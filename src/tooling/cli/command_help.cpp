@@ -28,8 +28,6 @@ namespace ahfl::cli {
         } else if (token.starts_with("registry-")) {
             result += "registry ";
             result += command_short_name(commands[index]);
-        } else if (token.starts_with("verify-")) {
-            result += "verify";
         } else if (token.starts_with("validate-")) {
             result += "validate";
         } else {
@@ -63,7 +61,6 @@ void print_usage(std::ostream &out) {
         << "  ahflc emit public-api-diff [--semver-gate --from <old> --to <new>] "
            "<old-public-api.json> <new-public-api.json>\n"
         << "  ahflc dump <target> [options] [<input.ahfl>]\n"
-        << "  ahflc verify [options] [<input.ahfl>]\n"
         << "  ahflc validate [options] [<input.ahfl>]\n"
         << "\n"
         << "Actions:\n"
@@ -77,7 +74,6 @@ void print_usage(std::ostream &out) {
         << "  registry resolve    Resolve manifest registry dependencies and write ahfl.lock\n"
         << "  emit <artifact>     Emit a build artifact (see list below)\n"
         << "  dump <target>       Diagnostic dump (ast, types, project, package-graph, lockfile)\n"
-        << "  verify              Formal verification via NuSMV/nuXmv\n"
         << "  validate            Assurance validation checks\n"
         << "\n"
         << "Artifacts (ahflc emit <artifact>):\n";
@@ -99,7 +95,7 @@ void print_usage(std::ostream &out) {
         << "    public-api-diff            Diff two public API JSON snapshots; optional SemVer "
            "gate\n"
         << "    summary                    Human-readable summary\n"
-        << "    smv                        NuSMV model (for verify)\n"
+        << "    smv                        NuSMV model (for --verify=full)\n"
         << "    smt                        SMT-LIB 2 encoding of contract data predicates\n"
         << "    assurance-json             Assurance model (for validate)\n";
 
@@ -139,6 +135,8 @@ void print_usage(std::ostream &out) {
         << "  --to <version>              Next version for emit public-api-diff only\n";
 
     out << "\nVerification Options:\n"
+        << "  --verify <mode>            Formal verification stage: off, light (default for\n"
+        << "                             check/run), or full (fail-closed production gate)\n"
         << "  --formal-backend <name>    Backend: nuxmv, nusmv, spin, or tlaplus\n"
         << "  --model-checker <path>     NuSMV/nuXmv binary path\n"
         << "  --checker-timeout-seconds <n>  Formal checker process timeout\n"

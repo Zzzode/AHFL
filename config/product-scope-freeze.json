@@ -37,8 +37,7 @@
       "EmitOpenApi",
       "EmitTerraform",
       "EmitWasm",
-      "ValidateAssurance",
-      "VerifyFormal"
+      "ValidateAssurance"
     ],
     "backend_kinds": [
       "Ir",

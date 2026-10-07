@@ -115,6 +115,10 @@ void set_formal_model_out(CommandLineOptions &opts, std::optional<std::string_vi
     opts.formal_model_out = val;
 }
 
+void set_verify_mode(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.verify_mode = val;
+}
+
 void set_package_archive_output(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.package_archive_output_path = val;
 }
@@ -365,6 +369,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_formal_model_out,
      "Output path for formal model",
      "an output path"},
+    {"--verify",
+     "",
+     OptionArgKind::RequiredValue,
+     set_verify_mode,
+     "Formal verification stage: off, light (default for check/run), or full",
+     "off|light|full"},
     {"--out",
      "",
      OptionArgKind::RequiredValue,
@@ -561,10 +571,6 @@ select_action_group_from_arguments(ActionGroup group,
         return usage_error("action cannot be combined with another action");
     }
 
-    if (group == ActionGroup::Verify) {
-        set_command_option(options, CommandKind::VerifyFormal);
-        return std::nullopt;
-    }
     if (group == ActionGroup::Validate) {
         set_command_option(options, CommandKind::ValidateAssurance);
         return std::nullopt;

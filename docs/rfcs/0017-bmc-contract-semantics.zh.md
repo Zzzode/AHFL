@@ -374,7 +374,7 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   duplicate SMV-backend helper deleted. Covered by
   `tests/unit/verification/formal/subset_eligibility.cpp`
   (`ahfl.formal.subset_eligibility_all`) and the golden
-  `ahflc.verify_formal.not_in_verified_subset_warning`.
+  `ahflc.check.verify_full.not_in_verified_subset_warning`.
 - 2026-08-24: Slice 3 landed — `ahflc emit smt`. The slice-2 encoder now also
   collects each predicate's free symbols with their SMT sort (Bool/Int, plus
   `Int(lo,hi)` bounds) in first-encounter order. `smt_emit.{hpp,cpp}` render a
@@ -431,7 +431,7 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   and the solver skip reason). A genuine SMT-BMC refutation (`Unsafe`) fails the
   command; a missing solver / no goals / unknown is a skip that never turns a
   pass into a failure and never fakes a pass (`smt_bmc_result_is_failure`).
-  Covered by the Z3-guarded golden `ahflc.verify_formal.smt_bmc_refutation`
+  Covered by the Z3-guarded golden `ahflc.check.verify_full.smt_bmc_refutation`
   (fake SMV passes, SMT-BMC refutes, verify fails with `smt_bmc_refuted`). All
   eight Implementation-Plan slices are landed with unit + golden + real-Z3
   coverage. Remaining for `stabilized`: `docs/spec/` verifiable-subset

@@ -371,19 +371,19 @@ ahfl_label_tests(
     LABELS formal-model-checker
     TESTS
         ahfl.formal.model_checker_backends_all
-        ahflc.verify_formal.state_space_report
-        ahflc.verify_formal.missing_binary
-        ahflc.verify_formal.unsupported_backend
-        ahflc.verify_formal.checker_error
-        ahflc.verify_formal.checker_timeout
-        ahflc.verify_formal.not_in_verified_subset_warning
+        ahflc.check.verify_full.state_space_report
+        ahflc.check.verify_full.missing_binary
+        ahflc.check.verify_full.unsupported_backend
+        ahflc.check.verify_full.checker_error
+        ahflc.check.verify_full.checker_timeout
+        ahflc.check.verify_full.not_in_verified_subset_warning
 )
 
 if(AHFL_Z3_SOLVER)
     ahfl_label_tests(
         LABELS formal-smt-bmc
         TESTS
-            ahflc.verify_formal.smt_bmc_refutation
+            ahflc.check.verify_full.smt_bmc_refutation
     )
 endif()
 

@@ -450,11 +450,37 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     result.error_message = "SMV backend support is disabled in this build";
     return result;
 #else
+    result.checker_timeout = options.checker_timeout;
+
+    // RFC 0028: generate the SMV model text BEFORE resolving the checker so the
+    // zero-spec fast path can skip both checker resolution and the external
+    // process launch. A program with no LTLSPEC/INVARSPEC has nothing to check.
+    std::unordered_map<std::string, std::string> symbol_mappings;
+    {
+        std::ostringstream model_content;
+        print_program_smv(program, model_content);
+        std::string model_text = model_content.str();
+        if (options.bmc_boundary_invariants) {
+            auto [rewritten, added] =
+                maybe_add_boundary_invariants(model_text, options.bmc_depth);
+            (void)added;
+            model_text = std::move(rewritten);
+        }
+        symbol_mappings = parse_symbol_mappings(model_text);
+        result.expected_specification_count = count_expected_specifications(model_text);
+        result.model_content = std::move(model_text);
+    }
+
+    if (result.expected_specification_count == 0) {
+        result.status = FormalVerificationStatus::Passed;
+        result.availability_status = ModelCheckerAvailabilityStatus::Available;
+        return result;
+    }
+
     const auto checker = resolve_checker(options);
     result.backend_kind = checker.backend_kind;
     result.capabilities = checker.capabilities;
     result.availability_status = checker.availability.status;
-    result.checker_timeout = options.checker_timeout;
 
     if (checker.availability.status == ModelCheckerAvailabilityStatus::VerificationUnsupported) {
         result.status = FormalVerificationStatus::VerificationUnsupported;
@@ -474,7 +500,6 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     result.model_path = options.model_output_path.value_or(make_temp_model_path());
     result.model_path_retained = options.model_output_path.has_value();
 
-    std::unordered_map<std::string, std::string> symbol_mappings;
     {
         if (options.model_output_path.has_value()) {
             const auto parent_path = result.model_path.parent_path();
@@ -488,25 +513,12 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
             }
         }
 
-        std::ostringstream model_content;
-        print_program_smv(program, model_content);
-        std::string model_text = model_content.str();
-        if (options.bmc_boundary_invariants) {
-            auto [rewritten, added] =
-                maybe_add_boundary_invariants(model_text, options.bmc_depth);
-            (void)added;
-            model_text = std::move(rewritten);
-        }
-        symbol_mappings = parse_symbol_mappings(model_text);
-        result.expected_specification_count = count_expected_specifications(model_text);
-        result.model_content = model_text;
-
         std::ofstream model(result.model_path);
         if (!model) {
             result.error_message = "failed to create temporary SMV model file";
             return result;
         }
-        model << model_text;
+        model << result.model_content;
     }
 
     const auto process =

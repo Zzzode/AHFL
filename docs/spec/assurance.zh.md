@@ -9,10 +9,11 @@
 | 长名（本文统一采用） | 短别名 |
 | --- | --- |
 | `ahflc validate-assurance <input>` | `ahflc validate <input>` |
-| `ahflc verify-formal <input>` | `ahflc verify <input>` |
 | `ahflc emit-assurance-json <input>` | `ahflc emit assurance-json <input>` |
 
 两套写法在 CLI 命令注册表中映射到同一 `CommandKind`（`command_registry.cpp`、`command_help.cpp`），行为完全一致。本文统一使用长名以保证可被全文检索与正则匹配；任何使用短别名的示例代码同样合法。
+
+> RFC 0028: 形式化验证已从独立命令 `verify-formal` 迁移到默认编译管线中的 `--verify` 阶段。生产 gate 为 `ahflc check --verify=full <input>`(等价旧 `verify-formal` 语义);`check`/`run` 默认 `--verify=light`(有界验证,缺 solver 时降级)。
 
 ## 目标
 
@@ -23,7 +24,7 @@ Assurance 的目标是让用户定义的 Harness 编排代码具备可静态检�
 - financial effect 必须提供审批和补偿事实。
 - flow handler 对 capability 的调用必须能投影出 checkpoint、recovery 和 production blocker。
 - 编译器必须能输出稳定 evidence bundle，并能用 `validate-assurance` 对 production readiness 做硬门禁。
-- 编译器必须能通过 `verify-formal` 调用 SMV 兼容 model checker，验证当前 formal backend 输出的控制模型。
+- 编译器必须能通过 `check --verify=full` 调用 SMV 兼容 model checker，验证当前 formal backend 输出的控制模型。
 
 本规范不声明 provider 内部实现已经被 model checker 完整证明。provider 语义、外部系统状态和无限数据域属于本规范的抽象或运行时监控边界。
 
@@ -83,9 +84,9 @@ ok: assurance validation ready
 
 ## Formal Verification Gate
 
-`ahflc verify-formal <file.ahfl>` 必须先通过 parse、resolve、typecheck 和基础 validator，再降低到 IR、生成 SMV 模型、调用 SMV 兼容 model checker。
+`ahflc check --verify=full <file.ahfl>` 必须先通过 parse、resolve、typecheck 和基础 validator，再降低到 IR、生成 SMV 模型、调用 SMV 兼容 model checker。
 
-`--formal-backend <name>` 可选择 checker backend。当前 `nuxmv` 与 `nusmv` 进入 AHFL SMV 外部验证路径；`spin` 与 `tlaplus` 只承诺模型 emission，不承诺 `verify-formal` 外部验证，命令必须以 `checker_status: verification_unsupported` 失败。
+`--formal-backend <name>` 可选择 checker backend。当前 `nuxmv` 与 `nusmv` 进入 AHFL SMV 外部验证路径；`spin` 与 `tlaplus` 只承诺模型 emission，不承诺 `--verify=full` 外部验证，命令必须以 `checker_status: verification_unsupported` 失败。
 
 NuSMV/nuXmv checker 选择顺序：
 
@@ -113,7 +114,7 @@ Checker 输出解析规则：
 ok: formal verification passed
 ```
 
-`verify-formal` 只证明当前 SMV backend 中被编码的有限控制模型。Provider 实现、无限数据域、外部系统状态、provider failure 注入和 runtime policy 执行仍属于 assurance profile 的抽象或运行时监控边界。
+`--verify=full` 只证明当前 SMV backend 中被编码的有限控制模型。Provider 实现、无限数据域、外部系统状态、provider failure 注入和 runtime policy 执行仍属于 assurance profile 的抽象或运行时监控边界。
 
 SMV backend 必须把 workflow node 编码为有限 lifecycle 控制模型：
 
@@ -140,7 +141,7 @@ SMV backend 可以把已声明 capability effect profile 降成 effect event 和
 - 未声明 effect profile、`unknown` effect 或无法解析的 call target 仍由 `validate-assurance` 作为 production gate 处理。
 - bounded boolean/integer expression 可以直接 lower 成 SMV 公式；包含 path、provider return、predicate/capability call、集合/结构体等未界定数据语义的 embedded data predicate 必须保持为 environment observation assumption，不得伪装成已证明的 guarantee。
 
-`verify-formal` 失败时应尽量输出 counterexample 摘要，并把可识别的 SMV symbol 映射回 AHFL 的 workflow node、agent state、call event、effect event 或 observation owner；若 IR 保留了 source range，mapping 应携带 source offset 范围。
+`--verify=full` 失败时应尽量输出 counterexample 摘要，并把可识别的 SMV symbol 映射回 AHFL 的 workflow node、agent state、call event、effect event 或 observation owner；若 IR 保留了 source range，mapping 应携带 source offset 范围。
 
 ## Obligation Synthesis
 
@@ -176,7 +177,7 @@ Bundle 顶层字段：
 - `recovery_obligations`
 - `formal_model_profile`
 
-`status` 为 `ready` 表示没有 capability 或 flow production blocker；`blocked` 表示至少有一个 blocker。`emit-assurance-json` 是 evidence emission 命令，本身不作为 production gate。CI 或发布流程应使用 `validate-assurance` 和 `verify-formal`。
+`status` 为 `ready` 表示没有 capability 或 flow production blocker；`blocked` 表示至少有一个 blocker。`emit-assurance-json` 是 evidence emission 命令，本身不作为 production gate。CI 或发布流程应使用 `validate-assurance` 和 `check --verify=full`。
 
 ## Formal Model Profile
 
