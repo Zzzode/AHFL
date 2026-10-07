@@ -967,13 +967,6 @@ struct WorkflowFrameSource {
     CoreValueTypeId type{};
 };
 
-// WH-5c.2: sentinel for WorkflowNodePlan::p6_block_ordinal. After the
-// dual-track elimination every workflow node is P6-frame and owns a block,
-// so this sentinel is defensive (the is_p6 checks that consume it are
-// always-true and slated for removal in a follow-up refactor).
-constexpr std::uint32_t kInvalidP6Block =
-    std::numeric_limits<std::uint32_t>::max();
-
 struct WorkflowNodePlan {
     CoreWorkflowNodeId node{};
     CoreInstanceId target_instance{};
@@ -985,19 +978,17 @@ struct WorkflowNodePlan {
     // across different branches.
     std::uint32_t schedule_pos{0};
     std::vector<std::pair<CoreCapabilityId, std::uint64_t>> capabilities;
-    // WH-5c.2 (GAP 1, Approach B): every P6 node owns its OWN node-frame block
+    // WH-5c.2 (GAP 1, Approach B): every node owns its OWN node-frame block
     // and runner function, so two nodes may reuse one packaged agent instance.
-    // p6_block_ordinal is the node's P6-dense ordinal (node-id order among P6
-    // nodes) indexing node_blocks / the dense layout tables / the wire
-    // node_inputs/node_outputs roots. After the dual-track elimination every
-    // node is P6-frame, so kInvalidP6Block is a defensive sentinel (the
-    // is_p6 checks that consume it are always-true and slated for removal in
-    // a follow-up refactor).
+    // p6_block_ordinal is the node's P6-dense ordinal (node-id order) indexing
+    // node_blocks / the dense layout tables / the wire node_inputs/node_outputs
+    // roots. Every node is P6-frame after the dual-track elimination, so the
+    // planner always assigns a valid ordinal.
     // runner_ordinal is the node's runner FUNCTION ordinal (P6 node runners
     // occupy [0, p6_node_count)). The host's
     // runner_to_schedule 1:1 identity and the state-trace runner attribution
     // both rely on a P6 node's runner being unique to that node.
-    std::uint32_t p6_block_ordinal{kInvalidP6Block};
+    std::uint32_t p6_block_ordinal{0};
     std::uint32_t runner_ordinal{0};
 };
 
@@ -1086,12 +1077,6 @@ struct WorkflowPlan {
     // capability-workflow baseline (import section, manifest, event buffer, latch,
     // checked alloc).
     std::vector<CoreCapabilityId> imports;
-    // V2-D: true when at least one scheduled node runs on the P6 frame lane.
-    // Gates the computed runners, node blocks, frame sections and the Data
-    // section. After the dual-track elimination every node is P6-frame, so
-    // this is always true for a non-empty workflow; the flag stays as a
-    // defensive guard (slated for removal in a follow-up refactor).
-    bool has_p6_nodes{false};
     // WH-5c.2 (GAP 1, Approach B): node blocks are P6-NODE-dense in node-id
     // order (parallel to p6_nodes). Every P6 node owns its own fixed
     // node-frame block, so two nodes reusing one packaged agent instance each
@@ -14473,9 +14458,6 @@ build_workflow_plan(const CoreProgram &program,
             }
             plan.nodes[id] = std::move(node_plan);
         }
-        plan.has_p6_nodes = std::any_of(
-            gathered.begin(), gathered.end(),
-            [](const GatheredAgent &g) { return g.p6; });
         // WH-5c.2: assign the per-node P6-dense block ordinal (node-id order
         // among P6 nodes) and the runner FUNCTION ordinal. P6 node runners
         // occupy [0, p6_node_count). A P6 node's runner is unique to that
@@ -14490,22 +14472,6 @@ build_workflow_plan(const CoreProgram &program,
                     static_cast<std::uint32_t>(plan.p6_nodes.size());
                 plan.p6_nodes.push_back(CoreWorkflowNodeId{id});
             }
-        }
-        std::uint32_t opaque_runner_ordinal = 0;
-        for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
-            if (gathered[runner].p6) {
-                continue;
-            }
-            const std::uint32_t runner_ordinal =
-                static_cast<std::uint32_t>(plan.p6_nodes.size()) + opaque_runner_ordinal;
-            for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
-                const auto node_runner =
-                    workflow_runner_index(plan, workflow.nodes[id].target_instance);
-                if (node_runner.has_value() && *node_runner == runner) {
-                    plan.nodes[id].runner_ordinal = runner_ordinal;
-                }
-            }
-            ++opaque_runner_ordinal;
         }
         for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
             plan.nodes[node_id.value].runner_ordinal =
@@ -14530,7 +14496,7 @@ build_workflow_plan(const CoreProgram &program,
     // payload-enum edge has a valid child address in the pointer-tree
     // form. The return frame is still inline-only (the scheduler region
     // rewrite does not cover the return frame yet).
-    if (plan.has_p6_nodes) {
+    if (!plan.p6_nodes.empty()) {
         // A bare-forward return (empty projection path) bulk-copies the
         // source frame verbatim — the materializer emits a byte-for-byte
         // copy of the upstream O_k block (always inline form: handlers
@@ -14573,11 +14539,11 @@ build_workflow_plan(const CoreProgram &program,
     // core-layout section and the descriptor fields) is the following V2-D
     // codegen slice; until it lands a workflow that actually needs the P6 node
     // lane is rejected here with a precise diagnostic.
-    if (plan.has_p6_nodes &&
+    if (!plan.p6_nodes.empty() &&
         !plan_workflow_p6_capacity_family(program, layouts, workflow, plan, gathered, result)) {
         return std::nullopt;
     }
-    if (plan.has_p6_nodes) {
+    if (!plan.p6_nodes.empty()) {
         // V2-D emission half 1: a p6 runner whose ONLY computed content is a
         // COMPUTED FINAL (with projected/constructed node inputs and a
         // projected/constructed workflow return materialized by the in-module
@@ -16248,49 +16214,20 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
         }
         out.u32(node.node.value);
         out.u32(index); // schedule_pos == array index
-        // WH-5c.2: a node is P6 iff it owns a node-frame block (p6_block_ordinal
-        // is the P6-dense ordinal); its in-runner bridge sites are grouped
-        // under that ordinal.
-        const bool is_p6 = node.p6_block_ordinal != kInvalidP6Block;
-        if (is_p6) {
-            if (node.p6_block_ordinal >= bridge_sites_by_node.size()) {
-                return std::nullopt;
-            }
-            const auto &bridge_sites = bridge_sites_by_node[node.p6_block_ordinal];
-            if (bridge_sites.empty() && !node.capabilities.empty()) {
-                // WH-5c.4 (GAP 2): construct-capability terminal. The P6
-                // runner materializes the construct into O_k; the scheduler
-                // transcodes O_k to wire-JSON and calls the capability at the
-                // scheduler boundary (never via bridge). Emit cap_call_count=1
-                // and the capability; no in-handler bridge sites.
-                out.byte(1); // cap_call_count = 1
-                for (const auto &[cap, sym] : node.capabilities) {
-                    if (cap.value == CoreCapabilityId::kInvalid) {
-                        return std::nullopt;
-                    }
-                    out.u32(cap.value);
-                    out.u64(sym);
-                }
-                out.byte(0); // bridge_site_count = 0
-            } else {
-                // P6 bridge node or pure compute node: identity at the
-                // scheduler boundary (tag-0 event record, zero capability
-                // fields). In-handler bridge imports are accounted in the
-                // in-node bridge-site table below.
-                out.byte(0); // cap_call_count = 0 (identity)
-                out.byte(static_cast<std::uint8_t>(bridge_sites.size()));
-                for (const auto &bs : bridge_sites) {
-                    out.byte(bs.ordinal);
-                    out.u32(bs.call_site_id);
-                    out.u32(bs.capability.value);
-                    out.u64(bs.source_symbol);
-                }
-            }
-        } else {
-            // Scheduler-boundary cap site (cap_call_count=1) or pure identity
-            // (0). The capabilities array carries the scheduler-boundary
-            // capability.
-            out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
+        // WH-5c.2: every node is P6 after the dual-track elimination, so
+        // p6_block_ordinal is always a valid P6-dense ordinal; the node's
+        // in-runner bridge sites are grouped under that ordinal.
+        if (node.p6_block_ordinal >= bridge_sites_by_node.size()) {
+            return std::nullopt;
+        }
+        const auto &bridge_sites = bridge_sites_by_node[node.p6_block_ordinal];
+        if (bridge_sites.empty() && !node.capabilities.empty()) {
+            // WH-5c.4 (GAP 2): construct-capability terminal. The P6
+            // runner materializes the construct into O_k; the scheduler
+            // transcodes O_k to wire-JSON and calls the capability at the
+            // scheduler boundary (never via bridge). Emit cap_call_count=1
+            // and the capability; no in-handler bridge sites.
+            out.byte(1); // cap_call_count = 1
             for (const auto &[cap, sym] : node.capabilities) {
                 if (cap.value == CoreCapabilityId::kInvalid) {
                     return std::nullopt;
@@ -16298,7 +16235,20 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
                 out.u32(cap.value);
                 out.u64(sym);
             }
-            out.byte(0); // bridge_site_count = 0 (no in-runner bridge calls)
+            out.byte(0); // bridge_site_count = 0
+        } else {
+            // P6 bridge node or pure compute node: identity at the
+            // scheduler boundary (tag-0 event record, zero capability
+            // fields). In-handler bridge imports are accounted in the
+            // in-node bridge-site table below.
+            out.byte(0); // cap_call_count = 0 (identity)
+            out.byte(static_cast<std::uint8_t>(bridge_sites.size()));
+            for (const auto &bs : bridge_sites) {
+                out.byte(bs.ordinal);
+                out.u32(bs.call_site_id);
+                out.u32(bs.capability.value);
+                out.u64(bs.source_symbol);
+            }
         }
     }
     return std::move(out).take();
@@ -16840,7 +16790,7 @@ class WorkflowFrameMaterializer {
         const ir::core::CoreLayoutTable &layouts,
         const WorkflowPlan &plan) {
         std::vector<bool> flags(plan.nodes.size(), false);
-        if (!plan.has_p6_nodes || plan.normalize_extent == 0u) {
+        if (plan.p6_nodes.empty() || plan.normalize_extent == 0u) {
             return flags;
         }
         for (std::uint32_t p6 = 0; p6 < plan.p6_nodes.size(); ++p6) {
@@ -17366,12 +17316,8 @@ class WorkflowFrameMaterializer {
             return true;
         }
         // WH-5c.2: the upstream node's O_k block is indexed by the node's own
-        // p6_block_ordinal (defensive: after the dual-track elimination every
-        // node owns a block, so kInvalidP6Block is never hit here).
+        // p6_block_ordinal (every node is P6 after the dual-track elimination).
         const auto &source_node = plan_.nodes[source.node.value];
-        if (source_node.p6_block_ordinal == kInvalidP6Block) {
-            return false;
-        }
         emit_const(plan_.node_blocks[source_node.p6_block_ordinal].output_base);
         return true;
     }
@@ -18081,7 +18027,7 @@ void append_word_zero_fill(ByteBuffer &body,
     append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
     // V2-D emission half 2: reset the state-entry trace count header (the ring
     // contents are read only through the count, so no body wipe is needed).
-    if (plan.has_p6_nodes && plan.state_trace_capacity != 0) {
+    if (!plan.p6_nodes.empty() && plan.state_trace_capacity != 0) {
         append_i32_store_const(body, plan.state_trace_base, 0u);
     }
 
@@ -18291,7 +18237,7 @@ make_workflow_run2_body(const CoreProgram &program,
     // V2-D: the frame materializer needs one zero-fill cursor plus an
     // address-stack local per aggregate nesting depth. They sit above the
     // scheduler's status scratch.
-    const bool p6 = plan.has_p6_nodes;
+    const bool p6 = !plan.p6_nodes.empty();
     const std::uint32_t address_locals =
         p6 ? WorkflowFrameMaterializer::required_locals(program, layouts, plan) : 0u;
     // The V2-D scheduler locals are contiguous above the node/status slots:
@@ -18366,7 +18312,7 @@ make_workflow_run2_body(const CoreProgram &program,
 [[nodiscard]] ByteBuffer make_workflow_run_body(const WorkflowPlan &plan,
                                                 const WorkflowFunctionTable &functions) {
     ByteBuffer body;
-    if (!plan.imports.empty() || plan.has_p6_nodes) {
+    if (!plan.imports.empty() || !plan.p6_nodes.empty()) {
         // Legacy run is pointer-only; the v1 (ptr,len) ABI cannot carry a status,
         // so a capability-workflow's run traps before any state mutation, input
         // read, or capability effect (a PENDING must never leak through run).
@@ -18437,7 +18383,7 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     const bool capability_workflow = !plan.imports.empty();
-    const bool p6 = plan.has_p6_nodes;
+    const bool p6 = !plan.p6_nodes.empty();
     // WH-5b.3: the transcode imports follow the capability imports in the
     // RFC 0026 dual-track elimination: the transcode import family is gone;
     // the import section carries capability imports only.
@@ -18477,7 +18423,7 @@ encode_workflow_module(const CoreProgram &program,
     // WH-5b.3: a P6 workflow's node-frame blocks are allocated above the
     // event region by the capacity planning. The bump heap must start above
     // them so alloc_then_write never overwrites a node-frame block.
-    if (plan.has_p6_nodes) {
+    if (!plan.p6_nodes.empty()) {
         heap_base = plan.wf_heap_base;
         if (heap_base > kCoreWasmFixedLinearMemoryCapacityBytes) {
             add_diag(result,
@@ -19233,7 +19179,7 @@ runner_last_cap_walk_index(const CoreProgram &program,
             descriptor.heap_base = layout->heap_base;
         }
     }
-    if (plan.has_p6_nodes) {
+    if (!plan.p6_nodes.empty()) {
         descriptor.heap_base = plan.wf_heap_base;
     }
 
