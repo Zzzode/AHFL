@@ -1161,7 +1161,6 @@ async function runAgent(compiled) {
 
   // RFC 0026 P6-7: pack the canonical input into the P4-D frame BEFORE the
   // step() walk, since non-final computed handlers branch on packed input.
-  // Every module is P6-frame after the WireJson lane elimination.
   const p6 = packP6Input(probe);
 
   let walked;
@@ -1198,8 +1197,7 @@ async function runAgent(compiled) {
   }
 
   // RFC 0026 P6-7: a p6-frame agent invokes runv on the packed frame and
-  // encodes the output. Every module is P6-frame after the WireJson lane
-  // elimination, so this is the sole return path.
+  // encodes the output. This is the sole return path.
   const outputRaw = encodeP6Output(probe, p6);
   return {
     status: "completed",
@@ -1379,11 +1377,10 @@ async function runWorkflowP6(compiled) {
     outputRaw = stringifyValue(output);
   }
   // V2-D emission half 2: the state sequence is REAL runtime evidence.
-  // Every node is P6-frame after the dual-track elimination, so every node
-  // writes its states to the trace ring; the node-event records the
-  // scheduler writes per completed node are validated below but no longer
-  // carry opaque-node state recovery (that path was deleted with the
-  // WireJson lane).
+  // Every node is P6-frame, so every node writes its states to the trace
+  // ring; the node-event records the scheduler writes per completed node
+  // are validated below but carry no state recovery (that path was deleted
+  // with the WireJson lane).
   const traceBase = Number(lane.state_trace_base);
   const traceCap = Number(lane.state_trace_capacity);
   const traceCount = traceCap > 0
@@ -1486,8 +1483,7 @@ async function runWorkflowP6(compiled) {
 }
 
 async function runWorkflow(compiled) {
-  // RFC 0026 dual-track elimination: every workflow is P6-frame, so the
-  // WireJson run2 path is gone. runWorkflowP6 is the sole execution path.
+  // Every workflow is P6-frame; runWorkflowP6 is the sole execution path.
   return runWorkflowP6(compiled);
 }
 
@@ -1567,10 +1563,9 @@ async function runAbiProbes(compiled) {
     expectTraps(() => p.exports[name](), `workflow ${name}()`);
   }
 
-  // RFC 0026 dual-track elimination: every workflow is P6-frame. run2 drives
-  // the frame lane and is already fully exercised by runWorkflowP6 (packed I
-  // block, fixed output slot); the opaque identity/capability normalization
-  // probes are deleted with the WireJson lane.
+  // Every workflow is P6-frame. run2 drives the frame lane and is already
+  // fully exercised by runWorkflowP6 (packed I block, fixed output slot);
+  // the legacy identity/capability normalization probes are deleted.
   {
     const p = await makeInstance(compiled, "ok");
     expectTraps(() => p.exports.run(...p.writeInput()), "p6 workflow legacy run()");
