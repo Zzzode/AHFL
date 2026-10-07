@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["compiler", "tooling", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["e4fcecbd"]
+implementation_prs: ["e4fcecbd", "22fa727b"]
 ---
 
 # RFC 0028: Formal Verification in the Default Compilation Pipeline
