@@ -2050,6 +2050,88 @@ void test_workspace_diagnostic_transitive_importer_change() {
           "workspaceDiagnostic.transitive.main_re_emitted_after_import_change");
 }
 
+/// Multi-step edit sequence in a project context: editing types.ahfl must
+/// invalidate and recompute main.ahfl's snapshot at EVERY step (transitive
+/// importer closure), not just on the first edit.  This exercises the
+/// source-graph-level fine-grained incremental path that the detached
+/// edit-sequence tests in analysis_engine_edits.cpp cannot reach.
+void test_project_aware_edit_sequence_transitive_closure() {
+    const auto root = make_temp_project("project_edit_sequence");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-edit-sequence", "app", "\"main\", \"types\"");
+
+    // main.ahfl uses types::Msg.value as a String (via a function that
+    // returns it). When types.ahfl changes value to Int, main.ahfl's
+    // type check fails.
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "fn get_value(msg: types::Msg) -> String effect Pure decreases 0 {\n"
+                                    "    return msg.value;\n"
+                                    "}\n";
+    const std::string types_clean = "module app::types;\n"
+                                    "\n"
+                                    "struct Msg {\n"
+                                    "    value: String;\n"
+                                    "}\n";
+    const std::string types_broken = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: Int;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_clean);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+    store.open(TextDocumentItem{
+        .uri = types_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = types_clean,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    auto main_has_type_error = [&]() -> bool {
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        if (snapshot == nullptr || snapshot->type_check_result == nullptr) {
+            return false;
+        }
+        return snapshot->type_check_result->diagnostics.has_error();
+    };
+
+    // Step 1: clean — main.ahfl should have no type errors.
+    check(!main_has_type_error(), "editSequence.project.step1_main_clean");
+
+    // Step 2: break types.ahfl (value: String -> Int) — main.ahfl should
+    // have a type error (get_value returns String but msg.value is Int).
+    store.change(types_uri, 2, types_broken);
+    analysis.invalidate_paths({types_path});
+    check(main_has_type_error(), "editSequence.project.step2_main_has_error");
+
+    // Step 3: fix types.ahfl (value: Int -> String) — main.ahfl should
+    // be clean again.
+    store.change(types_uri, 3, types_clean);
+    analysis.invalidate_paths({types_path});
+    check(!main_has_type_error(), "editSequence.project.step3_main_clean_again");
+
+    // Step 4: break again — main.ahfl should have a type error again.
+    store.change(types_uri, 4, types_broken);
+    analysis.invalidate_paths({types_path});
+    check(main_has_type_error(), "editSequence.project.step4_main_has_error_again");
+}
+
 void test_workspace_diagnostic_reports_unopened_project_sources() {
     const auto root = make_temp_project("workspace_diagnostic_project_sources");
     const auto main_path = root / "src" / "main.ahfl";
@@ -12035,6 +12117,7 @@ int main() {
     test_workspace_diagnostic_includes_result_ids();
     test_workspace_diagnostic_previous_result_ids_filter();
     test_workspace_diagnostic_transitive_importer_change();
+    test_project_aware_edit_sequence_transitive_closure();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
