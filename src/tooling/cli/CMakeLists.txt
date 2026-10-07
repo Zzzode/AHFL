@@ -67,3 +67,16 @@ if(TARGET NuSMV)
             $<TARGET_FILE_DIR:ahflc>/NuSMV
         VERBATIM)
 endif()
+
+# RFC 0028: copy the bundled Z3 SMT-BMC solver next to ahflc in the build tree
+# so the executable-directory solver discovery works without an install step
+# (the same layout `cmake --install` produces). The Z3 executable target is
+# named `shell` (OUTPUT_NAME z3); see third_party/z3/CMakeLists.txt.
+if(TARGET shell)
+    add_dependencies(ahflc shell)
+    add_custom_command(TARGET ahflc POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:shell>
+            $<TARGET_FILE_DIR:ahflc>/z3
+        VERBATIM)
+endif()

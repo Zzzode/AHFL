@@ -74,7 +74,8 @@ SmtSolverAvailability resolve_smt_solver(const SmtSolverOptions &options) {
     }
 
     // 3. Bundled solver in the executable's directory (default install layout,
-    //    RFC 0028). Z3 is not yet bundled; this is a no-op until it is.
+    //    RFC 0028). Z3 is bundled next to ahflc (third_party/z3), so a default
+    //    install always resolves the SMT-BMC solver here without a PATH lookup.
     if (auto bundled = bundled_solver_path({solver_binary_name(options.kind)});
         !bundled.empty()) {
         availability.available = true;

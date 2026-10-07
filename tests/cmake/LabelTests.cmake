@@ -379,6 +379,15 @@ ahfl_label_tests(
         ahflc.check.verify.not_in_verified_subset_warning
 )
 
+# RFC 0028: the bundled Z3 discovery test is unconditional — Z3 ships in-tree,
+# so the SMT-BMC solver is always present in a default build. The external-Z3
+# refutation test still requires a real AHFL_Z3_SOLVER.
+ahfl_label_tests(
+    LABELS formal-smt-bmc
+    TESTS
+        ahflc.check.verify.bundled_smt_solver
+)
+
 if(AHFL_Z3_SOLVER)
     ahfl_label_tests(
         LABELS formal-smt-bmc

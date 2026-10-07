@@ -789,6 +789,20 @@ add_test(NAME ahflc.check.verify.bundled_solver
             -P "${PROJECT_SOURCE_DIR}/cmake/RunBundledSolverCheck.cmake"
 )
 
+# RFC 0028: Z3 is bundled next to ahflc, so the SMT-BMC solver is discovered
+# via the executable's own directory even with no solver env vars and a
+# solver-free PATH. The fixture carries encodable, provable data-predicate
+# goals; a missing Z3 would fail-closed with "solver (Z3) not found" before
+# any verdict, so a smt_bmc_status: safe/bounded_safe verdict proves the
+# bundled binary was found and ran.
+add_test(NAME ahflc.check.verify.bundled_smt_solver
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
+            "-DEMPTY_PATH_DIR=${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunBundledSmtSolverCheck.cmake"
+)
+
 add_test(NAME ahflc.check.verify.unsupported_backend
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

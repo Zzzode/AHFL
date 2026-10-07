@@ -132,6 +132,13 @@ endif()
 if(AHFL_ENABLE_BACKEND_FORMAL)
     add_subdirectory(third_party/nusmv)
 endif()
+# Z3 (MIT) is the bundled SMT-BMC solver for the contract data-predicate path
+# (RFC 0028). It exists only when the formal backend does: the fail-closed
+# default pipeline launches it, so FORMAL=OFF must leave the tree without a
+# Z3 target. See third_party/z3/VENDORING.md.
+if(AHFL_ENABLE_BACKEND_FORMAL)
+    add_subdirectory(third_party/z3)
+endif()
 add_subdirectory(src)
 
 enable_testing()
