@@ -1029,7 +1029,6 @@ struct WorkflowRegionPlan {
 // V2-D fact-gathering facts per packaged instance (agent-lane coordinates;
 // the workflow relocation is applied during module emission).
 struct WorkflowP6GatherFacts {
-    bool p6{false};
     std::uint32_t scratch_high{0};
     std::uint32_t rodata_extent{0};
     // WH-5c.3 fix-forward: the source range of this agent's earliest surviving
@@ -14351,8 +14350,6 @@ build_workflow_plan(const CoreProgram &program,
             if (!agent_plan.has_value()) {
                 return std::nullopt;
             }
-            // RFC 0026 dual-track elimination: every agent is P6-frame.
-            gathered[runner].p6 = true;
             gathered[runner].scratch_high = agent_plan->p6_scratch_high;
             gathered[runner].rodata_extent = agent_plan->rodata_extent;
             gathered[runner].rodata_source_range =
@@ -14427,14 +14424,7 @@ build_workflow_plan(const CoreProgram &program,
                 return std::nullopt;
             }
             const std::uint32_t runner_id = *runner;
-            const bool p6 = gathered[runner_id].p6;
             const WorkflowRegionPlan &region = node_regions[id];
-            if (!p6 && region.constructed) {
-                add_diag(result, core_wasm_diag::kUnsupportedWorkflowFrame,
-                         "an opaque capability-final node cannot take a constructed P4-D input "
-                         "(only a P6 computed/bridge node does); add the frame-bridge packaging");
-                return std::nullopt;
-            }
             WorkflowNodePlan node_plan;
             node_plan.node = CoreWorkflowNodeId{id};
             node_plan.target_instance = node.target_instance;
@@ -14467,7 +14457,7 @@ build_workflow_plan(const CoreProgram &program,
         for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
             const auto runner =
                 workflow_runner_index(plan, workflow.nodes[id].target_instance);
-            if (runner.has_value() && gathered[*runner].p6) {
+            if (runner.has_value()) {
                 plan.nodes[id].p6_block_ordinal =
                     static_cast<std::uint32_t>(plan.p6_nodes.size());
                 plan.p6_nodes.push_back(CoreWorkflowNodeId{id});
