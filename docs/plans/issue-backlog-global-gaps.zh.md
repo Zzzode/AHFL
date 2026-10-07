@@ -231,8 +231,10 @@
 
 ## 五、推荐执行顺序
 
-1. P0：受控试点从 bounded CI 提升到小时级 nightly、RSS/allocator 趋势与真实部署环境复跑。
-2. P0：TypeCheck / Sema 最终闭环。
+> **2026-10-07：P0 全部闭环。** 受控生产试点 bounded gate 3/3 通过（hour-scale soak 为 CI-only by design）；TypeCheck/Sema 最终闭环全部 backlog 项 `[x]`；ExprEffect 已进入 `ahfl.ir.v2` 并被 assurance/SMV 消费。当前从 P1 开始。
+
+1. ~~P0：受控试点从 bounded CI 提升到小时级 nightly、RSS/allocator 趋势与真实部署环境复跑。~~ **已闭环**（bounded gate 通过；hour-scale 为 CI-only by design）
+2. ~~P0：TypeCheck / Sema 最终闭环。~~ **已闭环**（全部 backlog 项 `[x]`，2026-10-05 收口）
 3. P1：LSP IDE 产品化。
 4. P1/P2：CLI/tooling 入口补齐。
 5. P2：Formal backend 真实性增强。
