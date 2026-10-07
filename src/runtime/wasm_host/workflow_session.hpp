@@ -54,7 +54,7 @@ struct WorkflowSessionConfig {
     StateEnteredHook state_entered_hook;
     // kr68 section 12.9.14: the LIVE debug channel. Fired at P6 import
     // boundaries with the trace-ring prefix (before the capability is
-    // dispatched); never on the WireJson lane, never post-run.
+    // dispatched); never post-run.
     StateEnteredHook state_entered_live_hook;
     std::function<void(AgentId, std::string_view)> capability_invoked_hook;
     std::function<void(const CapabilityInvocationContext &,

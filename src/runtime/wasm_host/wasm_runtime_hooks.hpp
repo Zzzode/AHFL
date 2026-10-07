@@ -61,9 +61,9 @@ struct WasmRuntimeHooks {
     // last boundary) BEFORE the capability is dispatched (kr68
     // section 12.9.14). This is the debug channel: a blocking hook pauses the
     // run genuinely inside the ImportCallback, before the capability's side
-    // effects. NEVER fired on the WireJson lane (no trace ring), NEVER
-    // post-run (the remainder is by definition post-mortem), and NEVER from
-    // the agent runner (whose state_entered_hook is already live per step).
+    // effects. NEVER post-run (the remainder is by definition post-mortem),
+    // and NEVER from the agent runner (whose state_entered_hook is already
+    // live per step).
     // Signature is byte-identical to state_entered_hook.
     std::function<void(AgentId, std::string_view agent_name,
                        std::string_view node_name, std::string_view state_name)>

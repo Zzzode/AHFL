@@ -177,10 +177,9 @@ build_bridge_string_regions(const ir::core::CoreFrameLayoutSection &section,
             {section.construct_heap_base,
              ir::core::kCoreWasmFixedLinearMemoryCapacityBytes});
     }
-    // RFC 0026 dual-track elimination: a capability-final's construct terminal
-    // builds its argument at the node's O_k block (workflow lane) or the
-    // agent output frame (agent lane). String leaves inside that argument must
-    // be authorized.
+    // A capability-final's construct terminal builds its argument at the
+    // node's O_k block (workflow lane) or the agent output frame (agent
+    // lane). String leaves inside that argument must be authorized.
     if (!section.node_blocks.empty()) {
         for (const auto &block : section.node_blocks) {
             if (block.output_size > 0) {

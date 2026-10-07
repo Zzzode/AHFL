@@ -172,16 +172,16 @@ struct ParsedImport {
 // wire-schema table bytes (name framing stripped, borrowed from the caller's
 // module_bytes). Populated only when framing fully succeeds.
 struct ModuleFraming {
-    // The sole accepted ahfl_cap import functype: (i32)->(i32,i32). After the
-    // WireJson lane elimination, the old opaque (i32,i32)->(i32,i32,i32) tuple
-    // is rejected; every import must use the bridge signature.
+    // The sole accepted ahfl_cap import functype: (i32)->(i32,i32). The old
+    // opaque (i32,i32)->(i32,i32,i32) tuple is rejected; every import must
+    // use the bridge signature.
     std::vector<bool> type_is_bridge_signature;
     std::vector<ParsedImport> imports;
     std::span<const std::uint8_t> table_bytes;
 };
 
-// The sole ahfl_cap bridge function signature: (i32) -> (i32, i32). After the
-// WireJson lane elimination, this is the ONLY accepted import functype.
+// The sole ahfl_cap bridge function signature: (i32) -> (i32, i32). This is
+// the ONLY accepted import functype.
 [[nodiscard]] bool
 spans_are_bridge_signature(std::span<const std::uint8_t> params,
                            std::span<const std::uint8_t> results) noexcept {
@@ -493,8 +493,8 @@ make_wire_binding_from_core_wasm(std::span<const std::uint8_t> module_bytes,
         return result;
     }
     // Every ordinal's source_symbol + bridge signature must agree before we
-    // honor the requested ordinal. After the WireJson lane elimination, the
-    // sole accepted ahfl_cap import functype is the bridge (i32)->(i32,i32).
+    // honor the requested ordinal. The sole accepted ahfl_cap import functype
+    // is the bridge (i32)->(i32,i32).
     for (std::size_t i = 0; i < framing->imports.size(); ++i) {
         const auto &imported = framing->imports[i];
         if (imported.source_symbol != table.capabilities[i].source_symbol) {

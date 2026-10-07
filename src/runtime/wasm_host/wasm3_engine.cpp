@@ -559,8 +559,7 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     //    fully built, so its element addresses are stable for the session
     //    (committed to the Impl below before any invocation). The wasm3 raw
     //    signature is results-then-(params): the bridge 2-result lane is
-    //    "ii(i)", the sole accepted import functype after the WireJson lane
-    //    elimination.
+    //    "ii(i)", the sole accepted import functype.
     for (std::size_t i = 0; i < parsed->imports.size(); ++i) {
         const char *signature = "ii(i)";
         if (m3_LinkRawFunctionEx(impl_->module,
