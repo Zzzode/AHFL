@@ -753,8 +753,8 @@ int mode_verify(const fs::path &repo_root,
         }
         // Exact-set pin of the WH-5c.7 rich wire-type
         // (node_host_awaits_rich_wire_types) stems: keeps the Node-host gap
-        // reasons disjoint -- a case that traps at ahfl_xcode sites cannot be
-        // filed under the rich-wire-type gap (or vice versa).
+        // reasons disjoint -- a case that needs Map/Decimal/Duration cannot
+        // be filed under a different gap (or vice versa).
         std::sort(g_rich_wire_types_stems.begin(),
                   g_rich_wire_types_stems.end());
         g_rich_wire_types_stems.erase(

@@ -659,12 +659,12 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::wh5c_instance_reuse_fanout::ReuseFanout",
             0, 1, WasmEligibility::Orchestration,
         },
-        // WH-5c.4 (GAP 2): an opaque-lane capability-final agent that
-        // constructs the capability argument in-module. The wasm codegen emits
-        // a P4D_TO_JSON self-transcode for the constructed O_k and a
-        // JSON_TO_P4D workflow-output crossing. The native wasm3 lane has a
-        // checked-in blessing; the Node observation now agrees (the JS host
-        // implements the ahfl_xcode transcode adapter).
+        // WH-5c.4 (GAP 2): a capability-final agent that constructs the
+        // capability argument in-module. The wasm codegen materializes the
+        // constructed O_k and the scheduler forwards it to the capability at
+        // the scheduler boundary. The native wasm3 lane has a checked-in
+        // blessing; the Node observation agrees after the dual-track
+        // elimination.
         {
             "wh5c4_construct_cap_final.case.json",
             "tests/golden/wasm/wh5c4_construct_cap_final.ahfl",
@@ -674,12 +674,11 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             WasmNodeObservationSkip::None,
         },
         // WH-5c.4 P0-3: a construct-capability terminal whose upstream node is
-        // opaque (Echo capability-final). The construct node carries BOTH a
-        // JSON_TO_P4D input crossing (opaque producer output -> P4-D input)
-        // AND a P4D_TO_JSON self-transcode (constructed Request -> wire-JSON);
-        // the two-slot scheduler table keeps both. The native wasm3 lane has
-        // a checked-in blessing; the Node observation now agrees (the JS host
-        // implements the ahfl_xcode transcode adapter).
+        // a capability-final (Echo). The construct node materializes its input
+        // from the upstream output and constructs the Request in-module; the
+        // scheduler forwards it to the capability at the scheduler boundary.
+        // The native wasm3 lane has a checked-in blessing; the Node
+        // observation agrees after the dual-track elimination.
         {
             "wh5c4_p03_opaque_upstream.case.json",
             "tests/golden/wasm/wh5c4_p03_opaque_upstream.ahfl",
