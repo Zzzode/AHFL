@@ -2346,6 +2346,106 @@ void test_manifest_watcher_refreshes_workspace_index_scope() {
           "manifestWatcherIndex.after_includes_exported_uri");
 }
 
+std::string did_change_workspace_folders_body(const std::string &added_uri,
+                                              const std::string &removed_uri) {
+    std::string event = R"("event":{)";
+    if (!added_uri.empty()) {
+        event += R"("added":[{"uri":")" + added_uri + R"(","name":"added"}])";
+    } else {
+        event += R"("added":[])";
+    }
+    if (!removed_uri.empty()) {
+        event += R"(,"removed":[{"uri":")" + removed_uri + R"(","name":"removed"}])";
+    } else {
+        event += R"(,"removed":[])";
+    }
+    event += "}";
+    return R"({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders","params":{)" +
+           event + R"(}})";
+}
+
+void test_did_change_workspace_folders_add_and_remove() {
+    const auto root_a = make_temp_project("ws_folders_a");
+    const auto root_b = make_temp_project("ws_folders_b");
+    write_package_manifest(root_a, "ws-folders-a", "app", "\"main\"");
+    write_package_manifest(root_b, "ws-folders-b", "lib", "\"main\"");
+    const auto main_a_path = root_a / "src" / "main.ahfl";
+    const auto main_b_path = root_b / "src" / "main.ahfl";
+    write_file(main_a_path,
+               "module app::main;\n\nstruct TypeA {\n    value: Int;\n}\n");
+    write_file(main_b_path,
+               "module lib::main;\n\nstruct TypeB {\n    value: String;\n}\n");
+
+    const auto uri_a = AnalysisService::uri_from_path(main_a_path);
+    const auto uri_b = AnalysisService::uri_from_path(main_b_path);
+    const auto folder_a_uri = AnalysisService::uri_from_path(root_a);
+    const auto folder_b_uri = AnalysisService::uri_from_path(root_b);
+
+    // Phase 1: initialize with folder A, open a file in A, then add folder B.
+    // didOpen fires one $/diagnostic/refresh; didChangeWorkspaceFolders fires
+    // another and sends a workspace/configuration request whose scopeUris
+    // must include both folders.
+    const auto add_output = run_lsp_messages({
+        initialize_body(root_a),
+        did_open_body(uri_a, 1, "module app::main;\n\nstruct TypeA {\n    value: Int;\n}\n"),
+        did_change_workspace_folders_body(folder_b_uri, ""),
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+
+    check(count_substring(add_output, "\"method\":\"$/diagnostic/refresh\"") == 2,
+          "workspaceFolders.add.two_diagnostic_refresh");
+    check(add_output.find("\"method\":\"workspace/configuration\"") != std::string::npos,
+          "workspaceFolders.add.configuration_request_sent");
+    check(add_output.find("\"scopeUri\":\"" + folder_b_uri + "\"") != std::string::npos,
+          "workspaceFolders.add.configuration_includes_added_scope");
+    check(add_output.find("\"scopeUri\":\"" + folder_a_uri + "\"") != std::string::npos,
+          "workspaceFolders.add.configuration_still_includes_existing_scope");
+
+    // Phase 2: after adding folder B, workspace/diagnostic should report
+    // sources from both projects (B is now a workspace folder so its
+    // manifest is discovered and its sources are analyzed).
+    const auto both_output = run_lsp_messages({
+        initialize_body(root_a),
+        did_open_body(uri_a, 1, "module app::main;\n\nstruct TypeA {\n    value: Int;\n}\n"),
+        did_change_workspace_folders_body(folder_b_uri, ""),
+        did_open_body(uri_b, 1, "module lib::main;\n\nstruct TypeB {\n    value: String;\n}\n"),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto both_response = response_body_for_id(both_output, 2);
+    check(both_response.find(uri_a) != std::string::npos,
+          "workspaceFolders.add.diagnostic_reports_folder_a");
+    check(both_response.find(uri_b) != std::string::npos,
+          "workspaceFolders.add.diagnostic_reports_folder_b");
+
+    // Phase 3: remove folder B. The configuration request must no longer
+    // include B's scopeUri.
+    const auto remove_output = run_lsp_messages({
+        initialize_body(root_a),
+        did_open_body(uri_a, 1, "module app::main;\n\nstruct TypeA {\n    value: Int;\n}\n"),
+        did_change_workspace_folders_body(folder_b_uri, ""),
+        did_change_workspace_folders_body("", folder_b_uri),
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+
+    // Three $/diagnostic/refresh: didOpen + add + remove.
+    check(count_substring(remove_output, "\"method\":\"$/diagnostic/refresh\"") == 3,
+          "workspaceFolders.remove.three_diagnostic_refresh");
+
+    // The last workspace/configuration request (after removal) must not
+    // include B's scopeUri. Find the last occurrence and check from there.
+    const auto last_config_pos = remove_output.rfind("\"method\":\"workspace/configuration\"");
+    check(last_config_pos != std::string::npos,
+          "workspaceFolders.remove.configuration_request_sent");
+    if (last_config_pos != std::string::npos) {
+        const auto tail = remove_output.substr(last_config_pos);
+        check(tail.find("\"scopeUri\":\"" + folder_b_uri + "\"") == std::string::npos,
+              "workspaceFolders.remove.configuration_excludes_removed_scope");
+        check(tail.find("\"scopeUri\":\"" + folder_a_uri + "\"") != std::string::npos,
+              "workspaceFolders.remove.configuration_still_includes_remaining_scope");
+    }
+}
+
 void test_manifest_invalidation_preserves_workspace_source_unit_ids() {
     const auto root = make_temp_project("manifest_source_unit_stability");
     const auto main_path = root / "src" / "main.ahfl";
@@ -11915,6 +12015,7 @@ int main() {
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
     test_in_package_non_imported_change_keeps_snapshot();
     test_manifest_watcher_refreshes_workspace_index_scope();
+    test_did_change_workspace_folders_add_and_remove();
     test_manifest_invalidation_preserves_workspace_source_unit_ids();
     test_lsp_workspace_index_uses_package_graph_source_unit_ids();
     test_lsp_workspace_index_symbol_fingerprints_are_stable();
