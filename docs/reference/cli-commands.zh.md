@@ -130,7 +130,7 @@ ahfl-dap [--help]
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
-| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过。NuSMV 已内置于安装包,默认安装即有 solver |
+| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过。NuSMV 和 Z3 已内置于安装包,默认安装即有 solver |
 | `--formal-backend` | `<nuxmv\|nusmv\|spin\|tlaplus>` | 需 `--verify=on`: 选择形式化 backend。当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证；`spin` / `tlaplus` 会报告 `verification_unsupported` |
 | `--model-checker` | `<path>` | 需 `--verify=on`: NuSMV/nuXmv checker 路径 |
 | `--checker-timeout-seconds` | `<seconds>` | 需 `--verify=on`: 外部 checker 进程 timeout；超时会报告 `checker_status: checker_error` 与 `checker_timed_out: true` |
@@ -503,7 +503,7 @@ smt_bmc_refuted: contract pkg::Agent ensures[0]
 1. 真正的反驳(`unsafe`)使 `verify` 失败(退出码非零),即使 SMV 路径通过。
 2. 求解器缺失(`solver_unavailable`)、无可编码目标(`unsupported`)、`unknown` 都是
    skip,**绝不**把通过变成失败,也**绝不**伪造通过。
-3. 求解器解析:`AHFL_Z3_PATH` 环境变量 → PATH 中的 `z3`(当前 `verify` 使用默认
+3. 求解器解析:`AHFL_Z3_PATH` 环境变量 → **ahflc 同目录下的 bundled Z3**（默认安装即有）→ `PATH` 中的 `z3`(当前 `verify` 使用默认
    求解器选项,不接受显式路径标志)。
 4. 离开可验证子集的子句发 `formal.NOT_IN_VERIFIED_SUBSET` 告警(见
    `docs/reference/error-codes.zh.md`),被抽象而非证明。

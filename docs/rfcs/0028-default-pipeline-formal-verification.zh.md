@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["compiler", "tooling", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["e4fcecbd", "22fa727b", "8df39dfe"]
+implementation_prs: ["e4fcecbd", "22fa727b", "8df39dfe", "952d814b"]
 ---
 
 # RFC 0028: Formal Verification in the Default Compilation Pipeline
@@ -79,10 +79,10 @@ properties the language lets users write.
    (SMT-BMC, SMV model checker) into the pipeline; it does not build the internal
    IR→`BmcStateMachine` lowering that would make `run_bmc` the always-available
    backbone. That is the constraint-removal end-state (see Design §Constraint).
-2. **No vendoring of Z3.** NuSMV 2.6.0 IS vendored (see Design §Bundled
-   Solver); Z3 remains external because the SMT-BMC path is a secondary engine
-   and Z3's build is substantially heavier. RFC 0018's dlopen library-mode is
-   the separate track for embedding Z3 in-process.
+2. **No vendoring of additional solvers.** NuSMV 2.6.0 AND Z3 4.8.12 are both
+   vendored (see Design §Bundled Solver); no other solver (nuXmv, MathSAT, …)
+   is vendored. RFC 0018's dlopen library-mode is the separate track for
+   embedding solvers in-process.
 3. **No change to SMV model emission format.** `print_program_smv` output
    (`AHFL_MAP` / `LTLSPEC`) is unchanged; `emit smv` is unaffected.
 4. **No change to the SMT-BMC engine semantics** (RFC 0017): loop-free data-predicate
@@ -229,21 +229,14 @@ the `verify-formal` command is deleted in the SAME change:
 ### Constraint (Principle 6)
 
 The original constraint — **NuSMV/nuXmv and Z3 are external, optional processes
-that AHFL does not vendor** — is PARTIALLY REMOVED. NuSMV 2.6.0 is now vendored
-in-tree (`third_party/nusmv/`) and built as part of the AHFL CMake build. The
-NuSMV binary is installed to `bin/` alongside `ahflc` during `cmake --install`,
+that AHFL does not vendor** — is **REMOVED**. NuSMV 2.6.0 is vendored in-tree
+(`third_party/nusmv/`) and built as part of the AHFL CMake build. Z3 4.8.12 is
+vendored in-tree (`third_party/z3/`) and built as part of the AHFL CMake build.
+Both binaries are installed to `bin/` alongside `ahflc` during `cmake --install`,
 and the runtime solver discovery checks the executable's own directory first
 (see Design §Bundled Solver). A default AHFL installation ALWAYS has a working
-SMV model checker; the "missing NuSMV" failure mode cannot occur in a default
-install.
-
-The remaining constraint is **Z3 for the SMT-BMC path**. Z3 is a substantially
-heavier build (C++ with complex dependencies) and is not yet vendored. Programs
-with SMT-BMC contract-data goals still require Z3 on the PATH (or
-`AHFL_Z3_SOLVER`); programs without SMT-BMC goals are unaffected (the SMT-BMC
-engine returns `Unsupported` silently when no goals exist). The end-state for
-Z3 is the same: vendor it or land RFC 0018's dlopen embedding, then remove the
-`SolverUnavailable` failure path in one big-bang change.
+SMV model checker AND a working SMT solver; the "missing solver" failure mode
+cannot occur in a default install for either engine.
 
 The internal `run_bmc` engine (`src/verification/formal/bmc.hpp`) remains
 REPL-only and is the longer-term constraint-removal track for a fully
@@ -282,13 +275,17 @@ checks, in order:
 
 The bundled check is implemented in
 `src/verification/formal/bundled_solver.{hpp,cpp}` and shared with the SMT-BMC
-path (which checks for Z3 in the same way, though Z3 is not yet bundled).
+path (which checks for Z3 in the same way).
 
 **Test.** `ahflc.check.verify.bundled_solver` unsets all solver env vars, sets
 a solver-free PATH, and asserts that `ahflc check` finds the bundled NuSMV
 (`checker_status: available`, checker path is the binary in the executable's
 directory). This replaces the old `missing_binary` test, which asserted the
 opposite failure mode that can no longer occur in a default install.
+`ahflc.check.verify.bundled_smt_solver` does the same for the SMT-BMC path:
+unsets all solver env vars, sets a solver-free PATH, and asserts that
+`smt_bmc_status: safe` / `bounded_safe` is produced (proving the bundled Z3
+was found and ran, not just that the binary exists).
 
 ## User Impact
 
@@ -302,10 +299,11 @@ opposite failure mode that can no longer occur in a default install.
   no separate solver installation is required for LTL/safety verification.
   The solver is discovered in the executable's own directory first, then env
   vars, then PATH.
-- **Missing Z3** (SMT-BMC path only): programs with SMT-BMC contract-data goals
-  require Z3 on the PATH (or `AHFL_Z3_SOLVER`). Programs without SMT-BMC goals
-  are unaffected (the engine returns `Unsupported` silently). Z3 bundling is
-  tracked as a follow-up.
+- **Z3 bundled**: Z3 4.8.12 is built from source and installed alongside
+  `ahflc`. A default AHFL installation always has a working SMT solver;
+  programs with SMT-BMC contract-data goals no longer require a separate Z3
+  installation. The solver is discovered in the executable's own directory
+  first, then env vars, then PATH.
 - **`ahflc verify-formal`**: REMOVED. Migration: `ahflc verify-formal <file>` →
   `ahflc check --verify=on <file>`. CI / release pipelines that called
   `verify-formal` must update the invocation (breaking, documented in
@@ -379,6 +377,11 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
     solver-free PATH, `ahflc check` finds the bundled NuSMV in the executable's
     directory (`checker_status: available`). Replaces the old `missing_binary`
     test (the failure mode it asserted can no longer occur in a default install).
+  - `ahflc.check.verify.bundled_smt_solver` → with all solver env vars unset and
+    a solver-free PATH, `ahflc check` finds the bundled Z3 in the executable's
+    directory and discharges SMT-BMC goals (`smt_bmc_status: safe` /
+    `bounded_safe`). Proves the bundled Z3 binary was found and ran, not just
+    that it exists on disk.
   - `ahflc.check.verify.no_properties` → exit 0, no formal output, no NuSMV launch
     (assert via a fake checker that records invocations).
   - `ahflc.check.verify.refutation` (fake checker emitting `is false`) → exit non-zero
@@ -403,9 +406,11 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
    (command deleted in the same PR as the stage is added).
 3. `implemented`: code + migrated/new tests + `docs/spec/assurance.zh.md` landed;
    `ctest` green.
-4. `stabilized`: `docs/reference/` CLI reference reflects `--verify`; the
-   constraint-removal end-state (internal BMC engine or RFC 0018 embedding) is tracked
-   as the trigger that removes the missing-solver failure path.
+4. `stabilized`: `docs/reference/` CLI reference reflects `--verify`; both
+   solvers (NuSMV, Z3) are bundled so the missing-solver failure path is
+   unreachable in a default install. The internal BMC engine (`run_bmc`) or
+   RFC 0018 embedding remains as the longer-term track for a fully
+   self-contained formal engine with zero external processes.
 
 ## Alternatives
 
@@ -470,6 +475,15 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
   executable's own directory first (`bundled_solver.{hpp,cpp}`). The
   `missing_binary` test is replaced by `bundled_solver` (asserts the solver IS
   found with no env vars and a solver-free PATH). All NuSMV install rules except
-  the binary are stripped (no headers, no static libs, no docs). Z3 remains
-  external (SMT-BMC path only); its bundling is a follow-up. Constraint section
-  updated to reflect the partial removal.
+  the binary are stripped (no headers, no static libs, no docs). Constraint
+  section updated to reflect the partial removal.
+- 2026-10-08: Z3 4.8.12 bundled per user directive ("把后续工作全部做完"). The
+  external-solver constraint for the SMT-BMC path is REMOVED: Z3 is vendored in
+  `third_party/z3/`, built from source, and installed to `bin/` alongside
+  `ahflc`. Runtime discovery checks the executable's own directory first (same
+  `bundled_solver.{hpp,cpp}` helper). The `bundled_smt_solver` test asserts the
+  bundled Z3 is found and discharges SMT-BMC goals with no env vars and a
+  solver-free PATH. All Z3 install rules except the binary are stripped (no
+  headers, no static libs, no docs, no bindings). The external-solver
+  constraint is now FULLY REMOVED for both engines. Constraint section updated
+  to reflect the full removal.

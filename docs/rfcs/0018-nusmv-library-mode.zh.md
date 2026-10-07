@@ -1,19 +1,19 @@
 ---
 rfc: "0018"
 title: "NuSMV Library-Mode Embedding"
-status: "draft"
+status: "accepted"
 area: ["formal", "tooling"]
 stability: "experimental"
 created: "2026-08-24"
-updated: "2026-08-24"
+updated: "2026-10-08"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "zzzode"
 owners:
-  formal: "TBD"
-  tooling: "TBD"
+  formal: "zzzode"
+  tooling: "zzzode"
 required_reviewers: ["formal", "tooling"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-09-30"
 ---
@@ -24,12 +24,23 @@ decision_due: "2026-09-30"
 
 评估并决策是否把 AHFL 的形式化验证从"外部 nuXmv/NuSMV 进程 seam"演进到"in-process
 library-mode embedding"。当前 `src/verification/formal/nuxmv_backend.cpp` 通过
-`find_nuxmv_binary()`（在 PATH / `AHFL_SMV_CHECKER` 查找二进制）+
-`launch_process()`（`src/verification/formal/process_launcher.hpp`，替代 popen 的进程启动
-seam）调用外部检查器，并把 SMV 模型经 stdin 传入、解析 stdout。本 RFC 定义 library-mode
-的**接入契约、边界与可行性判定**——包括许可证/构建耦合分析、抽象接口保持
-（`ModelCheckerBackend`，`src/verification/formal/model_checker_backend.hpp`）、以及为何
-本 RFC 的结论倾向"保持进程 seam 为默认、library-mode 作为受限可选后端而非替换"。
+`find_nuxmv_binary()`（发现链：`--model-checker` → 环境变量 → **可执行文件同目录的 bundled
+solver** → PATH）+ `launch_process()`（`src/verification/formal/process_launcher.hpp`，替代
+popen 的进程启动 seam）调用检查器，并把 SMV 模型经 stdin 传入、解析 stdout。
+
+**2026-10-08 起的关键变化**：NuSMV 2.6.0（LGPL-2.1）已被 vendor 进
+`third_party/nusmv/`、随 AHFL CMake 从源码构建、`cmake --install` 时装到 `bin/` 与
+`ahflc` 并列，运行时发现链优先查可执行文件同目录（commit 8df39dfe，RFC 0028）。默认安装
+**必定**自带一个可用的 SMV 模型检查器，"缺 NuSMV"的失败模式在默认安装中不复存在。Z3
+4.8.12（MIT）同样已被 vendor 进 `third_party/z3/` 并随 AHFL 构建/安装（RFC 0028）。
+进程 seam 因此被
+**保留为默认**，但它的对端从"外部可选进程"变成了"自带的 bundled 二进制"。
+
+本 RFC 定义 library-mode 的**接入契约、边界与可行性判定**——包括许可证/构建耦合分析、抽象
+接口保持（`ModelCheckerBackend`，`src/verification/formal/model_checker_backend.hpp`）、以及
+为何本 RFC 的结论是"保持进程 seam 为默认（现对 bundled 二进制）、library-mode 作为受限可选
+后端而非替换"。该结论在 NuSMV bundling 落地后**依然成立并被重申**（见 Decision History
+2026-10-08）。
 
 ## Motivation
 
@@ -37,13 +48,24 @@ seam）调用外部检查器，并把 SMV 模型经 stdin 传入、解析 stdout
 "NuSMV/nuXmv library-mode embedding：当前是外部进程 seam，library-mode 仍是研究项"。
 进程模型有真实成本：
 
-1. **启动开销**：每次 `verify` fork/exec 一个 nuXmv 进程，对大量小 workflow 的批量验证
-   （LSP 实时反馈、CI 矩阵）累积可观。
+1. **启动开销**：每次 `verify` fork/exec 一个 nuXmv/NuSMV 进程，对大量小 workflow 的批量
+   验证（LSP 实时反馈、CI 矩阵）累积可观。
 2. **数据往返**：SMV 模型经 stdin 序列化、结果经 stdout 反序列化解析
    （`nuxmv_backend.cpp` 的 parse 逻辑），是文本层的脆弱边界——nuXmv 输出格式变化会打断
    parser（RFC/既有 fixture matrix 已在防这个）。
-2. **诊断粒度**：进程只能给最终文本输出；library-mode 理论上能拿到结构化的中间状态
+3. **诊断粒度**：进程只能给最终文本输出；library-mode 理论上能拿到结构化的中间状态
    （trace、bound、solver 统计）而不必解析文本。
+
+**2026-10-08 的变化（RFC 0028，commit 8df39dfe）**：NuSMV 2.6.0 已被 vendor 并随 AHFL
+构建/安装，运行时发现链优先查可执行文件同目录。这**移除了进程 seam 的"外部可选依赖"
+约束**——默认安装不再依赖用户自行安装/配置 NuSMV，"缺 solver"失败模式在默认安装中消失。
+但 bundling **没有**消除上面三条进程模型本身的成本（启动开销、文本往返、诊断粒度）：
+bundled 的 NuSMV 仍是一个被 fork/exec 的独立进程，只是它现在随 AHFL 一起分发。因此
+library-mode 的动机从"摆脱外部依赖"收窄为"消除进程边界本身的性能/诊断损耗"。
+
+Z3（SMT-BMC 路径）同样已被 vendor（`third_party/z3/`，MIT 许可），随 AHFL 构建并安装到
+`bin/` 与 `ahflc` 并列；SMT-BMC 目标的运行时发现链同样优先查可执行文件同目录，默认安装
+必定自带可用 SMT solver。
 
 但 library-mode 也有真实阻碍，本 RFC 的核心是**把这些阻碍量化成可决策的事实**，而不是
 默认"embedding 一定更好"。不做这个决策，"要不要 embed nuXmv"会一直是模糊的研究项，
@@ -57,7 +79,10 @@ seam）调用外部检查器，并把 SMV 模型经 stdin 传入、解析 stdout
    调用方（`checker.cpp`）不感知底层是进程还是库。
 2. **许可证与构建耦合分析**：判定把 nuXmv/NuSMV 作为库链接进 AHFL 是否与
    Apache-2.0（本项目 LICENSE）及"无外部运行时依赖（除 vendored ANTLR4）"原则
-   （CLAUDE.md）相容——这是 go/no-go 的硬约束。
+   （CLAUDE.md）相容——这是 go/no-go 的硬约束。**部分已有结论**：NuSMV 的 LGPL-2.1
+   与本项目在"构建期组合的独立作品"形态下相容（见 `third_party/nusmv/VENDORING.md`
+   §License），NuSMV 已据此被 vendor 为**独立二进制**（进程 seam）；但"作为库
+   链接/ dlopen 进同一进程"是更强的耦合，仍需单独判定。
 3. **接入契约**：若 library-mode 可行，定义它的可选构建开关、availability 三态
    （`Available` / `MissingBinary`→`MissingLibrary` / `VerificationUnsupported`）、以及与
    process-mode 完全一致的 `VerificationSummary` 输出，使二者对报告层无差别。
@@ -69,10 +94,13 @@ seam）调用外部检查器，并把 SMV 模型经 stdin 传入、解析 stdout
 
 ## Non-Goals
 
-1. **不移除 process seam**。无论 library-mode 是否落地，外部进程 seam 保持为默认路径
-   （最兼容、无链接/许可证耦合）。
-2. **不 vendor nuXmv 源码**。nuXmv 非开源可自由分发，本 RFC 不涉及把其源码纳入
-   `third_party/`。
+1. **不移除 process seam**。无论 library-mode 是否落地，进程 seam 保持为默认路径
+   （最兼容、无链接/许可证耦合）；自 RFC 0028 起其默认对端是自带的 bundled NuSMV 二进制，
+   而非外部可选进程。
+2. **不 vendor nuXmv 源码，也不把 NuSMV  vendor 为库**。nuXmv 非开源可自由分发，本 RFC
+   不涉及把其源码纳入 `third_party/`。NuSMV 2.6.0 已被 vendor 为**独立二进制**（RFC 0028，
+   `third_party/nusmv/`，经进程 seam 调用）；本 RFC 不改变这一形态，不把 NuSMV 作为
+   静态/动态库链接进 `ahflc`。
 3. **不改变 SMV 模型的发射格式**。`emit smv` 的 `AHFL_MAP` / `LTLSPEC` 输出
    （`src/compiler/backends/smv/smv.cpp`）不变——library-mode 消费的是同一份 SMV 文本。
 4. **不做 NuSMV 之外检查器（SPIN/TLA+）的 embedding**。它们当前是 emit-only
@@ -88,11 +116,17 @@ seam）调用外部检查器，并把 SMV 模型经 stdin 传入、解析 stdout
 flowchart TD
     IR["ir::Program"] --> Emit["emit smv (smv.cpp): AHFL_MAP + LTLSPEC"]
     Emit --> Backend["nuxmv_backend.cpp"]
-    Backend --> Find["find_nuxmv_binary() (PATH / AHFL_SMV_CHECKER)"]
+    Backend --> Find["find_nuxmv_binary(): --model-checker → env vars → bundled (exe dir) → PATH"]
     Find --> Launch["launch_process() (process_launcher.hpp): stdin=model"]
     Launch --> Parse["parse stdout -> VerificationSummary"]
     Parse --> Report["verify report"]
 ```
+
+发现链（`find_nuxmv_binary()`，RFC 0028 起）依次为：`--model-checker` flag →
+`AHFL_SMV_CHECKER` / `AHFL_NUXMV_PATH` / `AHFL_NUSMV_PATH` 环境变量 → **可执行文件同目录的
+bundled solver**（`bundled_solver.{hpp,cpp}`，Linux 经 `/proc/self/exe`、macOS 经
+`_NSGetExecutablePath`，按 `nuXmv`/`nuxmv`/`NuSMV`/`nusmv` 顺序查找）→ PATH。默认安装命中
+bundled 这一档。
 
 ### 抽象后端接口（已存在，是共存的关键）
 
@@ -122,11 +156,19 @@ nuXmv 的分发许可（非 OSI 开源，学术/评估许可）与"链接进发�
 - **动态加载可选库（dlopen）**：AHFL 二进制不链接 nuXmv，用户自行提供共享库路径，
    AHFL 在运行时 `dlopen`——这把许可责任留在用户侧、AHFL 分发物不含 nuXmv 代码，
    可能相容。这是唯一可能的 library-mode 形态。
-- **NuSMV（LGPL）** 而非 nuXmv：NuSMV 是 LGPL，动态链接相容性更好，但功能弱于 nuXmv
-   （无 IC3/部分 BMC 增强）。若 library-mode 落地，NuSMV-via-dlopen 是更干净的候选。
+- **NuSMV（LGPL-2.1）** 而非 nuXmv：NuSMV 是 LGPL-2.1，动态链接相容性更好，但功能弱于
+   nuXmv（无 IC3/部分 BMC 增强）。若 library-mode 落地，NuSMV-via-dlopen 是更干净的候选。
 
-**本 RFC 的倾向结论**：library-mode 只可能以"可选、dlopen、默认关闭、用户自备库"的形态
-存在；静态链接 no-go。默认路径永远是 process seam。这把决策从"embed 还是不 embed"
+**NuSMV LGPL 问题已落地（2026-10-08，RFC 0028，commit 8df39dfe）**：NuSMV 2.6.0 已被
+vendor 为**独立二进制**（`third_party/nusmv/`，LGPL-2.1 与 Apache-2.0 在"构建期组合的独立
+作品"形态下相容，见 `third_party/nusmv/VENDORING.md` §License），经进程 seam 调用。这是
+许可位置最干净的形态——AHFL 分发物不把 NuSMV 代码链接进同一进程，二进制是独立作品。
+"作为库（静态/dlopen）链接进同一进程"是更强的耦合，其相容性未被本次 bundling 覆盖，仍是
+library-mode 落地前必须单独判定的项。
+
+**本 RFC 的结论（2026-10-08 重申）**：library-mode 只可能以"可选、dlopen、默认关闭、用户
+自备库"的形态存在；静态链接 no-go。默认路径永远是 process seam——且自 NuSMV bundling 起，
+process seam 的对端是自带的 bundled 二进制而非外部可选进程。这把决策从"embed 还是不 embed"
 收敛为"是否值得为边际性能收益维护一条 dlopen 可选后端"。
 
 ### 若落地：接入契约
@@ -140,11 +182,13 @@ nuXmv 的分发许可（非 OSI 开源，学术/评估许可）与"链接进发�
 
 ## User Impact
 
-- **默认无变化**：process seam 仍是默认，用户不装库则行为完全不变。
+- **默认无变化**：process seam 仍是默认，用户不装库则行为完全不变（且自 NuSMV bundling
+   起，默认安装连 solver 都无需自行安装）。
 - 若 library-mode 落地且用户显式启用：批量 `verify` 更快、诊断更结构化，但需自备 nuXmv/
    NuSMV 共享库并自担许可责任。
-- 若结论是 no-go：backlog 的"library-mode 研究项"被明确关闭为"经分析决定不做"，不再是
-   悬而未决的模糊项——这本身是有价值的用户可见结论（文档明确说明为何用进程 seam）。
+- **no-go 已兑现（2026-10-08）**：backlog 的"library-mode 研究项"被明确关闭为"经分析决定
+   现阶段不做"，不再是悬而未决的模糊项——文档明确说明为何用进程 seam（现对 bundled
+   二进制）。
 
 ## Compatibility and Migration
 
@@ -191,29 +235,58 @@ nuXmv 的分发许可（非 OSI 开源，学术/评估许可）与"链接进发�
 3. 若 limited：`accepted` 后按 Implementation Plan 实现可选后端。
 4. `stabilized`：`docs/reference/` 与 spec 反映最终决策。
 
+**实际路径（2026-10-08）**：本 RFC 经 `accepted`，决策为 **no-go（现阶段不实现
+library-mode）**——process seam 保留为默认，且其对端随 RFC 0028 变为自带的 bundled NuSMV
+二进制。library-mode 不被永久否决，而是降级为"研究方向"：仅当 Open Questions 2/3 被正面
+回答（存在稳定 C API 且边际性能收益值得维护成本）时才重新立项。状态推进到 `implemented`
+的触发条件是"决策落文档"，本 RFC 即以此为完成态。
+
 ## Alternatives
 
 1. **静态链接 nuXmv 进发布二进制**：性能最优、无 dlopen 复杂度，但几乎确定违反 nuXmv
    许可与本项目"无外部运行时依赖"原则。**失败原因**：许可 + 原则双重 no-go。
 2. **保持纯 process seam，不做任何 embedding**：零许可风险、零维护增量。代价是放弃
-   library-mode 的性能/诊断收益。**这实际上是本 RFC 倾向的默认结论**——除非调研证明
-   dlopen 可选后端的收益值得其维护成本。列为 alternative 是因为它可能就是最终决策。
+   library-mode 的性能/诊断收益。**这是本 RFC 的最终决策（2026-10-08 重申）**——且
+   NuSMV bundling（RFC 0028）消除了该方案原本唯一的实质短板（"外部可选依赖"），使
+   process seam 成为既无许可耦合、又默认自带 solver 的形态。dlopen 可选后端仅在调研证明
+   其收益值得维护成本时才重新立项。
 3. **自研/vendor 一个开源模型检查器替换 nuXmv**：彻底摆脱许可问题，但重写一个成熟度
    接近 nuXmv 的检查器是巨大工程,远超 embedding 的收益。**失败原因**：投入产出比
    不成立;RFC 0017 的 SMT-BMC 已在为数据谓词提供自研验证路径,时序部分继续依赖成熟
-   外部工具更务实。
+   检查器（NuSMV 现已 bundled 为独立二进制）更务实。
 
 ## Open Questions
 
-1. nuXmv 当前分发许可的确切条款（能否 dlopen 而不违反）？NuSMV 的 LGPL 是否是更干净的
-   library-mode 载体？——这是 go/no-go 的决定性调研项。
+1. nuXmv 当前分发许可的确切条款（能否 dlopen 而不违反）？——仍是 go/no-go 的决定性调研项。
+   **NuSMV 侧已部分回答**：LGPL-2.1 与 Apache-2.0 在"构建期组合的独立作品"（vendor 为独立
+   二进制）形态下相容，已据此落地（RFC 0028）；但"作为库 dlopen 进同一进程"的相容性仍未
+   判定。
 2. dlopen 形态下,nuXmv/NuSMV 是否暴露稳定的 C API 供 in-process 调用,还是只有 CLI/
    交互式接口(若只有后者,library-mode 无从谈起)？
 3. 边际性能收益的量化：批量 verify 中进程启动开销占比多少?若 <10%,可选后端的维护
    成本可能不划算。
 4. 若结论 limited,`MissingLibrary` 与 `MissingBinary` 是否合并为单一 "checker
-   unavailable" 态以简化报告？
+   unavailable" 态以简化报告？——注意 NuSMV bundling 后，`MissingBinary` 对 SMV 路径在
+   默认安装中已不可达（仅在用户显式绕过 bundled solver 且 PATH 无 solver 时出现）；合并
+   讨论需以 Z3 bundling 后的可用性形态为前提。
 
 ## Decision History
 
 - 2026-08-24: Draft opened.
+- 2026-10-08: **NuSMV bundling 落地，本 RFC 结论重申并推进至 `accepted`。**
+  NuSMV 2.6.0（LGPL-2.1）经 RFC 0028（commit 8df39dfe）被 vendor 进
+  `third_party/nusmv/`、随 AHFL CMake 从源码构建、`cmake --install` 时装到 `bin/` 与
+  `ahflc` 并列；运行时发现链（`find_nuxmv_binary()`）优先查可执行文件同目录
+  （`bundled_solver.{hpp,cpp}`），默认安装必定自带可用 SMV 检查器，"缺 NuSMV"失败模式
+  在默认安装中不复存在。Z3 4.8.12（MIT）同样已被 vendor 进 `third_party/z3/` 并随 AHFL
+  构建/安装，SMT-BMC 路径的"缺 solver"失败模式在默认安装中同样消失。
+
+  本 RFC 的原结论——**保持 process seam 为默认、library-mode（dlopen）作为研究方向而非
+  近期实现**——在 bundling 后依然成立并被重申，且 bundling 强化了该结论：process seam
+  的对端从"外部可选进程"变为"自带的 bundled 二进制"，原方案唯一的实质短板（外部依赖/
+  许可耦合）已被消除，而进程边界本身的成本（启动开销、文本往返、诊断粒度）仍在，但不足
+  以驱动一条 dlopen 可选后端的维护成本。决策为 **no-go（现阶段不实现 library-mode）**；
+  library-mode 降级为研究方向，仅当 Open Questions 2/3 被正面回答（存在稳定 C API 且边际
+  性能收益值得维护成本）时重新立项。NuSMV LGPL-2.1 与 Apache-2.0 在"构建期组合的独立
+  作品"形态下相容（见 `third_party/nusmv/VENDORING.md` §License）；"作为库 dlopen 进同一
+  进程"的相容性未被本次 bundling 覆盖，留待 library-mode 重新立项时判定。
