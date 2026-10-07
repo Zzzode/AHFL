@@ -419,23 +419,18 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // WH-5c.4 (GAP 2): an opaque-lane capability-final agent that
-        // constructs the capability argument in-module. The module emits
-        // P6Frame with a P4D_TO_JSON self-transcode for the constructed O_k
-        // and a JSON_TO_P4D workflow-output crossing. Runnable on the
-        // orchestration lane; the Node observation withholds on
-        // host_transcode_awaits_node_port (the JS host lacks the ahfl_xcode
-        // transcode adapter).
+        // WH-5c.4 (GAP 2): a capability-final agent that constructs the
+        // capability argument in-module. The module emits P6Frame with a
+        // bridge call site; the Node observation agrees on the P6 frame
+        // lane after the dual-track elimination.
         {"wh5c4_construct_cap_final.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // WH-5c.4 P0-3: a construct-capability terminal whose upstream is an
-        // opaque capability-final node. The construct node carries BOTH a
-        // JSON_TO_P4D input crossing AND a P4D_TO_JSON self-transcode; the
-        // two-slot scheduler table keeps both. Runnable on the orchestration
-        // lane; the Node observation withholds on
-        // host_transcode_awaits_node_port.
+        // WH-5c.4 P0-3: a construct-capability terminal whose upstream is a
+        // capability-final node. Runnable on the orchestration lane; the
+        // Node observation agrees on the P6 frame lane after the dual-track
+        // elimination.
         {"wh5c4_p03_opaque_upstream.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",

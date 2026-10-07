@@ -1017,7 +1017,7 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
 
     // Param Verified-decode + arity-1 wire-canonical hash (before any branch).
     // Bridge lane: the adapter pre-decoded the P4-D args and supplied the hash.
-    // Opaque lane: decode the wire-JSON param frame.
+    // Param-frame lane: decode the wire-JSON param frame.
     std::uint64_t arg_hash;
     std::vector<runtime::Value> params;
     if (input.bridge_arg_hash.has_value()) {

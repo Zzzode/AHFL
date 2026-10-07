@@ -766,10 +766,10 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
             return std::nullopt;
         }
         // P2-6: cap_call_count is the scheduler-boundary binary byte. The codegen
-        // emits 0 (identity: a P6 bridge node or a pure compute node) or 1 (a single
-        // opaque capability call site); the opaque lane is arity-1, so no legitimate
-        // node carries more than one capability in this byte. Reject anything else
-        // rather than silently reading a capability table the scheduler cannot model.
+        // emits 0 (identity: a P6 bridge node or a pure compute node) or 1 (a
+        // single scheduler-boundary capability call site); a node carries at
+        // most one capability in this byte. Reject anything else rather than
+        // silently reading a capability table the scheduler cannot model.
         if (*cap_call_count > 1) {
             diagnostics.push_back(
                 error("exec-manifest cap_call_count must be 0 or 1"));

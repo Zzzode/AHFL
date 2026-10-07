@@ -230,11 +230,12 @@ using AdmitOutcome = std::variant<PreparedResume, PendingInjection>;
 // itself decodes the events and derives the expected coordinate -- the adapter
 // supplies no decoded prefix and no expected coordinate.
 //
-// Dual-track elimination: in the bridge lane the param frame is empty (the args
-// live in the P4-D control block, not a wire-JSON envelope). The adapter decodes
-// the P4-D args and supplies the pre-computed arg_hash via `bridge_arg_hash`;
-// the controller skips its wire-JSON param decode and uses this hash directly.
-// The opaque lane leaves this nullopt and the controller decodes `module_param_frame`.
+// Dual-track elimination: every capability import is a bridge call. The
+// param frame is empty (the args live in the P4-D control block, not a
+// wire-JSON envelope). The adapter decodes the P4-D args and supplies the
+// pre-computed arg_hash via `bridge_arg_hash`; the controller skips its
+// wire-JSON param decode and uses this hash directly. `module_param_frame`
+// stays as the empty-span default the controller's decode path accepts.
 struct ImportStepInput {
     core_wasm_schema_module::CapabilityImportOrdinal observed_ordinal{};
     std::span<const std::uint8_t> module_param_frame{};

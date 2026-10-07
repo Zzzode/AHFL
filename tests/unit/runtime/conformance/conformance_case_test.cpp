@@ -129,7 +129,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             1,
             1,
             WasmEligibility::Orchestration,
-            WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin,
+            WasmNodeObservationSkip::None,
         },
         {
             "enum_variant_e2e.case.json",
@@ -1120,6 +1120,11 @@ void test_malformed_manifests() {
     // module now packs/runs runv/encodes with differential agreement), so the
     // spelling is rejected as an unknown node_observation_skip value by the
     // generic "must be 'none'" gate above.
+    // RFC 0026 dual-track elimination removed the host_transcode_awaits_node_port
+    // and node_host_awaits_multinode_stash_join skips (the ahfl_xcode transcode
+    // adapter and the WH-5c.5 stash table they reference are deleted; every
+    // node is P6-frame and host-observable without a stash join), so their
+    // spellings are likewise rejected by the generic gate above.
 
     expect_rejected("blocked kr66 skip on an orchestration lane",
                     R"({
@@ -1138,45 +1143,6 @@ void test_malformed_manifests() {
                        "node_observation_skip": "blocked_kr66"}}
 })",
                     "engines.wasm.eligible 'computation'");
-
-    expect_rejected("host transcode skip on a computation lane",
-                    R"({
-  "format_version": "ahfl.conformance-case.v1",
-  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
-  "kind": "agent",
-  "entry": "x",
-  "scenarios": [
-    {"name": "s", "input": {},
-     "expect": {"run_status": "completed", "state_sequence": ["Start"],
-                "capability_sequence": []}}
-  ],
-  "capabilities": [],
-  "engines": {
-              "wasm": {"eligible": "computation", "reason": "r",
-                       "node_observation_skip": "host_transcode_awaits_node_port"}}
-})",
-                    "engines.wasm.eligible 'orchestration'");
-
-    expect_rejected("multi-node stash-join skip on a computation lane",
-                    R"({
-  "format_version": "ahfl.conformance-case.v1",
-  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
-  "kind": "agent",
-  "entry": "x",
-  "scenarios": [
-    {"name": "s", "input": {},
-     "expect": {"run_status": "completed", "state_sequence": ["Start"],
-                "capability_sequence": []}}
-  ],
-  "capabilities": [],
-  "engines": {
-              "wasm": {"eligible": "computation", "reason": "r",
-                       "node_observation_skip":
-                           "node_host_awaits_multinode_stash_join"}}
-})",
-                    "engines.wasm.node_observation_skip "
-                    "'node_host_awaits_multinode_stash_join' requires "
-                    "engines.wasm.eligible 'orchestration'");
 
     expect_rejected("rich wire-types skip on a computation lane",
                     R"({

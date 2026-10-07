@@ -632,11 +632,9 @@ struct AgentPlan {
     bool has_identity_final{false};
     // RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: true when at least
     // one NON-FINAL state is a ComputedGotoAction (a scalar computed-goto
-    // preamble, with or without a capability final behind it). The opaque
-    // workflow runner is a static GotoAction walk that treats any other action
-    // as its terminal, so a workflow packaging such an agent must take the
-    // (pending) V2-D computed-runner lane and is fail-closed rejected until
-    // that emission lands.
+    // preamble, with or without a capability final behind it). A workflow
+    // packaging such an agent must take the (pending) V2-D computed-runner
+    // lane and is fail-closed rejected until that emission lands.
     bool has_computed_goto{false};
     // RFC 0026 P6-2: compiled handler functions in ascending function-index
     // order. Empty for a pure E1-E3 agent, so its function/code sections keep
@@ -719,11 +717,12 @@ struct AgentPlan {
     std::vector<ConstructCapabilityTerminal> construct_capability_terminals;
     // The physical P6-frame section plan (boundary table, placements, payload
     // arena, rodata span, V2-C bridge page frame) populated when this agent
-    // emits on the frame lane; null on the opaque wire-JSON lane. Owned by
+    // emits on the frame lane. After the dual-track elimination every agent
+    // is P6-frame, so this is always populated; it stays a unique_ptr because
+    // FrameSectionPlan is defined later in this translation unit. Owned by
     // the plan so the single physical planning pass runs before handler
     // emission (the bridge emit needs its coordinates) and the section emitter
-    // / descriptor consume the identical plan. unique_ptr because
-    // FrameSectionPlan is defined later in this translation unit.
+    // / descriptor consume the identical plan.
     std::unique_ptr<FrameSectionPlan> frame_section;
     // The projected wire-schema table paired with `frame_section` (capability
     // roots + agent boundary roots), needed by the descriptor renderer.
@@ -968,8 +967,10 @@ struct WorkflowFrameSource {
     CoreValueTypeId type{};
 };
 
-// WH-5c.2: sentinel for WorkflowNodePlan::p6_block_ordinal when a workflow
-// node is opaque (no fixed node-frame block).
+// WH-5c.2: sentinel for WorkflowNodePlan::p6_block_ordinal. After the
+// dual-track elimination every workflow node is P6-frame and owns a block,
+// so this sentinel is defensive (the is_p6 checks that consume it are
+// always-true and slated for removal in a follow-up refactor).
 constexpr std::uint32_t kInvalidP6Block =
     std::numeric_limits<std::uint32_t>::max();
 
@@ -988,9 +989,12 @@ struct WorkflowNodePlan {
     // and runner function, so two nodes may reuse one packaged agent instance.
     // p6_block_ordinal is the node's P6-dense ordinal (node-id order among P6
     // nodes) indexing node_blocks / the dense layout tables / the wire
-    // node_inputs/node_outputs roots; kInvalidP6Block for an opaque node.
+    // node_inputs/node_outputs roots. After the dual-track elimination every
+    // node is P6-frame, so kInvalidP6Block is a defensive sentinel (the
+    // is_p6 checks that consume it are always-true and slated for removal in
+    // a follow-up refactor).
     // runner_ordinal is the node's runner FUNCTION ordinal (P6 node runners
-    // occupy [0, p6_node_count), opaque instance runners follow). The host's
+    // occupy [0, p6_node_count)). The host's
     // runner_to_schedule 1:1 identity and the state-trace runner attribution
     // both rely on a P6 node's runner being unique to that node.
     std::uint32_t p6_block_ordinal{kInvalidP6Block};
@@ -1084,12 +1088,14 @@ struct WorkflowPlan {
     std::vector<CoreCapabilityId> imports;
     // V2-D: true when at least one scheduled node runs on the P6 frame lane.
     // Gates the computed runners, node blocks, frame sections and the Data
-    // section; an all-opaque workflow stays byte-identical.
+    // section. After the dual-track elimination every node is P6-frame, so
+    // this is always true for a non-empty workflow; the flag stays as a
+    // defensive guard (slated for removal in a follow-up refactor).
     bool has_p6_nodes{false};
     // WH-5c.2 (GAP 1, Approach B): node blocks are P6-NODE-dense in node-id
     // order (parallel to p6_nodes). Every P6 node owns its own fixed
     // node-frame block, so two nodes reusing one packaged agent instance each
-    // get a distinct block; an opaque node owns no block. The frame section's
+    // get a distinct block. The frame section's
     // node_blocks array carries exactly these P6 spans (the transport
     // verifier's honesty guarantee needs no special-casing).
     std::vector<WorkflowNodeBlock> node_blocks;
@@ -1211,18 +1217,18 @@ struct WorkflowFunctionTable {
     std::uint32_t import_count{0};
     std::uint32_t runner_count{0};
     // V2-D: total relocated frame-handler functions across every P6
-    // node, appended AFTER run2 (each is a `() -> i32` handler). Zero on an
-    // all-opaque workflow, so the fixed 6+runner_count shape is byte-identical.
+    // node, appended AFTER run2 (each is a `() -> i32` handler). Zero only on
+    // a workflow with no nodes; after the dual-track elimination every node
+    // is P6-frame, so every node contributes its handlers.
     std::uint32_t handler_count{0};
     // RFC 0026 FB-1: outlined fn bodies follow runner/run2/handlers (§6.1 agent
-    // ordering discipline). In FB-1 a workflow module's node-input/return
-    // regions accept only opaque workflow frames and its packaged agents
-    // disallow computed handlers, so no outlined fn is ever reachable from a
-    // workflow MODULE (a packaged agent's direct calls are compiled into that
-    // agent's own module). The field stays 0 and an opaque workflow module is
-    // byte-identical to its E1-E3/E4 shape; the projection exists for
-    // index-space symmetry with the agent FunctionTable and the FB-3
-    // closure/indirect slice.
+    // ordering discipline). A workflow module's node-input/return regions
+    // accept only workflow frames and its packaged agents disallow computed
+    // handlers, so no outlined fn is ever reachable from a workflow MODULE (a
+    // packaged agent's direct calls are compiled into that agent's own
+    // module). The field stays 0; the projection exists for index-space
+    // symmetry with the agent FunctionTable and the FB-3 closure/indirect
+    // slice.
     std::uint32_t fn_count{0};
     [[nodiscard]] std::uint32_t alloc() const noexcept {
         return import_count + 0u;
@@ -12156,9 +12162,9 @@ struct PlannedFn {
     // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a computed final is a P6-frame
     // contract. The runv descriptor names exactly ONE authorized value_ptr base
     // (input for identity finals, output for computed finals), so one agent
-    // cannot mix the two final kinds; a capability final likewise stays on the
-    // opaque run2 lane and cannot share an agent with a computed final (the raw
-    // P4-D and wire-JSON lanes never mix; in-handler bridging is the V2-C rung).
+    // cannot mix the two final kinds; a capability final likewise stays on its
+    // own run2 lane and cannot share an agent with a computed final (the raw
+    // P4-D and frame lanes never mix; in-handler bridging is the V2-C rung).
     const bool has_planned_computed_final =
         std::any_of(planned_handlers.begin(), planned_handlers.end(),
                     [](const PlannedComputedHandler &planned) {
@@ -13627,9 +13633,9 @@ validate_workflow_region(const CoreProgram &program,
         cursor += control_extent;
     }
 
-    // (2) Per-P6-NODE node-frame blocks (every P6 node occupies its own block;
-    // opaque capability-final nodes keep their heap tuple and own no fixed
-    // block). Each block is I_k / C_k / scratch_k / O_k, every sub-span
+    // (2) Per-P6-NODE node-frame blocks (every node occupies its own block;
+    // a capability-final node's output lives in the bump heap, not in a
+    // fixed O_k block). Each block is I_k / C_k / scratch_k / O_k, every sub-span
     // 8-aligned and sized from the finalized boundary layouts + the gathered
     // scratch high-water. WH-5c.2: two nodes reusing one packaged instance
     // each get their own block (per-node relocated copies).
@@ -14360,10 +14366,7 @@ build_workflow_plan(const CoreProgram &program,
             if (!agent_plan.has_value()) {
                 return std::nullopt;
             }
-            // RFC 0026 dual-track elimination: every agent is P6. The
-            // opaque WireJson lane is gone; identity-final and
-            // capability-final agents join computed-final / computed-goto /
-            // bridge-call agents on the P6 frame lane.
+            // RFC 0026 dual-track elimination: every agent is P6-frame.
             gathered[runner].p6 = true;
             gathered[runner].scratch_high = agent_plan->p6_scratch_high;
             gathered[runner].rodata_extent = agent_plan->rodata_extent;
@@ -14424,12 +14427,12 @@ build_workflow_plan(const CoreProgram &program,
             return std::nullopt;
         }
 
-        // A P6 node's input region must be materializable by the scheduler and
-        // a non-P6 (opaque) node may not take a constructed frame; pin the
-        // per-node lane + host-pack facts. WH-5c.2 (GAP 1, Approach B): two
-        // nodes MAY reuse one packaged instance — every P6 node gets its own
-        // node-frame block and runner function, so the old D5 per-instance
-        // reuse rejection is deleted (big-bang, no flag).
+        // A node's input region must be materializable by the scheduler and a
+        // node may not take a constructed frame; pin the per-node lane +
+        // host-pack facts. WH-5c.2 (GAP 1, Approach B): two nodes MAY reuse
+        // one packaged instance — every node gets its own node-frame block and
+        // runner function, so the old D5 per-instance reuse rejection is
+        // deleted (big-bang, no flag).
         for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
             const ir::core::CoreWorkflowNode &node = workflow.nodes[id];
             const auto runner = workflow_runner_index(plan, node.target_instance);
@@ -14475,10 +14478,9 @@ build_workflow_plan(const CoreProgram &program,
             [](const GatheredAgent &g) { return g.p6; });
         // WH-5c.2: assign the per-node P6-dense block ordinal (node-id order
         // among P6 nodes) and the runner FUNCTION ordinal. P6 node runners
-        // occupy [0, p6_node_count); opaque instance runners follow in
-        // packaged-instance order. A P6 node's runner is unique to that node,
-        // which preserves the host's runner_to_schedule 1:1 identity and the
-        // state-trace runner attribution.
+        // occupy [0, p6_node_count). A P6 node's runner is unique to that
+        // node, which preserves the host's runner_to_schedule 1:1 identity
+        // and the state-trace runner attribution.
         plan.p6_nodes.clear();
         for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
             const auto runner =
@@ -14570,8 +14572,7 @@ build_workflow_plan(const CoreProgram &program,
     // emission, computed runners, in-module scheduler sequences, the v2
     // core-layout section and the descriptor fields) is the following V2-D
     // codegen slice; until it lands a workflow that actually needs the P6 node
-    // lane is rejected here with a precise diagnostic, while an all-opaque
-    // workflow never enters this path and keeps its byte-identical module.
+    // lane is rejected here with a precise diagnostic.
     if (plan.has_p6_nodes &&
         !plan_workflow_p6_capacity_family(program, layouts, workflow, plan, gathered, result)) {
         return std::nullopt;
@@ -14586,8 +14587,6 @@ build_workflow_plan(const CoreProgram &program,
         //     computed runner with state threading);
         //   * an in-handler capability bridge (the workflow module's bridge
         //     functype, control blocks and host callback lane).
-        // An all-opaque workflow never enters this path and keeps its
-        // byte-identical module.
         // V2-D emission half 2: one shared dense bridge registry spans every
         // packaged runner; a runner's sites compact as a contiguous per-runner
         // tail onto GLOBAL dense ids (block_offset = global_id * block_stride),
@@ -14781,10 +14780,9 @@ build_workflow_plan(const CoreProgram &program,
                                                  WorkflowPlan &plan,
                                                  CoreWasmCodegenResult &result) {
     // WH-5c.2: node_blocks, dense node layouts, and wire-schema node roots are
-    // P6-NODE-dense (parallel to plan.p6_nodes, node-id order). An opaque
-    // instance has no fixed frame block and no P4-D layout; its wire-JSON
-    // encoding is handled through the capability param/result binding, not
-    // frame_roots.
+    // P6-NODE-dense (parallel to plan.p6_nodes, node-id order). After the
+    // dual-track elimination every node is P6-frame and owns a fixed frame
+    // block.
     const std::uint32_t p6_count = static_cast<std::uint32_t>(
         plan.p6_nodes.size());
 
@@ -14880,7 +14878,8 @@ build_workflow_plan(const CoreProgram &program,
     // Wire projection: capabilities plus per-node roots; the agent input/output
     // pair is the WORKFLOW boundary (so frame_roots.input/output name it) and
     // node_inputs/node_outputs run parallel to the P6-runner table (P6-only
-    // dense order, matching node_blocks; opaque runners have no entry).
+    // dense order, matching node_blocks; every node is P6 after the
+    // dual-track elimination).
     auto projection = ir::core::project_core_wire_schema(
         program, plan.imports,
         std::pair{*wf_input_vt, *wf_output_vt},
@@ -15736,7 +15735,7 @@ encode_module(const CoreProgram &program,
     // capability without a handler-level bridge call site.
     const bool has_bridge = !plan.imports.empty();
     // RFC 0026 dual-track elimination: every capability import uses the bridge
-    // functype. The opaque tuple type is gone from the agent lane.
+    // functype.
     std::vector<bool> import_is_bridge(plan.imports.size(), true);
 
     ByteBuffer types;
@@ -16028,15 +16027,14 @@ encode_module(const CoreProgram &program,
     // decoder's agent arm turns into call sites (one per capability).
     //
     // The predicate is `!plan.imports.empty()`: EVERY capability agent carries
-    // the manifest -- both the opaque-lane WireJson agent AND the bridge-lane
-    // P6-frame agent. The WH-3 capability_import executor
-    // (make_capability_import_callback) is the single production import path
-    // for both lanes, and it requires the A2-admitted module (which requires
-    // the manifest). A bridge agent is a FRAME module (it carries the
-    // core-layout custom + bridge control-block coordinates) WITH a bridge
-    // import; its section order is [core-layout, AHFLXM, AHFLWS]. A2 tolerates
-    // the core-layout custom before the manifest (an unknown custom before the
-    // manifest is skipped), so A2 admission succeeds. The frame admit path
+    // the manifest. The WH-3 capability_import executor
+    // (make_capability_import_callback) is the single production import path,
+    // and it requires the A2-admitted module (which requires the manifest). A
+    // bridge agent is a FRAME module (it carries the core-layout custom +
+    // bridge control-block coordinates) WITH a bridge import; its section
+    // order is [core-layout, AHFLXM, AHFLWS]. A2 tolerates the core-layout
+    // custom before the manifest (an unknown custom before the manifest is
+    // skipped), so A2 admission succeeds. The frame admit path
     // (admit_core_wasm_frame_sections, exactly-two-custom-sections) is for
     // PURE frame agents (no imports) only; a bridge agent never goes through
     // it -- it goes through A2 + the WH-3 executor, which walks the bridge
@@ -16289,8 +16287,9 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
                 }
             }
         } else {
-            // Opaque cap site (cap_call_count=1) or pure identity (0). The
-            // capabilities array carries the scheduler-boundary capability.
+            // Scheduler-boundary cap site (cap_call_count=1) or pure identity
+            // (0). The capabilities array carries the scheduler-boundary
+            // capability.
             out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
             for (const auto &[cap, sym] : node.capabilities) {
                 if (cap.value == CoreCapabilityId::kInvalid) {
@@ -16311,9 +16310,9 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
 // capability_count(4) + capabilities[] { capability_id(4) + source_symbol(8)
 // }. An agent has no workflow schedule / nodes, so the manifest is a flat
 // capability list; each capability becomes one A2 call site. EVERY capability
-// agent reaches here (opaque-lane WireJson AND bridge-lane P6-frame): the WH-3
-// executor is the single production import path for both lanes and needs the
-// A2-admitted module, so the caller gates emission on `!plan.imports.empty()`.
+// agent reaches here: the WH-3 executor is the single production import path
+// and needs the A2-admitted module, so the caller gates emission on
+// `!plan.imports.empty()`.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_agent_exec_manifest(const CoreProgram &program, const AgentPlan &plan) {
     if (plan.agent.value == CoreAgentId::kInvalid) {
@@ -17350,10 +17349,9 @@ class WorkflowFrameMaterializer {
     }
 
     // Push the ABSOLUTE base of a path root: the entry input pointer or an
-    // upstream P6 node's O_k block base. An upstream OPAQUE node owns no fixed
-    // output block (its result lives in the bump heap as wire JSON), so a
-    // frame region that roots an opaque output is not materializable on this
-    // rung.
+    // upstream node's O_k block base. A capability-final node's output lives
+    // in the bump heap (not a fixed O_k block), so a frame region that roots
+    // such an output is not materializable on this rung.
     [[nodiscard]] bool emit_root_base(const WorkflowFrameSource &source) {
         // WH-5b.3: a crossed P6 node materializes from the JSON_TO_P4D shadow
         // region, not from the entry pointer or an upstream O_k block. The
@@ -17368,7 +17366,8 @@ class WorkflowFrameMaterializer {
             return true;
         }
         // WH-5c.2: the upstream node's O_k block is indexed by the node's own
-        // p6_block_ordinal (an opaque node owns no fixed output block).
+        // p6_block_ordinal (defensive: after the dual-track elimination every
+        // node owns a block, so kInvalidP6Block is never hit here).
         const auto &source_node = plan_.nodes[source.node.value];
         if (source_node.p6_block_ordinal == kInvalidP6Block) {
             return false;
@@ -18202,8 +18201,8 @@ void append_word_zero_fill(ByteBuffer &body,
             append_indexed_op(body, kOpLocalSet, *ptr_local);
             append_indexed_op(body, kOpLocalSet, status_local);
             // WH-5b.2 (design 12.14.5): a P6 bridge node's runner can suspend
-            // mid-handler on a Pending in-runner bridge call. Mirror the opaque
-            // lane's PENDING arm: only a null result_ptr is a legal suspend ->
+            // mid-handler on a Pending in-runner bridge call. Mirror the run2
+            // PENDING arm: only a null result_ptr is a legal suspend ->
             // set the latch and return (PENDING,0,0) from run2. A PENDING with a
             // non-null ptr is malformed -> ERROR and does NOT latch. The tag-0
             // identity record is NOT written (the node did not complete), so
@@ -18291,8 +18290,7 @@ make_workflow_run2_body(const CoreProgram &program,
     const auto status_local = 2u + node_locals;
     // V2-D: the frame materializer needs one zero-fill cursor plus an
     // address-stack local per aggregate nesting depth. They sit above the
-    // scheduler's status scratch and are absent on an all-opaque workflow, so
-    // its run2 local declaration is byte-identical.
+    // scheduler's status scratch.
     const bool p6 = plan.has_p6_nodes;
     const std::uint32_t address_locals =
         p6 ? WorkflowFrameMaterializer::required_locals(program, layouts, plan) : 0u;
@@ -18372,8 +18370,8 @@ make_workflow_run2_body(const CoreProgram &program,
         // Legacy run is pointer-only; the v1 (ptr,len) ABI cannot carry a status,
         // so a capability-workflow's run traps before any state mutation, input
         // read, or capability effect (a PENDING must never leak through run).
-        // A V2-D p6 workflow has no opaque run2 (ptr,len) contract either: its
-        // entry is a packed P4-D frame, so legacy run traps.
+        // A V2-D p6 workflow's entry is a packed P4-D frame, so legacy run
+        // traps.
         body.u32(0);
         body.byte(kOpUnreachable);
         body.byte(kOpEnd);
@@ -18494,8 +18492,7 @@ encode_workflow_module(const CoreProgram &program,
     // V2-D: relocated handler layout. Handler functions follow run2; a P6
     // node runner owns the contiguous range [handler_offset[p6], +count).
     // WH-5c.2: runner_count is the number of runner FUNCTIONS = P6 node count
-    // (one unique runner per P6 node). RFC 0026 dual-track elimination: the
-    // opaque packaged-instance runner count is always zero.
+    // (one unique runner per P6 node).
     const std::uint32_t p6_runner_count =
         static_cast<std::uint32_t>(plan.p6_nodes.size());
     const std::uint32_t runner_count = p6_runner_count;
@@ -18528,8 +18525,7 @@ encode_workflow_module(const CoreProgram &program,
     ByteBuffer types;
     // V2-D: type index 5 (`() -> i32`) is appended only when the module carries
     // relocated handlers; type index 6 (`(i32)->(i32,i32)`, the frame-bridge
-    // control-block protocol) only when a packaged handler bridges. An
-    // all-opaque workflow keeps its exact five types.
+    // control-block protocol) only when a packaged handler bridges.
     const std::uint32_t workflow_type_count =
         5u + (p6 ? 1u : 0u) + (p6 && has_bridge_imports ? 1u : 0u);
     types.u32(workflow_type_count);
@@ -18555,7 +18551,7 @@ encode_workflow_module(const CoreProgram &program,
     // RFC 0026 E4-B2-C: capability imports occupy the low function indices. The
     // import module name / field spelling mirror the E2 agent contract exactly.
     // RFC 0026 dual-track elimination: every capability import uses the bridge
-    // functype; the opaque tuple type and the transcode import family are gone.
+    // functype; the transcode import family is gone.
     if (capability_workflow) {
         ByteBuffer imports;
         imports.u32(import_count);
@@ -18582,10 +18578,8 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer functions_section;
-    // RFC 0026 FB-1: on an opaque workflow defined_count() is
-    // runner_count+6; V2-D appends the relocated `() -> i32` handler functions
-    // (type index 5) after run2, so an all-opaque workflow keeps its
-    // byte-identical function section.
+    // RFC 0026 FB-1: defined_count() is runner_count+6; V2-D appends the
+    // relocated `() -> i32` handler functions (type index 5) after run2.
     functions_section.u32(functions.defined_count());
     functions_section.u32(kTypeI32ToI32);
     functions_section.u32(kTypeTwoI32ToVoid);
@@ -18596,8 +18590,7 @@ encode_workflow_module(const CoreProgram &program,
     }
     functions_section.u32(kTypeTwoI32ToI32);
     functions_section.u32(kTypeCapabilityTuple);
-    // WH-5c.2: relocated handlers are per P6 NODE (p6-dense); opaque instance
-    // runners own no relocated handlers.
+    // WH-5c.2: relocated handlers are per P6 NODE (p6-dense).
     for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
         for (const CompiledHandler &h : plan.relocated_handlers[p6]) {
             functions_section.u32(5); // `() -> i32` handler type
@@ -18620,7 +18613,7 @@ encode_workflow_module(const CoreProgram &program,
     // 6th global (cap-lane only). Identity workflows keep the 5-global section.
     // V2-D + WH-5c.2: a P6 workflow appends one mutable private current-state
     // global PER P6 NODE after the fixed five (a relocated handler latches its
-    // own node's global). Additive, so an opaque workflow is byte-identical.
+    // own node's global).
     ByteBuffer globals;
     const std::uint32_t global_count =
         (capability_workflow ? 6u : 5u) + (p6 ? p6_runner_count : 0u);
@@ -18680,7 +18673,7 @@ encode_workflow_module(const CoreProgram &program,
         return std::nullopt;
     }
     // WH-5c.2: emit one runner body per runner FUNCTION, in function-index
-    // order: P6 node runners first (p6-dense), then opaque instance runners.
+    // order: P6 node runners (p6-dense).
     // Each P6 node's runner body bakes its own node block, handler base, state
     // global and state-trace runner ordinal (== its runner function ordinal).
     for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
@@ -18703,9 +18696,8 @@ encode_workflow_module(const CoreProgram &program,
             return std::nullopt;
         }
     }
-    // RFC 0026 dual-track elimination: every packaged instance is P6, so
-    // there are no opaque (WireJson) node runners to emit. The P6 node
-    // runners were emitted above.
+    // RFC 0026 dual-track elimination: every packaged instance is P6, so the
+    // P6 node runners emitted above are the only runners.
     // V2-D: run and run2 precede the relocated handlers in the code section,
     // matching the function section's declaration order (alloc, dealloc,
     // current_state, step, runners, run, run2, handlers).
@@ -18728,8 +18720,7 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     // V2-D: exactly ONE additive active Data(11) section for a P6 workflow's
-    // merged rodata image, in canonical position after Code(10). An opaque
-    // workflow emits no Data section and keeps its bytes.
+    // merged rodata image, in canonical position after Code(10).
     if (p6 && plan.workflow_rodata_extent != 0) {
         ByteBuffer data;
         data.u32(1);
@@ -19247,7 +19238,7 @@ runner_last_cap_walk_index(const CoreProgram &program,
     }
 
     // Runner table: one entry per runner FUNCTION, in emission order (P6 node
-    // runners first in p6-dense order, then one per opaque packaged instance).
+    // runners in p6-dense order).
     // WH-5c.2: every P6 node owns a unique runner function, so the host's
     // runner_to_schedule 1:1 identity and the state-trace rec.runner
     // attribution both hold when two nodes reuse one packaged instance.
@@ -19294,9 +19285,8 @@ runner_last_cap_walk_index(const CoreProgram &program,
         CoreWasmNodeDescriptor node_descriptor;
         node_descriptor.node_id = node.node.value;
         node_descriptor.schedule_pos = node.schedule_pos;
-        // WH-5c.2: the node's runner FUNCTION ordinal (unique per P6 node; an
-        // opaque instance's ordinal is shared by its nodes as in the E3/E4
-        // baseline). The host's runner_to_schedule and state-trace attribution
+        // WH-5c.2: the node's runner FUNCTION ordinal (unique per P6 node).
+        // The host's runner_to_schedule and state-trace attribution
         // both key on this ordinal.
         node_descriptor.runner = node.runner_ordinal;
         node_descriptor.name = workflow_decl.nodes[node.node.value].node_name;
@@ -19396,8 +19386,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         }
         // RFC 0026 dual-track elimination: every workflow is P6, so the wire
         // schema is always the merged frame-wire projection built inside
-        // build_workflow_plan (plan.frame_wire_table). The old opaque-workflow
-        // capability-only projection path is gone.
+        // build_workflow_plan (plan.frame_wire_table).
         const auto diag_count_before = result.diagnostics.size();
         auto bytes = encode_workflow_module(program, layouts, *plan, result);
         if (!bytes.has_value()) {

@@ -140,26 +140,6 @@ enum class WasmNodeObservationSkip {
     /// Node module exists to observe.
     BlockedOnKr66,
     /// The module emits and the native wasm3 lane has a checked-in blessing,
-    /// but the Node embedded host lacks the ahfl_xcode transcode
-    /// adapter: the C++ WH-5b.3 host-side transcode landed, but the Node
-    /// oracle JS port of ahfl_xcode is still a stub (returns [1,0,0]), so
-    /// the wasm module traps at its P4D_TO_JSON / JSON_TO_P4D transcode
-    /// sites. The Node observation is withheld until the JS host gains
-    /// transcode support.
-    HostTranscodeAwaitsNodePort,
-    /// The module emits and the native wasm3 lane has a checked-in blessing,
-    /// but the workflow is a MULTI-NODE all-opaque schedule
-    /// (identity + capability mixed, with no ahfl_xcode transcode sites)
-    /// whose per-node outputs only become host-observable through the
-    /// WH-5c.5 guest stash-table join. The Node oracle host predates that
-    /// join: it never reads the per-node stash slots, and its capability
-    /// normalization self-test assumes the capability node sits at
-    /// schedule position 0. The Node observation is withheld until the JS
-    /// host ports the WH-5c.5 stash-table join; this reason MUST NOT be
-    /// used for a module that emits ahfl_xcode sites (that gap is
-    /// HostTranscodeAwaitsNodePort).
-    NodeHostAwaitsMultiNodeStashJoin,
-    /// The module emits and the native wasm3 lane has a checked-in blessing,
     /// but the workflow's wire-type matrix carries shapes the
     /// Node oracle host's P6 frame packer/reader does not yet implement
     /// (Map / Decimal / Duration / Float are outside the JS host's
@@ -538,25 +518,6 @@ class ConformanceCaseReader {
             wasm.eligibility != WasmEligibility::Computation) {
             error("engines.wasm.node_observation_skip 'blocked_kr66' requires "
                   "engines.wasm.eligible 'computation' (a KR6.6 seam blocks the emit)",
-                  std::nullopt);
-            return std::nullopt;
-        }
-        if (wasm.node_observation_skip ==
-                WasmNodeObservationSkip::HostTranscodeAwaitsNodePort &&
-            wasm.eligibility != WasmEligibility::Orchestration) {
-            error("engines.wasm.node_observation_skip 'host_transcode_awaits_node_port' "
-                  "requires engines.wasm.eligible 'orchestration' (the module emits "
-                  "but the Node host lacks transcode support)",
-                  std::nullopt);
-            return std::nullopt;
-        }
-        if (wasm.node_observation_skip ==
-                WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin &&
-            wasm.eligibility != WasmEligibility::Orchestration) {
-            error("engines.wasm.node_observation_skip "
-                  "'node_host_awaits_multinode_stash_join' "
-                  "requires engines.wasm.eligible 'orchestration' (the module emits "
-                  "but the Node host lacks the WH-5c.5 multi-node stash-table join)",
                   std::nullopt);
             return std::nullopt;
         }
@@ -1122,19 +1083,11 @@ class ConformanceCaseReader {
         if (*value == "blocked_kr66") {
             return WasmNodeObservationSkip::BlockedOnKr66;
         }
-        if (*value == "host_transcode_awaits_node_port") {
-            return WasmNodeObservationSkip::HostTranscodeAwaitsNodePort;
-        }
-        if (*value == "node_host_awaits_multinode_stash_join") {
-            return WasmNodeObservationSkip::NodeHostAwaitsMultiNodeStashJoin;
-        }
         if (*value == "node_host_awaits_rich_wire_types") {
             return WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes;
         }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
-              "'blocked_kr66', "
-              "'host_transcode_awaits_node_port', "
-              "'node_host_awaits_multinode_stash_join', or "
+              "'blocked_kr66', or "
               "'node_host_awaits_rich_wire_types', got '" +
                   *value + "'",
               range_of(node));

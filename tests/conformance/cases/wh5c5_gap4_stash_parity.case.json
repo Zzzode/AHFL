@@ -25,8 +25,7 @@
   "engines": {
     "wasm": {
       "eligible": "orchestration",
-      "reason": "three-node workflow DAG (identity, capability, identity); WH-5c.5 per-node output stash table makes every node output host-observable, so output_value_id parity holds on the orchestration wasm subset",
-      "node_observation_skip": "node_host_awaits_multinode_stash_join"
+      "reason": "three-node workflow DAG (identity, capability, identity); every node is P6-frame after the dual-track elimination, so the workflow output is host-observable on the orchestration wasm subset"
     }
   }
 }

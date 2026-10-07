@@ -453,7 +453,7 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
       return [mode === "pending" ? 2 : 1, 0];
     }
 
-    // Invoke the scenario mock (per-name cursor matches the opaque lane).
+    // Invoke the scenario mock (per-name cursor matches the bridge callback).
     // "states" is the separate step()-instrumentation instance: it replays the
     // same scenario mocks but only its state names are evidence.
     const index = state.perName.get(importEntry.name) ?? 0;
@@ -500,7 +500,7 @@ async function makeInstance(compiled, mode) {
   const imports = {};
   for (const importEntry of descriptor.imports) {
     // RFC 0026 dual-track elimination: every capability import uses the bridge
-    // type (i32)->(i32,i32). The opaque (i32,i32)->(i32,i32,i32) lane is gone.
+    // type (i32)->(i32,i32).
     const ordinal = importEntry.ordinal;
     imports[importEntry.field] = makeBridgeCallback(
       importEntry, ordinal, () => instance, () => state, mode);
@@ -1378,12 +1378,12 @@ async function runWorkflowP6(compiled) {
                              stringRegions);
     outputRaw = stringifyValue(output);
   }
-  // V2-D emission half 2: the state sequence is REAL runtime evidence. In a
-  // hybrid (P6 + opaque) workflow the trace ring carries ONLY P6 nodes'
-  // states; opaque nodes never write to the trace ring, so their walks are
-  // recovered from the node-event records the scheduler writes per completed
-  // node (WH-5c.4 P0-3, mirroring the C++ host's collect_opaque_node_states
-  // + rebuild_states). The two sources are merged in schedule order.
+  // V2-D emission half 2: the state sequence is REAL runtime evidence.
+  // Every node is P6-frame after the dual-track elimination, so every node
+  // writes its states to the trace ring; the node-event records the
+  // scheduler writes per completed node are validated below but no longer
+  // carry opaque-node state recovery (that path was deleted with the
+  // WireJson lane).
   const traceBase = Number(lane.state_trace_base);
   const traceCap = Number(lane.state_trace_capacity);
   const traceCount = traceCap > 0
@@ -1420,9 +1420,10 @@ async function runWorkflowP6(compiled) {
     }
     statesPerNode[schedulePos].push({agent: agentWalk.agent, state: stateName});
   }
-  // 2. Opaque nodes: states from node-event records. The node-event region
-  //    overlaps the P6 input frame in an import-free module, so skip decoding
-  //    when there are no imports (mirrors the C++ host's guard).
+  // 2. Node-event records: validate the record fields (pad/reserved/
+  //    schedule_pos/status). The node-event region overlaps the P6 input
+  //    frame in an import-free module, so skip decoding when there are no
+  //    imports (mirrors the C++ host's guard).
   if (descriptor.imports.length > 0) {
     const evtView = new DataView(e.memory.buffer);
     const evtBase = descriptor.event_buffer.log_base;
@@ -1458,9 +1459,9 @@ async function runWorkflowP6(compiled) {
       if (node === undefined) {
         fail(`node-event record ${i} names unknown node ${nodeId}`);
       }
-      // RFC 0026 dual-track elimination: every node is P6, so the opaque
-      // node-event state collection is gone. P6 nodes' states are already
-      // collected from the trace ring above. The record validation
+      // RFC 0026 dual-track elimination: every node is P6, so node-event
+      // records carry no state collection (P6 nodes' states are already
+      // collected from the trace ring above). The record validation
       // (pad/reserved/schedule_pos/status) still runs for every record.
     }
   }

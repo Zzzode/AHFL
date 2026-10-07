@@ -214,55 +214,16 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
         }
         return Skip::None;
     }();
-    // WH-5c.4 (GAP 2): a case that RUNS on the wasm orchestration lane and
-    // has a checked-in blessing on the native wasm3 lane, but whose wasm
-    // module reaches ahfl_xcode transcode sites the Node embedded host does
-    // not yet implement (WH-5b.3 host transcode building). The compiler-derived
-    // emit facts cannot detect the JS host gap, so this skip is the manifest's
-    // honest claim; it is validated as attached to a genuinely RUNNABLE
-    // artifact, and the Node runner enforces the exact set via its pinned
-    // census.
-    //
-    // WH-5c.5 (GAP 4): a multi-node all-opaque workflow (no ahfl_xcode sites)
-    // RUNS on the orchestration lane and agrees on the native wasm3 lane via
-    // the guest stash-table join, but the Node oracle host predates that join
-    // (it never reads per-node stash slots and its normalization self-test
-    // assumes cap-on-node-0). Same manifest-claim treatment; the Node runner
-    // pins an exact stem set. This reason MUST NOT be used where the module
-    // actually emits ahfl_xcode sites (that is the HostTranscode reason).
-    //
     // WH-5c.7 (GAP 5): a case whose wire-type matrix carries shapes the Node
     // oracle host's P6 frame packer/reader does not yet implement (Map /
-    // Decimal / Duration / Float are outside the JS host's rung-E frame
-    // subset). The C++ host supports them (WH-5c.7); the module emits and the
-    // native wasm3 lane agrees, but the Node observation is withheld until
-    // the JS host ports the rich wire-type matrix. Same manifest-claim
-    // treatment; the Node runner pins an exact stem set.
-    const bool declared_host_transcode =
-        declared.node_observation_skip == Skip::HostTranscodeAwaitsNodePort;
-    const bool declared_multinode_stash =
-        declared.node_observation_skip == Skip::NodeHostAwaitsMultiNodeStashJoin;
+    // Decimal / Duration are outside the JS host's rung-E frame subset). The
+    // C++ host supports them (WH-5c.7); the module emits and the native wasm3
+    // lane agrees, but the Node observation is withheld until the JS host
+    // ports the rich wire-type matrix. Same manifest-claim treatment; the
+    // Node runner pins an exact stem set.
     const bool declared_rich_wire_types =
         declared.node_observation_skip == Skip::NodeHostAwaitsRichWireTypes;
-    if (declared_host_transcode) {
-        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
-            return "manifest declares engines.wasm.node_observation_skip="
-                   "'host_transcode_awaits_node_port' but the module does not emit on the "
-                   "orchestration lane (" +
-                   std::string{wasm_eligibility_verdict_name(verdict)} +
-                   ": " + computed.reason +
-                   ") -- a host-transcode skip requires a runnable artifact";
-        }
-    } else if (declared_multinode_stash) {
-        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
-            return "manifest declares engines.wasm.node_observation_skip="
-                   "'node_host_awaits_multinode_stash_join' but the module does not emit on "
-                   "the orchestration lane (" +
-                   std::string{wasm_eligibility_verdict_name(verdict)} +
-                   ": " + computed.reason +
-                   ") -- a multi-node stash-join skip requires a runnable artifact";
-        }
-    } else if (declared_rich_wire_types) {
+    if (declared_rich_wire_types) {
         if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
             return "manifest declares engines.wasm.node_observation_skip="
                    "'node_host_awaits_rich_wire_types' but the module does not emit on the "
