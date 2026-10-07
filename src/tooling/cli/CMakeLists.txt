@@ -55,3 +55,15 @@ target_compile_definitions(ahflc PRIVATE
 target_include_directories(ahflc PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 ahfl_apply_project_warnings(ahflc)
+
+# RFC 0028: copy the bundled NuSMV model checker next to ahflc in the build
+# tree so the executable-directory solver discovery works without an
+# install step (the same layout `cmake --install` produces).
+if(TARGET NuSMV)
+    add_dependencies(ahflc NuSMV)
+    add_custom_command(TARGET ahflc POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:NuSMV>
+            $<TARGET_FILE_DIR:ahflc>/NuSMV
+        VERBATIM)
+endif()

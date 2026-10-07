@@ -1,4 +1,6 @@
 add_library(ahfl_verification_formal STATIC
+    bmc.cpp
+    bundled_solver.cpp
     checker.cpp
     counterexample.cpp
     counterexample_json.cpp

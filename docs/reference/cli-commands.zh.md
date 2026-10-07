@@ -130,7 +130,7 @@ ahfl-dap [--help]
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
-| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过 |
+| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过。NuSMV 已内置于安装包,默认安装即有 solver |
 | `--formal-backend` | `<nuxmv\|nusmv\|spin\|tlaplus>` | 需 `--verify=on`: 选择形式化 backend。当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证；`spin` / `tlaplus` 会报告 `verification_unsupported` |
 | `--model-checker` | `<path>` | 需 `--verify=on`: NuSMV/nuXmv checker 路径 |
 | `--checker-timeout-seconds` | `<seconds>` | 需 `--verify=on`: 外部 checker 进程 timeout；超时会报告 `checker_status: checker_error` 与 `checker_timed_out: true` |

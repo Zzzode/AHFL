@@ -1,5 +1,6 @@
 #include "verification/formal/nuxmv_backend.hpp"
 
+#include "verification/formal/bundled_solver.hpp"
 #include "verification/formal/process_launcher.hpp"
 #include "verification/formal/smv_output.hpp"
 #include "verification/formal/smv_source_script.hpp"
@@ -31,6 +32,14 @@ std::string find_nuxmv_binary() {
     const char *nusmv_env = std::getenv("AHFL_NUSMV_PATH");
     if (nusmv_env && *nusmv_env && fs::exists(nusmv_env)) {
         return nusmv_env;
+    }
+
+    // RFC 0028: a solver bundled alongside the ahflc executable (the default
+    // install layout ships bin/NuSMV next to bin/ahflc). This makes a default
+    // installation self-contained without PATH or env-var configuration.
+    if (auto bundled = bundled_solver_path({"nuXmv", "nuxmv", "NuSMV", "nusmv"});
+        !bundled.empty()) {
+        return bundled.string();
     }
 
     // Search PATH for nuXmv or NuSMV

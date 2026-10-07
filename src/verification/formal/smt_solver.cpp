@@ -1,5 +1,6 @@
 #include "verification/formal/smt_solver.hpp"
 
+#include "verification/formal/bundled_solver.hpp"
 #include "verification/formal/process_launcher.hpp"
 
 #include <cstdlib>
@@ -72,7 +73,16 @@ SmtSolverAvailability resolve_smt_solver(const SmtSolverOptions &options) {
         return availability;
     }
 
-    // 3. PATH lookup.
+    // 3. Bundled solver in the executable's directory (default install layout,
+    //    RFC 0028). Z3 is not yet bundled; this is a no-op until it is.
+    if (auto bundled = bundled_solver_path({solver_binary_name(options.kind)});
+        !bundled.empty()) {
+        availability.available = true;
+        availability.binary_path = bundled.string();
+        return availability;
+    }
+
+    // 4. PATH lookup.
     if (auto found = find_executable(solver_binary_name(options.kind)); found.has_value()) {
         availability.available = true;
         availability.binary_path = *found;

@@ -775,17 +775,18 @@ set_tests_properties(ahflc.check.verify.state_space_report PROPERTIES
     PASS_REGULAR_EXPRESSION "state_space_estimate: 4"
 )
 
+# RFC 0028: NuSMV is bundled next to ahflc, so the checker is discovered via
+# the executable's own directory even with no solver env vars and a
+# solver-free PATH. Replaces the former missing_binary test — the "no solver
+# available" failure mode cannot occur in a default build.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path")
 
-add_test(NAME ahflc.check.verify.missing_binary
+add_test(NAME ahflc.check.verify.bundled_solver
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=check;--formal-backend;nuxmv;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
-            "-DEXPECTED_REGEX=checker_status: missing_binary"
-            "-DUNSET_ENV=AHFL_SMV_CHECKER;AHFL_NUXMV_PATH;AHFL_NUSMV_PATH"
-            "-DENV_PATH=${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+            "-DEMPTY_PATH_DIR=${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunBundledSolverCheck.cmake"
 )
 
 add_test(NAME ahflc.check.verify.unsupported_backend

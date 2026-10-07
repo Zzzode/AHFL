@@ -125,6 +125,13 @@ if(AHFL_ENABLE_BACKEND_WASM)
     enable_language(C)
     add_subdirectory(third_party/wasm3)
 endif()
+# NuSMV (LGPL-2.1) is the bundled formal verification model checker (RFC
+# 0028). It exists only when the formal backend does: the fail-closed default
+# pipeline launches it, so FORMAL=OFF must leave the tree without a NuSMV
+# target. See third_party/nusmVENDORING.md.
+if(AHFL_ENABLE_BACKEND_FORMAL)
+    add_subdirectory(third_party/nusmv)
+endif()
 add_subdirectory(src)
 
 enable_testing()

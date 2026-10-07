@@ -5,7 +5,7 @@ status: "implemented"
 area: ["compiler", "tooling", "formal"]
 stability: "developer-facing"
 created: "2026-10-07"
-updated: "2026-10-07"
+updated: "2026-10-08"
 authors: ["zzzode"]
 shepherd: "zzzode"
 owners:
@@ -79,9 +79,10 @@ properties the language lets users write.
    (SMT-BMC, SMV model checker) into the pipeline; it does not build the internal
    IR→`BmcStateMachine` lowering that would make `run_bmc` the always-available
    backbone. That is the constraint-removal end-state (see Design §Constraint).
-2. **No vendoring or embedding of NuSMV/Z3.** The "no external runtime dependencies
-   besides vendored ANTLR4" principle stands; RFC 0018's dlopen library-mode is the
-   separate track for removing the external-process constraint.
+2. **No vendoring of Z3.** NuSMV 2.6.0 IS vendored (see Design §Bundled
+   Solver); Z3 remains external because the SMT-BMC path is a secondary engine
+   and Z3's build is substantially heavier. RFC 0018's dlopen library-mode is
+   the separate track for embedding Z3 in-process.
 3. **No change to SMV model emission format.** `print_program_smv` output
    (`AHFL_MAP` / `LTLSPEC`) is unchanged; `emit smv` is unaffected.
 4. **No change to the SMT-BMC engine semantics** (RFC 0017): loop-free data-predicate
@@ -227,21 +228,67 @@ the `verify-formal` command is deleted in the SAME change:
 
 ### Constraint (Principle 6)
 
-The correct architecture — Dafny-style always-on verification that fails closed — is
-blocked by a named external constraint: **NuSMV/nuXmv and Z3 are external, optional
-processes that AHFL does not vendor (license + "no external runtime dependencies besides
-vendored ANTLR4").**
+The original constraint — **NuSMV/nuXmv and Z3 are external, optional processes
+that AHFL does not vendor** — is PARTIALLY REMOVED. NuSMV 2.6.0 is now vendored
+in-tree (`third_party/nusmv/`) and built as part of the AHFL CMake build. The
+NuSMV binary is installed to `bin/` alongside `ahflc` during `cmake --install`,
+and the runtime solver discovery checks the executable's own directory first
+(see Design §Bundled Solver). A default AHFL installation ALWAYS has a working
+SMV model checker; the "missing NuSMV" failure mode cannot occur in a default
+install.
 
-The end-state (constraint removed) is a self-contained formal engine that is
-unconditionally available: either (a) the internal `run_bmc`
-(`src/verification/formal/bmc.hpp`) is wired to the IR via a structured
-IR→`BmcStateMachine` lowering (today it is REPL-only, `src/tooling/repl/repl.cpp:409`),
-giving an always-available bounded reachability engine; or (b) RFC 0018's dlopen
-library-mode lands a bundled solver. The trigger condition is either engine becoming
-available in-tree; the migration is ONE big-bang change that removes the
-missing-solver failure path (the solver is always present) and simplifies the stage.
-Until then, the missing-solver failure is a named, removable constraint — not a
-degradation path.
+The remaining constraint is **Z3 for the SMT-BMC path**. Z3 is a substantially
+heavier build (C++ with complex dependencies) and is not yet vendored. Programs
+with SMT-BMC contract-data goals still require Z3 on the PATH (or
+`AHFL_Z3_SOLVER`); programs without SMT-BMC goals are unaffected (the SMT-BMC
+engine returns `Unsupported` silently when no goals exist). The end-state for
+Z3 is the same: vendor it or land RFC 0018's dlopen embedding, then remove the
+`SolverUnavailable` failure path in one big-bang change.
+
+The internal `run_bmc` engine (`src/verification/formal/bmc.hpp`) remains
+REPL-only and is the longer-term constraint-removal track for a fully
+self-contained formal engine with zero external processes.
+
+### Bundled Solver
+
+NuSMV 2.6.0 (LGPL-2.1) is vendored in `third_party/nusmv/` and built from
+source as part of the AHFL CMake build, gated on `AHFL_ENABLE_BACKEND_FORMAL`
+(which is ON by default). The vendored source carries build-system patches for
+modern toolchains (CMake ≥ 3.5, Python 3, glibc `union wait` removal, MiniSat
+idempotent patch step); see `third_party/nusmv/VENDORING.md` for the patch
+manifest.
+
+**Build integration.** `third_party/nusmv/CMakeLists.txt` is a thin wrapper that
+sets NuSMV's batch-mode build options (no readline, no libxml2, no interactive
+help array) and calls `add_subdirectory(NuSMV)`. The wrapper follows the same
+pattern as the vendored ANTLR4 and doctest: directory-scoped flags do not leak
+to the parent project.
+
+**Install.** When `AHFL_INSTALL=ON`, the NuSMV binary is installed to `bin/`
+alongside `ahflc` (`install(TARGETS NuSMV RUNTIME DESTINATION bin)`). All other
+NuSMV install rules (headers, static libraries, docs) are stripped from the
+vendored CMakeLists — the binary is the sole runtime artifact. A POST_BUILD
+copy step places the NuSMV binary next to `ahflc` in the build tree so bundled
+discovery works without installation.
+
+**Runtime discovery.** The solver discovery chain in `nuxmv_backend.cpp`
+checks, in order:
+1. `--model-checker` flag (explicit user override)
+2. `AHFL_SMV_CHECKER` / `AHFL_NUXMV_PATH` / `AHFL_NUSMV_PATH` env vars
+3. **Bundled solver** — the executable's own directory (via
+   `/proc/self/exe` on Linux, `_NSGetExecutablePath` on macOS), checking
+   `nuXmv`, `nuxmv`, `NuSMV`, `nusmv` in order
+4. PATH lookup
+
+The bundled check is implemented in
+`src/verification/formal/bundled_solver.{hpp,cpp}` and shared with the SMT-BMC
+path (which checks for Z3 in the same way, though Z3 is not yet bundled).
+
+**Test.** `ahflc.check.verify.bundled_solver` unsets all solver env vars, sets
+a solver-free PATH, and asserts that `ahflc check` finds the bundled NuSMV
+(`checker_status: available`, checker path is the binary in the executable's
+directory). This replaces the old `missing_binary` test, which asserted the
+opposite failure mode that can no longer occur in a default install.
 
 ## User Impact
 
@@ -250,10 +297,15 @@ degradation path.
   (zero-spec fast path, no checker launch). Programs with verifiable properties get a
   formal verification report; refutations now fail the build by default with a
   counterexample (previously: compiled clean).
-- **Missing NuSMV/Z3**: `check`/`run` FAIL with `checker_status: missing_binary` (or
-  `SMT-BMC solver (Z3) not found`). The compiler requires formal verification tooling
-  to be installed when the program has verifiable properties. This is intentional —
-  fail-closed by default.
+- **NuSMV bundled**: NuSMV 2.6.0 is built from source and installed alongside
+  `ahflc`. A default AHFL installation always has a working SMV model checker;
+  no separate solver installation is required for LTL/safety verification.
+  The solver is discovered in the executable's own directory first, then env
+  vars, then PATH.
+- **Missing Z3** (SMT-BMC path only): programs with SMT-BMC contract-data goals
+  require Z3 on the PATH (or `AHFL_Z3_SOLVER`). Programs without SMT-BMC goals
+  are unaffected (the engine returns `Unsupported` silently). Z3 bundling is
+  tracked as a follow-up.
 - **`ahflc verify-formal`**: REMOVED. Migration: `ahflc verify-formal <file>` →
   `ahflc check --verify=on <file>`. CI / release pipelines that called
   `verify-formal` must update the invocation (breaking, documented in
@@ -278,9 +330,9 @@ degradation path.
    `check --verify=on` tests.
 2. **Default `check`/`run` now verifies (fail-closed).** A program with a refuted
    property that previously compiled clean now fails. Migration: fix the property, or
-   pass `--verify=off` to disable the formal stage entirely. A program that requires
-   NuSMV/Z3 but the solver is missing also fails — install the solver or use
-   `--verify=off`.
+   pass `--verify=off` to disable the formal stage entirely. NuSMV is bundled and
+   always available; a program that requires Z3 (SMT-BMC goals) but Z3 is missing
+   also fails — install Z3 or use `--verify=off`.
 
 No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`, and
 `SmtBmcResult` are unchanged. No new env vars. The `AHFL_SMV_CHECKER` /
@@ -323,8 +375,10 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
   - `ahflc.check.verify.fake_pass` / `fake_bmc_pass` / `fake_fail` /
     `fake_timeout` / `fake_error` (migrated from `verify_formal.*`, reusing
     `fake_smv_checker_*.sh`).
-  - `ahflc.check.verify.missing_binary` → `checker_status: missing_binary`,
-    exit non-zero (fail-closed).
+  - `ahflc.check.verify.bundled_solver` → with all solver env vars unset and a
+    solver-free PATH, `ahflc check` finds the bundled NuSMV in the executable's
+    directory (`checker_status: available`). Replaces the old `missing_binary`
+    test (the failure mode it asserted can no longer occur in a default install).
   - `ahflc.check.verify.no_properties` → exit 0, no formal output, no NuSMV launch
     (assert via a fake checker that records invocations).
   - `ahflc.check.verify.refutation` (fake checker emitting `is false`) → exit non-zero
@@ -409,3 +463,13 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
   name (PID + timestamp) to avoid races under parallel test load; the temp path is
   normalized to `<temp-model>` in captured checker output for differential test
   stability. Test suite green (585/585 in parallel).
+- 2026-10-08: NuSMV 2.6.0 bundled per user directive ("安装我们这个的时候，要默认
+  安装，至少安装一个 Solver 才行"). The external-solver constraint for the SMV
+  path is REMOVED: NuSMV is vendored in `third_party/nusmv/`, built from source,
+  and installed to `bin/` alongside `ahflc`. Runtime discovery checks the
+  executable's own directory first (`bundled_solver.{hpp,cpp}`). The
+  `missing_binary` test is replaced by `bundled_solver` (asserts the solver IS
+  found with no env vars and a solver-free PATH). All NuSMV install rules except
+  the binary are stripped (no headers, no static libs, no docs). Z3 remains
+  external (SMT-BMC path only); its bundling is a follow-up. Constraint section
+  updated to reflect the partial removal.

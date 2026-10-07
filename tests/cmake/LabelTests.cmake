@@ -372,7 +372,7 @@ ahfl_label_tests(
     TESTS
         ahfl.formal.model_checker_backends_all
         ahflc.check.verify.state_space_report
-        ahflc.check.verify.missing_binary
+        ahflc.check.verify.bundled_solver
         ahflc.check.verify.unsupported_backend
         ahflc.check.verify.checker_error
         ahflc.check.verify.checker_timeout

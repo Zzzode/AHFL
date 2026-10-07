@@ -109,7 +109,8 @@ formal verification 对 workflow 的**有限控制模型**做外部验证：
 | `spin`、`tlaplus` | 可在 capability matrix 中出现，但 `verify` 返回 `verification_unsupported` |
 
 checker 查找顺序：`--model-checker` → `AHFL_SMV_CHECKER` → backend-specific 环境变量
-（如 `AHFL_NUXMV_PATH`）→ `PATH` 中的 `NuSMV` / `nuXmv`。
+（如 `AHFL_NUXMV_PATH`）→ **ahflc 同目录下的 bundled solver**（默认安装即有
+NuSMV）→ `PATH` 中的 `NuSMV` / `nuXmv`。
 
 可检查的控制性质：
 
