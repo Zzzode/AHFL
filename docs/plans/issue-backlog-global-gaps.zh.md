@@ -223,7 +223,7 @@
 | P1 | 官方 VS Code 扩展完整发布与 IDE 体验闭环 | extension scaffold、TextMate grammar、snippet、基础 CodeLens、platform VSIX 打包脚本、CI VSIX artifact workflow、Marketplace package inventory gate、platform VSIX install smoke、hover/completion/rename/watched-files/workspace-folder-lifecycle extension test、Problems diagnostics transcript 与 diagnostics publish/recovery extension test 已有；CI 已在 Linux+xvfb 上运行 extension test；2026-10-09 用户决策：Marketplace 发布暂缓（实现尚未完备），先本地 VSIX 打包安装 |
 | P2 | Native gRPC / Protobuf transport | JSON transcoding 已有，native Protobuf transport 未证明 |
 | P2 | NuSMV/nuXmv library-mode embedding | 当前是外部进程 seam，library-mode 仍是研究项 |
-| P2 | 浏览器端 Online Playground | WASM backend 有基础，playground product path 未证明 |
+| P2 | 浏览器端 Online Playground | 2026-10-09：server-side wrapper slice 已落地（`tools/playground/`，commit 71511cf5）——Vite dev-server middleware spawn `ahflc`，提供 /api/compile、/api/verify、/api/format、/api/build；Monaco 编辑器接上 AHFL 语法高亮。长期目标是 WASM 编译编译器实现纯客户端 |
 | P3 | 官方包仓库 | package resolver/registry 库存在，但 publish/install 和官方仓库未证明 |
 | P3 | 多 region 生产调度 | distributed scheduler 有基础，真实多 region control plane 未证明 |
 
