@@ -91,6 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         build: document.getElementById('btn-build') as HTMLButtonElement,
         format: document.getElementById('btn-format') as HTMLButtonElement,
         share: document.getElementById('btn-share') as HTMLButtonElement,
+        reset: document.getElementById('btn-reset') as HTMLButtonElement,
     };
 
     const setOutput = (className: string, html: string) => {
@@ -205,6 +206,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.prompt('Copy this URL to share:', url);
             statusEl.textContent = 'Share URL generated';
         }
+    });
+
+    buttons.reset.addEventListener('click', () => {
+        setEditorValue(DEFAULT_SOURCE);
+        setOutput('info', 'Ready. Write some AHFL code and click Compile.');
+        statusEl.textContent = 'Reset to default';
+        // Clear the URL hash
+        history.replaceState(null, '', window.location.pathname);
     });
 
     // Keyboard shortcuts: Ctrl/Cmd+Enter = Compile, Ctrl/Cmd+Shift+Enter = Verify

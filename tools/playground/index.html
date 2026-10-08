@@ -35,6 +35,11 @@
         }
         .toolbar button:hover { background: #1177bb; }
         .toolbar button:disabled { background: #3c3c3c; cursor: wait; }
+        .toolbar button.btn-secondary {
+            background: #3c3c3c;
+            color: #d4d4d4;
+        }
+        .toolbar button.btn-secondary:hover { background: #4c4c4c; }
         .toolbar select {
             background: #3c3c3c;
             color: #d4d4d4;
@@ -229,6 +234,7 @@
             <button id="btn-build">Build</button>
             <button id="btn-format">Format</button>
             <button id="btn-share">Share</button>
+            <button id="btn-reset" class="btn-secondary">Reset</button>
         </div>
     </header>
     <main>
