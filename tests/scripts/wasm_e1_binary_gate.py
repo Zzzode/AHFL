@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -107,39 +108,51 @@ def code_body(payload: bytes, function_index: int) -> bytes:
 
 
 def emit(ahflc: Path, source: Path, profile: str) -> bytes:
-    proc = subprocess.run(
-        [str(ahflc), "emit", "wasm", "--wasm-profile", profile, str(source)],
-        capture_output=True,
-        timeout=60,
-    )
-    if proc.returncode != 0:
-        fail(
-            f"ahflc emit wasm ({profile}) exited {proc.returncode}: "
-            f"{proc.stderr.decode(errors='replace')}"
+    with tempfile.NamedTemporaryFile(suffix=".wasm", delete=False) as tmp:
+        out_path = tmp.name
+    try:
+        proc = subprocess.run(
+            [str(ahflc), "build", "--verify=off", "--wasm-profile", profile,
+             "--output", out_path, str(source)],
+            capture_output=True,
+            timeout=60,
         )
-    return proc.stdout
+        if proc.returncode != 0:
+            fail(
+                f"ahflc build ({profile}) exited {proc.returncode}: "
+                f"{proc.stderr.decode(errors='replace')}"
+            )
+        return Path(out_path).read_bytes()
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 def expect_unsupported(ahflc: Path, source: Path) -> None:
-    proc = subprocess.run(
-        [str(ahflc), "emit", "wasm", str(source)],
-        capture_output=True,
-        timeout=60,
-    )
-    stderr = proc.stderr.decode(errors="replace")
-    if (
-        proc.returncode == 0
-        or proc.stdout
-        or (
-            "wasm.UNSUPPORTED_ORCHESTRATION" not in stderr
-            and "wasm.UNSUPPORTED_CAPABILITY_FRAME" not in stderr
-            and "wasm.ENTRY_AMBIGUOUS" not in stderr
+    with tempfile.NamedTemporaryFile(suffix=".wasm", delete=False) as tmp:
+        out_path = tmp.name
+    Path(out_path).unlink(missing_ok=True)  # ahflc must not create it on failure
+    try:
+        proc = subprocess.run(
+            [str(ahflc), "build", "--verify=off", "--output", out_path, str(source)],
+            capture_output=True,
+            timeout=60,
         )
-    ):
-        fail(
+        stderr = proc.stderr.decode(errors="replace")
+        if (
+            proc.returncode == 0
+            or Path(out_path).exists()
+            or (
+                "wasm.UNSUPPORTED_ORCHESTRATION" not in stderr
+                and "wasm.UNSUPPORTED_CAPABILITY_FRAME" not in stderr
+                and "wasm.ENTRY_AMBIGUOUS" not in stderr
+            )
+        ):
+            fail(
             f"unsupported CLI fixture did not fail closed ({source.name}): "
-            f"rc={proc.returncode}, stdout={len(proc.stdout)} bytes, stderr={stderr!r}"
+            f"rc={proc.returncode}, stderr={stderr!r}"
         )
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 def main(argv: list[str]) -> int:

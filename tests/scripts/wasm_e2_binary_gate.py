@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # RFC 0026 E4-B1: the E2 capability artifact is the byte-identical pre-B1 module
@@ -175,17 +176,23 @@ def code_body(payload: bytes, defined_index: int) -> bytes:
 
 
 def emit(ahflc: Path, source: Path, profile: str) -> bytes:
-    proc = subprocess.run(
-        [str(ahflc), "emit", "wasm", "--wasm-profile", profile, str(source)],
-        capture_output=True,
-        timeout=60,
-    )
-    if proc.returncode != 0:
-        fail(
-            f"ahflc emit wasm ({profile}) exited {proc.returncode}: "
-            f"{proc.stderr.decode(errors='replace')}"
+    with tempfile.NamedTemporaryFile(suffix=".wasm", delete=False) as tmp:
+        out_path = tmp.name
+    try:
+        proc = subprocess.run(
+            [str(ahflc), "build", "--verify=off", "--wasm-profile", profile,
+             "--output", out_path, str(source)],
+            capture_output=True,
+            timeout=60,
         )
-    return proc.stdout
+        if proc.returncode != 0:
+            fail(
+                f"ahflc build ({profile}) exited {proc.returncode}: "
+                f"{proc.stderr.decode(errors='replace')}"
+            )
+        return Path(out_path).read_bytes()
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 def main(argv: list[str]) -> int:

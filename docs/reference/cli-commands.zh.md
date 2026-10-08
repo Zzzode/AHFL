@@ -61,6 +61,7 @@ ahflc run --workflow <name> --input '<json>' [--llm-config <path>] [--tool-catal
 ahflc fmt [--check] <input.ahfl|dir>...
 ahflc fmt [--check] --manifest <ahfl.toml>
 ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>
+ahflc build [--output <path>] [--wasm-profile <wasi|browser>] <input-mode>
 ahflc init --single-file <input.ahfl>
 ahflc package archive --manifest <ahfl.toml> --out <dir>
 ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir> [--sysroot <path>] [--semver-gate --from <previous>]
@@ -130,12 +131,13 @@ ahfl-dap [--help]
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
-| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过。NuSMV 和 Z3 已内置于安装包,默认安装即有 solver |
+| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run`/`build` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过。NuSMV 和 Z3 已内置于安装包,默认安装即有 solver |
 | `--formal-backend` | `<nuxmv\|nusmv\|spin\|tlaplus>` | 需 `--verify=on`: 选择形式化 backend。当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证；`spin` / `tlaplus` 会报告 `verification_unsupported` |
 | `--model-checker` | `<path>` | 需 `--verify=on`: NuSMV/nuXmv checker 路径 |
 | `--checker-timeout-seconds` | `<seconds>` | 需 `--verify=on`: 外部 checker 进程 timeout；超时会报告 `checker_status: checker_error` 与 `checker_timed_out: true` |
 | `--formal-model-out` | `<model.smv>` | 需 `--verify=on`: 保留 SMV 模型文件 |
-| `--wasm-profile` | `<wasi\|browser>` | 仅 `emit wasm`: WASM 部署 profile。`wasi`(默认)面向命令行 wasm runtime;`browser` 面向 JS host(capability 走 fetch/JS 代理),无 WASI——文件系统/环境类 capability 在 emit 期被确定拒绝。模块 ABI 与 profile 无关 |
+| `--output` | `<path>` | 仅 `build`: WASM 二进制输出路径。默认 `<stem>.wasm`(与输入同目录);无法推导时报错 |
+| `--wasm-profile` | `<wasi\|browser>` | 仅 `build`: WASM 部署 profile。`wasi`(默认)面向命令行 wasm runtime;`browser` 面向 JS host(capability 走 fetch/JS 代理),无 WASI——文件系统/环境类 capability 在 build 期被确定拒绝。模块 ABI 与 profile 无关 |
 | `--dump-ast` | - | 输出 AST outline |
 | `--dump-types` | - | 输出类型环境 |
 | `--explain` | - | 启用结构化解释 |

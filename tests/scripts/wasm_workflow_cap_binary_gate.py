@@ -130,16 +130,17 @@ def emit_via_cli(ahflc: Path, manifest: Path, golden: Path) -> bytes:
         # golden directory (that would pollute the E1/E2 direct-source gates).
         shutil.copy(manifest, work / "ahfl.toml")
         shutil.copy(golden, work / golden.name)
+        out_path = work / "output.wasm"
         proc = subprocess.run(
-            [str(ahflc), "emit", "wasm", "--manifest", str(work / "ahfl.toml"),
-             "--target", "workflow"],
+            [str(ahflc), "build", "--verify=off", "--manifest", str(work / "ahfl.toml"),
+             "--target", "workflow", "--output", str(out_path)],
             capture_output=True,
             timeout=60,
         )
         if proc.returncode != 0:
-            fail(f"ahflc emit exited {proc.returncode}: "
+            fail(f"ahflc build exited {proc.returncode}: "
                  f"{proc.stderr.decode(errors='replace')!r}")
-        return proc.stdout
+        return out_path.read_bytes()
 
 
 def emit_via_probe(probe: Path, golden: Path) -> bytes:
@@ -159,15 +160,21 @@ def emit_via_probe(probe: Path, golden: Path) -> bytes:
 def emit_existing_package(ahflc: Path, manifest: Path) -> bytes:
     """Emit a committed package that already ships its own source alongside its
     manifest (used for the E3 identity byte-freeze canary)."""
-    proc = subprocess.run(
-        [str(ahflc), "emit", "wasm", "--manifest", str(manifest), "--target", "workflow"],
-        capture_output=True,
-        timeout=60,
-    )
-    if proc.returncode != 0:
-        fail(f"ahflc emit exited {proc.returncode}: "
-             f"{proc.stderr.decode(errors='replace')!r}")
-    return proc.stdout
+    with tempfile.NamedTemporaryFile(suffix=".wasm", delete=False) as tmp:
+        out_path = tmp.name
+    try:
+        proc = subprocess.run(
+            [str(ahflc), "build", "--verify=off", "--manifest", str(manifest),
+             "--target", "workflow", "--output", out_path],
+            capture_output=True,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            fail(f"ahflc build exited {proc.returncode}: "
+                 f"{proc.stderr.decode(errors='replace')!r}")
+        return Path(out_path).read_bytes()
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 def main(argv: "list[str]") -> int:

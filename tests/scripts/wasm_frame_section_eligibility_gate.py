@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # The ONLY fixtures allowed to carry the ahfl.core-layout.v1 frame section.
@@ -194,12 +195,18 @@ def section_ids(data: bytes) -> list[int]:
 
 
 def emit(ahflc: Path, source: Path) -> tuple[int, bytes]:
-    proc = subprocess.run(
-        [str(ahflc), "emit", "wasm", str(source)],
-        capture_output=True,
-        timeout=60,
-    )
-    return proc.returncode, proc.stdout
+    with tempfile.NamedTemporaryFile(suffix=".wasm", delete=False) as tmp:
+        out_path = tmp.name
+    try:
+        proc = subprocess.run(
+            [str(ahflc), "build", "--verify=off", "--output", out_path, str(source)],
+            capture_output=True,
+            timeout=60,
+        )
+        data = Path(out_path).read_bytes() if proc.returncode == 0 else b""
+        return proc.returncode, data
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 def main(argv: list[str]) -> int:
@@ -263,17 +270,23 @@ def main(argv: list[str]) -> int:
     overflow_source = wasm_dir / f"{RODATA_OVERFLOW_FIXTURE}.ahfl"
     if not overflow_source.is_file():
         fail(f"missing rodata-overflow reject fixture {overflow_source.name}")
-    overflow = subprocess.run(
-        [str(ahflc), "emit", "wasm", str(overflow_source)],
-        capture_output=True,
-        timeout=60,
-    )
-    overflow_err = overflow.stderr.decode(errors="replace")
-    if overflow.returncode == 0 or overflow.stdout:
-        fail(
-            f"{overflow_source.name} must fail closed when its literal image "
-            f"exceeds the rodata region, but emission produced an artifact"
+    with tempfile.NamedTemporaryFile(suffix=".wasm", delete=False) as tmp:
+        overflow_out = tmp.name
+    Path(overflow_out).unlink(missing_ok=True)  # ahflc must not create it on failure
+    try:
+        overflow = subprocess.run(
+            [str(ahflc), "build", "--verify=off", "--output", overflow_out, str(overflow_source)],
+            capture_output=True,
+            timeout=60,
         )
+        overflow_err = overflow.stderr.decode(errors="replace")
+        if overflow.returncode == 0 or Path(overflow_out).exists():
+            fail(
+                f"{overflow_source.name} must fail closed when its literal image "
+                f"exceeds the rodata region, but emission produced an artifact"
+            )
+    finally:
+        Path(overflow_out).unlink(missing_ok=True)
     if RODATA_OVERFLOW_SUBSTR not in overflow_err:
         fail(
             f"{overflow_source.name} rejection must name the rodata region "

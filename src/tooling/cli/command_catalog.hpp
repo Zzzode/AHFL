@@ -45,7 +45,7 @@ enum class CommandKind {
     EmitK8sCrd,
     EmitOpenApi,
     EmitTerraform,
-    EmitWasm,
+    Build,
     ValidateAssurance,
     _Count, // sentinel — must be last
 };
@@ -97,6 +97,7 @@ struct CommandLineOptions {
     std::optional<std::string_view> checker_timeout_seconds;
     std::optional<std::string_view> formal_model_out;
     std::optional<std::string_view> package_archive_output_path;
+    std::optional<std::string_view> build_output_path;
     std::optional<std::string_view> package_registry_id;
     std::optional<std::string_view> lockfile_path;
     std::optional<std::string_view> bmc_depth;
@@ -117,8 +118,8 @@ struct CommandLineOptions {
     bool format_check_requested{false};
     bool public_api_semver_gate_requested{false};
     bool package_publish_dry_run_requested{false};
-    // RFC 0028: formal verification stage. Raw CLI string ("off|light|full"),
-    // parsed on-demand. nullopt = per-command default (light for check/run,
+    // RFC 0028: formal verification stage. Raw CLI string ("off|on"),
+    // parsed on-demand. nullopt = per-command default (on for check/run/build,
     // off for everything else).
     std::optional<std::string_view> verify_mode;
     std::vector<std::string_view> positional;

@@ -15,13 +15,13 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # RFC 0026 KR6.5 E1: CLI emits one deterministic Core-IR-derived wasm
     # binary, not textual WAT. This always-on gate is explicitly structural;
     # the optional wasmtime differential below owns real-execution evidence.
-    add_test(NAME ahflc.emit_wasm.e1_binary_gate
+    add_test(NAME ahflc.build.e1_binary_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${AHFL_TESTS_DIR}/scripts/wasm_e1_binary_gate.py"
                 $<TARGET_FILE:ahflc>
                 "${AHFL_TESTS_DIR}"
     )
-    set_tests_properties(ahflc.emit_wasm.e1_binary_gate PROPERTIES
+    set_tests_properties(ahflc.build.e1_binary_gate PROPERTIES
         PASS_REGULAR_EXPRESSION "all KR6.5 E1 binary/structural gates passed"
         FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
         LABELS "wasm;backend;target"
@@ -29,13 +29,13 @@ if(AHFL_ENABLE_BACKEND_WASM)
 
     # KR6.5 E2: exact ahfl_cap import + run2 binary contract. This gate parses
     # bytes but does not claim execution evidence.
-    add_test(NAME ahflc.emit_wasm.e2_binary_gate
+    add_test(NAME ahflc.build.e2_binary_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${AHFL_TESTS_DIR}/scripts/wasm_e2_binary_gate.py"
                 $<TARGET_FILE:ahflc>
                 "${AHFL_TESTS_DIR}"
     )
-    set_tests_properties(ahflc.emit_wasm.e2_binary_gate PROPERTIES
+    set_tests_properties(ahflc.build.e2_binary_gate PROPERTIES
         PASS_REGULAR_EXPRESSION "all KR6.5 E2 binary/structural gates passed"
         FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
         LABELS "wasm;backend;target;structural"
@@ -47,23 +47,23 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # non-pinned module gains (or any pinned module loses) the frame section, or
     # if an emission is non-deterministic. Locks the rung-A byte-identity
     # invariant across the whole corpus, not just the e1 fixture.
-    add_test(NAME ahflc.emit_wasm.p67_frame_section_eligibility_gate
+    add_test(NAME ahflc.build.p67_frame_section_eligibility_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${AHFL_TESTS_DIR}/scripts/wasm_frame_section_eligibility_gate.py"
                 $<TARGET_FILE:ahflc>
                 "${AHFL_TESTS_DIR}"
     )
-    set_tests_properties(ahflc.emit_wasm.p67_frame_section_eligibility_gate PROPERTIES
+    set_tests_properties(ahflc.build.p67_frame_section_eligibility_gate PROPERTIES
         PASS_REGULAR_EXPRESSION "all P6-7 frame-section eligibility gates passed"
         FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
         LABELS "wasm;backend;target;structural"
     )
 
-    add_test(NAME ahflc.emit_wasm.profile_unknown
-        COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile bogus
+    add_test(NAME ahflc.build.profile_unknown
+        COMMAND $<TARGET_FILE:ahflc> build --wasm-profile bogus
                 "${AHFL_TESTS_DIR}/golden/wasm/e1_identity_agent.ahfl"
     )
-    set_tests_properties(ahflc.emit_wasm.profile_unknown PROPERTIES
+    set_tests_properties(ahflc.build.profile_unknown PROPERTIES
         PASS_REGULAR_EXPRESSION "unknown --wasm-profile"
         LABELS "wasm;backend;target"
     )
@@ -73,7 +73,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # with a copy of the committed golden), asserts byte identity vs the emit-only
     # producer + determinism, and locks the import / AHFLXM-golden / AHFLWS-EOF
     # structure. Not execution evidence.
-    add_test(NAME ahflc.emit_wasm.capability_workflow_binary_gate
+    add_test(NAME ahflc.build.capability_workflow_binary_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${AHFL_TESTS_DIR}/scripts/wasm_workflow_cap_binary_gate.py"
                 $<TARGET_FILE:ahflc>
@@ -82,7 +82,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
                 "${AHFL_TESTS_DIR}/golden/wasm/e3_capability_workflow.ahfl"
                 "${AHFL_TESTS_DIR}/integration/wasm_e3_workflow/ahfl.toml"
     )
-    set_tests_properties(ahflc.emit_wasm.capability_workflow_binary_gate PROPERTIES
+    set_tests_properties(ahflc.build.capability_workflow_binary_gate PROPERTIES
         PASS_REGULAR_EXPRESSION
             "all KR6.5 E4-B2-C capability-workflow binary/structural gates passed"
         FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"

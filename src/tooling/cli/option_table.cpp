@@ -123,6 +123,10 @@ void set_package_archive_output(CommandLineOptions &opts, std::optional<std::str
     opts.package_archive_output_path = val;
 }
 
+void set_build_output(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.build_output_path = val;
+}
+
 void set_package_registry_id(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.package_registry_id = val;
 }
@@ -298,7 +302,7 @@ constexpr OptionSpec kOptionSpecs[] = {
      "",
      OptionArgKind::RequiredValue,
      set_wasm_profile,
-     "WASM deployment profile for emit wasm: wasi (default) or browser",
+     "WASM deployment profile for build: wasi (default) or browser",
      "wasi|browser"},
     {"--output-format",
      "",
@@ -373,8 +377,14 @@ constexpr OptionSpec kOptionSpecs[] = {
      "",
      OptionArgKind::RequiredValue,
      set_verify_mode,
-     "Formal verification stage: off or on (default for check/run)",
+     "Formal verification stage: off or on (default for check/run/build)",
      "off|on"},
+    {"--output",
+     "",
+     OptionArgKind::RequiredValue,
+     set_build_output,
+     "Output path for the built WASM binary (default: <stem>.wasm)",
+     "a file path"},
     {"--out",
      "",
      OptionArgKind::RequiredValue,
@@ -669,12 +679,15 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         }
 
         // Recognize standalone commands.
-        if ((argument == "check" || argument == "run" || argument == "fmt") &&
+        if ((argument == "check" || argument == "run" || argument == "fmt" ||
+             argument == "build") &&
             can_select_action(options)) {
             if (argument == "run") {
                 set_command_option(options, CommandKind::RunWorkflow);
             } else if (argument == "fmt") {
                 set_command_option(options, CommandKind::Format);
+            } else if (argument == "build") {
+                set_command_option(options, CommandKind::Build);
             } else {
                 set_command_option(options, CommandKind::Check);
             }

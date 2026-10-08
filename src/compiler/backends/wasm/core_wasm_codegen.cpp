@@ -18790,7 +18790,7 @@ resolve_core_wasm_entry(const CoreProgram &program,
             return CoreWasmEntry{CoreAgentId{0}};
         }
         return fail(core_wasm_diag::kEntryAmbiguous,
-                    "emit wasm requires an explicit package entry for workflow or "
+                    "build requires an explicit package entry for workflow or "
                     "multi-agent programs");
     }
     if (!package_metadata->entry_target.has_value()) {

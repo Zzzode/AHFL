@@ -174,6 +174,44 @@ void print_smv_size_report(const SmvSizeReport &report, std::ostream &err) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+// Build output path resolution
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Resolve the WASM output path for `ahflc build`. Priority:
+//   1. --output <path>
+//   2. <stem>.wasm derived from the input file (single-file mode)
+//   3. package name + ".wasm" (package mode)
+// Returns empty string if no path can be derived (caller errors out).
+[[nodiscard]] std::string
+resolve_build_output_path(const CommandLineOptions &options,
+                          const ahfl::handoff::PackageMetadata *package_metadata) {
+    if (options.build_output_path.has_value() && !options.build_output_path->empty()) {
+        return std::string{*options.build_output_path};
+    }
+
+    // Single-file mode: derive <stem>.wasm from the input file path.
+    if (!options.positional.empty()) {
+        std::filesystem::path input{std::string{options.positional[0]}};
+        if (input.has_extension() && input.extension() == ".ahfl") {
+            return input.replace_extension(".wasm").string();
+        }
+        // Non-.ahfl positional (e.g. a directory in package mode): fall through.
+    }
+
+    // Package mode: use the package name.
+    if (package_metadata != nullptr && package_metadata->identity.has_value() &&
+        !package_metadata->identity->name.empty()) {
+        return package_metadata->identity->name + ".wasm";
+    }
+
+    return {};
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
 // emit_core_backend (non-template overload)
 // ---------------------------------------------------------------------------
 
@@ -193,7 +231,7 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
         return std::nullopt;
     }
 
-    // RFC 0019: resolve the WASM deployment profile (emit wasm only).
+    // RFC 0019: resolve the WASM deployment profile (build only).
     auto wasm_profile = ahfl::WasmProfile::Wasi;
     if (options.wasm_profile.has_value()) {
         if (*options.wasm_profile == "browser") {
@@ -218,8 +256,24 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
     const bool needs_smv_size_report =
         options.smv_size_report_requested && effective_command == CommandKind::EmitSmv;
 
+    // `ahflc build` writes the WASM binary to a file (default <stem>.wasm),
+    // not stdout. All other backend commands write to stdout. Buffer the
+    // output so a failed backend leaves no artifact behind.
+    const bool is_build = effective_command == CommandKind::Build;
+    std::string build_path;
+    if (is_build) {
+        build_path = resolve_build_output_path(options, package_metadata);
+        if (build_path.empty()) {
+            err << "error: cannot determine build output path; pass --output <path>\n";
+            return 1;
+        }
+    }
+
+    std::ostringstream build_buffer;
+    std::ostream &backend_out = is_build ? build_buffer : out;
+
     if (!needs_smv_size_report) {
-        auto result = ahfl::emit_backend(*backend, program, out, package_metadata, wasm_profile);
+        auto result = ahfl::emit_backend(*backend, program, backend_out, package_metadata, wasm_profile);
         if (!result.has_value()) {
             if (reports_user_facing_lowering_diagnostic) {
                 err << "error: " << result.error() << "\n";
@@ -231,6 +285,16 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
                 err << "failed: " << result.error() << "\n";
             }
             return 1;
+        }
+        if (is_build) {
+            std::ofstream build_file(build_path, std::ios::binary | std::ios::trunc);
+            if (!build_file.is_open()) {
+                err << "error: cannot open output file '" << build_path << "' for writing\n";
+                return 1;
+            }
+            build_file << build_buffer.str();
+            build_file.close();
+            out << "ok: built " << build_path << '\n';
         }
         return 0;
     }

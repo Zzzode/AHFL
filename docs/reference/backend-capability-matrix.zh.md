@@ -43,7 +43,7 @@
 - `emit-k8s-crd` — Agent 的 CRD YAML
 - `emit-openapi` — API surface spec
 - `emit-terraform` — IaC 配置
-- `emit-wasm` — WAT（仅编码 agent 状态机骨架）
+- `build` — WASM 二进制（编译 + 形式化验证 + 产物输出）
 
 下文的能力矩阵只覆盖**消费完整 IR 语义**的 5 个 core/formal backend（`emit-ir`、`emit-ir-json`、`emit-native-json`、`emit-summary`、`emit-smv`）。handoff 族消费 workflow 结构与 lifecycle 摘要；public-api 族消费符号可见性；infra 族是 IR 的只读消费者，只提取 agent/flow 结构生成部署描述，不保留完整语义。
 

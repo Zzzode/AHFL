@@ -202,7 +202,7 @@ constexpr CommandSpec kCommandSpecs[] = {
     emit_command(CommandKind::EmitOpenApi, "emit-openapi", "openapi", "openapi", 120, 116, 120),
     emit_command(
         CommandKind::EmitTerraform, "emit-terraform", "terraform", "terraform", 121, 117, 121),
-    emit_command(CommandKind::EmitWasm, "emit-wasm", "wasm", "wasm", 122, 118, 122, 54),
+    command(CommandKind::Build, "build", 2, kNotListed, kNotListed, 54),
     routed_command(CommandKind::ValidateAssurance,
                    "validate-assurance",
                    ActionGroup::Validate,
@@ -416,7 +416,7 @@ core_backend_for_command(std::optional<CommandKind> command) {
         return ahfl::BackendKind::InfraOpenApi;
     case CommandKind::EmitTerraform:
         return ahfl::BackendKind::InfraTerraform;
-    case CommandKind::EmitWasm:
+    case CommandKind::Build:
         return ahfl::BackendKind::InfraWasm;
     default:
         return std::nullopt;
@@ -528,6 +528,7 @@ VerificationMode default_verification_mode(std::optional<CommandKind> command) {
         return VerificationMode::On;
     switch (*command) {
     case CommandKind::Check:
+    case CommandKind::Build:
     case CommandKind::RunWorkflow:
         return VerificationMode::On;
     default:
