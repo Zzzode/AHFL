@@ -68,7 +68,20 @@ pub workflow HelloWorkflow {
 
 document.addEventListener('DOMContentLoaded', async () => {
     const container = document.getElementById('editor-container')!;
-    createEditor(container, DEFAULT_SOURCE);
+
+    // Load source from URL hash if present (#code=base64)
+    const hash = window.location.hash;
+    let initialSource = DEFAULT_SOURCE;
+    if (hash.startsWith('#code=')) {
+        try {
+            const encoded = hash.slice(6);
+            initialSource = decodeURIComponent(atob(encoded));
+        } catch {
+            // Invalid hash; fall back to default
+        }
+    }
+
+    createEditor(container, initialSource);
 
     const outputEl = document.getElementById('output-content')!;
     const statusEl = document.getElementById('status')!;
@@ -77,6 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         verify: document.getElementById('btn-verify') as HTMLButtonElement,
         build: document.getElementById('btn-build') as HTMLButtonElement,
         format: document.getElementById('btn-format') as HTMLButtonElement,
+        share: document.getElementById('btn-share') as HTMLButtonElement,
     };
 
     const setOutput = (className: string, html: string) => {
@@ -178,6 +192,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }),
     );
+
+    buttons.share.addEventListener('click', async () => {
+        const source = getEditorValue();
+        const encoded = btoa(encodeURIComponent(source));
+        const url = `${window.location.origin}${window.location.pathname}#code=${encoded}`;
+        try {
+            await navigator.clipboard.writeText(url);
+            statusEl.textContent = 'Share link copied to clipboard';
+        } catch {
+            // Clipboard API may fail in some contexts; fall back to prompt
+            window.prompt('Copy this URL to share:', url);
+            statusEl.textContent = 'Share URL generated';
+        }
+    });
 
     // Keyboard shortcuts: Ctrl/Cmd+Enter = Compile, Ctrl/Cmd+Shift+Enter = Verify
     document.addEventListener('keydown', (e) => {
