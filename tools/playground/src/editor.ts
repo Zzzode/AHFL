@@ -1,74 +1,135 @@
 /**
  * Monaco Editor Configuration for AHFL
  *
- * In production, this would configure the Monaco editor with:
- * - AHFL language definition (tokenization)
- * - Auto-completion
- * - Hover info
- * - Error highlighting
+ * Registers the AHFL language with Monaco and creates the editor instance.
  */
-
-interface EditorConfig {
-    theme: 'dark' | 'light';
-    fontSize: number;
-    tabSize: number;
-    minimap: boolean;
-    lineNumbers: boolean;
-}
-
-const defaultConfig: EditorConfig = {
-    theme: 'dark',
-    fontSize: 14,
-    tabSize: 4,
-    minimap: false,
-    lineNumbers: true
-};
+import * as monaco from 'monaco-editor';
 
 // AHFL language token definitions for Monaco
-const ahflLanguageDefinition = {
+const ahflLanguageDefinition: monaco.languages.IMonarchLanguage = {
+    defaultToken: '',
     keywords: [
         'agent', 'workflow', 'capability', 'struct', 'enum',
-        'state', 'transition', 'input', 'output', 'context',
+        'state', 'transition', 'transitions', 'input', 'output', 'context',
         'contract', 'flow', 'node', 'on', 'when', 'then',
         'if', 'else', 'match', 'return', 'let', 'const',
         'import', 'export', 'module', 'package',
-        'invariant', 'ensures', 'requires', 'assert'
+        'invariant', 'ensures', 'requires', 'assert',
+        'fn', 'effect', 'pure', 'type', 'alias',
+        'true', 'false', 'none', 'some',
     ],
-    types: [
+    typeKeywords: [
         'String', 'Int', 'Float', 'Bool', 'List', 'Map',
-        'Optional', 'Result', 'Void', 'Any'
+        'Optional', 'Result', 'Void', 'Any', 'Decimal', 'Duration',
     ],
     operators: [
         '->', '=>', '::', ':', '=', '==', '!=',
-        '<', '>', '<=', '>=', '&&', '||', '!'
-    ]
+        '<', '>', '<=', '>=', '&&', '||', '!',
+        '+', '-', '*', '/', '%',
+    ],
+    symbols: /[=><!~?:&|+\-*\/\^%]+/,
+    tokenizer: {
+        root: [
+            // Comments
+            [/\/\/.*$/, 'comment'],
+            [/\/\*/, 'comment', '@comment'],
+
+            // Strings
+            [/"([^"\\]|\\.)*$/, 'string.invalid'],
+            [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
+
+            // Numbers
+            [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
+            [/\d+/, 'number'],
+
+            // Identifiers and keywords
+            [/[a-zA-Z_]\w*/, {
+                cases: {
+                    '@typeKeywords': 'type',
+                    '@keywords': 'keyword',
+                    '@default': 'identifier',
+                },
+            }],
+
+            // Whitespace
+            { include: '@whitespace' },
+
+            // Delimiters
+            [/[{}()\[\]]/, '@brackets'],
+            [/[<>](?!@symbols)/, '@brackets'],
+            [/@symbols/, {
+                cases: {
+                    '@operators': 'operator',
+                    '@default': '',
+                },
+            }],
+        ],
+        comment: [
+            [/[^\/*]+/, 'comment'],
+            [/\*\//, 'comment', '@pop'],
+            [/[\/*]/, 'comment'],
+        ],
+        string: [
+            [/[^\\"]+/, 'string'],
+            [/\\./, 'string.escape'],
+            [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+        ],
+        whitespace: [
+            [/[ \t\r\n]+/, 'white'],
+        ],
+    },
 };
 
-// Example snippets
-const ahflSnippets = [
-    {
-        label: 'agent',
-        insertText: 'agent ${1:Name} {\n  states {\n    ${2:idle}\n  }\n  transitions {\n    ${3:idle} -> ${4:running}\n  }\n}',
-        documentation: 'Define a new agent'
+// AHFL dark theme (VS Code-style)
+const ahflTheme: monaco.editor.IStandaloneThemeData = {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+        { token: 'keyword', foreground: '569cd6' },
+        { token: 'type', foreground: '4ec9b0' },
+        { token: 'comment', foreground: '6a9955' },
+        { token: 'string', foreground: 'ce9178' },
+        { token: 'number', foreground: 'b5cea8' },
+        { token: 'operator', foreground: 'd4d4d4' },
+    ],
+    colors: {
+        'editor.background': '#1e1e1e',
     },
-    {
-        label: 'workflow',
-        insertText: 'workflow ${1:Name} {\n  node ${2:start} {\n    ${3:// logic}\n  }\n}',
-        documentation: 'Define a new workflow'
-    },
-    {
-        label: 'struct',
-        insertText: 'struct ${1:Name} {\n  ${2:field}: ${3:String};\n}',
-        documentation: 'Define a new struct'
-    }
-];
+};
 
-function createEditor(container: HTMLElement, config: EditorConfig = defaultConfig): void {
-    // In production, this would initialize Monaco
-    // For the playground stub, we use a simple textarea
-    console.log('[Editor] Initialized with config:', config);
-    console.log('[Editor] Language definition loaded:', ahflLanguageDefinition.keywords.length, 'keywords');
-    console.log('[Editor] Snippets loaded:', ahflSnippets.length);
+let editorInstance: monaco.editor.IStandaloneCodeEditor | null = null;
+
+export function createEditor(container: HTMLElement, initialValue: string = ''): monaco.editor.IStandaloneCodeEditor {
+    // Register language and theme once
+    monaco.languages.register({ id: 'ahfl' });
+    monaco.languages.setMonarchTokensProvider('ahfl', ahflLanguageDefinition);
+    monaco.editor.defineTheme('ahfl-dark', ahflTheme);
+
+    editorInstance = monaco.editor.create(container, {
+        value: initialValue,
+        language: 'ahfl',
+        theme: 'ahfl-dark',
+        fontSize: 14,
+        fontFamily: "'Fira Code', 'Cascadia Code', monospace",
+        minimap: { enabled: false },
+        lineNumbers: 'on',
+        scrollBeyondLastLine: false,
+        automaticLayout: true,
+        tabSize: 4,
+        insertSpaces: true,
+    });
+
+    return editorInstance;
 }
 
-export { EditorConfig, defaultConfig, ahflLanguageDefinition, ahflSnippets, createEditor };
+export function getEditor(): monaco.editor.IStandaloneCodeEditor | null {
+    return editorInstance;
+}
+
+export function getEditorValue(): string {
+    return editorInstance?.getValue() ?? '';
+}
+
+export function setEditorValue(value: string): void {
+    editorInstance?.setValue(value);
+}

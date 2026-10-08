@@ -1,48 +1,46 @@
-// Hello World - Basic AHFL Agent
+// Hello World - Basic AHFL Agent and Workflow
 
-agent Greeter {
-    states {
-        idle,
-        greeting,
-        done
-    }
+module playground;
 
-    transitions {
-        idle -> greeting on receive_name,
-        greeting -> done on greet_complete
-    }
-
-    capabilities {
-        text_generation
-    }
-}
-
-struct GreetRequest {
+pub struct GreetRequest {
     name: String;
-    language: String;
 }
 
-struct GreetResponse {
+pub struct GreetResponse {
     message: String;
-    timestamp: Int;
 }
 
-workflow HelloWorkflow {
+pub agent Greeter {
+    input: GreetRequest;
+    context: Unit;
+    output: GreetResponse;
+    states: [Idle, Greeting, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [];
+    transition Idle -> Greeting;
+    transition Greeting -> Done;
+}
+
+flow for Greeter {
+    state Idle {
+        goto Greeting;
+    }
+
+    state Greeting {
+        goto Done;
+    }
+
+    state Done {
+        return GreetResponse { message: "Hello, " + input.name };
+    }
+}
+
+pub workflow HelloWorkflow {
     input: GreetRequest;
     output: GreetResponse;
 
-    node prepare {
-        input: GreetRequest;
-        output: String;
-    }
+    node greet: Greeter(input);
 
-    node generate {
-        input: String;
-        output: GreetResponse;
-        capability: text_generation;
-    }
-
-    flow {
-        prepare -> generate
-    }
+    return: greet;
 }

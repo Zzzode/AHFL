@@ -7,7 +7,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1e1e1e;
             color: #d4d4d4;
             height: 100vh;
@@ -16,14 +16,14 @@
         }
         header {
             background: #2d2d2d;
-            padding: 12px 24px;
+            padding: 10px 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             border-bottom: 1px solid #404040;
         }
-        header h1 { font-size: 18px; color: #569cd6; }
-        .toolbar { display: flex; gap: 8px; }
+        header h1 { font-size: 16px; color: #569cd6; font-weight: 600; }
+        .toolbar { display: flex; gap: 8px; align-items: center; }
         .toolbar button {
             background: #0e639c;
             color: white;
@@ -34,12 +34,14 @@
             font-size: 13px;
         }
         .toolbar button:hover { background: #1177bb; }
+        .toolbar button:disabled { background: #3c3c3c; cursor: wait; }
         .toolbar select {
             background: #3c3c3c;
             color: #d4d4d4;
             border: 1px solid #555;
             padding: 4px 8px;
             border-radius: 4px;
+            font-size: 13px;
         }
         main {
             flex: 1;
@@ -54,8 +56,8 @@
         }
         .panel-header {
             background: #252526;
-            padding: 8px 16px;
-            font-size: 12px;
+            padding: 6px 16px;
+            font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 1px;
             color: #888;
@@ -64,32 +66,21 @@
         .panel-content {
             flex: 1;
             overflow: auto;
-            padding: 16px;
-            font-family: 'Fira Code', 'Cascadia Code', monospace;
-            font-size: 14px;
-            line-height: 1.5;
         }
-        #editor { background: #1e1e1e; }
-        #output { background: #1a1a1a; }
+        #editor-container { background: #1e1e1e; }
+        #output {
+            background: #1a1a1a;
+            padding: 12px 16px;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .divider {
             width: 2px;
             background: #404040;
             cursor: col-resize;
-        }
-        #editor textarea {
-            width: 100%;
-            height: 100%;
-            background: transparent;
-            color: #d4d4d4;
-            border: none;
-            resize: none;
-            outline: none;
-            font-family: inherit;
-            font-size: inherit;
-            line-height: inherit;
-        }
-        #output-content {
-            white-space: pre-wrap;
         }
         .error { color: #f48771; }
         .success { color: #89d185; }
@@ -110,7 +101,6 @@
             <select id="examples">
                 <option value="">Load Example...</option>
                 <option value="hello">Hello Agent</option>
-                <option value="workflow">Basic Workflow</option>
             </select>
             <button id="btn-compile">Compile</button>
             <button id="btn-verify">Verify</button>
@@ -120,9 +110,7 @@
     <main>
         <div class="panel">
             <div class="panel-header">Source</div>
-            <div class="panel-content" id="editor">
-                <textarea id="source" spellcheck="false" placeholder="// Write AHFL code here..."></textarea>
-            </div>
+            <div class="panel-content" id="editor-container"></div>
         </div>
         <div class="divider"></div>
         <div class="panel">
@@ -133,9 +121,9 @@
         </div>
     </main>
     <footer>
-        <span>AHFL Compiler v0.59 (WASM)</span>
+        <span>AHFL Compiler (local ahflc)</span>
         <span id="status">Ready</span>
     </footer>
-    <script type="module" src="src/compiler.ts"></script>
+    <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
