@@ -4,7 +4,7 @@
  * Initializes the Monaco editor and wires up the toolbar buttons
  * to the server-side ahflc API.
  */
-import { createEditor, getEditorValue, setEditorValue } from './editor';
+import { createEditor, getEditorValue, setEditorValue, revealPosition } from './editor';
 import { callApi, type StructuredResult } from './compiler';
 import { renderStructured, renderFallback } from './renderer';
 import helloExample from '../examples/hello.ahfl?raw';
@@ -79,6 +79,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         outputEl.className = className;
         outputEl.innerHTML = html;
     };
+
+    // Click-to-jump: clicking a diagnostic reveals its position in the editor.
+    outputEl.addEventListener('click', (e) => {
+        const target = (e.target as HTMLElement).closest('.diag-clickable') as HTMLElement | null;
+        if (!target) return;
+        const line = parseInt(target.dataset.line ?? '0', 10);
+        const column = parseInt(target.dataset.column ?? '0', 10);
+        if (line > 0 && column > 0) {
+            revealPosition(line, column);
+        }
+    });
 
     const renderResult = (success: boolean, structured?: StructuredResult, fallbackText?: string) => {
         if (structured) {

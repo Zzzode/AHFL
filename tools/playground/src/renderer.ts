@@ -31,7 +31,7 @@ function renderDiagnostic(diag: Diagnostic): string {
     const cls = LEVEL_CLASSES[diag.level];
     const loc = `${diag.line}:${diag.column}`;
 
-    let html = `<div class="diag ${cls}">`;
+    let html = `<div class="diag ${cls} diag-clickable" data-line="${diag.line}" data-column="${diag.column}">`;
     html += `<div class="diag-header">`;
     html += `<span class="diag-icon">${icon}</span>`;
     html += `<span class="diag-level">${diag.level}</span>`;

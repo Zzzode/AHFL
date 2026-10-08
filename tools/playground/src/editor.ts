@@ -133,3 +133,15 @@ export function getEditorValue(): string {
 export function setEditorValue(value: string): void {
     editorInstance?.setValue(value);
 }
+
+/**
+ * Reveal a position in the editor and place the cursor there.
+ * Line and column are 1-based (matching ahflc diagnostic output).
+ */
+export function revealPosition(line: number, column: number): void {
+    if (!editorInstance) return;
+    const position = { lineNumber: line, column: column };
+    editorInstance.revealPositionInCenter(position);
+    editorInstance.setPosition(position);
+    editorInstance.focus();
+}
