@@ -18,49 +18,47 @@ const DEFAULT_SOURCE = `// Welcome to the AHFL Playground
 
 module playground;
 
-agent Greeter {
-    states {
-        idle,
-        greeting,
-        done
-    }
-
-    transitions {
-        idle -> greeting on receive_name,
-        greeting -> done on greet_complete
-    }
-
-    capabilities {
-        text_generation
-    }
-}
-
-struct GreetRequest {
+pub struct GreetRequest {
     name: String;
 }
 
-struct GreetResponse {
+pub struct GreetResponse {
     message: String;
 }
 
-workflow HelloWorkflow {
+pub agent Greeter {
+    input: GreetRequest;
+    context: Unit;
+    output: GreetResponse;
+    states: [Idle, Greeting, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [];
+    transition Idle -> Greeting;
+    transition Greeting -> Done;
+}
+
+flow for Greeter {
+    state Idle {
+        goto Greeting;
+    }
+
+    state Greeting {
+        goto Done;
+    }
+
+    state Done {
+        return GreetResponse { message: "Hello, " + input.name };
+    }
+}
+
+pub workflow HelloWorkflow {
     input: GreetRequest;
     output: GreetResponse;
 
-    node prepare {
-        input: GreetRequest;
-        output: String;
-    }
+    node greet: Greeter(input);
 
-    node generate {
-        input: String;
-        output: GreetResponse;
-        capability: text_generation;
-    }
-
-    flow {
-        prepare -> generate
-    }
+    return: greet;
 }
 `;
 
@@ -73,6 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const buttons = {
         compile: document.getElementById('btn-compile') as HTMLButtonElement,
         verify: document.getElementById('btn-verify') as HTMLButtonElement,
+        build: document.getElementById('btn-build') as HTMLButtonElement,
         format: document.getElementById('btn-format') as HTMLButtonElement,
     };
 
@@ -123,6 +122,30 @@ document.addEventListener('DOMContentLoaded', async () => {
                 result.success ? result.stdout : result.stderr || result.stdout,
             );
             statusEl.textContent = result.success ? 'Verified' : 'Error';
+        }),
+    );
+
+    buttons.build.addEventListener('click', () =>
+        withButton(buttons.build, 'Build', async () => {
+            statusEl.textContent = 'Building WASM...';
+            const result = await callApi('build', getEditorValue());
+            if (result.success && result.wasmBase64 !== undefined) {
+                const sizeKb = (result.wasmSize ?? 0 / 1024).toFixed(1);
+                const html = `<div class="result-summary result-ok">
+                    <span class="result-icon">✓</span>
+                    <span class="result-text">Built WASM binary</span>
+                    <span class="result-count">${sizeKb} KB</span>
+                    <span class="result-time">${result.elapsedMs.toFixed(0)}ms</span>
+                </div>
+                <div class="build-download">
+                    <a href="data:application/wasm;base64,${result.wasmBase64}" download="output.wasm" class="download-link">Download output.wasm</a>
+                </div>`;
+                setOutput('success', html);
+                statusEl.textContent = 'Built';
+            } else {
+                setOutput('error', renderFallback(false, result.stderr || result.stdout || 'Build failed'));
+                statusEl.textContent = 'Error';
+            }
         }),
     );
 

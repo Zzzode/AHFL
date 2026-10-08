@@ -21,6 +21,8 @@ interface ApiResult {
     elapsedMs: number;
     formatted?: string;
     structured?: StructuredResult;
+    wasmBase64?: string;
+    wasmSize?: number;
 }
 
 function resolveAhflcPath(): string {
@@ -94,6 +96,130 @@ function readBody(req: IncomingMessage): Promise<string> {
     });
 }
 
+/**
+ * Extract the first `pub workflow <Name>` from the source.
+ * Returns null if no workflow is found.
+ */
+function extractWorkflowName(source: string): string | null {
+    const match = source.match(/pub\s+workflow\s+(\w+)/);
+    return match ? match[1] : null;
+}
+
+/**
+ * Rewrite the module declaration to `module playground::main;`
+ * so the package graph can resolve it under the playground prefix.
+ * If no module declaration exists, prepend one.
+ */
+function normalizeModuleDecl(source: string): string {
+    const moduleRe = /^module\s+[\w:]+;/m;
+    if (moduleRe.test(source)) {
+        return source.replace(moduleRe, 'module playground::main;');
+    }
+    return `module playground::main;\n\n${source}`;
+}
+
+/**
+ * Build a WASM binary from the source. This requires a manifest because
+ * `ahflc build` needs a package entry point for workflow programs.
+ */
+async function runBuild(source: string): Promise<ApiResult> {
+    const ahflc = resolveAhflcPath();
+    const workDir = mkdtempSync(join(tmpdir(), 'ahfl-playground-build-'));
+    const sourceFile = join(workDir, 'main.ahfl');
+    const manifestFile = join(workDir, 'ahfl.toml');
+    const wasmFile = join(workDir, 'output.wasm');
+
+    const workflowName = extractWorkflowName(source);
+    if (!workflowName) {
+        rmSync(workDir, { recursive: true, force: true });
+        return {
+            success: false,
+            stdout: '',
+            stderr: 'No pub workflow found in source. Build requires a workflow entry point.',
+            exitCode: 1,
+            elapsedMs: 0,
+        };
+    }
+
+    const normalized = normalizeModuleDecl(source);
+    writeFileSync(sourceFile, normalized, 'utf-8');
+
+    const manifest = `manifest_version = 1
+
+[package]
+name = "playground"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "playground"
+root = "."
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "playground::main::${workflowName}"
+exports = [{ kind = "workflow", name = "playground::main::${workflowName}" }]
+
+[dependencies]
+std = { source = "sysroot" }
+`;
+    writeFileSync(manifestFile, manifest, 'utf-8');
+
+    const start = performance.now();
+    return new Promise((resolve) => {
+        const proc = spawn(
+            ahflc,
+            ['build', '--manifest', manifestFile, '--verify=off', '--output', wasmFile],
+            { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (chunk) => (stdout += chunk));
+        proc.stderr.on('data', (chunk) => (stderr += chunk));
+
+        proc.on('close', (code) => {
+            const elapsedMs = performance.now() - start;
+            const result: ApiResult = {
+                success: code === 0,
+                stdout,
+                stderr,
+                exitCode: code ?? -1,
+                elapsedMs,
+            };
+
+            if (code === 0) {
+                try {
+                    const wasmBytes = readFileSync(wasmFile);
+                    result.wasmBase64 = wasmBytes.toString('base64');
+                    result.wasmSize = wasmBytes.length;
+                } catch {
+                    result.success = false;
+                    result.stderr = 'Build succeeded but WASM output file was not found.';
+                }
+            }
+
+            rmSync(workDir, { recursive: true, force: true });
+            resolve(result);
+        });
+
+        proc.on('error', (err) => {
+            rmSync(workDir, { recursive: true, force: true });
+            resolve({
+                success: false,
+                stdout: '',
+                stderr: `Failed to start ahflc: ${err.message}`,
+                exitCode: -1,
+                elapsedMs: performance.now() - start,
+            });
+        });
+    });
+}
+
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
     const json = JSON.stringify(data);
     res.writeHead(status, {
@@ -147,7 +273,7 @@ export function createApiMiddleware() {
             const result = await runAhflc(['fmt'], source);
             sendJson(res, 200, result);
         } else if (url === '/build') {
-            const result = await runAhflc(['build', '--verify=off', '--output', 'output.wasm'], source);
+            const result = await runBuild(source);
             sendJson(res, 200, result);
         } else {
             next();

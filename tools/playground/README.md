@@ -32,8 +32,10 @@ AHFLC_PATH=/path/to/ahflc npm run dev
 
 - **Compile**: `ahflc check` — type-check and report diagnostics
 - **Verify**: `ahflc check --verify=on` — formal verification with NuSMV/Z3
+- **Build**: `ahflc build` — compile to a WASM binary with download link
 - **Format**: `ahflc fmt` — format source in place
 - **Monaco Editor**: AHFL syntax highlighting, dark theme
+- **Structured Output**: diagnostics, stats, and verification results rendered as readable cards (not raw CLI text)
 
 ## Current Status
 

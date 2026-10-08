@@ -51,6 +51,8 @@ export interface ApiResult {
     elapsedMs: number;
     formatted?: string;
     structured?: StructuredResult;
+    wasmBase64?: string;
+    wasmSize?: number;
 }
 
 export async function callApi(endpoint: string, source: string): Promise<ApiResult> {
