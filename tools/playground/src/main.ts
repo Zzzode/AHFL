@@ -5,7 +5,8 @@
  * to the server-side ahflc API.
  */
 import { createEditor, getEditorValue, setEditorValue } from './editor';
-import { callApi } from './compiler';
+import { callApi, type StructuredResult } from './compiler';
+import { renderStructured, renderFallback } from './renderer';
 import helloExample from '../examples/hello.ahfl?raw';
 
 const EXAMPLES: Record<string, string> = {
@@ -75,9 +76,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         format: document.getElementById('btn-format') as HTMLButtonElement,
     };
 
-    const setOutput = (className: string, text: string) => {
+    const setOutput = (className: string, html: string) => {
         outputEl.className = className;
-        outputEl.textContent = text;
+        outputEl.innerHTML = html;
+    };
+
+    const renderResult = (success: boolean, structured?: StructuredResult, fallbackText?: string) => {
+        if (structured) {
+            setOutput(success ? 'success' : 'error', renderStructured(structured));
+        } else {
+            setOutput(success ? 'success' : 'error', renderFallback(success, fallbackText ?? ''));
+        }
     };
 
     const withButton = async (btn: HTMLButtonElement, label: string, fn: () => Promise<void>) => {
@@ -95,10 +104,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         withButton(buttons.compile, 'Compile', async () => {
             statusEl.textContent = 'Compiling...';
             const result = await callApi('compile', getEditorValue());
-            const text = result.success
-                ? `Compiled successfully (${result.elapsedMs.toFixed(0)}ms)\n\n${result.stdout}`
-                : `Compilation failed (exit ${result.exitCode}):\n\n${result.stderr || result.stdout}`;
-            setOutput(result.success ? 'success' : 'error', text);
+            renderResult(
+                result.success,
+                result.structured,
+                result.success ? result.stdout : result.stderr || result.stdout,
+            );
             statusEl.textContent = result.success ? 'Compiled' : 'Error';
         }),
     );
@@ -107,10 +117,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         withButton(buttons.verify, 'Verify', async () => {
             statusEl.textContent = 'Verifying...';
             const result = await callApi('verify', getEditorValue());
-            const text = result.success
-                ? `Verification passed (${result.elapsedMs.toFixed(0)}ms)\n\n${result.stdout}`
-                : `Verification failed (exit ${result.exitCode}):\n\n${result.stderr || result.stdout}`;
-            setOutput(result.success ? 'success' : 'error', text);
+            renderResult(
+                result.success,
+                result.structured,
+                result.success ? result.stdout : result.stderr || result.stdout,
+            );
             statusEl.textContent = result.success ? 'Verified' : 'Error';
         }),
     );
@@ -121,10 +132,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const result = await callApi('format', getEditorValue());
             if (result.success && result.formatted !== undefined) {
                 setEditorValue(result.formatted);
-                setOutput('success', `Formatted (${result.elapsedMs.toFixed(0)}ms)`);
+                setOutput('success', renderFallback(true, `Formatted in ${result.elapsedMs.toFixed(0)}ms`));
                 statusEl.textContent = 'Formatted';
             } else {
-                setOutput('error', `Format failed:\n\n${result.stderr || result.stdout}`);
+                setOutput('error', renderFallback(false, result.stderr || result.stdout || 'Format failed'));
                 statusEl.textContent = 'Error';
             }
         }),

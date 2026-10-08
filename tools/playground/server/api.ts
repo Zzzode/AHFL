@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { parseAhflcOutput, type StructuredResult } from './parser.js';
 
 interface ApiResult {
     success: boolean;
@@ -19,6 +20,7 @@ interface ApiResult {
     exitCode: number;
     elapsedMs: number;
     formatted?: string;
+    structured?: StructuredResult;
 }
 
 function resolveAhflcPath(): string {
@@ -125,9 +127,21 @@ export function createApiMiddleware() {
 
         if (url === '/compile') {
             const result = await runAhflc(['check'], source);
+            result.structured = parseAhflcOutput(
+                result.stdout,
+                result.stderr,
+                result.success,
+                result.elapsedMs,
+            );
             sendJson(res, 200, result);
         } else if (url === '/verify') {
             const result = await runAhflc(['check', '--verify=on'], source);
+            result.structured = parseAhflcOutput(
+                result.stdout,
+                result.stderr,
+                result.success,
+                result.elapsedMs,
+            );
             sendJson(res, 200, result);
         } else if (url === '/format') {
             const result = await runAhflc(['fmt'], source);
