@@ -1,0 +1,78 @@
+// Multi-Agent Pipeline
+// Demonstrates: multiple agents in a workflow, data transformation
+
+module playground;
+
+pub struct TextInput {
+    text: String;
+}
+
+pub struct AnalyzedText {
+    original: String;
+    word_count: Int;
+    char_count: Int;
+}
+
+pub struct SummaryOutput {
+    summary: String;
+    word_count: Int;
+}
+
+pub agent TextAnalyzer {
+    input: TextInput;
+    context: Unit;
+    output: AnalyzedText;
+    states: [Analyzing, Done];
+    initial: Analyzing;
+    final: [Done];
+    capabilities: [];
+    transition Analyzing -> Done;
+}
+
+flow for TextAnalyzer {
+    state Analyzing {
+        goto Done;
+    }
+
+    state Done {
+        return AnalyzedText {
+            original: input.text,
+            word_count: 42,
+            char_count: 256,
+        };
+    }
+}
+
+pub agent Summarizer {
+    input: AnalyzedText;
+    context: Unit;
+    output: SummaryOutput;
+    states: [Summarizing, Done];
+    initial: Summarizing;
+    final: [Done];
+    capabilities: [];
+    transition Summarizing -> Done;
+}
+
+flow for Summarizer {
+    state Summarizing {
+        goto Done;
+    }
+
+    state Done {
+        return SummaryOutput {
+            summary: "Summary of: " + input.original,
+            word_count: input.word_count,
+        };
+    }
+}
+
+pub workflow TextPipeline {
+    input: TextInput;
+    output: SummaryOutput;
+
+    node analyze: TextAnalyzer(input);
+    node summarize: Summarizer(analyze) after [analyze];
+
+    return: summarize;
+}

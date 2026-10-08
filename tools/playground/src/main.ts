@@ -8,9 +8,13 @@ import { createEditor, getEditorValue, setEditorValue, revealPosition } from './
 import { callApi, type StructuredResult } from './compiler';
 import { renderStructured, renderFallback } from './renderer';
 import helloExample from '../examples/hello.ahfl?raw';
+import vendingExample from '../examples/vending-machine.ahfl?raw';
+import multiAgentExample from '../examples/multi-agent.ahfl?raw';
 
 const EXAMPLES: Record<string, string> = {
     hello: helloExample,
+    'vending-machine': vendingExample,
+    'multi-agent': multiAgentExample,
 };
 
 const DEFAULT_SOURCE = `// Welcome to the AHFL Playground
@@ -141,7 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             statusEl.textContent = 'Building WASM...';
             const result = await callApi('build', getEditorValue());
             if (result.success && result.wasmBase64 !== undefined) {
-                const sizeKb = (result.wasmSize ?? 0 / 1024).toFixed(1);
+                const sizeKb = ((result.wasmSize ?? 0) / 1024).toFixed(1);
                 const html = `<div class="result-summary result-ok">
                     <span class="result-icon">✓</span>
                     <span class="result-text">Built WASM binary</span>
@@ -174,6 +178,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }),
     );
+
+    // Keyboard shortcuts: Ctrl/Cmd+Enter = Compile, Ctrl/Cmd+Shift+Enter = Verify
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            if (e.shiftKey) {
+                buttons.verify.click();
+            } else {
+                buttons.compile.click();
+            }
+        }
+    });
 
     // Load examples
     const examplesSelect = document.getElementById('examples') as HTMLSelectElement;

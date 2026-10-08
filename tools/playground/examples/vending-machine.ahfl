@@ -1,0 +1,58 @@
+// Vending Machine State Machine
+// Demonstrates: states, transitions, and flow logic
+
+module playground;
+
+pub struct CoinInserted {
+    amount: Int;
+}
+
+pub struct VendResult {
+    item_id: Int;
+    change: Int;
+}
+
+pub agent VendingMachine {
+    input: CoinInserted;
+    context: Unit;
+    output: VendResult;
+    states: [Idle, AcceptingCoins, SelectingItem, Dispensing, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [];
+    transition Idle -> AcceptingCoins;
+    transition AcceptingCoins -> SelectingItem;
+    transition SelectingItem -> Dispensing;
+    transition Dispensing -> Done;
+}
+
+flow for VendingMachine {
+    state Idle {
+        goto AcceptingCoins;
+    }
+
+    state AcceptingCoins {
+        goto SelectingItem;
+    }
+
+    state SelectingItem {
+        goto Dispensing;
+    }
+
+    state Dispensing {
+        goto Done;
+    }
+
+    state Done {
+        return VendResult { item_id: 1, change: 0 };
+    }
+}
+
+pub workflow VendingWorkflow {
+    input: CoinInserted;
+    output: VendResult;
+
+    node vend: VendingMachine(input);
+
+    return: vend;
+}
