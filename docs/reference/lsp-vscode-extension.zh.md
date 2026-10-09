@@ -4,7 +4,7 @@
 |------|------|
 | 文档类型 | reference |
 | 适用范围 | `tools/vscode` VS Code extension scaffold |
-| 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test；toolchain sysroot 通过 `workspace/configuration` 按 resource scope 拉取，workspace folder extension 序列仍需扩展验证 |
+| 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test；toolchain sysroot 通过 `workspace/configuration` 按 resource scope 拉取，workspace folder extension 序列仍需扩展验证；LSP server 已支持 inlay hints、call hierarchy、type hierarchy、range formatting、$/setTrace；extension 已贡献 14 个 snippets、keybindings、editor context menu、`ahflc` problem matcher |
 
 ---
 
@@ -192,7 +192,7 @@ Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外
 4. 对 primitive type 触发 definition 与 implementation：definition 应跳到 primitive home，implementation 应列出 exported std modules 中的相关 impl。
 5. 修改未打开的 imported `.ahfl` 文件后，确认 watched-files notification 会触发 workspace diagnostics 刷新。
 6. workspace folder 切换目前只有 server handler/protocol 级证据；extension-host 序列仍作为后续验证项。
-7. 如需排查 server 输出，可临时设置环境变量 `AHFL_LSP_TRACE=1` 后启动 VS Code。
+7. 如需排查 server 输出，将 `ahfl-language-server.trace.server` 设置为 `messages` 或 `verbose`，server 会通过 `$/setTrace` 通知接收 trace level 并将日志写入 stderr。
 
 ## 五、Marketplace 手动发布
 

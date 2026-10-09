@@ -276,6 +276,18 @@ std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapab
         obj->set("codeLensProvider", std::move(cl));
     }
 
+    if (caps.inlay_hint_provider) {
+        obj->set("inlayHintProvider", json::JsonValue::make_bool(true));
+    }
+
+    if (caps.call_hierarchy_provider) {
+        obj->set("callHierarchyProvider", json::JsonValue::make_bool(true));
+    }
+
+    if (caps.type_hierarchy_provider) {
+        obj->set("typeHierarchyProvider", json::JsonValue::make_bool(true));
+    }
+
     return obj;
 }
 
@@ -519,6 +531,60 @@ std::unique_ptr<json::JsonValue> serialize_code_lens(const CodeLens &lens) {
     if (lens.data) {
         obj->set("data", json::JsonValue::make_string(*lens.data));
     }
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue> serialize_inlay_hint(const InlayHint &hint) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("position", serialize_position(hint.position));
+    obj->set("label", json::JsonValue::make_string(hint.label));
+    obj->set("kind", json::JsonValue::make_int(static_cast<int64_t>(hint.kind)));
+    if (hint.padding_left) {
+        obj->set("paddingLeft", json::JsonValue::make_bool(true));
+    }
+    if (hint.padding_right) {
+        obj->set("paddingRight", json::JsonValue::make_bool(true));
+    }
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue> serialize_call_hierarchy_item(const CallHierarchyItem &item) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("name", json::JsonValue::make_string(item.name));
+    obj->set("kind", json::JsonValue::make_int(static_cast<int64_t>(item.kind)));
+    if (!item.detail.empty()) {
+        obj->set("detail", json::JsonValue::make_string(item.detail));
+    }
+    obj->set("uri", json::JsonValue::make_string(item.uri));
+    obj->set("range", serialize_range(item.range));
+    obj->set("selectionRange", serialize_range(item.selection_range));
+    if (!item.data.empty()) {
+        obj->set("data", json::JsonValue::make_string(item.data));
+    }
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue>
+serialize_call_hierarchy_incoming_call(const CallHierarchyIncomingCall &call) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("from", serialize_call_hierarchy_item(call.from));
+    auto ranges = json::JsonValue::make_array();
+    for (const auto &range : call.from_ranges) {
+        ranges->push(serialize_range(range));
+    }
+    obj->set("fromRanges", std::move(ranges));
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue>
+serialize_call_hierarchy_outgoing_call(const CallHierarchyOutgoingCall &call) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("to", serialize_call_hierarchy_item(call.to));
+    auto ranges = json::JsonValue::make_array();
+    for (const auto &range : call.from_ranges) {
+        ranges->push(serialize_range(range));
+    }
+    obj->set("fromRanges", std::move(ranges));
     return obj;
 }
 

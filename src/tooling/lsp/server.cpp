@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -3833,6 +3832,65 @@ typed_call_signature_info(const LspAnalysisSnapshot &snapshot, const TypedExpr &
     return std::nullopt;
 }
 
+/// Resolve the parameter names for a typed Call / MethodCall expression.
+/// For MethodCall, params[0] is `self` and is skipped (the Typed-HIR
+/// Argument children do not include the Base/self).
+[[nodiscard]] std::vector<std::string>
+call_parameter_names(const LspAnalysisSnapshot &snapshot, const TypedExpr &call) {
+    if (!snapshot.type_check_result) {
+        return {};
+    }
+    const auto &environment = snapshot.type_check_result->environment;
+
+    if (call.kind == ast::ExprSyntaxKind::MethodCall) {
+        if (!call.dispatch_target.has_value()) {
+            return {};
+        }
+        const auto &dt = *call.dispatch_target;
+        const auto impl_it = environment.impls().find(dt.impl_index);
+        if (impl_it == environment.impls().end()) {
+            return {};
+        }
+        for (const auto &method : impl_it->second.methods) {
+            if (method.name != dt.method_name) {
+                continue;
+            }
+            std::vector<std::string> names;
+            // Skip self (params[0]).
+            for (std::size_t i = 1; i < method.params.size(); ++i) {
+                names.push_back(method.params[i].name);
+            }
+            return names;
+        }
+        return {};
+    }
+
+    if (call.kind == ast::ExprSyntaxKind::Call) {
+        if (!call.resolved_symbol.has_value()) {
+            return {};
+        }
+        const auto symbol = *call.resolved_symbol;
+        const auto extract_names = [](const auto &callable) {
+            std::vector<std::string> names;
+            for (const auto &param : callable.params) {
+                names.push_back(param.name);
+            }
+            return names;
+        };
+        if (const auto fn = environment.get_fn(symbol); fn.has_value()) {
+            return extract_names(fn->get());
+        }
+        if (const auto capability = environment.get_capability(symbol); capability.has_value()) {
+            return extract_names(capability->get());
+        }
+        if (const auto predicate = environment.get_predicate(symbol); predicate.has_value()) {
+            return extract_names(predicate->get());
+        }
+    }
+
+    return {};
+}
+
 [[nodiscard]] std::optional<std::pair<std::string, int>>
 call_context_before_cursor(const SourceFile &source, std::size_t offset) {
     const auto &text = source.content;
@@ -4002,11 +4060,56 @@ void append_symbol_children(DocumentSymbol &symbol,
     return ranges;
 }
 
+/// Split text into lines (without trailing newlines).
+[[nodiscard]] std::vector<std::string_view> split_lines(std::string_view text) {
+    std::vector<std::string_view> lines;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const auto end = text.find('\n', start);
+        if (end == std::string_view::npos) {
+            lines.push_back(text.substr(start));
+            break;
+        }
+        auto line = text.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') {
+            line = line.substr(0, line.size() - 1);
+        }
+        lines.push_back(line);
+        start = end + 1;
+    }
+    return lines;
+}
+
+/// Compute the minimal line range that differs between two texts.
+/// Returns the [start_line, end_line) half-open range of lines that changed.
+/// When the texts are identical, returns {0, 0}.
+[[nodiscard]] std::pair<uint32_t, uint32_t>
+minimal_edit_range(std::string_view original, std::string_view formatted) {
+    const auto orig_lines = split_lines(original);
+    const auto fmt_lines = split_lines(formatted);
+
+    std::size_t prefix = 0;
+    while (prefix < orig_lines.size() && prefix < fmt_lines.size() &&
+           orig_lines[prefix] == fmt_lines[prefix]) {
+        ++prefix;
+    }
+
+    std::size_t suffix = 0;
+    while (suffix < orig_lines.size() - prefix && suffix < fmt_lines.size() - prefix &&
+           orig_lines[orig_lines.size() - 1 - suffix] ==
+               fmt_lines[fmt_lines.size() - 1 - suffix]) {
+        ++suffix;
+    }
+
+    const uint32_t start_line = static_cast<uint32_t>(prefix);
+    const uint32_t end_line = static_cast<uint32_t>(orig_lines.size() - suffix);
+    return {start_line, end_line};
+}
+
 } // anonymous namespace
 
 LspServer::LspServer(std::istream &in, std::ostream &out)
-    : transport_(in, out), analysis_(store_),
-      trace_enabled_(std::getenv("AHFL_LSP_TRACE") != nullptr) {}
+    : transport_(in, out), analysis_(store_) {}
 
 void LspServer::run() {
     while (true) {
@@ -4068,6 +4171,8 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_signature_help(req);
     } else if (req.method == "textDocument/formatting") {
         handle_document_formatting(req);
+    } else if (req.method == "textDocument/rangeFormatting") {
+        handle_document_range_formatting(req);
     } else if (req.method == "textDocument/semanticTokens/full") {
         handle_semantic_tokens_full(req);
     } else if (req.method == "textDocument/codeAction") {
@@ -4080,6 +4185,20 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_selection_range(req);
     } else if (req.method == "textDocument/codeLens") {
         handle_code_lens(req);
+    } else if (req.method == "textDocument/inlayHint") {
+        handle_inlay_hint(req);
+    } else if (req.method == "textDocument/prepareCallHierarchy") {
+        handle_prepare_call_hierarchy(req);
+    } else if (req.method == "callHierarchy/incomingCalls") {
+        handle_call_hierarchy_incoming(req);
+    } else if (req.method == "callHierarchy/outgoingCalls") {
+        handle_call_hierarchy_outgoing(req);
+    } else if (req.method == "textDocument/prepareTypeHierarchy") {
+        handle_prepare_type_hierarchy(req);
+    } else if (req.method == "typeHierarchy/supertypes") {
+        handle_type_hierarchy_supertypes(req);
+    } else if (req.method == "typeHierarchy/subtypes") {
+        handle_type_hierarchy_subtypes(req);
     } else {
         JsonRpcResponse resp;
         resp.id = req.id;
@@ -4120,6 +4239,10 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
         if (notif.params) {
             handle_watched_files_changed(*notif.params);
         }
+    } else if (notif.method == "$/setTrace") {
+        if (notif.params) {
+            handle_set_trace(*notif.params);
+        }
     } else if (notif.method == "exit") {
         handle_exit();
     }
@@ -4152,12 +4275,16 @@ void LspServer::handle_initialize(const JsonRpcRequest &req) {
 
     ServerCapabilities caps;
     caps.document_formatting_provider = true;
+    caps.document_range_formatting_provider = true;
     caps.semantic_tokens_provider = true;
     caps.code_action_provider = true;
     caps.folding_range_provider = true;
     caps.document_highlight_provider = true;
     caps.selection_range_provider = true;
     caps.code_lens_provider = true;
+    caps.inlay_hint_provider = true;
+    caps.call_hierarchy_provider = true;
+    caps.type_hierarchy_provider = true;
     auto result = json::JsonValue::make_object();
     result->set("capabilities", serialize_server_capabilities(caps));
 
@@ -4355,10 +4482,28 @@ void LspServer::send_diagnostic_refresh() {
 }
 
 void LspServer::trace(std::string_view message) const {
-    if (!trace_enabled_) {
+    if (trace_level_ == TraceLevel::Off) {
         return;
     }
     std::clog << "[ahfl-lsp] " << message << '\n';
+}
+
+void LspServer::handle_set_trace(const json::JsonValue &params) {
+    const auto *value = params.get("value");
+    if (value == nullptr) {
+        return;
+    }
+    const auto str = value->as_string();
+    if (!str.has_value()) {
+        return;
+    }
+    if (*str == "off") {
+        trace_level_ = TraceLevel::Off;
+    } else if (*str == "messages") {
+        trace_level_ = TraceLevel::Messages;
+    } else if (*str == "verbose") {
+        trace_level_ = TraceLevel::Verbose;
+    }
 }
 
 void LspServer::handle_completion(const JsonRpcRequest &req) {
@@ -5416,6 +5561,110 @@ void LspServer::handle_document_formatting(const JsonRpcRequest &req) {
     transport_.send_response(resp);
 }
 
+void LspServer::handle_document_range_formatting(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    // Parse the requested range.
+    Range requested_range;
+    if (const auto *range_val = req.params->get("range"); range_val != nullptr) {
+        requested_range = parse_range(*range_val);
+    }
+
+    formatter::FormatOptions options;
+    if (const auto *options_val = req.params->get("options"); options_val != nullptr) {
+        if (const auto *tab_size = options_val->get("tabSize"); tab_size != nullptr) {
+            if (auto size = tab_size->as_int(); size.has_value() && *size > 0) {
+                options.indent_width = static_cast<int>(*size);
+            }
+        }
+        if (const auto *insert_spaces = options_val->get("insertSpaces");
+            insert_spaces != nullptr) {
+            if (auto spaces = insert_spaces->as_bool(); spaces.has_value()) {
+                options.use_tabs = !*spaces;
+            }
+        }
+    }
+
+    auto result = formatter::format_source(document->text, options);
+    if (!result.success || result.formatted == document->text) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    // Compute the minimal line range that changed and only emit an edit when
+    // it intersects the requested range.
+    const auto [changed_start, changed_end] =
+        minimal_edit_range(document->text, result.formatted);
+
+    // Check intersection: [changed_start, changed_end) vs [requested.start.line, requested.end.line].
+    const bool intersects =
+        changed_start <= requested_range.end.line && changed_end >= requested_range.start.line;
+    if (!intersects) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    // Build the edit covering the changed line range.
+    const auto &text = document->text;
+    const auto orig_lines = split_lines(text);
+    const auto fmt_lines = split_lines(result.formatted);
+
+    TextEdit edit;
+    if (changed_start >= changed_end) {
+        // The only change is at a boundary (e.g., trailing newline added).
+        // Emit a single append edit at end-of-document.
+        edit.range.start = Position{static_cast<uint32_t>(orig_lines.size()), 0};
+        edit.range.end = Position{static_cast<uint32_t>(orig_lines.size()), 0};
+        edit.new_text = "\n";
+    } else {
+        edit.range.start = Position{changed_start, 0};
+        if (changed_end > 0 && changed_end <= orig_lines.size()) {
+            edit.range.end =
+                Position{changed_end - 1, static_cast<uint32_t>(orig_lines[changed_end - 1].size())};
+        } else {
+            edit.range.end = Position{static_cast<uint32_t>(orig_lines.size()), 0};
+        }
+
+        // Reconstruct the formatted text for the changed line range.
+        std::string new_text;
+        for (uint32_t i = changed_start; i < changed_end && i < fmt_lines.size(); ++i) {
+            if (i > changed_start) {
+                new_text.push_back('\n');
+            }
+            new_text.append(fmt_lines[i]);
+        }
+        // If the original text ends with a newline and the formatted text for the
+        // changed range doesn't, preserve the trailing newline.
+        if (!text.empty() && text.back() == '\n' && changed_end >= orig_lines.size()) {
+            new_text.push_back('\n');
+        }
+        edit.new_text = std::move(new_text);
+    }
+
+    auto edits_array = json::JsonValue::make_array();
+    edits_array->push(serialize_text_edit(edit));
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(edits_array);
+    transport_.send_response(resp);
+}
+
 void LspServer::handle_semantic_tokens_full(const JsonRpcRequest &req) {
     if (!req.params) {
         send_null(transport_, req.id);
@@ -5668,13 +5917,868 @@ void LspServer::handle_code_lens(const JsonRpcRequest &req) {
     if (snapshot != nullptr && snapshot->workspace_index != nullptr) {
         lenses = compute_code_lens(*snapshot->workspace_index, uri);
     } else {
-        lenses = compute_code_lens(document->text);
+        lenses = compute_code_lens(document->text, uri);
     }
 
     auto result = json::JsonValue::make_array();
     for (const auto &lens : lenses) {
         result->push(serialize_code_lens(lens));
     }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_inlay_hint(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    // Parse the requested range (optional — when absent, return all hints).
+    std::optional<Range> requested_range;
+    if (const auto *range_val = req.params->get("range"); range_val != nullptr) {
+        requested_range = parse_range(*range_val);
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *program = snapshot->typed_program();
+    if (program == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::vector<InlayHint> hints;
+
+    // Parameter name hints at call sites.
+    for (const auto &expr : program->expressions) {
+        if (expr.source_id != source->source_id) {
+            continue;
+        }
+        if (expr.kind != ast::ExprSyntaxKind::Call &&
+            expr.kind != ast::ExprSyntaxKind::MethodCall) {
+            continue;
+        }
+
+        const auto param_names = call_parameter_names(*snapshot, expr);
+        if (param_names.empty()) {
+            continue;
+        }
+
+        // Collect Argument-role children in source order.
+        std::vector<std::uint32_t> arg_indices;
+        for (const auto &child : expr.children) {
+            if (child.role != TypedExprChildRole::Argument) {
+                continue;
+            }
+            if (child.expr_index == UINT32_MAX) {
+                continue;
+            }
+            arg_indices.push_back(child.expr_index);
+        }
+
+        for (std::size_t i = 0; i < arg_indices.size() && i < param_names.size(); ++i) {
+            const auto &arg_expr = program->expressions[arg_indices[i]];
+            InlayHint hint;
+            hint.position = to_lsp_position(*source->source, arg_expr.range.begin_offset);
+            hint.label = param_names[i] + ":";
+            hint.kind = InlayHintKind::Parameter;
+            hint.padding_right = true;
+            hints.push_back(std::move(hint));
+        }
+    }
+
+    // Type hints for let bindings without an explicit type annotation.
+    for (const auto &stmt : program->statements) {
+        if (stmt.source_id != source->source_id) {
+            continue;
+        }
+        if (stmt.kind != TypedStmtKind::Let) {
+            continue;
+        }
+        // Skip let bindings where the user wrote an explicit type annotation.
+        if (stmt.let_type_ref_strategy == LetTypeRefStrategy::FromSyntax) {
+            continue;
+        }
+        if (stmt.is_wildcard) {
+            continue;
+        }
+        if (stmt.let_type == nullptr) {
+            continue;
+        }
+
+        // Position the hint right after the binding name.
+        const auto &text = source->source->content;
+        const auto stmt_begin = stmt.range.begin_offset;
+        if (stmt_begin >= text.size()) {
+            continue;
+        }
+        const auto stmt_text =
+            std::string_view{text}.substr(stmt_begin, stmt.range.end_offset - stmt_begin);
+        const auto let_pos = stmt_text.find("let");
+        if (let_pos == std::string_view::npos) {
+            continue;
+        }
+        auto name_start = let_pos + 3;
+        while (name_start < stmt_text.size() &&
+               std::isspace(static_cast<unsigned char>(stmt_text[name_start])) != 0) {
+            ++name_start;
+        }
+        if (name_start + stmt.target_name.size() > stmt_text.size()) {
+            continue;
+        }
+        if (stmt_text.substr(name_start, stmt.target_name.size()) != stmt.target_name) {
+            continue;
+        }
+        const auto name_end = name_start + stmt.target_name.size();
+
+        InlayHint hint;
+        hint.position = to_lsp_position(*source->source, stmt_begin + name_end);
+        hint.label = ": " + stmt.let_type->describe();
+        hint.kind = InlayHintKind::Type;
+        hint.padding_left = true;
+        hints.push_back(std::move(hint));
+    }
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &hint : hints) {
+        if (requested_range.has_value()) {
+            const auto &r = *requested_range;
+            if (hint.position.line < r.start.line || hint.position.line > r.end.line) {
+                continue;
+            }
+        }
+        result->push(serialize_inlay_hint(hint));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+namespace {
+
+[[nodiscard]] bool is_callable_symbol_kind(SymbolKind kind) noexcept {
+    return kind == SymbolKind::Function || kind == SymbolKind::Capability ||
+           kind == SymbolKind::Predicate || kind == SymbolKind::Workflow;
+}
+
+[[nodiscard]] std::optional<DefId> parse_def_id_from_data(const json::JsonValue &params) {
+    const auto *item = params.get("item");
+    if (item == nullptr) {
+        return std::nullopt;
+    }
+    const auto *data = item->get("data");
+    if (data == nullptr) {
+        return std::nullopt;
+    }
+    const auto str = data->as_string();
+    if (!str.has_value() || str->empty()) {
+        return std::nullopt;
+    }
+    try {
+        std::size_t consumed = 0;
+        const auto value = std::stoll(std::string{*str}, &consumed);
+        if (consumed != str->size() || value < 0) {
+            return std::nullopt;
+        }
+        return DefId{.value = static_cast<std::size_t>(value)};
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+[[nodiscard]] std::string parse_item_uri(const json::JsonValue &params) {
+    const auto *item = params.get("item");
+    if (item == nullptr) {
+        return {};
+    }
+    const auto *uri = item->get("uri");
+    if (uri == nullptr) {
+        return {};
+    }
+    const auto str = uri->as_string();
+    return str.has_value() ? std::string{*str} : std::string{};
+}
+
+[[nodiscard]] Range parse_item_selection_range(const json::JsonValue &params) {
+    const auto *item = params.get("item");
+    if (item == nullptr) {
+        return {};
+    }
+    const auto *sel = item->get("selectionRange");
+    if (sel == nullptr) {
+        return {};
+    }
+    return parse_range(*sel);
+}
+
+[[nodiscard]] const TypedDecl *
+enclosing_decl_for_offset(const TypedProgram &program, std::optional<SourceId> source_id,
+                          std::size_t offset) noexcept {
+    const TypedDecl *best = nullptr;
+    for (const auto &decl : program.declarations) {
+        if (!same_source(decl.source_id, source_id)) {
+            continue;
+        }
+        if (!contains(decl.range, offset)) {
+            continue;
+        }
+        // Pick the smallest (innermost) declaration.
+        if (best == nullptr || decl.range.end_offset - decl.range.begin_offset <
+                                   best->range.end_offset - best->range.begin_offset) {
+            best = &decl;
+        }
+    }
+    return best;
+}
+
+[[nodiscard]] std::optional<CallHierarchyItem>
+call_hierarchy_item_for_symbol(const LspAnalysisSnapshot &snapshot, const Symbol &symbol,
+                               const LspSourceSnapshot &source) {
+    if (!is_callable_symbol_kind(symbol.kind)) {
+        return std::nullopt;
+    }
+    auto location = indexed_symbol_location(snapshot, symbol);
+    if (!location.has_value()) {
+        location = symbol_location(snapshot, symbol, source);
+    }
+    if (!location.has_value()) {
+        return std::nullopt;
+    }
+
+    CallHierarchyItem item;
+    item.name = symbol.local_name;
+    item.kind = to_lsp_symbol_kind(symbol.kind);
+    item.uri = location->uri;
+    item.range = location->range;
+    item.selection_range = location->range;
+
+    if (snapshot.workspace_index != nullptr) {
+        const auto def = snapshot.workspace_def_for_symbol(symbol.id);
+        if (def.has_value()) {
+            item.data = std::to_string(def->value);
+        }
+    }
+    return item;
+}
+
+[[nodiscard]] bool is_type_symbol_kind(SymbolKind kind) noexcept {
+    return kind == SymbolKind::Struct || kind == SymbolKind::Enum || kind == SymbolKind::Trait;
+}
+
+[[nodiscard]] std::optional<CallHierarchyItem>
+type_hierarchy_item_for_symbol(const LspAnalysisSnapshot &snapshot, const Symbol &symbol,
+                               const LspSourceSnapshot &source) {
+    if (!is_type_symbol_kind(symbol.kind)) {
+        return std::nullopt;
+    }
+    auto location = indexed_symbol_location(snapshot, symbol);
+    if (!location.has_value()) {
+        location = symbol_location(snapshot, symbol, source);
+    }
+    if (!location.has_value()) {
+        return std::nullopt;
+    }
+
+    CallHierarchyItem item;
+    item.name = symbol.local_name;
+    item.kind = to_lsp_symbol_kind(symbol.kind);
+    item.uri = location->uri;
+    item.range = location->range;
+    item.selection_range = location->range;
+
+    if (snapshot.workspace_index != nullptr) {
+        const auto def = snapshot.workspace_def_for_symbol(symbol.id);
+        if (def.has_value()) {
+            item.data = std::to_string(def->value);
+        }
+    }
+    return item;
+}
+
+[[nodiscard]] std::optional<CallHierarchyItem>
+type_hierarchy_item_for_fact(const SymbolFact &fact) {
+    if (!is_type_symbol_kind(fact.kind)) {
+        return std::nullopt;
+    }
+    CallHierarchyItem item;
+    item.name = fact.local_name;
+    item.kind = to_lsp_symbol_kind(fact.kind);
+    item.uri = fact.location.uri;
+    item.range = fact.location.range;
+    item.selection_range = fact.location.range;
+    item.data = std::to_string(fact.def_id.value);
+    return item;
+}
+
+/// Resolved identity of a type-hierarchy item: the kind and (when available)
+/// the SymbolId + DefId needed to walk supertypes/subtypes.
+struct ResolvedTypeHierarchySymbol {
+    SymbolKind kind{SymbolKind::Struct};
+    SymbolId symbol_id{0};
+    std::optional<DefId> def_id;
+    bool symbol_id_valid{false};
+};
+
+/// Resolve a type-hierarchy item back to its symbol. Tries the workspace
+/// index (DefId -> SymbolFact) first; falls back to uri + selectionRange when
+/// the workspace index is unavailable.
+[[nodiscard]] std::optional<ResolvedTypeHierarchySymbol>
+resolve_type_hierarchy_symbol(const LspAnalysisSnapshot &snapshot, const std::string &uri,
+                              const json::JsonValue &params) {
+    const auto def_id = parse_def_id_from_data(params);
+
+    if (def_id.has_value() && snapshot.workspace_index != nullptr) {
+        const auto *fact = snapshot.workspace_index->symbol_for_def(*def_id);
+        if (fact != nullptr && is_type_symbol_kind(fact->kind)) {
+            // Find the SymbolId by scanning declarations for a matching DefId.
+            if (const auto *program = snapshot.typed_program(); program != nullptr) {
+                for (const auto &decl : program->declarations) {
+                    const auto def = snapshot.workspace_def_for_symbol(decl.symbol);
+                    if (def.has_value() && *def == *def_id) {
+                        return ResolvedTypeHierarchySymbol{
+                            .kind = fact->kind,
+                            .symbol_id = decl.symbol,
+                            .def_id = def_id,
+                            .symbol_id_valid = true,
+                        };
+                    }
+                }
+            }
+            // Symbol is defined in another source unit not in this typed
+            // program. Workspace-index queries still work; TypeEnvironment
+            // queries (supertrait lookup) are unavailable.
+            return ResolvedTypeHierarchySymbol{
+                .kind = fact->kind,
+                .symbol_id = SymbolId{0},
+                .def_id = def_id,
+                .symbol_id_valid = false,
+            };
+        }
+    }
+
+    // Fall back to uri + selectionRange (detached mode, no workspace index).
+    const auto *source = snapshot.source_for_uri(uri);
+    if (source == nullptr || source->source == nullptr) {
+        return std::nullopt;
+    }
+    const auto selection = parse_item_selection_range(params);
+    const auto offset = offset_at(*source->source, selection.start);
+    const auto target = symbol_at(snapshot, *source, offset);
+    if (!target.has_value()) {
+        return std::nullopt;
+    }
+    const auto symbol = snapshot.resolve_result->symbol_table.get(*target);
+    if (!symbol.has_value() || !is_type_symbol_kind(symbol->get().kind)) {
+        return std::nullopt;
+    }
+    return ResolvedTypeHierarchySymbol{
+        .kind = symbol->get().kind,
+        .symbol_id = symbol->get().id,
+        .def_id = def_id,
+        .symbol_id_valid = true,
+    };
+}
+
+} // namespace
+
+void LspServer::handle_prepare_call_hierarchy(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
+    if (!target.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
+    if (!symbol.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto item = call_hierarchy_item_for_symbol(*snapshot, symbol->get(), *source);
+    if (!item.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto result = json::JsonValue::make_array();
+    result->push(serialize_call_hierarchy_item(*item));
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_call_hierarchy_incoming(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto def_id = parse_def_id_from_data(*req.params);
+    if (!def_id.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto uri = parse_item_uri(*req.params);
+    if (uri.empty()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    if (snapshot == nullptr || snapshot->workspace_index == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *program = snapshot->typed_program();
+    if (program == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto ref_locations = snapshot->workspace_index->reference_locations_for_def(*def_id);
+
+    // Group reference locations by enclosing caller declaration.
+    struct CallerGroup {
+        const TypedDecl *decl{nullptr};
+        std::vector<Range> ranges;
+    };
+    std::vector<CallerGroup> groups;
+
+    for (const auto &loc : ref_locations) {
+        const auto *ref_source = snapshot->source_for_uri(loc.uri);
+        if (ref_source == nullptr || ref_source->source == nullptr) {
+            continue;
+        }
+        const auto offset = offset_at(*ref_source->source, loc.range.start);
+        const auto *decl = enclosing_decl_for_offset(*program, ref_source->source_id, offset);
+        if (decl == nullptr) {
+            continue;
+        }
+
+        auto it = std::ranges::find_if(groups, [decl](const CallerGroup &g) {
+            return g.decl == decl;
+        });
+        if (it == groups.end()) {
+            groups.push_back(CallerGroup{.decl = decl, .ranges = {}});
+            it = std::prev(groups.end());
+        }
+        it->ranges.push_back(loc.range);
+    }
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &group : groups) {
+        const auto caller_symbol = program->find_symbol(group.decl->symbol);
+        if (!caller_symbol.has_value()) {
+            continue;
+        }
+        const auto *caller_source = snapshot->source_for_id(*group.decl->source_id);
+        if (caller_source == nullptr) {
+            continue;
+        }
+        auto caller_item =
+            call_hierarchy_item_for_symbol(*snapshot, caller_symbol->get(), *caller_source);
+        if (!caller_item.has_value()) {
+            continue;
+        }
+
+        CallHierarchyIncomingCall call;
+        call.from = std::move(*caller_item);
+        call.from_ranges = group.ranges;
+        result->push(serialize_call_hierarchy_incoming_call(call));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_call_hierarchy_outgoing(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto uri = parse_item_uri(*req.params);
+    if (uri.empty()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *program = snapshot->typed_program();
+    if (program == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto selection = parse_item_selection_range(*req.params);
+    const auto sel_offset = offset_at(*source->source, selection.start);
+    const auto *decl = enclosing_decl_for_offset(*program, source->source_id, sel_offset);
+    if (decl == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    // Scan all expressions within this declaration's range for calls.
+    struct CalleeGroup {
+        SymbolId symbol;
+        std::vector<Range> ranges;
+    };
+    std::vector<CalleeGroup> groups;
+
+    for (const auto &expr : program->expressions) {
+        if (!same_source(expr.source_id, source->source_id)) {
+            continue;
+        }
+        if (expr.kind != ast::ExprSyntaxKind::Call &&
+            expr.kind != ast::ExprSyntaxKind::MethodCall) {
+            continue;
+        }
+        // Only include expressions inside the enclosing declaration.
+        if (!contains(decl->range, expr.range.begin_offset)) {
+            continue;
+        }
+
+        std::optional<SymbolId> callee;
+        if (expr.kind == ast::ExprSyntaxKind::Call) {
+            callee = expr.resolved_symbol;
+        } else if (expr.kind == ast::ExprSyntaxKind::MethodCall) {
+            if (expr.dispatch_target.has_value() &&
+                expr.dispatch_target->method_symbol.has_value()) {
+                callee = expr.dispatch_target->method_symbol;
+            }
+        }
+        if (!callee.has_value()) {
+            continue;
+        }
+
+        auto it = std::ranges::find_if(groups, [callee](const CalleeGroup &g) {
+            return g.symbol == *callee;
+        });
+        if (it == groups.end()) {
+            groups.push_back(CalleeGroup{.symbol = *callee, .ranges = {}});
+            it = std::prev(groups.end());
+        }
+        it->ranges.push_back(to_lsp_range(*source->source, expr.range));
+    }
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &group : groups) {
+        const auto callee_symbol = program->find_symbol(group.symbol);
+        if (!callee_symbol.has_value()) {
+            continue;
+        }
+        auto callee_item =
+            call_hierarchy_item_for_symbol(*snapshot, callee_symbol->get(), *source);
+        if (!callee_item.has_value()) {
+            continue;
+        }
+
+        CallHierarchyOutgoingCall call;
+        call.to = std::move(*callee_item);
+        call.from_ranges = group.ranges;
+        result->push(serialize_call_hierarchy_outgoing_call(call));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_prepare_type_hierarchy(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
+    if (!target.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
+    if (!symbol.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto item = type_hierarchy_item_for_symbol(*snapshot, symbol->get(), *source);
+    if (!item.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto result = json::JsonValue::make_array();
+    result->push(serialize_call_hierarchy_item(*item));
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_type_hierarchy_supertypes(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto uri = parse_item_uri(*req.params);
+    if (uri.empty()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    if (snapshot == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto resolved = resolve_type_hierarchy_symbol(*snapshot, uri, *req.params);
+    if (!resolved.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto result = json::JsonValue::make_array();
+    const auto *program = snapshot->typed_program();
+
+    if (resolved->kind == SymbolKind::Trait) {
+        // Supertypes of a trait = its supertraits.
+        if (resolved->symbol_id_valid && snapshot->type_check_result != nullptr &&
+            program != nullptr) {
+            const auto trait_info =
+                snapshot->type_check_result->environment.get_trait(resolved->symbol_id);
+            if (trait_info.has_value()) {
+                for (const auto &super_id : trait_info->get().super_traits) {
+                    // Build item via workspace index when available.
+                    if (snapshot->workspace_index != nullptr) {
+                        const auto def = snapshot->workspace_def_for_symbol(super_id);
+                        if (def.has_value()) {
+                            const auto *fact =
+                                snapshot->workspace_index->symbol_for_def(*def);
+                            if (fact != nullptr) {
+                                auto item = type_hierarchy_item_for_fact(*fact);
+                                if (item.has_value()) {
+                                    result->push(serialize_call_hierarchy_item(*item));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    // Fall back to typed program.
+                    const auto super_symbol = program->find_symbol(super_id);
+                    if (super_symbol.has_value()) {
+                        const auto *super_source = snapshot->source_for_uri(uri);
+                        if (super_source != nullptr) {
+                            auto item = type_hierarchy_item_for_symbol(
+                                *snapshot, super_symbol->get(), *super_source);
+                            if (item.has_value()) {
+                                result->push(serialize_call_hierarchy_item(*item));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if (resolved->kind == SymbolKind::Struct || resolved->kind == SymbolKind::Enum) {
+        // Supertypes of a struct/enum = traits it implements.
+        if (resolved->def_id.has_value() && snapshot->workspace_index != nullptr) {
+            // Workspace index path: cross-file impl coverage.
+            for (const auto &impl : snapshot->workspace_index->impls()) {
+                if (impl.target_type.kind != TypeKey::Kind::Nominal) {
+                    continue;
+                }
+                if (!impl.target_type.def.has_value() ||
+                    *impl.target_type.def != *resolved->def_id) {
+                    continue;
+                }
+                if (!impl.trait_def.has_value()) {
+                    continue;
+                }
+                const auto *trait_fact =
+                    snapshot->workspace_index->symbol_for_def(*impl.trait_def);
+                if (trait_fact != nullptr) {
+                    auto item = type_hierarchy_item_for_fact(*trait_fact);
+                    if (item.has_value()) {
+                        result->push(serialize_call_hierarchy_item(*item));
+                    }
+                }
+            }
+        } else if (resolved->symbol_id_valid && snapshot->type_check_result != nullptr &&
+                   program != nullptr) {
+            // TypeEnvironment fallback: current file only.
+            const auto *source = snapshot->source_for_uri(uri);
+            if (source != nullptr) {
+                for (const auto &[index, impl] :
+                     snapshot->type_check_result->environment.impls()) {
+                    (void)index;
+                    if (!impl.trait_symbol.has_value() || !impl.target_symbol.has_value()) {
+                        continue;
+                    }
+                    if (*impl.target_symbol != resolved->symbol_id) {
+                        continue;
+                    }
+                    const auto trait_symbol = program->find_symbol(*impl.trait_symbol);
+                    if (trait_symbol.has_value()) {
+                        auto item = type_hierarchy_item_for_symbol(
+                            *snapshot, trait_symbol->get(), *source);
+                        if (item.has_value()) {
+                            result->push(serialize_call_hierarchy_item(*item));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_type_hierarchy_subtypes(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto uri = parse_item_uri(*req.params);
+    if (uri.empty()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    if (snapshot == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto resolved = resolve_type_hierarchy_symbol(*snapshot, uri, *req.params);
+    if (!resolved.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto result = json::JsonValue::make_array();
+
+    if (resolved->kind == SymbolKind::Trait) {
+        // Subtypes of a trait = types that implement it.
+        if (resolved->def_id.has_value() && snapshot->workspace_index != nullptr) {
+            // Workspace index path: cross-file impl coverage.
+            for (const auto &impl : snapshot->workspace_index->impls()) {
+                if (!impl.trait_def.has_value() || *impl.trait_def != *resolved->def_id) {
+                    continue;
+                }
+                if (impl.target_type.kind != TypeKey::Kind::Nominal) {
+                    continue;
+                }
+                if (!impl.target_type.def.has_value()) {
+                    continue;
+                }
+                const auto *target_fact =
+                    snapshot->workspace_index->symbol_for_def(*impl.target_type.def);
+                if (target_fact != nullptr) {
+                    auto item = type_hierarchy_item_for_fact(*target_fact);
+                    if (item.has_value()) {
+                        result->push(serialize_call_hierarchy_item(*item));
+                    }
+                }
+            }
+        } else if (resolved->symbol_id_valid && snapshot->type_check_result != nullptr) {
+            // TypeEnvironment fallback: current file only.
+            const auto *program = snapshot->typed_program();
+            const auto *source = snapshot->source_for_uri(uri);
+            if (program != nullptr && source != nullptr) {
+                for (const auto &[index, impl] :
+                     snapshot->type_check_result->environment.impls()) {
+                    (void)index;
+                    if (!impl.trait_symbol.has_value() ||
+                        *impl.trait_symbol != resolved->symbol_id) {
+                        continue;
+                    }
+                    if (!impl.target_symbol.has_value()) {
+                        continue;
+                    }
+                    const auto target_symbol = program->find_symbol(*impl.target_symbol);
+                    if (target_symbol.has_value()) {
+                        auto item = type_hierarchy_item_for_symbol(
+                            *snapshot, target_symbol->get(), *source);
+                        if (item.has_value()) {
+                            result->push(serialize_call_hierarchy_item(*item));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Struct/Enum have no subtypes in AHFL (no nominal inheritance).
 
     JsonRpcResponse resp;
     resp.id = req.id;

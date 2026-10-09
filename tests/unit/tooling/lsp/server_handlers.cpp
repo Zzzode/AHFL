@@ -1270,6 +1270,9 @@ void test_code_lens_uses_text_fallback_without_workspace_index() {
           "codeLens.fallback_struct_title");
     check(response.find(R"("command":"ahfl.showReferences")") != std::string::npos,
           "codeLens.fallback_command");
+    // Command arguments must be [uri, line, character] positioned on the symbol name.
+    check(response.find(R"("arguments":["file:///test.ahfl","0","7"])") != std::string::npos,
+          "codeLens.fallback_arguments_uri_position");
 }
 
 void test_code_lens_uses_workspace_index_symbols() {
@@ -1295,11 +1298,88 @@ void test_code_lens_uses_workspace_index_symbols() {
     });
     const auto response = response_body_for_id(output, 2);
 
-    check(response.find(R"("title":"fn keep")") != std::string::npos,
+    // keep is never called, so the lens shows "0 references".
+    check(response.find(R"("title":"0 references")") != std::string::npos,
           "codeLens.index_function_title");
     check(response.find(R"("command":"ahfl.showReferences")") != std::string::npos,
           "codeLens.index_command");
-    check(response.find(R"("arguments":["keep"])") != std::string::npos, "codeLens.index_argument");
+    // Arguments are [uri, line, character] positioned on the symbol name.
+    // "fn keep" is on line 2 (0-based), name "keep" starts at character 3.
+    check(response.find(R"("arguments":[")" + main_uri + R"(","2","3"])") != std::string::npos,
+          "codeLens.index_arguments_uri_position");
+}
+
+void test_code_lens_reference_count_reflects_call_sites() {
+    const auto root = make_temp_project("code_lens_reference_count");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-code-lens-count", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "fn double(x: Int) -> Int effect Pure decreases 0 {\n"
+                               "    return x * 2;\n"
+                               "}\n"
+                               "\n"
+                               "fn use_it() -> Int effect Pure decreases 0 {\n"
+                               "    return double(21);\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const std::string code_lens =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/codeLens","params":{"textDocument":{"uri":")" +
+        main_uri + R"("}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        code_lens,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+
+    // double is called once (in use_it), so its lens shows "1 reference".
+    check(response.find(R"("title":"1 reference")") != std::string::npos,
+          "codeLens.reference_count_one");
+    // use_it is never called, so its lens shows "0 references".
+    check(response.find(R"("title":"0 references")") != std::string::npos,
+          "codeLens.reference_count_zero");
+}
+
+void test_document_range_formatting_capability() {
+    const auto init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"documentRangeFormattingProvider\":true") != std::string::npos,
+          "rangeFormatting.capability_provider");
+}
+
+void test_document_range_formatting_returns_edit_for_intersecting_range() {
+    // Unindented struct that the formatter will fix.
+    const std::string source = "struct Foo {\nvalue: String;\n}\n";
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"range":{"start":{"line":0,"character":0},"end":{"line":2,"character":0}},"options":{"tabSize":4,"insertSpaces":true}})";
+    const auto output = run_handler_request(source, "textDocument/rangeFormatting", params);
+    const auto response = response_body_for_id(output, 2);
+
+    // The formatter should produce a non-empty edit.
+    check(response.find("\"newText\"") != std::string::npos,
+          "rangeFormatting.intersecting_returns_edit");
+    check(response.find("\"range\"") != std::string::npos,
+          "rangeFormatting.intersecting_has_range");
+}
+
+void test_document_range_formatting_empty_for_non_intersecting_range() {
+    // Struct on lines 0-2; request a range on line 5 (past the document).
+    const std::string source = "struct Foo {\n    value: String;\n}\n";
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"range":{"start":{"line":5,"character":0},"end":{"line":6,"character":0}},"options":{"tabSize":4,"insertSpaces":true}})";
+    const auto output = run_handler_request(source, "textDocument/rangeFormatting", params);
+    const auto response = response_body_for_id(output, 2);
+
+    // No changes intersect the requested range, so the result should be an empty array.
+    check(response.find("\"result\":[]") != std::string::npos,
+          "rangeFormatting.non_intersecting_empty");
 }
 
 void test_rename_returns_workspace_edit() {
@@ -1312,6 +1392,499 @@ void test_rename_returns_workspace_edit() {
     // If rename succeeds, response should contain the new name "Message"
     // or a changes object
     check(output.find("\"id\"") != std::string::npos, "rename.has_response");
+}
+
+void test_inlay_hint_capability() {
+    const auto init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"inlayHintProvider\":true") != std::string::npos,
+          "inlayHint.capability_provider");
+}
+
+void test_inlay_hint_parameter_names_and_let_types() {
+    // Source with a capability call and a let binding without annotation.
+    const std::string source =
+        "struct OrderInfo {\n"
+        "    order_id: String;\n"
+        "}\n"
+        "\n"
+        "capability get_data(name: String, count: Int) -> OrderInfo;\n"
+        "\n"
+        "agent TestAgent {\n"
+        "    input: OrderInfo;\n"
+        "    context: OrderInfo;\n"
+        "    output: OrderInfo;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [get_data];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for TestAgent {\n"
+        "    state Init {\n"
+        "        let x = get_data(input.order_id, 5);\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"range":{"start":{"line":0,"character":0},"end":{"line":30,"character":0}}})";
+    const auto output = run_handler_request(source, "textDocument/inlayHint", params);
+    const auto response = response_body_for_id(output, 2);
+
+    // Parameter name hints at the call site.
+    check(response.find(R"("label":"name:")") != std::string::npos,
+          "inlayHint.parameter_name");
+    check(response.find(R"("label":"count:")") != std::string::npos,
+          "inlayHint.parameter_name_count");
+    check(response.find(R"("kind":2)") != std::string::npos,
+          "inlayHint.parameter_kind");
+
+    // Type hint for the let binding without annotation.
+    check(response.find(R"("label":": OrderInfo")") != std::string::npos,
+          "inlayHint.let_type");
+    check(response.find(R"("kind":1)") != std::string::npos,
+          "inlayHint.type_kind");
+}
+
+void test_inlay_hint_respects_range() {
+    // Request a narrow range that does not include the call site.
+    const std::string source =
+        "struct OrderInfo {\n"
+        "    order_id: String;\n"
+        "}\n"
+        "\n"
+        "capability get_data(name: String, count: Int) -> OrderInfo;\n"
+        "\n"
+        "agent TestAgent {\n"
+        "    input: OrderInfo;\n"
+        "    context: OrderInfo;\n"
+        "    output: OrderInfo;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [get_data];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for TestAgent {\n"
+        "    state Init {\n"
+        "        let x = get_data(input.order_id, 5);\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+    // Request only lines 0-3 (the struct + capability declarations).
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"range":{"start":{"line":0,"character":0},"end":{"line":3,"character":0}}})";
+    const auto output = run_handler_request(source, "textDocument/inlayHint", params);
+    const auto response = response_body_for_id(output, 2);
+
+    // No call sites or let bindings in this range.
+    check(response.find(R"("label":"name:")") == std::string::npos,
+          "inlayHint.range_excludes_parameter_hints");
+    check(response.find(R"("label":": OrderInfo")") == std::string::npos,
+          "inlayHint.range_excludes_let_type");
+}
+
+std::string extract_data_field(const std::string &json) {
+    constexpr std::string_view key = R"("data":")";
+    const auto pos = json.find(key);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    const auto start = pos + key.size();
+    const auto end = json.find('"', start);
+    if (end == std::string::npos) {
+        return {};
+    }
+    return json.substr(start, end - start);
+}
+
+void test_call_hierarchy_capability() {
+    const auto init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"callHierarchyProvider\":true") != std::string::npos,
+          "callHierarchy.capability_provider");
+}
+
+void test_prepare_call_hierarchy_returns_item_for_function() {
+    const auto root = make_temp_project("call_hierarchy_prepare");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-call-hierarchy", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "fn double(x: Int) -> Int effect Pure decreases 0 {\n"
+                               "    return x * 2;\n"
+                               "}\n"
+                               "\n"
+                               "fn use_it() -> Int effect Pure decreases 0 {\n"
+                               "    return double(21);\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // Position on "double" in the declaration (line 2, character 3).
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareCallHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":2,"character":3}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+
+    check(response.find(R"("name":"double")") != std::string::npos,
+          "callHierarchy.prepare_name");
+    check(response.find(R"("kind":12)") != std::string::npos,
+          "callHierarchy.prepare_kind_function");
+    check(response.find(R"("data":")") != std::string::npos,
+          "callHierarchy.prepare_has_data");
+}
+
+void test_call_hierarchy_incoming_returns_callers() {
+    const auto root = make_temp_project("call_hierarchy_incoming");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-call-hierarchy-incoming", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "fn double(x: Int) -> Int effect Pure decreases 0 {\n"
+                               "    return x * 2;\n"
+                               "}\n"
+                               "\n"
+                               "fn use_it() -> Int effect Pure decreases 0 {\n"
+                               "    return double(21);\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // First prepare to get the item with data.
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareCallHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":2,"character":3}}})";
+    const auto prepare_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto prepare_response = response_body_for_id(prepare_output, 2);
+    const auto data = extract_data_field(prepare_response);
+    check(!data.empty(), "callHierarchy.incoming_data_extracted");
+
+    // Now send incomingCalls with the item.
+    const std::string incoming =
+        R"({"jsonrpc":"2.0","id":2,"method":"callHierarchy/incomingCalls","params":{"item":{"name":"double","kind":12,"uri":")" +
+        main_uri + R"(","range":{"start":{"line":2,"character":0},"end":{"line":4,"character":1}},"selectionRange":{"start":{"line":2,"character":3},"end":{"line":2,"character":9}},"data":")" +
+        data + R"("}}})";
+    const auto incoming_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        incoming,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto incoming_response = response_body_for_id(incoming_output, 2);
+
+    // use_it calls double, so we should see one incoming call from use_it.
+    check(incoming_response.find(R"("name":"use_it")") != std::string::npos,
+          "callHierarchy.incoming_caller_name");
+    check(incoming_response.find(R"("fromRanges")") != std::string::npos,
+          "callHierarchy.incoming_has_ranges");
+}
+
+void test_call_hierarchy_outgoing_returns_callees() {
+    const auto root = make_temp_project("call_hierarchy_outgoing");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-call-hierarchy-outgoing", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "fn double(x: Int) -> Int effect Pure decreases 0 {\n"
+                               "    return x * 2;\n"
+                               "}\n"
+                               "\n"
+                               "fn use_it() -> Int effect Pure decreases 0 {\n"
+                               "    return double(21);\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // Prepare on use_it (line 6, character 3).
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareCallHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":6,"character":3}}})";
+    const auto prepare_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto prepare_response = response_body_for_id(prepare_output, 2);
+    const auto data = extract_data_field(prepare_response);
+    check(!data.empty(), "callHierarchy.outgoing_data_extracted");
+
+    // Now send outgoingCalls with the item.
+    const std::string outgoing =
+        R"({"jsonrpc":"2.0","id":2,"method":"callHierarchy/outgoingCalls","params":{"item":{"name":"use_it","kind":12,"uri":")" +
+        main_uri + R"(","range":{"start":{"line":6,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":6,"character":3},"end":{"line":6,"character":9}},"data":")" +
+        data + R"("}}})";
+    const auto outgoing_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        outgoing,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto outgoing_response = response_body_for_id(outgoing_output, 2);
+
+    // use_it calls double, so we should see one outgoing call to double.
+    check(outgoing_response.find(R"("name":"double")") != std::string::npos,
+          "callHierarchy.outgoing_callee_name");
+    check(outgoing_response.find(R"("fromRanges")") != std::string::npos,
+          "callHierarchy.outgoing_has_ranges");
+}
+
+// ---------------------------------------------------------------------------
+// Type hierarchy
+// ---------------------------------------------------------------------------
+
+void test_type_hierarchy_capability() {
+    const auto init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"typeHierarchyProvider\":true") != std::string::npos,
+          "typeHierarchy.capability_provider");
+}
+
+void test_prepare_type_hierarchy_returns_item_for_struct() {
+    const auto root = make_temp_project("type_hierarchy_prepare");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-type-hierarchy", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "trait Display {\n"
+                               "    fn marker(self) -> Int effect Pure;\n"
+                               "}\n"
+                               "\n"
+                               "struct Point {\n"
+                               "    x: Int;\n"
+                               "    y: Int;\n"
+                               "}\n"
+                               "\n"
+                               "impl Display for Point {\n"
+                               "    fn marker(self) -> Int effect Pure decreases 0 {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // Position on "Point" in the struct declaration (line 6, character 7).
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareTypeHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":6,"character":7}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+
+    check(response.find(R"("name":"Point")") != std::string::npos,
+          "typeHierarchy.prepare_name");
+    check(response.find(R"("kind":23)") != std::string::npos,
+          "typeHierarchy.prepare_kind_struct");
+    check(response.find(R"("data":")") != std::string::npos,
+          "typeHierarchy.prepare_has_data");
+}
+
+void test_type_hierarchy_supertypes_returns_traits_for_struct() {
+    const auto root = make_temp_project("type_hierarchy_supertypes");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-type-hierarchy-super", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "trait Display {\n"
+                               "    fn marker(self) -> Int effect Pure;\n"
+                               "}\n"
+                               "\n"
+                               "struct Point {\n"
+                               "    x: Int;\n"
+                               "    y: Int;\n"
+                               "}\n"
+                               "\n"
+                               "impl Display for Point {\n"
+                               "    fn marker(self) -> Int effect Pure decreases 0 {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // First prepare to get the item with data.
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareTypeHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":6,"character":7}}})";
+    const auto prepare_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto prepare_response = response_body_for_id(prepare_output, 2);
+    const auto data = extract_data_field(prepare_response);
+    check(!data.empty(), "typeHierarchy.supertypes_data_extracted");
+
+    // Now send supertypes with the item.
+    const std::string supertypes =
+        R"({"jsonrpc":"2.0","id":2,"method":"typeHierarchy/supertypes","params":{"item":{"name":"Point","kind":23,"uri":")" +
+        main_uri + R"(","range":{"start":{"line":6,"character":0},"end":{"line":9,"character":1}},"selectionRange":{"start":{"line":6,"character":7},"end":{"line":6,"character":12}},"data":")" +
+        data + R"("}}})";
+    const auto super_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        supertypes,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto super_response = response_body_for_id(super_output, 2);
+
+    // Point implements Display, so we should see Display as a supertype.
+    check(super_response.find(R"("name":"Display")") != std::string::npos,
+          "typeHierarchy.supertypes_trait_name");
+    check(super_response.find(R"("kind":11)") != std::string::npos,
+          "typeHierarchy.supertypes_trait_kind");
+}
+
+void test_type_hierarchy_subtypes_returns_impls_for_trait() {
+    const auto root = make_temp_project("type_hierarchy_subtypes");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-type-hierarchy-sub", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "trait Display {\n"
+                               "    fn marker(self) -> Int effect Pure;\n"
+                               "}\n"
+                               "\n"
+                               "struct Point {\n"
+                               "    x: Int;\n"
+                               "    y: Int;\n"
+                               "}\n"
+                               "\n"
+                               "impl Display for Point {\n"
+                               "    fn marker(self) -> Int effect Pure decreases 0 {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // Prepare on "Display" (line 2, character 6).
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareTypeHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":2,"character":6}}})";
+    const auto prepare_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto prepare_response = response_body_for_id(prepare_output, 2);
+    const auto data = extract_data_field(prepare_response);
+    check(!data.empty(), "typeHierarchy.subtypes_data_extracted");
+
+    // Now send subtypes with the item.
+    const std::string subtypes =
+        R"({"jsonrpc":"2.0","id":2,"method":"typeHierarchy/subtypes","params":{"item":{"name":"Display","kind":11,"uri":")" +
+        main_uri + R"(","range":{"start":{"line":2,"character":0},"end":{"line":4,"character":1}},"selectionRange":{"start":{"line":2,"character":6},"end":{"line":2,"character":13}},"data":")" +
+        data + R"("}}})";
+    const auto sub_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        subtypes,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto sub_response = response_body_for_id(sub_output, 2);
+
+    // Point implements Display, so we should see Point as a subtype.
+    check(sub_response.find(R"("name":"Point")") != std::string::npos,
+          "typeHierarchy.subtypes_struct_name");
+    check(sub_response.find(R"("kind":23)") != std::string::npos,
+          "typeHierarchy.subtypes_struct_kind");
+}
+
+void test_type_hierarchy_supertypes_returns_supertrait_for_trait() {
+    const auto root = make_temp_project("type_hierarchy_supertrait");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-type-hierarchy-st", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "trait Display {\n"
+                               "    fn marker(self) -> Int effect Pure;\n"
+                               "}\n"
+                               "\n"
+                               "trait Hash: Display {\n"
+                               "}\n"
+                               "\n"
+                               "struct Point {\n"
+                               "    x: Int;\n"
+                               "    y: Int;\n"
+                               "}\n"
+                               "\n"
+                               "impl Display for Point {\n"
+                               "    fn marker(self) -> Int effect Pure decreases 0 {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    // Prepare on "Hash" (line 6, character 6).
+    const std::string prepare =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/prepareTypeHierarchy","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":6,"character":6}}})";
+    const auto prepare_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        prepare,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto prepare_response = response_body_for_id(prepare_output, 2);
+    const auto data = extract_data_field(prepare_response);
+    check(!data.empty(), "typeHierarchy.supertrait_data_extracted");
+
+    // Now send supertypes with the item.
+    const std::string supertypes =
+        R"({"jsonrpc":"2.0","id":2,"method":"typeHierarchy/supertypes","params":{"item":{"name":"Hash","kind":11,"uri":")" +
+        main_uri + R"(","range":{"start":{"line":6,"character":0},"end":{"line":7,"character":1}},"selectionRange":{"start":{"line":6,"character":6},"end":{"line":6,"character":10}},"data":")" +
+        data + R"("}}})";
+    const auto super_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        supertypes,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto super_response = response_body_for_id(super_output, 2);
+
+    // Hash extends Display, so Display should be a supertype.
+    check(super_response.find(R"("name":"Display")") != std::string::npos,
+          "typeHierarchy.supertrait_name");
+    check(super_response.find(R"("kind":11)") != std::string::npos,
+          "typeHierarchy.supertrait_kind");
 }
 
 void test_prepare_rename_returns_range_or_null() {
@@ -12086,6 +12659,22 @@ int main() {
     test_references_returns_locations();
     test_code_lens_uses_text_fallback_without_workspace_index();
     test_code_lens_uses_workspace_index_symbols();
+    test_code_lens_reference_count_reflects_call_sites();
+    test_document_range_formatting_capability();
+    test_document_range_formatting_returns_edit_for_intersecting_range();
+    test_document_range_formatting_empty_for_non_intersecting_range();
+    test_inlay_hint_capability();
+    test_inlay_hint_parameter_names_and_let_types();
+    test_inlay_hint_respects_range();
+    test_call_hierarchy_capability();
+    test_prepare_call_hierarchy_returns_item_for_function();
+    test_call_hierarchy_incoming_returns_callers();
+    test_call_hierarchy_outgoing_returns_callees();
+    test_type_hierarchy_capability();
+    test_prepare_type_hierarchy_returns_item_for_struct();
+    test_type_hierarchy_supertypes_returns_traits_for_struct();
+    test_type_hierarchy_subtypes_returns_impls_for_trait();
+    test_type_hierarchy_supertypes_returns_supertrait_for_trait();
     test_rename_returns_workspace_edit();
     test_prepare_rename_returns_range_or_null();
     test_signature_help_capability();

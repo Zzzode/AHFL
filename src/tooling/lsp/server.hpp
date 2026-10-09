@@ -15,6 +15,13 @@
 
 namespace ahfl::lsp {
 
+/// LSP trace levels, set by the client via $/setTrace notifications.
+enum class TraceLevel : std::uint8_t {
+    Off,
+    Messages,
+    Verbose,
+};
+
 /// AHFL Language Server — handles LSP protocol over stdin/stdout.
 class LspServer {
   public:
@@ -35,7 +42,7 @@ class LspServer {
     std::uint64_t next_server_request_id_{1};
     bool initialized_{false};
     bool shutdown_requested_{false};
-    bool trace_enabled_{false};
+    TraceLevel trace_level_{TraceLevel::Off};
     bool completion_snippet_support_{false};
 
     // Request handlers
@@ -59,12 +66,20 @@ class LspServer {
     void handle_workspace_symbol(const JsonRpcRequest &req);
     void handle_signature_help(const JsonRpcRequest &req);
     void handle_document_formatting(const JsonRpcRequest &req);
+    void handle_document_range_formatting(const JsonRpcRequest &req);
     void handle_semantic_tokens_full(const JsonRpcRequest &req);
     void handle_code_action(const JsonRpcRequest &req);
     void handle_folding_range(const JsonRpcRequest &req);
     void handle_document_highlight(const JsonRpcRequest &req);
     void handle_selection_range(const JsonRpcRequest &req);
     void handle_code_lens(const JsonRpcRequest &req);
+    void handle_inlay_hint(const JsonRpcRequest &req);
+    void handle_prepare_call_hierarchy(const JsonRpcRequest &req);
+    void handle_call_hierarchy_incoming(const JsonRpcRequest &req);
+    void handle_call_hierarchy_outgoing(const JsonRpcRequest &req);
+    void handle_prepare_type_hierarchy(const JsonRpcRequest &req);
+    void handle_type_hierarchy_supertypes(const JsonRpcRequest &req);
+    void handle_type_hierarchy_subtypes(const JsonRpcRequest &req);
 
     void handle_initialized();
     void handle_did_open(const json::JsonValue &params);
@@ -74,6 +89,7 @@ class LspServer {
     void handle_did_change_configuration(const json::JsonValue &params);
     void handle_workspace_folders_changed(const json::JsonValue &params);
     void handle_watched_files_changed(const json::JsonValue &params);
+    void handle_set_trace(const json::JsonValue &params);
     void handle_exit();
 
     // Analysis

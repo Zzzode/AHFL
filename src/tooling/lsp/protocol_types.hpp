@@ -302,6 +302,45 @@ struct CodeLens {
     std::optional<std::string> data;
 };
 
+// ---------- Inlay Hint ----------
+
+enum class InlayHintKind : int {
+    Type = 1,
+    Parameter = 2,
+};
+
+struct InlayHint {
+    Position position;
+    std::string label;
+    InlayHintKind kind{InlayHintKind::Type};
+    bool padding_left{false};
+    bool padding_right{false};
+};
+
+// ---------- Call Hierarchy ----------
+
+struct CallHierarchyItem {
+    std::string name;
+    LspSymbolKind kind{LspSymbolKind::Function};
+    std::string detail;
+    std::string uri;
+    Range range;
+    Range selection_range;
+    // Server-specific data: the symbol's DefId as a string, used to resolve
+    // incoming/outgoing calls without re-resolving the symbol by name.
+    std::string data;
+};
+
+struct CallHierarchyIncomingCall {
+    CallHierarchyItem from;
+    std::vector<Range> from_ranges;
+};
+
+struct CallHierarchyOutgoingCall {
+    CallHierarchyItem to;
+    std::vector<Range> from_ranges;
+};
+
 // ---------- Server Capabilities ----------
 
 struct ServerCapabilities {
@@ -328,6 +367,9 @@ struct ServerCapabilities {
     bool document_highlight_provider{false};
     bool selection_range_provider{false};
     bool code_lens_provider{false};
+    bool inlay_hint_provider{false};
+    bool call_hierarchy_provider{false};
+    bool type_hierarchy_provider{false};
 };
 
 // ---------- Serialization helpers ----------
@@ -360,6 +402,13 @@ serialize_document_highlight(const DocumentHighlight &hl);
 [[nodiscard]] std::unique_ptr<json::JsonValue>
 serialize_selection_range(const SelectionRange &range);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_code_lens(const CodeLens &lens);
+[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_inlay_hint(const InlayHint &hint);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_call_hierarchy_item(const CallHierarchyItem &item);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_call_hierarchy_incoming_call(const CallHierarchyIncomingCall &call);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_call_hierarchy_outgoing_call(const CallHierarchyOutgoingCall &call);
 
 // ---------- Deserialization helpers ----------
 

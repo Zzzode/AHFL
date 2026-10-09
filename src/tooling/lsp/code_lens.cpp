@@ -116,28 +116,36 @@ void update_brace_depth(std::string_view line, int &depth, bool &in_block_commen
     return std::nullopt;
 }
 
-[[nodiscard]] CodeLens code_lens_for_symbol(const SymbolFact &symbol, std::string_view label) {
+/// Build the "N references" / "1 reference" title.
+[[nodiscard]] std::string reference_count_title(std::size_t count) {
+    if (count == 1) {
+        return "1 reference";
+    }
+    return std::to_string(count) + " references";
+}
+
+/// Attach the ahfl.showReferences command (uri + name position) to a lens.
+void attach_references_command(CodeLens &lens, std::string_view uri, const Position &position) {
+    lens.command = "ahfl.showReferences";
+    lens.command_arguments.push_back(std::string{uri});
+    lens.command_arguments.push_back(std::to_string(position.line));
+    lens.command_arguments.push_back(std::to_string(position.character));
+}
+
+[[nodiscard]] CodeLens code_lens_for_symbol(const LspWorkspaceIndex &index,
+                                            const SymbolFact &symbol) {
     CodeLens lens;
     lens.range = symbol.location.range;
 
-    std::string title;
-    title.reserve(label.size() + 1 + symbol.local_name.size());
-    title.append(label);
-    if (!symbol.local_name.empty()) {
-        title.push_back(' ');
-        title.append(symbol.local_name);
-    }
-    lens.command_title = std::move(title);
-    lens.command = "ahfl.showReferences";
-    if (!symbol.local_name.empty()) {
-        lens.command_arguments.push_back(symbol.local_name);
-    }
+    const auto ref_count = index.reference_locations_for_def(symbol.def_id).size();
+    lens.command_title = reference_count_title(ref_count);
+    attach_references_command(lens, symbol.location.uri, symbol.location.range.start);
     return lens;
 }
 
 } // namespace
 
-std::vector<CodeLens> compute_code_lens(const std::string &source) {
+std::vector<CodeLens> compute_code_lens(const std::string &source, std::string_view uri) {
     std::vector<CodeLens> result;
 
     // Keywords that introduce top-level declarations we care about.
@@ -182,7 +190,6 @@ std::vector<CodeLens> compute_code_lens(const std::string &source) {
         const bool is_line_comment = stripped.substr(0, 2) == "//";
         const bool starts_block_comment = stripped.substr(0, 2) == "/*";
 
-        bool found_decl = false;
         if (at_top_level && !is_line_comment && !starts_block_comment && !stripped.empty()) {
             for (const auto &[keyword, label] : kKeywords) {
                 if (starts_with_keyword(stripped, keyword)) {
@@ -203,19 +210,24 @@ std::vector<CodeLens> compute_code_lens(const std::string &source) {
                         title.append(name);
                     }
                     lens.command_title = std::move(title);
-                    lens.command = "ahfl.showReferences";
+
+                    // Position the references command on the symbol name when
+                    // available, otherwise on the keyword itself.
+                    Position command_position;
+                    command_position.line = line_number;
                     if (!name.empty()) {
-                        lens.command_arguments.push_back(std::string{name});
+                        command_position.character = static_cast<uint32_t>(
+                            (stripped.data() - line.data()) + (name.data() - stripped.data()));
+                    } else {
+                        command_position.character = lens.range.start.character;
                     }
+                    attach_references_command(lens, uri, command_position);
 
                     result.push_back(std::move(lens));
-                    found_decl = true;
                     break;
                 }
             }
         }
-
-        (void)found_decl;
 
         // Update brace depth and comment state for the next line.
         update_brace_depth(line, brace_depth, in_block_comment);
@@ -240,7 +252,7 @@ std::vector<CodeLens> compute_code_lens(const LspWorkspaceIndex &index, std::str
         if (!label.has_value()) {
             continue;
         }
-        result.push_back(code_lens_for_symbol(symbol, *label));
+        result.push_back(code_lens_for_symbol(index, symbol));
     }
     return result;
 }
