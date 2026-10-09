@@ -20,6 +20,7 @@
 
 #ifdef AHFL_ENABLE_BACKEND_WASM
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/descriptor_emit.hpp"
 #endif
 
 #ifdef AHFL_ENABLE_BACKEND_INFRA
@@ -259,6 +260,23 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                                    "wasm.INTERNAL_INVALID: failed to write "
                                                    "complete artifact");
                                            }
+                                           // Surface the embedded-host execution
+                                           // descriptor when the caller asked for it
+                                           // (ahflc build --emit-descriptor). Kind and
+                                           // entry come from the descriptor itself, so
+                                           // no package_metadata is required.
+                                           if (ctx.wasm_descriptor_out != nullptr &&
+                                               emitted.descriptor.has_value()) {
+                                               *ctx.wasm_descriptor_out =
+                                                   backends::render_wasm_execution_descriptor(
+                                                       *emitted.descriptor,
+                                                       emitted.descriptor->is_workflow
+                                                           ? "workflow"
+                                                           : "agent",
+                                                       emitted.descriptor->is_workflow
+                                                           ? emitted.descriptor->workflow_name
+                                                           : emitted.descriptor->agent_name);
+                                           }
                                            return {};
                                        }});
 #endif
@@ -268,10 +286,12 @@ EmitResult emit_backend(BackendKind kind,
                         ir::Program &program,
                         std::ostream &out,
                         const handoff::PackageMetadata *package_metadata,
-                        WasmProfile wasm_profile) {
+                        WasmProfile wasm_profile,
+                        std::string *wasm_descriptor_out) {
     ir::ensure_derived_analyses(
         program, ir::all_derived_analysis_kinds(), emission_analysis_phase(program));
     EmitContext ctx{program, out, package_metadata, wasm_profile};
+    ctx.wasm_descriptor_out = wasm_descriptor_out;
     return global_backend_registry().emit(kind, ctx);
 }
 

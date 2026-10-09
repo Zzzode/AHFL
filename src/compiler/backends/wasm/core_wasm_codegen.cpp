@@ -19151,6 +19151,19 @@ runner_last_cap_walk_index(const CoreProgram &program,
             bridge.spill_extent = site.spill_extent;
             lane.bridge_call_sites.push_back(std::move(bridge));
         }
+        // The construct heap is per-agent-plan: each P6 handler resets the
+        // shared heap_next global to its plan's construct_heap_base on entry
+        // (see build_agent_plan's reset_construct_heap_on_entry). The
+        // descriptor carries the minimum enabled base so a host authorizes
+        // the largest possible region [min_base, 65536) for output String
+        // reads.
+        for (const AgentPlan &agent_plan : plan.agent_plans) {
+            if (agent_plan.construct_heap_enabled &&
+                (lane.construct_heap_base == 0 ||
+                 agent_plan.construct_heap_base < lane.construct_heap_base)) {
+                lane.construct_heap_base = agent_plan.construct_heap_base;
+            }
+        }
         descriptor.frame = std::move(lane);
         descriptor.frame_section = plan.frame_section;
         descriptor.wire_schema = plan.frame_wire_table;

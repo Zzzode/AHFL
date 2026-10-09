@@ -269,11 +269,23 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
         }
     }
 
+    // --emit-descriptor is only meaningful for the WASM backend: the embedded
+    // host execution descriptor is a product of WASM emission. Reject it on
+    // any other backend rather than silently producing no file.
+    if (options.emit_descriptor_path.has_value() && *backend != ahfl::BackendKind::InfraWasm) {
+        err << "error: --emit-descriptor is only valid with the wasm backend (ahflc build)\n";
+        return 1;
+    }
+    std::string descriptor_json;
+    std::string *const descriptor_out =
+        options.emit_descriptor_path.has_value() ? &descriptor_json : nullptr;
+
     std::ostringstream build_buffer;
     std::ostream &backend_out = is_build ? build_buffer : out;
 
     if (!needs_smv_size_report) {
-        auto result = ahfl::emit_backend(*backend, program, backend_out, package_metadata, wasm_profile);
+        auto result = ahfl::emit_backend(*backend, program, backend_out, package_metadata,
+                                         wasm_profile, descriptor_out);
         if (!result.has_value()) {
             if (reports_user_facing_lowering_diagnostic) {
                 err << "error: " << result.error() << "\n";
@@ -295,6 +307,18 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
             build_file << build_buffer.str();
             build_file.close();
             out << "ok: built " << build_path << '\n';
+            if (descriptor_out != nullptr && !descriptor_json.empty()) {
+                std::ofstream descriptor_file(std::string{*options.emit_descriptor_path},
+                                              std::ios::binary | std::ios::trunc);
+                if (!descriptor_file.is_open()) {
+                    err << "error: cannot open descriptor file '"
+                        << *options.emit_descriptor_path << "' for writing\n";
+                    return 1;
+                }
+                descriptor_file << descriptor_json;
+                descriptor_file.close();
+                out << "ok: emitted descriptor " << *options.emit_descriptor_path << '\n';
+            }
         }
         return 0;
     }

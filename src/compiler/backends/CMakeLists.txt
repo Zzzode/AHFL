@@ -80,6 +80,7 @@ endif()
 if(AHFL_ENABLE_BACKEND_WASM)
     add_library(ahfl_compiler_backend_wasm STATIC
         wasm/core_wasm_codegen.cpp
+        wasm/descriptor_emit.cpp
     )
 
     target_link_libraries(ahfl_compiler_backend_wasm

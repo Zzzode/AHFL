@@ -127,6 +127,10 @@ void set_build_output(CommandLineOptions &opts, std::optional<std::string_view> 
     opts.build_output_path = val;
 }
 
+void set_emit_descriptor(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.emit_descriptor_path = val;
+}
+
 void set_package_registry_id(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.package_registry_id = val;
 }
@@ -384,6 +388,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      OptionArgKind::RequiredValue,
      set_build_output,
      "Output path for the built WASM binary (default: <stem>.wasm)",
+     "a file path"},
+    {"--emit-descriptor",
+     "",
+     OptionArgKind::RequiredValue,
+     set_emit_descriptor,
+     "Also write the embedded-host execution descriptor JSON to this path (build only)",
      "a file path"},
     {"--out",
      "",

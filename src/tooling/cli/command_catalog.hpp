@@ -98,6 +98,10 @@ struct CommandLineOptions {
     std::optional<std::string_view> formal_model_out;
     std::optional<std::string_view> package_archive_output_path;
     std::optional<std::string_view> build_output_path;
+    // When set, `ahflc build` also writes the embedded-host execution
+    // descriptor (ahfl.wasm-execution-descriptor.v1) to this path alongside
+    // the WASM binary. Inert on non-build commands.
+    std::optional<std::string_view> emit_descriptor_path;
     std::optional<std::string_view> package_registry_id;
     std::optional<std::string_view> lockfile_path;
     std::optional<std::string_view> bmc_depth;

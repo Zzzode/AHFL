@@ -44,6 +44,7 @@ enum class WasmProfile {
                                       ir::Program &program,
                                       std::ostream &out,
                                       const handoff::PackageMetadata *package_metadata = nullptr,
-                                      WasmProfile wasm_profile = WasmProfile::Wasi);
+                                      WasmProfile wasm_profile = WasmProfile::Wasi,
+                                      std::string *wasm_descriptor_out = nullptr);
 
 } // namespace ahfl
