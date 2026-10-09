@@ -38,8 +38,8 @@
     "onDebug:ahfl",
     "onDebugResolve:ahfl",
     "onCommand:ahfl.restartServer",
-    "onCommand:ahfl.formatDocument",
-    "onCommand:ahfl.showOutput"
+    "onCommand:ahfl.showOutput",
+    "onCommand:ahfl.showReferences"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -75,12 +75,52 @@
         "title": "AHFL: Restart Language Server"
       },
       {
-        "command": "ahfl.formatDocument",
-        "title": "AHFL: Format Document"
-      },
-      {
         "command": "ahfl.showOutput",
         "title": "AHFL: Show Language Server Output"
+      },
+      {
+        "command": "ahfl.showReferences",
+        "title": "AHFL: Show References"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ahfl.restartServer",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "editorLangId == ahfl"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ahfl.restartServer",
+          "when": "editorLangId == ahfl",
+          "group": "ahfl"
+        },
+        {
+          "command": "ahfl.showOutput",
+          "when": "editorLangId == ahfl",
+          "group": "ahfl"
+        }
+      ]
+    },
+    "problemMatchers": [
+      {
+        "name": "ahflc",
+        "label": "AHFL Compiler",
+        "owner": "ahfl",
+        "source": "ahflc",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(error|warning|note)(?: \\[([^\\]]+)\\])?: (.+) \\((.+):(\\d+):(\\d+)\\)$",
+          "severity": 1,
+          "code": 2,
+          "message": 3,
+          "file": 4,
+          "line": 5,
+          "column": 6
+        }
       }
     ],
     "breakpoints": [
@@ -219,6 +259,16 @@
           ],
           "default": "auto",
           "description": "Controls the MarkupContent kind requested from the AHFL language server."
+        },
+        "ahfl-language-server.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the AHFL language server."
         }
       }
     },
@@ -226,7 +276,7 @@
       "[ahfl]": {
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
-        "editor.formatOnSave": false,
+        "editor.formatOnSave": true,
         "editor.wordBasedSuggestions": "off",
         "editor.semanticHighlighting.enabled": true,
         "editor.rulers": [100]

@@ -43,6 +43,63 @@
     ],
     "description": "Define a new AHFL struct"
   },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:EnumName} {",
+      "    ${2:Variant1},",
+      "    ${3:Variant2}(${4:Type}),",
+      "}"
+    ],
+    "description": "Define a new AHFL enum"
+  },
+  "Type Alias": {
+    "prefix": "type",
+    "body": [
+      "type ${1:AliasName} = ${2:Type};"
+    ],
+    "description": "Define a type alias"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:param}: ${3:Type}) -> ${4:ReturnType} effect Pure decreases 0 {",
+      "    ${5:// body}",
+      "}"
+    ],
+    "description": "Define a new AHFL function"
+  },
+  "Trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:TraitName} {",
+      "    ${2:fn method(self) -> ${3:ReturnType} effect Pure;}",
+      "}"
+    ],
+    "description": "Define a new AHFL trait"
+  },
+  "Impl (Trait)": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Trait} for ${2:Type} {",
+      "    ${3:fn method(self) -> ${4:ReturnType} effect Pure decreases 0 {",
+      "        ${5:// body}",
+      "    }}",
+      "}"
+    ],
+    "description": "Implement a trait for a type"
+  },
+  "Impl (Inherent)": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Type} {",
+      "    ${2:fn method(self) -> ${3:ReturnType} effect Pure decreases 0 {",
+      "        ${4:// body}",
+      "    }}",
+      "}"
+    ],
+    "description": "Define an inherent impl block for a type"
+  },
   "Contract": {
     "prefix": "contract",
     "body": [
@@ -69,5 +126,22 @@
       "}"
     ],
     "description": "Define a flow implementation for an agent"
+  },
+  "Match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:expr} {",
+      "    ${2:Pattern} => ${3:result},",
+      "    ${4:_} => ${5:default},",
+      "}"
+    ],
+    "description": "Match expression"
+  },
+  "Transition": {
+    "prefix": "transition",
+    "body": [
+      "transition ${1:FromState} -> ${2:ToState};"
+    ],
+    "description": "Define a state transition"
   }
 }

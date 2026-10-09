@@ -60,25 +60,45 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ahfl.formatDocument', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                return;
-            }
-            if (editor.document.languageId !== 'ahfl') {
-                vscode.window.showInformationMessage('AHFL formatter is only available for AHFL files.');
-                return;
-            }
-            await vscode.commands.executeCommand('editor.action.formatDocument');
-        })
-    );
-
-    context.subscriptions.push(
         vscode.commands.registerCommand('ahfl.showOutput', () => {
             if (client) {
                 client.outputChannel.show();
             }
         })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'ahfl.showReferences',
+            async (uri?: string, line?: string, character?: string) => {
+                if (uri === undefined || line === undefined || character === undefined) {
+                    vscode.window.showInformationMessage(
+                        'This command is invoked from CodeLens, not the Command Palette.'
+                    );
+                    return;
+                }
+                const position = new vscode.Position(
+                    parseInt(line, 10),
+                    parseInt(character, 10)
+                );
+                const targetUri = vscode.Uri.parse(uri);
+                const locations = await vscode.commands.executeCommand<vscode.Location[]>(
+                    'vscode.executeReferenceProvider',
+                    targetUri,
+                    position
+                );
+                if (locations && locations.length > 0) {
+                    await vscode.commands.executeCommand(
+                        'editor.action.showReferences',
+                        targetUri,
+                        position,
+                        locations
+                    );
+                } else {
+                    vscode.window.showInformationMessage('No references found.');
+                }
+            }
+        )
     );
 
     // Register the AHFL debug adapter. The `ahfl-dap` binary speaks DAP over
