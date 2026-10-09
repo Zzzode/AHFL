@@ -53,6 +53,7 @@ export interface ApiResult {
     structured?: StructuredResult;
     wasmBase64?: string;
     wasmSize?: number;
+    descriptorJson?: string;
 }
 
 export async function callApi(endpoint: string, source: string): Promise<ApiResult> {

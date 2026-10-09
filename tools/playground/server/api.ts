@@ -23,6 +23,7 @@ interface ApiResult {
     structured?: StructuredResult;
     wasmBase64?: string;
     wasmSize?: number;
+    descriptorJson?: string;
 }
 
 function resolveAhflcPath(): string {
@@ -128,6 +129,7 @@ async function runBuild(source: string): Promise<ApiResult> {
     const sourceFile = join(workDir, 'main.ahfl');
     const manifestFile = join(workDir, 'ahfl.toml');
     const wasmFile = join(workDir, 'output.wasm');
+    const descriptorFile = join(workDir, 'descriptor.json');
 
     const workflowName = extractWorkflowName(source);
     if (!workflowName) {
@@ -173,7 +175,16 @@ std = { source = "sysroot" }
     return new Promise((resolve) => {
         const proc = spawn(
             ahflc,
-            ['build', '--manifest', manifestFile, '--verify=off', '--output', wasmFile],
+            [
+                'build',
+                '--manifest',
+                manifestFile,
+                '--verify=off',
+                '--output',
+                wasmFile,
+                '--emit-descriptor',
+                descriptorFile,
+            ],
             { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'] },
         );
 
@@ -200,6 +211,16 @@ std = { source = "sysroot" }
                 } catch {
                     result.success = false;
                     result.stderr = 'Build succeeded but WASM output file was not found.';
+                }
+                // The descriptor is a build sidecar; a missing descriptor is a
+                // soft failure (the binary is still usable for download) but
+                // the in-browser Run feature needs it.
+                try {
+                    result.descriptorJson = readFileSync(descriptorFile, 'utf-8');
+                } catch {
+                    result.stderr +=
+                        (result.stderr ? '\n' : '') +
+                        'Warning: build succeeded but the execution descriptor was not emitted.';
                 }
             }
 

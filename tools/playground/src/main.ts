@@ -6,7 +6,8 @@
  */
 import { createEditor, getEditorValue, setEditorValue, revealPosition } from './editor';
 import { callApi, type StructuredResult } from './compiler';
-import { renderStructured, renderFallback } from './renderer';
+import { renderStructured, renderFallback, renderRunResult } from './renderer';
+import { runWasmWorkflow, generateInputSkeleton, type ExecutionDescriptor } from './wasm-runner';
 import helloExample from '../examples/hello.ahfl?raw';
 import vendingExample from '../examples/vending-machine.ahfl?raw';
 import multiAgentExample from '../examples/multi-agent.ahfl?raw';
@@ -89,6 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         compile: document.getElementById('btn-compile') as HTMLButtonElement,
         verify: document.getElementById('btn-verify') as HTMLButtonElement,
         build: document.getElementById('btn-build') as HTMLButtonElement,
+        run: document.getElementById('btn-run') as HTMLButtonElement,
         format: document.getElementById('btn-format') as HTMLButtonElement,
         share: document.getElementById('btn-share') as HTMLButtonElement,
         reset: document.getElementById('btn-reset') as HTMLButtonElement,
@@ -178,6 +180,97 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }),
     );
+
+    // --- In-browser workflow execution (Run) ---
+    // The last successful build's WASM bytes + descriptor are cached so the
+    // Execute button can re-run with edited input without rebuilding.
+    let cachedWasmBytes: Uint8Array | null = null;
+    let cachedDescriptor: ExecutionDescriptor | null = null;
+    let lastRunInput = '';
+
+    const base64ToBytes = (base64: string): Uint8Array => {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    };
+
+    const executeAndRender = async (inputJson: string, buildMs: number) => {
+        if (cachedWasmBytes === null || cachedDescriptor === null) {
+            setOutput('error', renderFallback(false, 'No built workflow to run. Click Run first.'));
+            return;
+        }
+        const start = performance.now();
+        try {
+            const runResult = await runWasmWorkflow(cachedWasmBytes, cachedDescriptor, inputJson);
+            const elapsed = buildMs + (performance.now() - start);
+            setOutput('success', renderRunResult(runResult, inputJson, elapsed));
+            statusEl.textContent = runResult.status === 'completed' ? 'Ran' : 'Suspended';
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            setOutput('error', renderRunResult(
+                { status: 'failed', outputJson: null, stateTrace: [], transitions: 0, completedNodes: null, error: message },
+                inputJson,
+                buildMs + (performance.now() - start),
+            ));
+            statusEl.textContent = 'Error';
+        }
+    };
+
+    buttons.run.addEventListener('click', () =>
+        withButton(buttons.run, 'Run', async () => {
+            statusEl.textContent = 'Building WASM...';
+            const result = await callApi('build', getEditorValue());
+            if (!result.success || result.wasmBase64 === undefined) {
+                setOutput('error', renderFallback(false, result.stderr || result.stdout || 'Build failed'));
+                statusEl.textContent = 'Error';
+                return;
+            }
+            if (result.descriptorJson === undefined) {
+                setOutput('error', renderFallback(false,
+                    'Build succeeded but no execution descriptor was emitted. The ahflc binary may be out of date.'));
+                statusEl.textContent = 'Error';
+                return;
+            }
+            let descriptor: ExecutionDescriptor;
+            try {
+                descriptor = JSON.parse(result.descriptorJson) as ExecutionDescriptor;
+            } catch {
+                setOutput('error', renderFallback(false, 'Failed to parse the execution descriptor.'));
+                statusEl.textContent = 'Error';
+                return;
+            }
+            cachedWasmBytes = base64ToBytes(result.wasmBase64);
+            cachedDescriptor = descriptor;
+            // Generate a fresh input skeleton on the first run; keep the
+            // user's edited input on subsequent re-builds.
+            if (!lastRunInput) {
+                try {
+                    lastRunInput = generateInputSkeleton(descriptor);
+                } catch {
+                    lastRunInput = '{}';
+                }
+            }
+            statusEl.textContent = 'Executing...';
+            await executeAndRender(lastRunInput, result.elapsedMs);
+        }),
+    );
+
+    // Execute button: re-run with the edited input (delegated because the
+    // button is re-created on every render).
+    outputEl.addEventListener('click', (e) => {
+        const target = (e.target as HTMLElement).closest('#btn-execute') as HTMLElement | null;
+        if (!target) return;
+        const inputEl = document.getElementById('run-input') as HTMLTextAreaElement | null;
+        if (inputEl === null) return;
+        lastRunInput = inputEl.value;
+        target.setAttribute('disabled', 'true');
+        target.textContent = 'Executing...';
+        executeAndRender(lastRunInput, 0).finally(() => {
+            target.removeAttribute('disabled');
+            target.textContent = 'Execute';
+        });
+    });
 
     buttons.format.addEventListener('click', () =>
         withButton(buttons.format, 'Format', async () => {

@@ -5,6 +5,7 @@
  * into user-friendly HTML instead of raw CLI text.
  */
 import type { Diagnostic, StructuredResult, VerificationInfo } from './compiler';
+import type { RunResult } from './wasm-runner';
 
 const LEVEL_ICONS: Record<Diagnostic['level'], string> = {
     error: '✕',
@@ -140,4 +141,82 @@ export function renderFallback(success: boolean, text: string): string {
         <span class="result-icon">${success ? '✓' : '✕'}</span>
         <span class="result-text">${escapeHtml(text)}</span>
     </div>`;
+}
+
+/**
+ * Render the in-browser workflow run result: a status summary, the editable
+ * input JSON, the output JSON, the state trace, and run stats. The Execute
+ * button (id="btn-execute") re-runs with the edited input without rebuilding.
+ */
+export function renderRunResult(result: RunResult, inputJson: string, elapsedMs: number): string {
+    let html = '<div class="run-view">';
+
+    // Status summary
+    const completed = result.status === 'completed';
+    const suspended = result.status === 'suspended';
+    const summaryCls = completed ? 'result-ok' : suspended ? 'result-fail' : 'result-fail';
+    const summaryIcon = completed ? '✓' : suspended ? '⏸' : '✕';
+    const summaryText = completed
+        ? 'Workflow completed'
+        : suspended
+          ? 'Workflow suspended (pending capability)'
+          : 'Workflow failed';
+    html += `<div class="result-summary ${summaryCls}">
+        <span class="result-icon">${summaryIcon}</span>
+        <span class="result-text">${summaryText}</span>
+        <span class="result-time">${elapsedMs.toFixed(0)}ms</span>
+    </div>`;
+
+    // Input editor
+    html += `<div class="run-input-section">
+        <div class="run-section-header">Workflow Input (JSON)</div>
+        <textarea id="run-input" class="run-input-editor" spellcheck="false">${escapeHtml(inputJson)}</textarea>
+        <button id="btn-execute" class="btn-execute">Execute</button>
+    </div>`;
+
+    // Output
+    if (result.outputJson !== null) {
+        let pretty: string;
+        try {
+            pretty = JSON.stringify(JSON.parse(result.outputJson), null, 2);
+        } catch {
+            pretty = result.outputJson;
+        }
+        html += `<div class="run-output-section">
+            <div class="run-section-header">Output</div>
+            <pre class="run-output-json">${escapeHtml(pretty)}</pre>
+        </div>`;
+    }
+
+    // Stats
+    const stats: string[] = [];
+    if (result.completedNodes !== null) {
+        stats.push(`${result.completedNodes} node${result.completedNodes === 1 ? '' : 's'} completed`);
+    }
+    stats.push(`${result.transitions} transition${result.transitions === 1 ? '' : 's'}`);
+    html += `<div class="run-stats-bar">${stats.map((s) => `<span>${escapeHtml(s)}</span>`).join('<span class="stat-sep">·</span>')}</div>`;
+
+    // State trace
+    if (result.stateTrace.length > 0) {
+        const traceParts: string[] = [];
+        for (let i = 0; i < result.stateTrace.length; i++) {
+            const entry = result.stateTrace[i];
+            const shortAgent = entry.agent.split('::').pop() ?? entry.agent;
+            traceParts.push(`<span class="run-trace-node">${escapeHtml(shortAgent)}: ${escapeHtml(entry.state)}</span>`);
+            if (i < result.stateTrace.length - 1) {
+                traceParts.push('<span class="run-trace-arrow">→</span>');
+            }
+        }
+        html += `<div class="run-trace-section">
+            <div class="run-section-header">State Trace</div>
+            <div class="run-trace">${traceParts.join('')}</div>
+        </div>`;
+    }
+
+    if (result.error) {
+        html += `<div class="run-suspended">${escapeHtml(result.error)}</div>`;
+    }
+
+    html += '</div>';
+    return html;
 }
