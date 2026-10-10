@@ -151,8 +151,8 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 当前 runtime kernel 不承诺：
 
 1. Native gRPC / Protobuf transport；继续服从 RFC 0004 decision gate。
-2. 多 region distributed scheduler 或 remote worker lease。
-3. 官方 object store / database schema 或 registry service。
+2. 多 region distributed scheduler 或 remote worker lease。种子代码（`distributed.cpp`、`parallel_scheduler.cpp`）已按 Principle 1 删除（2026-10-10，零非测试生产调用者）；概念仍冻结，未来复活从 RFC 开始。
+3. 官方 object store / database schema 或 registry service。已决定（2026-10-10）：实现最小自托管 reference registry server（C++、filesystem-backed、复用现有 registry JSON codec），推迟托管多租户服务。
 4. OpenTelemetry SDK / collector transport；当前只提供从 canonical events 派生的 OTLP-compatible JSON adapter。
 5. Web Playground、Marketplace adapter 或第三方框架 wrapper。
 6. 真实部署环境的跨平台长期趋势与 production-ready 声明。当前 hour-scale
@@ -169,3 +169,27 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 3. schema 变化必须同步 recovery compatibility policy、测试和 evidence generator。
 4. renderer 变化不能改变 event 或 report 语义。
 5. 修改 runtime kernel 后至少运行 event、report、projection、recovery、wasm workflow runtime 测试,以及 `durable_resume_capstone` 与 `long_soak_smoke`。
+
+## Decision History
+
+### 2026-10-10: gRPC transport — in-process HTTP/2 via vendored libcurl
+
+**Decision:** Commit to the in-process HTTP/2 client path by vendoring libcurl (the Cargo/rustc pattern) and replacing the curl subprocess in one big-bang, interface-preserving change. RFC 0004 No-Go on native gRPC stands; the CI gate stays.
+
+**Rationale:** The curl subprocess has three real defects: (1) fake streaming — `extract_stream_content` and `StreamingClient::stream` both buffer the entire response body then parse SSE lines from the buffered string, with no incremental token delivery or mid-stream cancellation; (2) no connection reuse — the transport uses popen+curl, creating a new process per request; (3) conflicts with the embeddable positioning — a subprocess dependency is unacceptable for an embeddable DSL runtime. Native gRPC is rejected because it conflicts with stabilized RFC 0020 (single-binary, vendored-only deps, capabilities via host) and the no-external-runtime-dependency constraint: grpc + protobuf + abseil + re2 + cares + openssl is ~100-300MB of vendored source plus protoc codegen. The Reference Hierarchy is unanimous: no core toolchain (Rust, Swift, Clang, GHC, Dafny) embeds a gRPC client. Rust/Cargo — the closest analog — vendors libcurl for HTTP, not gRPC. The capability embedding ABI (RFC 0021) is the designed escape hatch: a host needing native gRPC implements it host-side.
+
+**Costs:** Vendoring libcurl + nghttp2 + a TLS library is significant CMake integration. libcurl must be option-locked to HTTP/HTTPS only (disable FTP/SMTP/LDAP/etc.) to keep the attack surface and binary size minimal. This is the second compiled-in vendored runtime dependency after ANTLR4.
+
+**Acceptance criteria:** `execute_http` keeps its exact signature; all seven call sites compile and pass with no source changes beyond the transport implementation; streaming delivers incremental chunks with mid-stream cancellation; connection reuse is verified; the CI gate (`scripts/check-native-grpc-gate.py`) continues to pass.
+
+### 2026-10-10: P3 scoping — registry server and dead scheduler deletion
+
+**Decision:** Two items, two opposite recommendations.
+
+1. **Registry server: IMPLEMENT** a minimal self-hostable reference registry server binary (C++, in-repo, filesystem-backed content-addressed store, reusing existing registry JSON codecs). **DEFER** the hosted multi-tenant service (auth, TLS, SLA, abuse — operations work blocked on unresolved RFC 0010 Open Question 1). Effort: M.
+
+2. **Multi-region scheduling: DELETE** the dead code per Principle 1. `DistributedScheduler` + `ParallelScheduler` had zero non-test production callers (verified for the class AND every associated type). Sources, CMake targets, test wiring, and doc references deleted in the same change. The multi-region feature stays frozen as a concept; reviving it starts from a future RFC and the RFC 0022 resume machinery, not from this code. Effort: S.
+
+**Rationale:** The RFC 0010 registry client is stabilized production code — deleting it would break the publish/resolve/yank product path. But the server doesn't exist, and release evidence runs against a Python fixture. A reference server captures the real value (a proven, implementable protocol and a self-hostable registry) without the operations burden. The hosted service is the wrong architecture now (Principle 6: a constraint forcing wrong architecture is a problem to name, not a state to accept). For the schedulers, Principle 1 is non-negotiable: zero non-test production callers means dead code, and keeping it "just in case" is explicitly forbidden.
+
+**Acceptance criteria (registry server):** A new in-repo C++ server binary starts an HTTP server implementing the exact protocol the client speaks (7 endpoints from `scripts/generate-release-evidence-archive.py`); release evidence runs against the real server over HTTP loopback; immutability per RFC 0010 is enforced (409 Conflict on re-publish with different content); filesystem-backed storage with no new runtime dependency; offline-source-buildable.

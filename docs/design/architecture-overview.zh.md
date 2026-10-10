@@ -225,7 +225,7 @@ controlled-pilot gate、beta evidence gate、bounded soak、网络故障矩阵�
 
 ### 4.6 尚不存在的平台概念
 
-Serverless 托管、多租户平台、多 region 控制面——目前**只有种子没有产品**：infra backends 是部署视图的种子，`distributed.cpp` 是分布式调度的种子。任何平台化讨论应先开 RFC，不得回填破坏 L1 边界。
+Serverless 托管、多租户平台、多 region 控制面——目前**只有种子没有产品**：infra backends 是部署视图的种子。分布式调度的种子代码（`distributed.cpp`、`parallel_scheduler.cpp`）已按 Principle 1 删除（零非测试生产调用者）；多 region 调度作为概念仍然冻结，未来复活从 RFC 开始，不从旧代码开始。任何平台化讨论应先开 RFC，不得回填破坏 L1 边界。
 
 ---
 

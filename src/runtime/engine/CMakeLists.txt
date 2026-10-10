@@ -14,10 +14,8 @@ add_library(ahfl_runtime_engine STATIC
     connection_pool.cpp
     http_transport.cpp
     grpc_transport.cpp
-    parallel_scheduler.cpp
     data_pipeline.cpp
     sandbox.cpp
-    distributed.cpp
     wire_capability.cpp
     wire_value.cpp
     wire_transport_adapter.cpp

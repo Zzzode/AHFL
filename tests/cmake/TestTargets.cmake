@@ -1476,15 +1476,6 @@ target_link_libraries(ahfl_bmc_depth_customization_tests
 )
 ahfl_apply_project_warnings(ahfl_bmc_depth_customization_tests)
 
-add_executable(ahfl_parallel_scheduler_tests
-    unit/runtime/engine/parallel_scheduler.cpp
-)
-target_link_libraries(ahfl_parallel_scheduler_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_parallel_scheduler_tests)
-
 add_executable(ahfl_sandbox_tests
     unit/runtime/engine/sandbox.cpp
 )
@@ -1493,15 +1484,6 @@ target_link_libraries(ahfl_sandbox_tests
         ahfl_runtime_engine
 )
 ahfl_apply_project_warnings(ahfl_sandbox_tests)
-
-add_executable(ahfl_distributed_tests
-    unit/runtime/engine/distributed.cpp
-)
-target_link_libraries(ahfl_distributed_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_distributed_tests)
 
 add_executable(ahfl_tooling_formatter_tests
     unit/tooling/formatter/formatter.cpp
@@ -2038,9 +2020,7 @@ foreach(_tgt
     ahfl_model_checker_tests
     ahfl_verification_formal_integration_tests
     ahfl_bmc_depth_customization_tests
-    ahfl_parallel_scheduler_tests
     ahfl_sandbox_tests
-    ahfl_distributed_tests
     ahfl_tooling_formatter_tests
     ahfl_decreases_structure_tests
     ahfl_decreases_printer_tests

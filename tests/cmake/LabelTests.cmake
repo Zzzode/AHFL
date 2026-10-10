@@ -462,21 +462,9 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS parallel-scheduler
-    TESTS
-        ahfl.runtime.parallel_scheduler_all
-)
-
-ahfl_label_tests(
     LABELS sandbox
     TESTS
         ahfl.runtime.sandbox_all
-)
-
-ahfl_label_tests(
-    LABELS distributed
-    TESTS
-        ahfl.runtime.distributed_all
 )
 
 ahfl_label_tests(

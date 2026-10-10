@@ -1824,16 +1824,8 @@ add_test(NAME ahfl.formal.bmc_depth_customization_all
     COMMAND $<TARGET_FILE:ahfl_bmc_depth_customization_tests>
 )
 
-add_test(NAME ahfl.runtime.parallel_scheduler_all
-    COMMAND $<TARGET_FILE:ahfl_parallel_scheduler_tests>
-)
-
 add_test(NAME ahfl.runtime.sandbox_all
     COMMAND $<TARGET_FILE:ahfl_sandbox_tests>
-)
-
-add_test(NAME ahfl.runtime.distributed_all
-    COMMAND $<TARGET_FILE:ahfl_distributed_tests>
 )
 
 add_test(NAME ahfl.formatter.formatter_all
