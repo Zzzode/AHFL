@@ -1,0 +1,60 @@
+// Generics
+// Demonstrates: a generic enum type parameter, monomorphization (Option<Int>),
+// and match with payload binding
+
+module playground;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct GenRequest {
+    n: Int;
+    label: String;
+}
+
+pub struct GenResult {
+    value: Int;
+    label: String;
+}
+
+pub struct GenContext {
+    value: Int = 0;
+}
+
+pub agent GenericAgent {
+    input: GenRequest;
+    context: GenContext;
+    output: GenResult;
+    states: [Computing, Done];
+    initial: Computing;
+    final: [Done];
+    capabilities: [];
+    transition Computing -> Done;
+}
+
+flow for GenericAgent {
+    state Computing {
+        let maybe: Option<Int> = Option::Some(input.n);
+        let value: Int = match maybe {
+            Some(v) => v,
+            None => 0,
+        };
+        ctx.value = value;
+        goto Done;
+    }
+
+    state Done {
+        return GenResult { value: ctx.value, label: input.label };
+    }
+}
+
+pub workflow GenericWorkflow {
+    input: GenRequest;
+    output: GenResult;
+
+    node compute: GenericAgent(input);
+
+    return: compute;
+}

@@ -1,0 +1,62 @@
+// Match on Enums
+// Demonstrates: enum types, match expressions, context mutation, and if-let
+
+module playground;
+
+pub enum Tier {
+    Standard,
+    Premium,
+}
+
+pub struct ScoreRequest {
+    name: String;
+    tier: Tier;
+    score: Int;
+}
+
+pub struct ScoreResult {
+    label: String;
+    points: Int;
+}
+
+pub struct ScoreContext {
+    points: Int = 0;
+}
+
+pub agent Scorer {
+    input: ScoreRequest;
+    context: ScoreContext;
+    output: ScoreResult;
+    states: [Deciding, Done];
+    initial: Deciding;
+    final: [Done];
+    capabilities: [];
+    transition Deciding -> Done;
+}
+
+flow for Scorer {
+    state Deciding {
+        let bonus: Int = match input.tier {
+            Premium => 25,
+            Standard => 0,
+        };
+        ctx.points = input.score + bonus;
+        if let Premium = input.tier {
+            ctx.points = ctx.points + 10;
+        }
+        goto Done;
+    }
+
+    state Done {
+        return ScoreResult { label: input.name, points: ctx.points };
+    }
+}
+
+pub workflow ScoreWorkflow {
+    input: ScoreRequest;
+    output: ScoreResult;
+
+    node score: Scorer(input);
+
+    return: score;
+}

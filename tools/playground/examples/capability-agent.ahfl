@@ -1,0 +1,74 @@
+// Effectful Agent with Capabilities
+// Demonstrates: capability declarations, bridge calls, match-based routing.
+// The playground binds mock responses to each capability below the Run view.
+
+module playground;
+
+pub enum Channel {
+    Web,
+    Phone,
+    Post,
+}
+
+pub struct TicketRequest {
+    ticket_id: String;
+    urgent: Bool;
+    channel: Channel;
+}
+
+pub struct RoutingContext {
+    owner: String = "unassigned";
+}
+
+pub struct RoutingDecision {
+    route: Channel;
+    owner: String;
+}
+
+capability RouteTicket(ticket_id: String, priority: Int, urgent: Bool) -> RoutingDecision;
+
+pub agent RoutingAgent {
+    input: TicketRequest;
+    context: RoutingContext;
+    output: RoutingDecision;
+    states: [Init, Routing, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [RouteTicket];
+
+    transition Init -> Routing;
+    transition Routing -> Done;
+}
+
+flow for RoutingAgent {
+    state Init {
+        goto Routing;
+    }
+
+    state Routing {
+        let priority: Int = match input.channel {
+            Phone => 1,
+            Web => 2,
+            Post => 3,
+        };
+        let decision = RouteTicket(input.ticket_id, priority, input.urgent);
+        ctx.owner = decision.owner;
+        goto Done;
+    }
+
+    state Done {
+        return RoutingDecision {
+            route: input.channel,
+            owner: ctx.owner,
+        };
+    }
+}
+
+pub workflow RoutingWorkflow {
+    input: TicketRequest;
+    output: RoutingDecision;
+
+    node route: RoutingAgent(input);
+
+    return: route;
+}

@@ -12,8 +12,14 @@
  * offset/stride/capacity comes from the module's own execution descriptor
  * (ahfl.wasm-execution-descriptor.v1), never a host re-derivation.
  *
- * Slice 1 supports capability-free workflows only (zero imports). A module
- * that imports capabilities is rejected with an actionable error.
+ * Capability workflows are supported through the frame-bridge v2 ABI (RFC
+ * 0026 P6-7, rung V2-C): every capability import has functype
+ * (block_ptr:i32) -> (status:i32, result_root_ptr:i32). The host walks the
+ * dense P4-D argument spans at the bridge control block, builds the same wire
+ * argument envelope the native transport uses, and packs a configurable mock
+ * response (JSON) into the call site's disjoint result placement. The bridge
+ * machinery is a TypeScript port of the certified conformance host
+ * (tests/conformance/node_embedded_host.mjs).
  */
 
 // ---------------------------------------------------------------------------
@@ -217,12 +223,32 @@ export interface StateTraceEntry {
     state: string;
 }
 
+/**
+ * One observed capability invocation: the capability's short source name and
+ * the wire argument envelope the module passed (same shape the native
+ * transport serializes: 0 args => {}, one Struct => bare object, one
+ * non-Struct => {"value":..}, N => {"args":[...]}).
+ */
+export interface CapabilityCall {
+    name: string;
+    argument: string;
+}
+
+/**
+ * Mock responses for capability imports, keyed by the capability's short
+ * source name (last segment of its canonical name, e.g. "RouteTicket"). Each
+ * value is a wire-JSON string that is packed into the call site's result
+ * placement on every invocation of that capability.
+ */
+export type CapabilityMocks = Record<string, string>;
+
 export interface RunResult {
     status: 'completed' | 'suspended' | 'failed';
     outputJson: string | null;
     stateTrace: StateTraceEntry[];
     transitions: number;
     completedNodes: number | null;
+    capabilityCalls?: CapabilityCall[];
     error?: string;
 }
 
@@ -801,30 +827,344 @@ function decodeStateTrace(
 }
 
 // ---------------------------------------------------------------------------
+// Capability bridge (frame-bridge v2, ported from node_embedded_host.mjs)
+// ---------------------------------------------------------------------------
+
+/**
+ * The short source name of a capability import: the last segment of its
+ * canonical name ("playground::main::RouteTicket" -> "RouteTicket").
+ */
+export function capabilityShortName(canonical: string): string {
+    const segments = canonical.split('::');
+    return segments[segments.length - 1] ?? canonical;
+}
+
+/**
+ * Classify one bridge parameter by its WIRE shape (the SSOT discriminator): a
+ * scalar / tag-only enum / String PtrLen is spilled into the call site's
+ * private 8-byte slots; a struct / tuple / option / payload-bearing enum stays
+ * at its aggregate root address. Mirrors the C++ planning classification in
+ * plan_capability_call.
+ */
+function bridgeParamKind(W: WireNode[], wireId: number): 'spill' | 'root' {
+    const w = W[wireId];
+    if (w === undefined) throw new Error('wasm-runner: bridge parameter names an unknown wire node');
+    switch (w.t) {
+        case 'bool':
+        case 'int':
+        case 'unit':
+        case 'string':
+        case 'float':
+            return 'spill';
+        case 'struct':
+        case 'option':
+        case 'tuple':
+            return 'root';
+        case 'enum': {
+            const tagOnly = w.variants.every((v) => v.kind === 'unit');
+            return tagOnly ? 'spill' : 'root';
+        }
+        case 'decimal':
+        case 'duration':
+        case 'timestamp':
+        case 'uuid':
+        case 'map':
+        case 'sequence':
+        case 'closure':
+            throw new Error(`wasm-runner: a bridge parameter of wire shape '${w.t}' is outside the frame-bridge subset`);
+    }
+}
+
+function inRegion(addr: number, len: number, region: Region): boolean {
+    return addr >= region.lo && len <= region.hi - addr;
+}
+
+/**
+ * The authorized aggregate-root homes for a bridge call's arguments: every
+ * packaged node's I_k / C_k / scratch_k / O_k block span (a bridge in a
+ * non-final handler may project the node input or an earlier handler's
+ * context/scratch/output) and every OTHER call site's disjoint result
+ * placement. The current site's own result is excluded — it is the call
+ * output, unwritten before the invocation.
+ */
+function bridgeRootRegions(descriptor: ExecutionDescriptor, currentSite: BridgeCallSite): Region[] {
+    const lane = descriptor.frame_lane;
+    const regions: Region[] = [];
+    if (descriptor.kind === 'workflow' && descriptor.workflow_lane?.node_blocks) {
+        for (const block of descriptor.workflow_lane.node_blocks) {
+            regions.push({ lo: block.input_base, hi: block.input_base + block.input_size });
+            if (block.context_size > 0) {
+                regions.push({ lo: block.context_base, hi: block.context_base + block.context_size });
+            }
+            if (block.scratch_size > 0) {
+                regions.push({ lo: block.scratch_base, hi: block.scratch_base + block.scratch_size });
+            }
+            if (block.output_size > 0) {
+                regions.push({ lo: block.output_base, hi: block.output_base + block.output_size });
+            }
+        }
+    } else {
+        regions.push({ lo: lane.input_base, hi: lane.input_base + lane.input_size });
+        regions.push({ lo: 4096, hi: 7168 });
+        regions.push({ lo: 7168, hi: 12288 });
+    }
+    for (const other of lane.bridge_call_sites) {
+        if (other.call_site_id === currentSite.call_site_id) continue;
+        regions.push({ lo: other.result_base, hi: other.result_base + other.result_extent });
+    }
+    return regions;
+}
+
+/**
+ * Union of the String-payload regions the read walker may authorize for a
+ * bridge argument: the packed input-payload arena, the workflow entry payload
+ * arena, the rodata region, the construct heap, every OTHER call site's result
+ * placement payload, and every packaged node's O_k block (a construct terminal
+ * materializes its argument there). Mirrors build_bridge_string_regions in
+ * capability_import.cpp.
+ */
+function bridgeStringRegions(descriptor: ExecutionDescriptor, currentSite: BridgeCallSite): Region[] {
+    const lane = descriptor.frame_lane;
+    const regions: Region[] = [];
+    const arenaLo = lane.payload_arena_base || 0;
+    const arenaHi = arenaLo + lane.payload_arena_capacity;
+    if (arenaLo !== 0 && arenaHi > arenaLo) {
+        regions.push({ lo: arenaLo, hi: arenaHi });
+    }
+    const wfLane = descriptor.workflow_lane;
+    if (wfLane !== undefined && wfLane.entry_payload_capacity > 0) {
+        regions.push({
+            lo: wfLane.entry_payload_base,
+            hi: wfLane.entry_payload_base + wfLane.entry_payload_capacity,
+        });
+    }
+    const rodataLo = lane.rodata_base || 0;
+    const rodataHi = rodataLo + lane.rodata_extent;
+    if (rodataLo !== 0 && rodataHi > rodataLo) {
+        regions.push({ lo: rodataLo, hi: rodataHi });
+    }
+    const heapLo = lane.construct_heap_base || 0;
+    if (heapLo !== 0) {
+        regions.push({ lo: heapLo, hi: kPageSize });
+    }
+    for (const s of lane.bridge_call_sites) {
+        if (s.call_site_id === currentSite.call_site_id) continue;
+        if (s.result_payload_capacity > 0) {
+            regions.push({ lo: s.result_payload_base, hi: s.result_payload_base + s.result_payload_capacity });
+        }
+    }
+    if (wfLane?.node_blocks) {
+        for (const block of wfLane.node_blocks) {
+            if (block.output_size > 0) {
+                regions.push({ lo: block.output_base, hi: block.output_base + block.output_size });
+            }
+        }
+    } else if (lane.output_size > 0) {
+        regions.push({ lo: lane.output_base, hi: lane.output_base + lane.output_size });
+    }
+    return regions;
+}
+
+/**
+ * Read ONE bridge argument P4-D span into a JS value. The descriptor ptr/len
+ * words are untrusted module evidence: each argument span is independently
+ * region-membership-tested against exactly the homes that parameter kind may
+ * name, and the module-provided len is only cross-checked against the dense
+ * layout — never used as the span authority.
+ */
+function readBridgeArg(
+    memory: WebAssembly.Memory,
+    descriptor: ExecutionDescriptor,
+    lane: FrameLane,
+    W: WireNode[],
+    L: LayoutNode[],
+    backing: Map<number, FramePlacement>,
+    currentSite: BridgeCallSite,
+    wireId: number,
+    layoutId: number,
+    ptr: number,
+    len: number,
+    rootRegions: Region[],
+): unknown {
+    if (!Number.isInteger(ptr) || !Number.isInteger(len) || ptr < 0 || len < 0 ||
+        ptr + len > kPageSize) {
+        throw new Error('wasm-runner: bridge argument span lies outside the fixed page');
+    }
+    const l = L[layoutId];
+    if (l === undefined) throw new Error('wasm-runner: bridge argument names an unknown layout root');
+    const kind = bridgeParamKind(W, wireId);
+    if (kind === 'spill') {
+        if (l.t !== 'scalar' && l.t !== 'ptrlen' && l.t !== 'enum') {
+            throw new Error('wasm-runner: a spilled bridge parameter maps to a non-scalar/non-PtrLen/non-tag-enum layout');
+        }
+        if (len !== 8) {
+            throw new Error(`wasm-runner: a spilled bridge parameter descriptor len must be 8 (got ${len})`);
+        }
+        const spillRegion = {
+            lo: currentSite.spill_base,
+            hi: currentSite.spill_base + currentSite.spill_extent,
+        };
+        if (!(spillRegion.hi > spillRegion.lo) || !inRegion(ptr, 8, spillRegion)) {
+            throw new Error("wasm-runner: a spilled bridge parameter lies outside its call site's private spill window");
+        }
+    } else {
+        if (l.t !== 'struct' && l.t !== 'enum') {
+            throw new Error('wasm-runner: an aggregate bridge parameter maps to a non-struct/non-enum layout');
+        }
+        const rootSize = l.size;
+        if (len !== rootSize) {
+            throw new Error(
+                'wasm-runner: an aggregate bridge parameter descriptor len disagrees with its dense ' +
+                `layout root size (descriptor ${len}, layout ${rootSize})`);
+        }
+        if (!rootRegions.some((r) => inRegion(ptr, rootSize, r))) {
+            throw new Error('wasm-runner: an aggregate bridge parameter names a root outside an authorized frame / scratch / other-site result placement');
+        }
+    }
+    return readValue(memory, lane, W, L, wireId, layoutId, ptr, backing,
+                     bridgeStringRegions(descriptor, currentSite));
+}
+
+/**
+ * Pack one bridge result value at the call site's result root. String payload
+ * bytes are written to the site's disjoint payload arena (one bump cursor).
+ */
+function packBridgeResult(
+    memory: WebAssembly.Memory,
+    lane: FrameLane,
+    W: WireNode[],
+    L: LayoutNode[],
+    site: BridgeCallSite,
+    value: unknown,
+): void {
+    if (site.result_base < 0 || site.result_base + site.result_extent > kPageSize) {
+        throw new Error('wasm-runner: bridge result placement lies outside the fixed page');
+    }
+    // Zero the whole result placement (padding reads back deterministically).
+    new Uint8Array(memory.buffer, site.result_base, site.result_extent).fill(0);
+    const arena: Arena = {
+        cursor: site.result_payload_base,
+        base: site.result_payload_base,
+        capacity: site.result_payload_capacity,
+        exhausted_message: 'wasm-runner: bridge result payload arena exhausted',
+    };
+    const resultBacking = backingByLayout(lane);
+    packValue(memory, lane, W, L, value, site.result, site.result_layout,
+              site.result_base, resultBacking, arena);
+}
+
+/**
+ * The wire argument envelope SSOT (mirrors serialize_args_for_wire_json in
+ * src/runtime/engine/wire_value.cpp): 0 args => {}, one Struct => bare object,
+ * one non-Struct => {"value":..}, N => {"args":[...]}.
+ */
+function bridgeEnvelope(W: WireNode[], paramWireIds: number[], args: unknown[]): string {
+    if (args.length === 0) return '{}';
+    if (args.length === 1) {
+        const wireNode = W[paramWireIds[0]];
+        if (wireNode === undefined) {
+            throw new Error('wasm-runner: bridge envelope names an unknown wire parameter');
+        }
+        if (wireNode.t === 'struct') return stringifyValue(args[0]);
+        return stringifyValue({ value: args[0] });
+    }
+    return stringifyValue({ args });
+}
+
+/** Everything a bridge callback needs that is not known at import-construction time. */
+interface BridgeHost {
+    descriptor: ExecutionDescriptor;
+    mocks: Map<string, unknown>;
+    calls: CapabilityCall[];
+    getMemory: () => WebAssembly.Memory;
+}
+
+/**
+ * Build the host function for one capability import. The import has functype
+ * (block_ptr:i32) -> (status:i32, result_root_ptr:i32): the call site is
+ * resolved FROM THE CONTROL-BLOCK ADDRESS (one capability legally occupies one
+ * import shared by many dense call sites), its arguments are walked and
+ * recorded, and the configured mock JSON is packed into the site's result
+ * placement. Returns [0, result_base] on success.
+ */
+function makeBridgeCallback(
+    entry: ImportDescriptor,
+    host: BridgeHost,
+): (blockPtr: number) => [number, number] {
+    const lane = host.descriptor.frame_lane;
+    const W = host.descriptor.wire_schema.nodes;
+    const L = lane.layouts;
+    const backing = backingByLayout(lane);
+    const shortName = capabilityShortName(entry.name);
+    return (blockPtr: number): [number, number] => {
+        const memory = host.getMemory();
+        const sites = lane.bridge_call_sites;
+        const stride = lane.bridge_block_stride;
+        const rel = blockPtr - lane.bridge_control_base;
+        if (!Number.isInteger(blockPtr) || rel < 0 ||
+            rel >= sites.length * stride || rel % stride !== 0) {
+            throw new Error('wasm-runner: bridge control-block pointer names an address outside a dense fixed-stride control-block slot');
+        }
+        const site = sites[Math.floor(rel / stride)];
+        if (site === undefined || blockPtr !== lane.bridge_control_base + site.block_offset) {
+            throw new Error('wasm-runner: bridge control-block pointer is not at its dense fixed-stride offset');
+        }
+        if (site.import_ordinal !== entry.ordinal) {
+            throw new Error(
+                `wasm-runner: bridge call site ${site.call_site_id} names import ordinal ` +
+                `${site.import_ordinal} but import ordinal ${entry.ordinal} was invoked`);
+        }
+        const view = new DataView(memory.buffer);
+        const callSiteId = view.getUint32(blockPtr, true);
+        const argCount = view.getUint32(blockPtr + 4, true);
+        if (callSiteId !== site.call_site_id) {
+            throw new Error('wasm-runner: bridge control-block call_site_id disagrees with its dense block address');
+        }
+        if (argCount !== site.arity) {
+            throw new Error(`wasm-runner: bridge control-block arg_count ${argCount} != descriptor arity ${site.arity}`);
+        }
+        const rootRegions = bridgeRootRegions(host.descriptor, site);
+        const argValues: unknown[] = [];
+        for (let i = 0; i < argCount; ++i) {
+            const desc = blockPtr + 8 + 8 * i;
+            const ptr = view.getInt32(desc, true);
+            const len = view.getUint32(desc + 4, true);
+            argValues.push(readBridgeArg(memory, host.descriptor, lane, W, L, backing, site,
+                                         site.params[i], site.param_layout[i], ptr, len, rootRegions));
+        }
+        host.calls.push({ name: shortName, argument: bridgeEnvelope(W, site.params, argValues) });
+        const mock = host.mocks.get(shortName);
+        if (mock === undefined) {
+            throw new Error(`wasm-runner: no mock response configured for capability '${shortName}'`);
+        }
+        packBridgeResult(memory, lane, W, L, site, mock);
+        return [0, site.result_base];
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Workflow runner
 // ---------------------------------------------------------------------------
 
 /**
- * Compile, instantiate, and run a capability-free workflow WASM module.
+ * Compile, instantiate, and run a workflow WASM module.
  *
- * Throws on a module that imports capabilities (Slice 1 does not bind the
- * bridge callback), on a non-workflow descriptor, or on any frame/ABI
+ * Capability-free modules run with an empty import object. Modules that
+ * import capabilities are run with bridge host functions (frame-bridge v2
+ * ABI): each capability invocation packs `capabilityMocks[short-name]` (or a
+ * wire-shape skeleton default) into the call site's result placement. Throws
+ * on a non-workflow descriptor, an unexpected host module, or any frame/ABI
  * violation. The caller catches and surfaces the error message.
  */
 export async function runWasmWorkflow(
     wasmBytes: Uint8Array,
     descriptor: ExecutionDescriptor,
     inputJson: string,
+    capabilityMocks?: CapabilityMocks,
 ): Promise<RunResult> {
     if (descriptor.kind !== 'workflow' || descriptor.workflow_lane === undefined) {
         throw new Error(
             `wasm-runner: only workflow modules are supported (got kind '${descriptor.kind}')`);
-    }
-    if (descriptor.imports.length > 0) {
-        const names = descriptor.imports.map((i) => i.name).join(', ');
-        throw new Error(
-            `wasm-runner: this workflow requires capabilities (${names}), which the playground ` +
-            'does not support yet. Use a capability-free workflow.');
     }
 
     // Copy into a fresh ArrayBuffer-backed view so WebAssembly.compile accepts
@@ -832,18 +1172,61 @@ export async function runWasmWorkflow(
     const bytes = new Uint8Array(wasmBytes.length);
     bytes.set(wasmBytes);
     const module = await WebAssembly.compile(bytes);
-    // Verify the module declares no undeclared imports (a capability-free
-    // module must have zero imports).
-    for (const listed of WebAssembly.Module.imports(module)) {
+    // Every import must name the single AHFL capability host module.
+    const listedImports = WebAssembly.Module.imports(module);
+    for (const listed of listedImports) {
         if (listed.module !== 'ahfl_cap') {
             throw new Error(
                 `wasm-runner: module imports an unexpected host module '${listed.module}.${listed.name}'`);
         }
     }
+    if (listedImports.length > 0 && descriptor.imports.length === 0) {
+        throw new Error(
+            'wasm-runner: module imports capabilities but the execution descriptor lists none ' +
+            '(the descriptor may be stale)');
+    }
 
-    const instance = await WebAssembly.instantiate(module, {});
+    // Resolve the mock response for every declared capability: the caller's
+    // mock wins, otherwise a wire-shape skeleton of the result type. The mock
+    // JSON is parsed up front so a bad edit fails before run2 starts.
+    const calls: CapabilityCall[] = [];
+    const mocks = new Map<string, unknown>();
+    const defaults = defaultCapabilityMocks(descriptor);
+    for (const imp of descriptor.imports) {
+        const shortName = capabilityShortName(imp.name);
+        const raw = capabilityMocks?.[shortName] ?? defaults[shortName];
+        if (raw === undefined) {
+            throw new Error(`wasm-runner: no mock response configured for capability '${shortName}'`);
+        }
+        try {
+            mocks.set(shortName, JSON.parse(raw));
+        } catch (err) {
+            throw new Error(
+                `wasm-runner: mock response for capability '${shortName}' is not valid JSON: ` +
+                `${(err as Error).message}`);
+        }
+    }
+
+    let memory: WebAssembly.Memory | undefined;
+    const host: BridgeHost = {
+        descriptor,
+        mocks,
+        calls,
+        getMemory: () => {
+            if (memory === undefined) {
+                throw new Error('wasm-runner: bridge invoked before module instantiation');
+            }
+            return memory;
+        },
+    };
+    const bridgeImports: Record<string, (blockPtr: number) => [number, number]> = {};
+    for (const imp of descriptor.imports) {
+        bridgeImports[imp.field] = makeBridgeCallback(imp, host);
+    }
+
+    const instance = await WebAssembly.instantiate(module, { ahfl_cap: bridgeImports });
     const e = instance.exports as unknown as WasmExports;
-    const memory = e.memory;
+    memory = e.memory;
 
     const lane = descriptor.workflow_lane;
     const frameLane = descriptor.frame_lane;
@@ -948,7 +1331,113 @@ export async function runWasmWorkflow(
         stateTrace,
         transitions: e.transition_count.value,
         completedNodes: suspended ? null : e.workflow_completed_count.value,
+        capabilityCalls: calls,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Capability discovery and mock defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a WASM binary's import section and return every import as
+ * "module.field" pairs (e.g. "ahfl_cap.cap_4"). Synchronous and allocation-
+ * free: it walks the section header table without compiling the module, so the
+ * UI can decide whether to show the capability-mock panel before instantiating.
+ */
+export function discoverCapabilities(wasmBytes: Uint8Array): string[] {
+    if (wasmBytes.length < 8 ||
+        wasmBytes[0] !== 0x00 || wasmBytes[1] !== 0x61 ||
+        wasmBytes[2] !== 0x73 || wasmBytes[3] !== 0x6d) {
+        throw new Error('wasm-runner: not a WASM binary');
+    }
+    let p = 8;
+    const need = (n: number): void => {
+        if (p + n > wasmBytes.length) {
+            throw new Error('wasm-runner: truncated WASM binary while parsing imports');
+        }
+    };
+    const u8 = (): number => {
+        need(1);
+        return wasmBytes[p++];
+    };
+    const u32 = (): number => {
+        let result = 0;
+        let shift = 0;
+        for (;;) {
+            const b = u8();
+            const bits = b & 0x7f;
+            if (shift >= 32) {
+                throw new Error('wasm-runner: LEB128 value exceeds 32 bits');
+            }
+            // At shift=28, only 4 bits fit in a u32; reject non-canonical
+            // encodings that set bits beyond bit 31.
+            if (shift === 28 && (bits & 0x70) !== 0) {
+                throw new Error('wasm-runner: LEB128 value exceeds 32 bits');
+            }
+            result |= bits << shift;
+            if ((b & 0x80) === 0) return result >>> 0;
+            shift += 7;
+        }
+    };
+    const str = (): string => {
+        const len = u32();
+        need(len);
+        const s = new TextDecoder().decode(wasmBytes.subarray(p, p + len));
+        p += len;
+        return s;
+    };
+    const skipLimits = (): void => {
+        const flags = u8();
+        u32(); // min
+        if ((flags & 0x01) !== 0) u32(); // max
+    };
+    while (p < wasmBytes.length) {
+        const id = u8();
+        const size = u32();
+        need(size);
+        if (id === 2) {
+            const count = u32();
+            const names: string[] = [];
+            for (let i = 0; i < count; ++i) {
+                const mod = str();
+                const field = str();
+                const kind = u8();
+                switch (kind) {
+                    case 0x00: u32(); break; // function: type index
+                    case 0x01: u8(); skipLimits(); break; // table: elem type + limits
+                    case 0x02: skipLimits(); break; // memory: limits
+                    case 0x03: u8(); u8(); break; // global: value type + mutability
+                    default: throw new Error(`wasm-runner: unknown WASM import kind ${kind}`);
+                }
+                names.push(`${mod}.${field}`);
+            }
+            return names;
+        }
+        p += size;
+    }
+    return [];
+}
+
+/**
+ * Build a default mock response for every capability import: a wire-shape
+ * skeleton of the capability's result type (from its first bridge call site),
+ * so the default mock packs cleanly and the user edits a valid starting point.
+ */
+export function defaultCapabilityMocks(descriptor: ExecutionDescriptor): CapabilityMocks {
+    const mocks: CapabilityMocks = {};
+    const sites = descriptor.frame_lane.bridge_call_sites;
+    for (const imp of descriptor.imports) {
+        const shortName = capabilityShortName(imp.name);
+        const site = sites.find((s) => s.import_ordinal === imp.ordinal);
+        if (site !== undefined) {
+            mocks[shortName] = JSON.stringify(
+                skeletonFor(descriptor.wire_schema.nodes, site.result), null, 2);
+        } else {
+            mocks[shortName] = '{"ok":true,"data":null}';
+        }
+    }
+    return mocks;
 }
 
 // ---------------------------------------------------------------------------

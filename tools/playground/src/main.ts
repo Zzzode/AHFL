@@ -5,17 +5,32 @@
  * to the server-side ahflc API.
  */
 import { createEditor, getEditorValue, setEditorValue, revealPosition } from './editor';
+import { registerAhflLanguage } from './ahfl-language';
 import { callApi, type StructuredResult } from './compiler';
 import { renderStructured, renderFallback, renderRunResult } from './renderer';
-import { runWasmWorkflow, generateInputSkeleton, type ExecutionDescriptor } from './wasm-runner';
+import {
+    runWasmWorkflow,
+    generateInputSkeleton,
+    discoverCapabilities,
+    defaultCapabilityMocks,
+    capabilityShortName,
+    type CapabilityMocks,
+    type ExecutionDescriptor,
+} from './wasm-runner';
 import helloExample from '../examples/hello.ahfl?raw';
 import vendingExample from '../examples/vending-machine.ahfl?raw';
 import multiAgentExample from '../examples/multi-agent.ahfl?raw';
+import matchEnumExample from '../examples/match-enum.ahfl?raw';
+import genericsExample from '../examples/generics.ahfl?raw';
+import capabilityAgentExample from '../examples/capability-agent.ahfl?raw';
 
 const EXAMPLES: Record<string, string> = {
     hello: helloExample,
     'vending-machine': vendingExample,
     'multi-agent': multiAgentExample,
+    'match-enum': matchEnumExample,
+    generics: genericsExample,
+    'capability-agent': capabilityAgentExample,
 };
 
 const DEFAULT_SOURCE = `// Welcome to the AHFL Playground
@@ -82,6 +97,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    registerAhflLanguage();
     createEditor(container, initialSource);
 
     const outputEl = document.getElementById('output-content')!;
@@ -125,6 +141,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.textContent = `${label}...`;
         try {
             await fn();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            setOutput('error', renderFallback(false, message));
+            statusEl.textContent = 'Error';
         } finally {
             btn.disabled = false;
             btn.textContent = label;
@@ -183,10 +203,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // --- In-browser workflow execution (Run) ---
     // The last successful build's WASM bytes + descriptor are cached so the
-    // Execute button can re-run with edited input without rebuilding.
+    // Execute button can re-run with edited input without rebuilding. The last
+    // capability mocks are cached the same way, so edited mock responses
+    // survive a re-build of the same workflow.
     let cachedWasmBytes: Uint8Array | null = null;
     let cachedDescriptor: ExecutionDescriptor | null = null;
     let lastRunInput = '';
+    let lastMocks: CapabilityMocks | null = null;
 
     const base64ToBytes = (base64: string): Uint8Array => {
         const binary = atob(base64);
@@ -195,16 +218,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         return bytes;
     };
 
-    const executeAndRender = async (inputJson: string, buildMs: number) => {
+    const executeAndRender = async (inputJson: string, buildMs: number, mocks: CapabilityMocks | null) => {
         if (cachedWasmBytes === null || cachedDescriptor === null) {
             setOutput('error', renderFallback(false, 'No built workflow to run. Click Run first.'));
             return;
         }
+        const defaults = cachedDescriptor.imports.length > 0
+            ? defaultCapabilityMocks(cachedDescriptor)
+            : {};
+        const capList = cachedDescriptor.imports.map((imp) => {
+            const name = capabilityShortName(imp.name);
+            return { name, mock: mocks?.[name] ?? defaults[name] ?? '' };
+        });
         const start = performance.now();
         try {
-            const runResult = await runWasmWorkflow(cachedWasmBytes, cachedDescriptor, inputJson);
+            const runResult = await runWasmWorkflow(
+                cachedWasmBytes, cachedDescriptor, inputJson, mocks ?? undefined);
             const elapsed = buildMs + (performance.now() - start);
-            setOutput('success', renderRunResult(runResult, inputJson, elapsed));
+            setOutput('success', renderRunResult(
+                runResult, inputJson, elapsed, capList.length > 0 ? capList : undefined));
             statusEl.textContent = runResult.status === 'completed' ? 'Ran' : 'Suspended';
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -212,6 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 { status: 'failed', outputJson: null, stateTrace: [], transitions: 0, completedNodes: null, error: message },
                 inputJson,
                 buildMs + (performance.now() - start),
+                capList.length > 0 ? capList : undefined,
             ));
             statusEl.textContent = 'Error';
         }
@@ -251,24 +284,55 @@ document.addEventListener('DOMContentLoaded', async () => {
                     lastRunInput = '{}';
                 }
             }
+            // Capability workflows: seed mocks from the result-type skeletons,
+            // keeping the user's edited responses for capabilities still present.
+            let requiredCaps: string[];
+            try {
+                requiredCaps = discoverCapabilities(cachedWasmBytes);
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                setOutput('error', renderFallback(false, message));
+                statusEl.textContent = 'Error';
+                return;
+            }
+            if (requiredCaps.length > 0) {
+                const defaults = defaultCapabilityMocks(descriptor);
+                if (lastMocks === null) {
+                    lastMocks = defaults;
+                } else {
+                    const merged: CapabilityMocks = {};
+                    for (const [name, mock] of Object.entries(defaults)) {
+                        merged[name] = lastMocks[name] ?? mock;
+                    }
+                    lastMocks = merged;
+                }
+            } else {
+                lastMocks = null;
+            }
             statusEl.textContent = 'Executing...';
-            await executeAndRender(lastRunInput, result.elapsedMs);
+            await executeAndRender(lastRunInput, result.elapsedMs, lastMocks);
         }),
     );
 
-    // Execute button: re-run with the edited input (delegated because the
-    // button is re-created on every render).
+    // Execute / Re-run-with-mocks buttons: re-run with the edited input and
+    // mock responses (delegated because the buttons are re-created on every
+    // render).
     outputEl.addEventListener('click', (e) => {
-        const target = (e.target as HTMLElement).closest('#btn-execute') as HTMLElement | null;
-        if (!target) return;
+        const target = (e.target as HTMLElement).closest('#btn-execute, #btn-rerun-mocks') as HTMLElement | null;
+        if (target === null) return;
         const inputEl = document.getElementById('run-input') as HTMLTextAreaElement | null;
-        if (inputEl === null) return;
-        lastRunInput = inputEl.value;
+        lastRunInput = inputEl?.value ?? lastRunInput;
+        const mocks: CapabilityMocks = {};
+        outputEl.querySelectorAll<HTMLTextAreaElement>('.cap-mock-input').forEach((el) => {
+            const cap = el.dataset.cap;
+            if (cap !== undefined) mocks[cap] = el.value;
+        });
+        lastMocks = mocks;
         target.setAttribute('disabled', 'true');
         target.textContent = 'Executing...';
-        executeAndRender(lastRunInput, 0).finally(() => {
+        executeAndRender(lastRunInput, 0, mocks).finally(() => {
             target.removeAttribute('disabled');
-            target.textContent = 'Execute';
+            target.textContent = target.id === 'btn-rerun-mocks' ? 'Re-run with mocks' : 'Execute';
         });
     });
 

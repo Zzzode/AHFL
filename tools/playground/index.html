@@ -287,6 +287,75 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-size: 13px;
         }
+
+        /* Capability mock editor */
+        .cap-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .cap-mock {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .cap-mock-name {
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            color: #4ec9b0;
+        }
+        .cap-mock-input {
+            width: 100%;
+            min-height: 80px;
+            background: #1a1a1a;
+            color: #d4d4d4;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .cap-mock-input:focus { outline: none; border-color: #0e639c; }
+        #btn-rerun-mocks {
+            align-self: flex-start;
+            margin-top: 0;
+        }
+
+        /* Capability calls */
+        .cap-calls-section {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .cap-call {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            background: rgba(78, 201, 176, 0.08);
+            border: 1px solid rgba(78, 201, 176, 0.25);
+            border-radius: 4px;
+            padding: 6px 10px;
+        }
+        .cap-call-name {
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: #4ec9b0;
+            padding-top: 2px;
+            white-space: nowrap;
+        }
+        .cap-call-args {
+            margin: 0;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #9cdcfe;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .divider {
             width: 2px;
             background: #404040;
@@ -313,6 +382,9 @@
                 <option value="hello">Hello Agent</option>
                 <option value="vending-machine">Vending Machine</option>
                 <option value="multi-agent">Multi-Agent Pipeline</option>
+                <option value="match-enum">Match on Enums</option>
+                <option value="generics">Generics</option>
+                <option value="capability-agent">Capability Agent</option>
             </select>
             <button id="btn-compile">Compile</button>
             <button id="btn-verify">Verify</button>

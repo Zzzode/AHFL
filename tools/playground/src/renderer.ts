@@ -144,11 +144,28 @@ export function renderFallback(success: boolean, text: string): string {
 }
 
 /**
- * Render the in-browser workflow run result: a status summary, the editable
- * input JSON, the output JSON, the state trace, and run stats. The Execute
- * button (id="btn-execute") re-runs with the edited input without rebuilding.
+ * One capability's editable mock response: the capability's short source name
+ * and the wire JSON the playground returns on every invocation of it.
  */
-export function renderRunResult(result: RunResult, inputJson: string, elapsedMs: number): string {
+export interface CapabilityMockInfo {
+    name: string;
+    mock: string;
+}
+
+/**
+ * Render the in-browser workflow run result: a status summary, the editable
+ * input JSON, the capability mock editor (when the workflow imports
+ * capabilities), the output JSON, observed capability calls, the state trace,
+ * and run stats. The Execute button (id="btn-execute") re-runs with the edited
+ * input without rebuilding; the Re-run with mocks button (id="btn-rerun-mocks")
+ * re-runs with the edited mock responses.
+ */
+export function renderRunResult(
+    result: RunResult,
+    inputJson: string,
+    elapsedMs: number,
+    capabilities?: CapabilityMockInfo[],
+): string {
     let html = '<div class="run-view">';
 
     // Status summary
@@ -174,6 +191,20 @@ export function renderRunResult(result: RunResult, inputJson: string, elapsedMs:
         <button id="btn-execute" class="btn-execute">Execute</button>
     </div>`;
 
+    // Capability mock editor
+    if (capabilities !== undefined && capabilities.length > 0) {
+        html += `<div class="cap-section">
+            <div class="run-section-header">Capability Mocks (wire JSON returned per call)</div>`;
+        for (const cap of capabilities) {
+            html += `<div class="cap-mock">
+                <div class="cap-mock-name">${escapeHtml(cap.name)}</div>
+                <textarea class="cap-mock-input" data-cap="${escapeHtml(cap.name)}" spellcheck="false">${escapeHtml(cap.mock)}</textarea>
+            </div>`;
+        }
+        html += `<button id="btn-rerun-mocks" class="btn-execute">Re-run with mocks</button>
+        </div>`;
+    }
+
     // Output
     if (result.outputJson !== null) {
         let pretty: string;
@@ -195,6 +226,25 @@ export function renderRunResult(result: RunResult, inputJson: string, elapsedMs:
     }
     stats.push(`${result.transitions} transition${result.transitions === 1 ? '' : 's'}`);
     html += `<div class="run-stats-bar">${stats.map((s) => `<span>${escapeHtml(s)}</span>`).join('<span class="stat-sep">·</span>')}</div>`;
+
+    // Capability calls observed during the run
+    if (result.capabilityCalls !== undefined && result.capabilityCalls.length > 0) {
+        html += `<div class="cap-calls-section">
+            <div class="run-section-header">Capability Calls</div>`;
+        for (const call of result.capabilityCalls) {
+            let prettyArgs: string;
+            try {
+                prettyArgs = JSON.stringify(JSON.parse(call.argument), null, 2);
+            } catch {
+                prettyArgs = call.argument;
+            }
+            html += `<div class="cap-call">
+                <span class="cap-call-name">${escapeHtml(call.name)}</span>
+                <pre class="cap-call-args">${escapeHtml(prettyArgs)}</pre>
+            </div>`;
+        }
+        html += `</div>`;
+    }
 
     // State trace
     if (result.stateTrace.length > 0) {
