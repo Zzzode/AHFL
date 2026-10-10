@@ -1,0 +1,197 @@
+// Data Pipeline (Multi-Stage Transformation)
+// Demonstrates: a four-node workflow where each stage transforms the data
+// shape for the next one — parse, enrich, score, assemble.
+
+module playground;
+
+pub enum Risk {
+    Low,
+    Medium,
+    High,
+}
+
+pub struct OrderRequest {
+    order_id: String;
+    item_count: Int;
+    amount: Int;
+}
+
+pub struct ParsedOrder {
+    order_id: String;
+    item_count: Int;
+    amount: Int;
+    valid: Bool;
+}
+
+pub struct EnrichedOrder {
+    order_id: String;
+    item_count: Int;
+    amount: Int;
+    valid: Bool;
+    unit_price: Int;
+    region: String;
+}
+
+pub struct ScoredOrder {
+    order_id: String;
+    unit_price: Int;
+    region: String;
+    risk: Risk;
+}
+
+pub struct Shipment {
+    order_id: String;
+    status: String;
+    risk: Risk;
+}
+
+pub struct ScoreContext {
+    risk: Risk = Risk::Low;
+}
+
+pub struct EnrichContext {
+    unit_price: Int = 0;
+}
+
+pub struct AssembleContext {
+    status: String = "ready";
+}
+
+pub agent ParseAgent {
+    input: OrderRequest;
+    context: Unit;
+    output: ParsedOrder;
+    states: [Parsing, Done];
+    initial: Parsing;
+    final: [Done];
+    capabilities: [];
+    transition Parsing -> Done;
+}
+
+flow for ParseAgent {
+    state Parsing {
+        goto Done;
+    }
+
+    state Done {
+        return ParsedOrder {
+            order_id: input.order_id,
+            item_count: input.item_count,
+            amount: input.amount,
+            valid: input.item_count > 0 and input.amount > 0,
+        };
+    }
+}
+
+pub agent EnrichAgent {
+    input: ParsedOrder;
+    context: EnrichContext;
+    output: EnrichedOrder;
+    states: [Enriching, Done];
+    initial: Enriching;
+    final: [Done];
+    capabilities: [];
+    transition Enriching -> Done;
+}
+
+flow for EnrichAgent {
+    state Enriching {
+        if input.item_count > 0 {
+            ctx.unit_price = input.amount / input.item_count;
+        }
+        goto Done;
+    }
+
+    state Done {
+        return EnrichedOrder {
+            order_id: input.order_id,
+            item_count: input.item_count,
+            amount: input.amount,
+            valid: input.valid,
+            unit_price: ctx.unit_price,
+            region: "global",
+        };
+    }
+}
+
+pub agent ScoreAgent {
+    input: EnrichedOrder;
+    context: ScoreContext;
+    output: ScoredOrder;
+    states: [Scoring, Done];
+    initial: Scoring;
+    final: [Done];
+    capabilities: [];
+    transition Scoring -> Done;
+}
+
+flow for ScoreAgent {
+    state Scoring {
+        // Classify by unit price, most severe first.
+        if input.unit_price > 10000 {
+            ctx.risk = Risk::High;
+        } else {
+            if input.unit_price > 1000 {
+                ctx.risk = Risk::Medium;
+            }
+        }
+        goto Done;
+    }
+
+    state Done {
+        return ScoredOrder {
+            order_id: input.order_id,
+            unit_price: input.unit_price,
+            region: input.region,
+            risk: ctx.risk,
+        };
+    }
+}
+
+pub agent AssembleAgent {
+    input: ScoredOrder;
+    context: AssembleContext;
+    output: Shipment;
+    states: [Assembling, Blocked, Done];
+    initial: Assembling;
+    final: [Done];
+    capabilities: [];
+    transition Assembling -> Blocked;
+    transition Assembling -> Done;
+    transition Blocked -> Done;
+}
+
+flow for AssembleAgent {
+    state Assembling {
+        if input.risk == Risk::High {
+            ctx.status = "held";
+            goto Blocked;
+        } else {
+            goto Done;
+        }
+    }
+
+    state Blocked {
+        goto Done;
+    }
+
+    state Done {
+        return Shipment {
+            order_id: input.order_id,
+            status: ctx.status,
+            risk: input.risk,
+        };
+    }
+}
+
+pub workflow OrderPipeline {
+    input: OrderRequest;
+    output: Shipment;
+
+    node parse: ParseAgent(input);
+    node enrich: EnrichAgent(parse) after [parse];
+    node score: ScoreAgent(enrich) after [enrich];
+    node assemble: AssembleAgent(score) after [score];
+
+    return: assemble;
+}

@@ -1,0 +1,121 @@
+// Complex State Machine
+// Demonstrates: eight states, computed gotos driven by runtime conditions,
+// and context mutation across states. The goto graph is acyclic so the
+// workflow is guaranteed to terminate.
+
+module playground;
+
+pub enum Risk {
+    Low,
+    Medium,
+    High,
+}
+
+pub struct PaymentRequest {
+    amount: Int;
+    risk: Risk;
+    retries: Int;
+}
+
+pub struct PaymentReceipt {
+    status: String;
+    settled_amount: Int;
+}
+
+pub struct PaymentContext {
+    settled_amount: Int = 0;
+    attempts: Int = 0;
+}
+
+pub agent PaymentProcessor {
+    input: PaymentRequest;
+    context: PaymentContext;
+    output: PaymentReceipt;
+    states: [Validating, RiskCheck, Approving, Review, Escalated, Declined, Settling, Done];
+    initial: Validating;
+    final: [Done, Declined, Escalated];
+    capabilities: [];
+    transition Validating -> RiskCheck;
+    transition Validating -> Declined;
+    transition RiskCheck -> Approving;
+    transition RiskCheck -> Review;
+    transition RiskCheck -> Declined;
+    transition Review -> Approving;
+    transition Review -> Escalated;
+    transition Approving -> Settling;
+    transition Settling -> Done;
+}
+
+flow for PaymentProcessor {
+    state Validating {
+        if input.amount <= 0 {
+            goto Declined;
+        } else {
+            goto RiskCheck;
+        }
+    }
+
+    state RiskCheck {
+        // Computed goto: high risk is declined outright, medium risk goes
+        // to manual review, and low risk is fast-tracked below the limit
+        // (larger low-risk payments are reviewed too).
+        ctx.attempts = ctx.attempts + 1;
+        if input.risk == Risk::High {
+            goto Declined;
+        } else {
+            if input.risk == Risk::Medium {
+                goto Review;
+            } else {
+                if input.amount < 50000 {
+                    goto Approving;
+                } else {
+                    goto Review;
+                }
+            }
+        }
+    }
+
+    state Review {
+        // Manual review: approve small payments with few retries, escalate
+        // the rest for a senior decision.
+        if input.retries < 3 and input.amount < 5000 {
+            goto Approving;
+        } else {
+            goto Escalated;
+        }
+    }
+
+    state Escalated {
+        // Senior review: the payment is parked for a manual decision.
+        return PaymentReceipt { status: "escalated", settled_amount: 0 };
+    }
+
+    state Approving {
+        ctx.settled_amount = input.amount;
+        goto Settling;
+    }
+
+    state Settling {
+        goto Done;
+    }
+
+    state Declined {
+        return PaymentReceipt { status: "declined", settled_amount: 0 };
+    }
+
+    state Done {
+        return PaymentReceipt {
+            status: "settled",
+            settled_amount: ctx.settled_amount,
+        };
+    }
+}
+
+pub workflow PaymentWorkflow {
+    input: PaymentRequest;
+    output: PaymentReceipt;
+
+    node pay: PaymentProcessor(input);
+
+    return: pay;
+}

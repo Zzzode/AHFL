@@ -23,6 +23,10 @@ import multiAgentExample from '../examples/multi-agent.ahfl?raw';
 import matchEnumExample from '../examples/match-enum.ahfl?raw';
 import genericsExample from '../examples/generics.ahfl?raw';
 import capabilityAgentExample from '../examples/capability-agent.ahfl?raw';
+import contractExample from '../examples/contract.ahfl?raw';
+import paymentStateMachineExample from '../examples/payment-state-machine.ahfl?raw';
+import effectfulWorkflowExample from '../examples/effectful-workflow.ahfl?raw';
+import dataPipelineExample from '../examples/data-pipeline.ahfl?raw';
 
 const EXAMPLES: Record<string, string> = {
     hello: helloExample,
@@ -31,6 +35,10 @@ const EXAMPLES: Record<string, string> = {
     'match-enum': matchEnumExample,
     generics: genericsExample,
     'capability-agent': capabilityAgentExample,
+    contract: contractExample,
+    'payment-state-machine': paymentStateMachineExample,
+    'effectful-workflow': effectfulWorkflowExample,
+    'data-pipeline': dataPipelineExample,
 };
 
 const DEFAULT_SOURCE = `// Welcome to the AHFL Playground

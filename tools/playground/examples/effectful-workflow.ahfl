@@ -1,0 +1,90 @@
+// Effectful Workflow with Capabilities
+// Demonstrates: http and llm capabilities with effect annotations, chained
+// in a two-agent workflow. The playground binds mock responses to each
+// capability below the Run view.
+
+module playground;
+
+pub struct FetchRequest {
+    url: String;
+}
+
+pub struct Page {
+    url: String;
+    body: String;
+}
+
+pub struct Summary {
+    url: String;
+    text: String;
+}
+
+pub struct FetchContext {
+    body: String = "";
+}
+
+pub struct SummaryContext {
+    text: String = "";
+}
+
+capability HttpFetch(url: String) -> Page {
+    effect: read;
+}
+
+capability LlmComplete(prompt: String) -> String;
+
+pub agent FetchAgent {
+    input: FetchRequest;
+    context: FetchContext;
+    output: Page;
+    states: [Fetching, Done];
+    initial: Fetching;
+    final: [Done];
+    capabilities: [HttpFetch];
+    transition Fetching -> Done;
+}
+
+flow for FetchAgent {
+    state Fetching {
+        let page: Page = HttpFetch(input.url);
+        ctx.body = page.body;
+        goto Done;
+    }
+
+    state Done {
+        return Page { url: input.url, body: ctx.body };
+    }
+}
+
+pub agent SummarizeAgent {
+    input: Page;
+    context: SummaryContext;
+    output: Summary;
+    states: [Summarizing, Done];
+    initial: Summarizing;
+    final: [Done];
+    capabilities: [LlmComplete];
+    transition Summarizing -> Done;
+}
+
+flow for SummarizeAgent {
+    state Summarizing {
+        let text: String = LlmComplete("Summarize: " + input.body);
+        ctx.text = text;
+        goto Done;
+    }
+
+    state Done {
+        return Summary { url: input.url, text: ctx.text };
+    }
+}
+
+pub workflow ResearchWorkflow {
+    input: FetchRequest;
+    output: Summary;
+
+    node fetch: FetchAgent(input);
+    node summarize: SummarizeAgent(fetch) after [fetch];
+
+    return: summarize;
+}

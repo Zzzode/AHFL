@@ -1,0 +1,60 @@
+// Behavioral Contract
+// Demonstrates: requires / ensures / forbid contract clauses.
+// The contract is checked against every state the agent can reach.
+
+module playground;
+
+pub struct PriceRequest {
+    base_price: Int;
+    discount_pct: Int;
+}
+
+pub struct PriceQuote {
+    final_price: Int;
+    applied: Bool;
+}
+
+pub struct PriceContext {
+    final_price: Int = 0;
+}
+
+pub agent PricingAgent {
+    input: PriceRequest;
+    context: PriceContext;
+    output: PriceQuote;
+    states: [Compute, Done];
+    initial: Compute;
+    final: [Done];
+    capabilities: [];
+    transition Compute -> Done;
+}
+
+contract for PricingAgent {
+    requires: input.base_price > 0
+        and input.discount_pct >= 0
+        and input.discount_pct <= 100;
+    ensures: output.final_price >= 0;
+    ensures: output.final_price <= input.base_price;
+    forbid: always (in_state(Done) and input.discount_pct > 100);
+}
+
+flow for PricingAgent {
+    state Compute {
+        let rebate: Int = input.base_price * input.discount_pct / 100;
+        ctx.final_price = input.base_price - rebate;
+        goto Done;
+    }
+
+    state Done {
+        return PriceQuote { final_price: ctx.final_price, applied: true };
+    }
+}
+
+pub workflow PricingWorkflow {
+    input: PriceRequest;
+    output: PriceQuote;
+
+    node price: PricingAgent(input);
+
+    return: price;
+}
