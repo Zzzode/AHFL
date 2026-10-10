@@ -52,6 +52,7 @@ add_subdirectory(tooling/abi)
 add_subdirectory(tooling/cache)
 add_subdirectory(tooling/testing)
 add_subdirectory(tooling/package)
+add_subdirectory(tooling/registry)
 
 add_library(ahfl_compiler_core INTERFACE)
 target_link_libraries(ahfl_compiler_core
