@@ -5606,51 +5606,62 @@ void LspServer::handle_document_range_formatting(const JsonRpcRequest &req) {
         return;
     }
 
-    // Compute the minimal line range that changed and only emit an edit when
-    // it intersects the requested range.
+    // Compute the minimal line range that changed and clamp it to the
+    // requested selection so edits never leak outside the user's range.
     const auto [changed_start, changed_end] =
         minimal_edit_range(document->text, result.formatted);
 
-    // Check intersection: [changed_start, changed_end) vs [requested.start.line, requested.end.line].
-    const bool intersects =
-        changed_start <= requested_range.end.line && changed_end >= requested_range.start.line;
-    if (!intersects) {
-        send_empty_array(transport_, req.id);
-        return;
-    }
-
-    // Build the edit covering the changed line range.
     const auto &text = document->text;
     const auto orig_lines = split_lines(text);
     const auto fmt_lines = split_lines(result.formatted);
 
+    // The requested range is inclusive on both line ends; the changed range
+    // is half-open [start, end).
+    const uint32_t sel_start_line = requested_range.start.line;
+    const uint32_t sel_end_line = requested_range.end.line;
+
     TextEdit edit;
     if (changed_start >= changed_end) {
         // The only change is at a boundary (e.g., trailing newline added).
-        // Emit a single append edit at end-of-document.
-        edit.range.start = Position{static_cast<uint32_t>(orig_lines.size()), 0};
-        edit.range.end = Position{static_cast<uint32_t>(orig_lines.size()), 0};
+        // Emit a single append edit at end-of-document, but only when the
+        // selection covers the append position.
+        const auto append_line = static_cast<uint32_t>(orig_lines.size());
+        if (append_line < sel_start_line || append_line > sel_end_line) {
+            send_empty_array(transport_, req.id);
+            return;
+        }
+        edit.range.start = Position{append_line, 0};
+        edit.range.end = Position{append_line, 0};
         edit.new_text = "\n";
     } else {
-        edit.range.start = Position{changed_start, 0};
-        if (changed_end > 0 && changed_end <= orig_lines.size()) {
-            edit.range.end =
-                Position{changed_end - 1, static_cast<uint32_t>(orig_lines[changed_end - 1].size())};
+        // Clamp the changed line range to the selection. Convert the
+        // inclusive selection end to an exclusive bound.
+        const uint32_t clamped_start = std::max(changed_start, sel_start_line);
+        const uint32_t clamped_end = std::min(changed_end, sel_end_line + 1u);
+        if (clamped_start >= clamped_end) {
+            send_empty_array(transport_, req.id);
+            return;
+        }
+
+        edit.range.start = Position{clamped_start, 0};
+        if (clamped_end > 0 && clamped_end <= orig_lines.size()) {
+            edit.range.end = Position{clamped_end - 1,
+                                      static_cast<uint32_t>(orig_lines[clamped_end - 1].size())};
         } else {
             edit.range.end = Position{static_cast<uint32_t>(orig_lines.size()), 0};
         }
 
-        // Reconstruct the formatted text for the changed line range.
+        // Reconstruct the formatted text for the clamped line range.
         std::string new_text;
-        for (uint32_t i = changed_start; i < changed_end && i < fmt_lines.size(); ++i) {
-            if (i > changed_start) {
+        for (uint32_t i = clamped_start; i < clamped_end && i < fmt_lines.size(); ++i) {
+            if (i > clamped_start) {
                 new_text.push_back('\n');
             }
             new_text.append(fmt_lines[i]);
         }
         // If the original text ends with a newline and the formatted text for the
-        // changed range doesn't, preserve the trailing newline.
-        if (!text.empty() && text.back() == '\n' && changed_end >= orig_lines.size()) {
+        // clamped range doesn't, preserve the trailing newline.
+        if (!text.empty() && text.back() == '\n' && clamped_end >= orig_lines.size()) {
             new_text.push_back('\n');
         }
         edit.new_text = std::move(new_text);
@@ -6054,6 +6065,50 @@ void LspServer::handle_inlay_hint(const JsonRpcRequest &req) {
         hints.push_back(std::move(hint));
     }
 
+    // Type hints for workflow node call sites: show the inferred output type
+    // (the target agent's output type) after each node's input expression.
+    // Use "-> " prefix to distinguish from input type annotations.
+    if (snapshot->type_check_result != nullptr) {
+        const auto &environment = snapshot->type_check_result->environment;
+        for (const auto &entry : environment.workflows()) {
+            const auto &workflow = entry.second;
+            const auto workflow_symbol = program->find_symbol(workflow.symbol);
+            if (!workflow_symbol.has_value()) {
+                continue;
+            }
+            if (!same_source(workflow_symbol->get().source_id, source->source_id)) {
+                continue;
+            }
+
+            for (const auto &node : workflow.nodes) {
+                const auto agent_info = environment.get_agent(node.target_symbol);
+                if (!agent_info.has_value() || agent_info->get().output_type == nullptr) {
+                    continue;
+                }
+                if (node.input_expr_range.end_offset > source->source->content.size()) {
+                    continue;
+                }
+
+                InlayHint hint;
+                hint.position =
+                    to_lsp_position(*source->source, node.input_expr_range.end_offset);
+                hint.label = "-> " + agent_info->get().output_type->describe();
+                hint.kind = InlayHintKind::Type;
+                hint.padding_left = true;
+                hints.push_back(std::move(hint));
+            }
+        }
+    }
+
+    // Sort by (line, character) for deterministic output regardless of
+    // the underlying map iteration order.
+    std::sort(hints.begin(), hints.end(), [](const InlayHint &a, const InlayHint &b) {
+        if (a.position.line != b.position.line) {
+            return a.position.line < b.position.line;
+        }
+        return a.position.character < b.position.character;
+    });
+
     auto result = json::JsonValue::make_array();
     for (const auto &hint : hints) {
         if (requested_range.has_value()) {
@@ -6347,31 +6402,35 @@ void LspServer::handle_prepare_call_hierarchy(const JsonRpcRequest &req) {
 
 void LspServer::handle_call_hierarchy_incoming(const JsonRpcRequest &req) {
     if (!req.params) {
-        send_null(transport_, req.id);
+        send_empty_array(transport_, req.id);
         return;
     }
 
     const auto def_id = parse_def_id_from_data(*req.params);
     if (!def_id.has_value()) {
-        send_null(transport_, req.id);
+        send_empty_array(transport_, req.id);
         return;
     }
 
     const auto uri = parse_item_uri(*req.params);
     if (uri.empty()) {
-        send_null(transport_, req.id);
+        send_empty_array(transport_, req.id);
         return;
     }
 
+    // Detached mode: the file may have been modified after the prepare call,
+    // or the snapshot may have been evicted. The LSP spec allows an empty
+    // array for "no calls found", so degrade gracefully instead of returning
+    // null, which some clients surface as an error.
     const auto *snapshot = analysis_.snapshot_for_uri(uri);
     if (snapshot == nullptr || snapshot->workspace_index == nullptr) {
-        send_null(transport_, req.id);
+        send_empty_array(transport_, req.id);
         return;
     }
 
     const auto *program = snapshot->typed_program();
     if (program == nullptr) {
-        send_null(transport_, req.id);
+        send_empty_array(transport_, req.id);
         return;
     }
 

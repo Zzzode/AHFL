@@ -1382,6 +1382,29 @@ void test_document_range_formatting_empty_for_non_intersecting_range() {
           "rangeFormatting.non_intersecting_empty");
 }
 
+void test_document_range_formatting_clamps_to_selection() {
+    // Two unindented struct fields; the formatter reindents both, but the
+    // selection covers only the first field. The edit must be clamped to the
+    // selected line and must not leak the second field's reindentation.
+    const std::string source = "struct Foo {\nvalue: String;\nother: Int;\n}\n";
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":0}},"options":{"tabSize":4,"insertSpaces":true}})";
+    const auto output = run_handler_request(source, "textDocument/rangeFormatting", params);
+    const auto response = response_body_for_id(output, 2);
+
+    // The edit should contain only the first field's reindentation.
+    check(response.find(R"("newText":"    value: String;")") != std::string::npos,
+          "rangeFormatting.clamped_new_text");
+    // The second field's reindentation must not leak into the edit.
+    check(response.find("other: Int") == std::string::npos,
+          "rangeFormatting.clamped_excludes_unselected_line");
+    // The edit range must be confined to the selected line (line 1).
+    check(response.find(R"("start":{"line":1,"character":0})") != std::string::npos,
+          "rangeFormatting.clamped_range_start");
+    check(response.find(R"("end":{"line":1,)") != std::string::npos,
+          "rangeFormatting.clamped_range_end");
+}
+
 void test_rename_returns_workspace_edit() {
     std::string source =
         "struct Msg {\n    value: String;\n}\n\nstruct Envelope {\n    payload: Msg;\n}";
@@ -1487,6 +1510,43 @@ void test_inlay_hint_respects_range() {
           "inlayHint.range_excludes_parameter_hints");
     check(response.find(R"("label":": OrderInfo")") == std::string::npos,
           "inlayHint.range_excludes_let_type");
+}
+
+void test_inlay_hint_workflow_node_output_types() {
+    // A workflow with a node that calls an agent. The node's inferred output
+    // type is the agent's output type (Request), and an inlay hint should
+    // appear after the node's input expression.
+    const std::string source =
+        "struct Request {\n"
+        "    category: String;\n"
+        "}\n"
+        "\n"
+        "agent TestAgent {\n"
+        "    input: Request;\n"
+        "    context: Request;\n"
+        "    output: Request;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "workflow TestWorkflow {\n"
+        "    input: Request;\n"
+        "    output: Request;\n"
+        "    node run: TestAgent(input);\n"
+        "    return: run;\n"
+        "}\n";
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"range":{"start":{"line":0,"character":0},"end":{"line":30,"character":0}}})";
+    const auto output = run_handler_request(source, "textDocument/inlayHint", params);
+    const auto response = response_body_for_id(output, 2);
+
+    // The node's output type (Request) should appear as a type hint.
+    check(response.find(R"("label":"-> Request")") != std::string::npos,
+          "inlayHint.workflow_node_output_type");
+    check(response.find(R"("kind":1)") != std::string::npos,
+          "inlayHint.workflow_node_type_kind");
 }
 
 std::string extract_data_field(const std::string &json) {
@@ -1599,6 +1659,26 @@ void test_call_hierarchy_incoming_returns_callers() {
           "callHierarchy.incoming_caller_name");
     check(incoming_response.find(R"("fromRanges")") != std::string::npos,
           "callHierarchy.incoming_has_ranges");
+}
+
+void test_call_hierarchy_incoming_detached_returns_empty_array() {
+    // Simulate detached mode: the item's URI has no open document, so the
+    // snapshot cannot resolve the symbol. The handler should return a
+    // successful empty array, not null or an error.
+    const std::string incoming =
+        R"({"jsonrpc":"2.0","id":2,"method":"callHierarchy/incomingCalls","params":{"item":{"name":"ghost","kind":12,"uri":"file:///detached.ahfl","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"selectionRange":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"data":"42"}}})";
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        incoming,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+
+    // The response should be a successful empty array, not null or an error.
+    check(response.find(R"("result":[])") != std::string::npos,
+          "callHierarchy.incoming_detached_empty_array");
+    check(response.find(R"("error")") == std::string::npos,
+          "callHierarchy.incoming_detached_no_error");
 }
 
 void test_call_hierarchy_outgoing_returns_callees() {
@@ -12663,12 +12743,15 @@ int main() {
     test_document_range_formatting_capability();
     test_document_range_formatting_returns_edit_for_intersecting_range();
     test_document_range_formatting_empty_for_non_intersecting_range();
+    test_document_range_formatting_clamps_to_selection();
     test_inlay_hint_capability();
     test_inlay_hint_parameter_names_and_let_types();
     test_inlay_hint_respects_range();
+    test_inlay_hint_workflow_node_output_types();
     test_call_hierarchy_capability();
     test_prepare_call_hierarchy_returns_item_for_function();
     test_call_hierarchy_incoming_returns_callers();
+    test_call_hierarchy_incoming_detached_returns_empty_array();
     test_call_hierarchy_outgoing_returns_callees();
     test_type_hierarchy_capability();
     test_prepare_type_hierarchy_returns_item_for_struct();
