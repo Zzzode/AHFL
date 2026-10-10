@@ -480,6 +480,265 @@ struct OrderedLocation {
            AnalysisService::normalized_path_key(*rhs_path);
 }
 
+// ---------- workspace/willRenameFiles helpers ----------
+
+/// A resolved module rename: the old module path and its replacement.
+struct ModuleRename {
+    std::string old_module_path;
+    std::string new_module_path;
+};
+
+/// Split a module path (e.g. "pkg::sub::name") into segments.
+[[nodiscard]] std::vector<std::string> split_module_path(std::string_view path) {
+    std::vector<std::string> segments;
+    std::size_t start = 0;
+    while (start < path.size()) {
+        const auto separator = path.find("::", start);
+        if (separator == std::string_view::npos) {
+            segments.emplace_back(path.substr(start));
+            break;
+        }
+        segments.emplace_back(path.substr(start, separator - start));
+        start = separator + 2;
+    }
+    return segments;
+}
+
+/// Join module path segments with "::".
+[[nodiscard]] std::string join_module_path(const std::vector<std::string> &segments) {
+    std::string result;
+    for (std::size_t index = 0; index < segments.size(); ++index) {
+        if (index != 0) {
+            result += "::";
+        }
+        result += segments[index];
+    }
+    return result;
+}
+
+/// Extract the module path from a module declaration in an AST program.
+[[nodiscard]] std::optional<std::string>
+extract_module_path_from_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        if (const auto *module = std::get_if<ast::ModuleDecl>(&declaration)) {
+            if (module->name != nullptr && !module->name->segments.empty()) {
+                return module->name->spelling();
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+/// Check whether `path` is equal to or a descendant of `ancestor`.
+[[nodiscard]] bool path_is_equal_or_descendant(const std::filesystem::path &path,
+                                               const std::filesystem::path &ancestor) {
+    auto path_part = path.begin();
+    for (auto ancestor_part = ancestor.begin(); ancestor_part != ancestor.end(); ++ancestor_part) {
+        if (path_part == path.end() || *path_part != *ancestor_part) {
+            return false;
+        }
+        ++path_part;
+    }
+    return true;
+}
+
+/// Compute the new module path after a file rename, given the old module path
+/// and the old/new file paths. Tries all possible package-prefix splits of the
+/// module path and uses the first one where the new file is still within the
+/// inferred module root.
+[[nodiscard]] std::optional<ModuleRename>
+compute_module_rename(std::string_view old_module_path,
+                      const std::filesystem::path &old_path,
+                      const std::filesystem::path &new_path) {
+    const auto segments = split_module_path(old_module_path);
+    if (segments.size() < 2) {
+        return std::nullopt;
+    }
+
+    const auto old_normalized =
+        std::filesystem::path(AnalysisService::normalized_path_key(old_path));
+    const auto new_normalized =
+        std::filesystem::path(AnalysisService::normalized_path_key(new_path));
+    const auto old_generic = old_normalized.generic_string();
+
+    for (std::size_t prefix_len = 1; prefix_len < segments.size(); ++prefix_len) {
+        // Build the relative path from the module root to the old file.
+        std::filesystem::path relative;
+        for (std::size_t index = prefix_len; index < segments.size(); ++index) {
+            relative /= segments[index];
+        }
+        relative += ".ahfl";
+
+        const auto relative_generic = relative.generic_string();
+        if (!old_generic.ends_with(relative_generic)) {
+            continue;
+        }
+        auto root_generic =
+            old_generic.substr(0, old_generic.size() - relative_generic.size());
+        if (root_generic.empty()) {
+            continue;
+        }
+        // Strip the trailing separator so path iteration doesn't produce a
+        // spurious empty component that breaks descendant checks.
+        if (root_generic.ends_with('/')) {
+            root_generic.pop_back();
+        }
+        const auto root = std::filesystem::path(root_generic);
+
+        // The new file must be within the module root for the rename to be
+        // expressible as a module path change.
+        if (!path_is_equal_or_descendant(new_normalized, root)) {
+            continue;
+        }
+
+        // Compute the new relative path from the module root.
+        std::error_code error;
+        auto new_relative = std::filesystem::relative(new_normalized, root, error);
+        if (error || new_relative.empty()) {
+            continue;
+        }
+        if (new_relative.extension() != ".ahfl") {
+            continue;
+        }
+        new_relative.replace_extension();
+
+        // Build the new module path: prefix segments + new relative segments.
+        std::vector<std::string> new_segments(segments.begin(),
+                                              segments.begin() + prefix_len);
+        for (const auto &part : new_relative) {
+            if (part.empty() || part == "/" || part == ".") {
+                continue;
+            }
+            new_segments.push_back(part.string());
+        }
+
+        return ModuleRename{
+            .old_module_path = std::string(old_module_path),
+            .new_module_path = join_module_path(new_segments),
+        };
+    }
+    return std::nullopt;
+}
+
+/// Determine the old and new module paths for a file rename. Tries the old
+/// file's own module declaration first, then falls back to project graphs of
+/// open documents.
+[[nodiscard]] std::optional<ModuleRename>
+resolve_module_rename(AnalysisService &analysis,
+                      const DocumentStore &store,
+                      const std::filesystem::path &old_path,
+                      const std::filesystem::path &new_path) {
+    // Strategy 1: the old file is open — read its module declaration.
+    const auto old_uri = AnalysisService::uri_from_path(old_path);
+    if (store.contains(old_uri)) {
+        const auto *snapshot = analysis.snapshot_for_uri(old_uri);
+        const auto *source =
+            snapshot != nullptr ? snapshot->source_for_uri(old_uri) : nullptr;
+        if (source != nullptr && source->program != nullptr) {
+            if (const auto module_path = extract_module_path_from_program(*source->program);
+                module_path.has_value()) {
+                return compute_module_rename(*module_path, old_path, new_path);
+            }
+        }
+    }
+
+    // Strategy 2: search project graphs of open documents for the old file.
+    const auto old_normalized = AnalysisService::normalized_path_key(old_path);
+    for (const auto &uri : store.all_uris()) {
+        const auto *snapshot = analysis.snapshot_for_uri(uri);
+        if (snapshot == nullptr || snapshot->project_graph == nullptr) {
+            continue;
+        }
+        for (const auto &unit : snapshot->project_graph->sources) {
+            if (AnalysisService::normalized_path_key(unit.path) != old_normalized) {
+                continue;
+            }
+            if (unit.module_name.empty()) {
+                continue;
+            }
+            return compute_module_rename(unit.module_name, old_path, new_path);
+        }
+    }
+
+    return std::nullopt;
+}
+
+/// Collect TextEdits for a single open document that references the renamed
+/// module. Handles import, use, and module declarations.
+void collect_module_rename_edits(AnalysisService &analysis,
+                                 const std::string &uri,
+                                 const std::filesystem::path &old_path,
+                                 const ModuleRename &rename,
+                                 WorkspaceEdit &edit) {
+    const auto *snapshot = analysis.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (source == nullptr || source->program == nullptr || source->source == nullptr) {
+        return;
+    }
+
+    const auto &program = *source->program;
+    const auto &source_file = *source->source;
+    const auto old_normalized = AnalysisService::normalized_path_key(old_path);
+
+    for (const auto &declaration : program.declarations) {
+        // import declarations: replace the entire module path.
+        if (const auto *import = std::get_if<ast::ImportDecl>(&declaration)) {
+            if (import->path == nullptr) {
+                continue;
+            }
+            if (import->path->spelling() == rename.old_module_path) {
+                edit.changes[uri].push_back(TextEdit{
+                    .range = to_lsp_range(source_file, import->path->range),
+                    .new_text = rename.new_module_path,
+                });
+            }
+            continue;
+        }
+
+        // use declarations: replace the module prefix (all segments except the
+        // last), preserving the symbol name.
+        if (const auto *use = std::get_if<ast::UseDecl>(&declaration)) {
+            if (use->path == nullptr || use->path->segments.size() < 2) {
+                continue;
+            }
+            std::string module_prefix;
+            for (std::size_t index = 0; index + 1 < use->path->segments.size(); ++index) {
+                if (!module_prefix.empty()) {
+                    module_prefix += "::";
+                }
+                module_prefix += use->path->segments[index];
+            }
+            if (module_prefix == rename.old_module_path) {
+                edit.changes[uri].push_back(TextEdit{
+                    .range = to_lsp_range(source_file, use->path->range),
+                    .new_text = rename.new_module_path + "::" + use->path->segments.back(),
+                });
+            }
+            continue;
+        }
+
+        // module declarations: update the module path only in the file that is
+        // being renamed.
+        if (const auto *module = std::get_if<ast::ModuleDecl>(&declaration)) {
+            if (module->name == nullptr) {
+                continue;
+            }
+            const auto doc_path = AnalysisService::path_from_uri(uri);
+            if (!doc_path.has_value() ||
+                AnalysisService::normalized_path_key(*doc_path) != old_normalized) {
+                continue;
+            }
+            if (module->name->spelling() == rename.old_module_path) {
+                edit.changes[uri].push_back(TextEdit{
+                    .range = to_lsp_range(source_file, module->name->range),
+                    .new_text = rename.new_module_path,
+                });
+            }
+            continue;
+        }
+    }
+}
+
 void push_unique_location(std::vector<Location> &locations, Location location) {
     const auto duplicate =
         std::find_if(locations.begin(), locations.end(), [&](const Location &existing) {
@@ -4167,6 +4426,8 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_document_symbol(req);
     } else if (req.method == "workspace/symbol") {
         handle_workspace_symbol(req);
+    } else if (req.method == "workspace/willRenameFiles") {
+        handle_will_rename_files(req);
     } else if (req.method == "textDocument/signatureHelp") {
         handle_signature_help(req);
     } else if (req.method == "textDocument/formatting") {
@@ -5052,6 +5313,54 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
                 });
             }
         }
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = serialize_workspace_edit(edit);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_will_rename_files(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto old_uri = read_string_field(*req.params, "oldUri");
+    const auto new_uri = read_string_field(*req.params, "newUri");
+    if (old_uri.empty() || new_uri.empty() || old_uri == new_uri) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto old_path = AnalysisService::path_from_uri(old_uri);
+    const auto new_path = AnalysisService::path_from_uri(new_uri);
+    if (!old_path.has_value() || !new_path.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    // Only handle .ahfl source files.
+    if (old_path->extension() != ".ahfl" || new_path->extension() != ".ahfl") {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto rename = resolve_module_rename(analysis_, store_, *old_path, *new_path);
+    if (!rename.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    WorkspaceEdit edit;
+    for (const auto &uri : store_.all_uris()) {
+        collect_module_rename_edits(analysis_, uri, *old_path, *rename, edit);
+    }
+
+    if (edit.changes.empty()) {
+        send_null(transport_, req.id);
+        return;
     }
 
     JsonRpcResponse resp;

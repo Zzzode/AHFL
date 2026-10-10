@@ -181,12 +181,28 @@ std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapab
         obj->set("workspaceSymbolProvider", json::JsonValue::make_bool(true));
     }
 
-    if (caps.workspace_folders_provider) {
+    if (caps.workspace_folders_provider || caps.workspace_file_operations_will_rename) {
         auto workspace = json::JsonValue::make_object();
-        auto workspace_folders = json::JsonValue::make_object();
-        workspace_folders->set("supported", json::JsonValue::make_bool(true));
-        workspace_folders->set("changeNotifications", json::JsonValue::make_bool(true));
-        workspace->set("workspaceFolders", std::move(workspace_folders));
+        if (caps.workspace_folders_provider) {
+            auto workspace_folders = json::JsonValue::make_object();
+            workspace_folders->set("supported", json::JsonValue::make_bool(true));
+            workspace_folders->set("changeNotifications", json::JsonValue::make_bool(true));
+            workspace->set("workspaceFolders", std::move(workspace_folders));
+        }
+        if (caps.workspace_file_operations_will_rename) {
+            auto file_operations = json::JsonValue::make_object();
+            auto will_rename = json::JsonValue::make_object();
+            auto filters = json::JsonValue::make_array();
+            auto filter = json::JsonValue::make_object();
+            auto pattern = json::JsonValue::make_object();
+            pattern->set("glob", json::JsonValue::make_string("**/*.ahfl"));
+            pattern->set("matches", json::JsonValue::make_string("file"));
+            filter->set("pattern", std::move(pattern));
+            filters->push(std::move(filter));
+            will_rename->set("filters", std::move(filters));
+            file_operations->set("willRename", std::move(will_rename));
+            workspace->set("fileOperations", std::move(file_operations));
+        }
         obj->set("workspace", std::move(workspace));
     }
 

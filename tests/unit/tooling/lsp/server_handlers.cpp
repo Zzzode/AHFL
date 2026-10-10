@@ -10272,6 +10272,59 @@ void test_rename_rejects_keyword_and_conflict() {
     check(conflict_output.find("conflict") != std::string::npos, "rename.rejects_conflict");
 }
 
+void test_will_rename_files_capability() {
+    const auto init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"willRename\"") != std::string::npos,
+          "willRenameFiles.capability_advertised");
+    check(init_response.find("**/*.ahfl") != std::string::npos,
+          "willRenameFiles.capability_glob_filter");
+}
+
+void test_will_rename_files_updates_module_decl() {
+    // The file path must match the module structure so the handler can
+    // compute the new module path: /playground/pkg.ahfl → playground::pkg.
+    const std::string source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const auto escaped = escape_json_string(source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("playground::pkg2") != std::string::npos,
+          "willRenameFiles.module_decl_updated");
+}
+
+void test_will_rename_files_null_without_module_decl() {
+    // A file without a module declaration cannot produce a rename edit.
+    const std::string source =
+        "struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const auto escaped = escape_json_string(source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("\"result\":null") != std::string::npos,
+          "willRenameFiles.null_without_module_decl");
+}
+
 void test_document_symbol_hierarchy() {
     const std::string source = "struct Request {\n"
                                "    value: String;\n"
@@ -12780,6 +12833,9 @@ int main() {
     test_completion_pattern_variants_emit_payload_snippets_when_supported();
     test_completion_struct_variant_fields_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
+    test_will_rename_files_capability();
+    test_will_rename_files_updates_module_decl();
+    test_will_rename_files_null_without_module_decl();
     test_document_symbol_hierarchy();
     test_diagnostics_reflect_document_version();
     test_text_document_diagnostic_pull_report();

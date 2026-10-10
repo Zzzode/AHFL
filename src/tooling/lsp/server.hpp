@@ -64,6 +64,7 @@ class LspServer {
     void handle_workspace_diagnostic(const JsonRpcRequest &req);
     void handle_document_symbol(const JsonRpcRequest &req);
     void handle_workspace_symbol(const JsonRpcRequest &req);
+    void handle_will_rename_files(const JsonRpcRequest &req);
     void handle_signature_help(const JsonRpcRequest &req);
     void handle_document_formatting(const JsonRpcRequest &req);
     void handle_document_range_formatting(const JsonRpcRequest &req);

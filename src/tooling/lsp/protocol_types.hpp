@@ -360,6 +360,7 @@ struct ServerCapabilities {
     bool document_symbol_provider{true};
     bool workspace_symbol_provider{true};
     bool workspace_folders_provider{true};
+    bool workspace_file_operations_will_rename{true};
     bool signature_help_provider{true};
     bool semantic_tokens_provider{false};
     bool code_action_provider{false};
