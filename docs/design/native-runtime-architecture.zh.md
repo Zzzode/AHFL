@@ -182,6 +182,8 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 
 **Acceptance criteria:** `execute_http` keeps its exact signature; all seven call sites compile and pass with no source changes beyond the transport implementation; streaming delivers incremental chunks with mid-stream cancellation; connection reuse is verified; the CI gate (`scripts/check-native-grpc-gate.py`) continues to pass.
 
+**Landing:** `4eab01f7` (2026-10-11) — vendored curl 8.x + nghttp2 1.x + mbedTLS 3.x + zlib 1.3.x; libcurl easy-handle pool; `execute_http_streaming` + `SSEParser::feed`; `StreamingClient` and `extract_stream_content` deleted; smoke tests rewritten with loopback HTTP/1 and HTTP/2 servers.
+
 ### 2026-10-10: P3 scoping — registry server and dead scheduler deletion
 
 **Decision:** Two items, two opposite recommendations.
