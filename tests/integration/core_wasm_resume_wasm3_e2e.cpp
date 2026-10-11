@@ -763,7 +763,11 @@ void test_run_resume_wasm3_e2e() {
         }
         check(done.has_value(), "run_resume e2e memo: completes");
         if (done.has_value()) {
-            check(done->raw_status == 0, "run_resume e2e memo: raw_status OK");
+            const auto *completed = std::get_if<host::ResumeCompleted>(&*done);
+            check(completed != nullptr, "run_resume e2e memo: completed (not suspended)");
+            if (completed != nullptr) {
+                check(completed->raw_status == 0, "run_resume e2e memo: raw_status OK");
+            }
             check(output_matches(engine, injected_bytes),
                   "run_resume e2e memo: output is memo bytes (no live capability)");
             // The driver's import callback served the memo from the store. It
@@ -806,7 +810,11 @@ void test_run_resume_wasm3_e2e() {
         }
         check(done.has_value(), "run_resume e2e inject: completes");
         if (done.has_value()) {
-            check(done->raw_status == 0, "run_resume e2e inject: raw_status OK");
+            const auto *completed = std::get_if<host::ResumeCompleted>(&*done);
+            check(completed != nullptr, "run_resume e2e inject: completed (not suspended)");
+            if (completed != nullptr) {
+                check(completed->raw_status == 0, "run_resume e2e inject: raw_status OK");
+            }
             check(output_matches(engine, injected_bytes),
                   "run_resume e2e inject: output is injected bytes");
         }

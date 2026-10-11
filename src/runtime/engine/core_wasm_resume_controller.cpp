@@ -29,6 +29,7 @@ using core_wasm_resume::InvocationOrdinal;
 using core_wasm_resume::PayloadSlotId;
 using core_wasm_resume::ResumeMemoEntry;
 using core_wasm_resume::ResumeNode;
+using core_wasm_resume::ResumePendingEntry;
 using core_wasm_resume::ResumeState;
 using core_wasm_schema_module::ArtifactDigest;
 using core_wasm_schema_module::ManifestCallSiteIndex;
@@ -98,6 +99,8 @@ enum class Phase : std::uint8_t {
     AwaitingPublishAck,
     AwaitingLiveResult,
     AwaitingConsumedAck,
+    AwaitingPendingPublishAck,
+    Suspended,
     Failed,
     Consumed,
 };
@@ -169,6 +172,24 @@ struct PreparedState {
     std::vector<payload_store::Slot> pending_publish_slots;
     std::uint64_t pending_expected_generation{0};
 
+    // D2b-8: the last after-frontier live call site the controller issued a
+    // verdict for, retained so a PENDING run2 exit can form the new pending
+    // coordinate. The arg_hash cannot be re-derived (it was computed from the
+    // module's param frame, which the controller does not retain), so it is
+    // stored explicitly at the after-frontier verdict point.
+    std::optional<std::size_t> last_live_call_site;
+    std::optional<std::uint64_t> last_live_arg_hash;
+
+    // The injected frontier's chosen slot (retained in bind_publish_injected),
+    // so a D2b-8 pending publish can re-emit the unchanged admitted slot set.
+    PayloadSlotId injected_slot{};
+
+    // D2b-8 pending-coordinate publish scratch (valid only across
+    // finish_run(PENDING) -> ack_publish_pending).
+    std::optional<CoreWasmResumeRecord> pending_pending_record;
+    std::vector<payload_store::Slot> pending_pending_slots;
+    std::uint64_t pending_pending_expected_generation{0};
+
     // Terminal scratch.
     std::uint64_t consume_expected_generation{0};
 
@@ -190,6 +211,11 @@ struct PreparedState {
     make_publish_plan(std::uint64_t expected, const CoreWasmResumeRecord *rec,
                       std::span<const payload_store::Slot> slots) const noexcept {
         return PublishInjectedPlan(expected, rec, slots);
+    }
+    [[nodiscard]] FormNewPendingCoordinatePlan
+    make_pending_plan(std::uint64_t expected, const CoreWasmResumeRecord *rec,
+                      std::span<const payload_store::Slot> slots) const noexcept {
+        return FormNewPendingCoordinatePlan(expected, rec, slots);
     }
 };
 
@@ -1058,6 +1084,11 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
         st.phase = Phase::Failed;
         return std::unexpected(verdict.error());
     }
+    // D2b-8: retain the live call site + its computed arg_hash so a PENDING
+    // run2 exit can form the new pending coordinate (the arg_hash cannot be
+    // re-derived -- the param frame is not retained).
+    st.last_live_call_site = j;
+    st.last_live_arg_hash = arg_hash;
     st.replay_cursor = j + 1;
     st.phase = Phase::AwaitingLiveResult;
     return verdict;
@@ -1091,6 +1122,9 @@ bind_publish_injected(PreparedResume &prepared, PayloadSlotId chosen_slot) {
             }
         }
     }
+    // D2b-8: retain the injected slot so a later pending-coordinate publish can
+    // re-emit the unchanged admitted slot set.
+    st.injected_slot = chosen_slot;
 
     // Build the updated record: Suspended -> Injected; promote the frontier pending entry
     // to an ordinal-0 memo bound to the chosen slot; clear pending.
@@ -1166,7 +1200,7 @@ ack_publish_injected(PreparedResume &prepared,
 // ---------------------------------------------------------------------------
 // Terminal.
 // ---------------------------------------------------------------------------
-std::expected<MarkConsumedPlan, ResumeStepError>
+std::expected<FinishRunPlan, ResumeStepError>
 finish_run(PreparedResume &prepared, const Run2Exit &exit) {
     detail::PreparedState &st = detail::PreparedState::unwrap(prepared);
     // D2b-5: an after-frontier live verdict parks in AwaitingLiveResult. The
@@ -1183,8 +1217,83 @@ finish_run(PreparedResume &prepared, const Run2Exit &exit) {
     const auto &ret = std::get<Run2Returned>(exit);
     // ABI status classification (fail-closed: any unknown raw status is an error).
     if (ret.raw_status == AHFL_CAP_PENDING) {
-        st.phase = Phase::Failed;
-        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+        // D2b-8: a PENDING exit is valid ONLY after a ReadyForLive verdict parked
+        // in AwaitingLiveResult (the live call returned PENDING). In any other
+        // phase (incl. Replaying -- a module that returns PENDING without a
+        // PENDING import) it is an ineligible transition.
+        if (st.phase != Phase::AwaitingLiveResult) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+        }
+        if (!st.last_live_call_site.has_value() || !st.last_live_arg_hash.has_value()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+        }
+        const std::size_t cs_index = *st.last_live_call_site;
+        auto cs = st.module.resolve(ManifestCallSiteIndex{cs_index});
+        if (!cs.ok()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::CoordinateMismatch});
+        }
+        // The suspended node is the dense successor of the committed prefix.
+        const std::size_t schedule_pos = cs.call_site->schedule_pos().value;
+        if (schedule_pos != st.record.nodes.size()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::CoordinateMismatch});
+        }
+        auto node_res = st.module.resolve_node(ManifestNodeIndex{schedule_pos});
+        if (!node_res.ok()) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{ResumeStepReason::CoordinateMismatch});
+        }
+        // Event-prefix gate: the suspended node writes NO completion event, so the
+        // published prefix joins only the committed nodes (not module.node_count()).
+        if (const auto e = event_join(st, ret.whole_linear_memory, st.record.nodes.size())) {
+            st.phase = Phase::Failed;
+            return std::unexpected(ResumeStepError{*e});
+        }
+        // Form the new pending coordinate: the committed record plus a new frontier
+        // node carrying the suspended call site's pending entry (empty memo, no
+        // result_slot -- a pending entry publishes no new slot).
+        CoreWasmResumeRecord updated = st.record;
+        updated.resume_state = ResumeState::Suspended;
+        updated.suspended_node_id = node_res.node->workflow_node_id();
+        ResumeNode suspended;
+        suspended.workflow_node_id = node_res.node->workflow_node_id();
+        suspended.schedule_pos = static_cast<std::uint32_t>(schedule_pos);
+        suspended.node_kind = core_wasm_resume::NodeKind::Capability;
+        ResumePendingEntry pending;
+        pending.invocation_ordinal = cs.call_site->invocation_ordinal();
+        pending.capability = cs.call_site->capability();
+        pending.source_symbol = cs.call_site->source_symbol();
+        pending.arg_hash = *st.last_live_arg_hash;
+        suspended.pending = pending;
+        updated.nodes.push_back(std::move(suspended));
+
+        // The unchanged admitted slot set: the gen-N admitted slots plus the
+        // injected frontier slot (the pending entry adds none).
+        st.pending_pending_slots.clear();
+        st.pending_pending_slots.reserve(st.admitted_slots.size() +
+                                         (st.has_injected_result ? 1u : 0u));
+        for (const auto &s : st.admitted_slots) {
+            st.pending_pending_slots.push_back(
+                payload_store::Slot{s.slot, std::span<const std::uint8_t>(s.payload)});
+        }
+        if (st.has_injected_result) {
+            if (st.injected_slot.value == PayloadSlotId::kInvalid) {
+                st.phase = Phase::Failed;
+                return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+            }
+            st.pending_pending_slots.push_back(payload_store::Slot{
+                st.injected_slot, std::span<const std::uint8_t>(st.injected_result_bytes)});
+        }
+
+        st.pending_pending_record = std::move(updated);
+        st.pending_pending_expected_generation = st.current_generation;
+        st.phase = Phase::AwaitingPendingPublishAck;
+        return FinishRunPlan{st.make_pending_plan(
+            st.pending_pending_expected_generation, &*st.pending_pending_record,
+            std::span<const payload_store::Slot>(st.pending_pending_slots))};
     }
     if (ret.raw_status != AHFL_CAP_OK) {
         st.phase = Phase::Failed;
@@ -1204,7 +1313,7 @@ finish_run(PreparedResume &prepared, const Run2Exit &exit) {
     }
     st.consume_expected_generation = st.current_generation;
     st.phase = Phase::AwaitingConsumedAck;
-    return st.make_mark_consumed_plan(st.consume_expected_generation);
+    return FinishRunPlan{st.make_mark_consumed_plan(st.consume_expected_generation)};
 }
 
 std::expected<void, ResumeStepError>
@@ -1227,6 +1336,35 @@ ack_mark_consumed(PreparedResume &prepared,
     }
     st.current_generation = m;
     st.phase = Phase::Consumed;
+    return {};
+}
+
+std::expected<void, ResumeStepError>
+ack_publish_pending(PreparedResume &prepared,
+                    std::expected<std::uint64_t, payload_store::PayloadStoreError> store_result) {
+    detail::PreparedState &st = detail::PreparedState::unwrap(prepared);
+    if (st.phase != Phase::AwaitingPendingPublishAck) {
+        st.phase = Phase::Failed;
+        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+    }
+    if (!store_result.has_value()) {
+        st.phase = Phase::Failed;
+        return std::unexpected(ResumeStepError{store_result.error()});
+    }
+    const std::uint64_t m = *store_result;
+    const std::uint64_t n = st.pending_pending_expected_generation;
+    if (n == kU64Max || m != n + 1) {
+        st.phase = Phase::Failed;
+        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+    }
+    // Commit: adopt the new pending coordinate (the committed record plus the new
+    // Suspended frontier node) and its generation; the resume ends Suspended -- a
+    // future resume admits the new record and reconciles the sealed Pending row.
+    st.record = std::move(*st.pending_pending_record);
+    st.pending_pending_record.reset();
+    st.pending_pending_slots.clear();
+    st.current_generation = m;
+    st.phase = Phase::Suspended;
     return {};
 }
 

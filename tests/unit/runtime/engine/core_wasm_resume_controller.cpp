@@ -90,6 +90,8 @@ static_assert(std::variant_size_v<rc::ImportStepDecision> == 6,
               "ImportStepDecision has 6 arms (ReturnMemo/NeedInjectedSlot/ReadyForLive + "
               "D2b-4 DedupReplay/DedupReplayFailure/RecoverPending)");
 static_assert(std::variant_size_v<rc::Run2Exit> == 2, "Run2Exit has 2 arms");
+static_assert(std::variant_size_v<rc::FinishRunPlan> == 2,
+              "FinishRunPlan has 2 arms (MarkConsumed/FormNewPendingCoordinate)");
 // Reason enums are compact (u8), carry no bytes.
 static_assert(sizeof(rc::ResumePrepareReason) == 1, "PrepareReason u8");
 static_assert(sizeof(rc::ResumeStepReason) == 1, "StepReason u8");
@@ -387,9 +389,12 @@ int main(int argc, char **argv) {
             ret.raw_status = AHFL_CAP_OK;
             ret.whole_linear_memory = std::span<const std::uint8_t>(mem2);
             auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
-            check(mc.has_value() && mc->expected_generation() == 2, "A.finish_ok");
+            check(mc.has_value(), "A.finish_ok");
             if (mc.has_value()) {
-                auto cons = store->mark_consumed(wf, ckpt, mc->expected_generation(), id_span, key);
+                const auto consumed_from = std::visit(
+                    [](const auto &p) { return p.expected_generation(); }, *mc);
+                check(consumed_from == 2, "A.finish_ok");
+                auto cons = store->mark_consumed(wf, ckpt, consumed_from, id_span, key);
                 check(cons.has_value() && *cons == 3, "A.mark_consumed_gen3");
                 auto ack = rc::ack_mark_consumed(*prepared, cons);
                 check(ack.has_value(), "A.ack_consumed");
@@ -2032,6 +2037,122 @@ int main(int argc, char **argv) {
                               is_step_reason(again.error(),
                                              rc::ResumeStepReason::TransitionInvalid),
                           "E.failed_is_terminal");
+                }
+                nuke(work);
+            }
+            // E1h: finish_run(PENDING) in AwaitingLiveResult (fresh fixture) ->
+            // FormNewPendingCoordinatePlan. D2b-8: the live call returned
+            // PENDING; the controller forms the new pending coordinate (the
+            // committed record plus a new Suspended frontier node for the live
+            // call site) and parks in AwaitingPendingPublishAck. The event
+            // prefix joins only the committed nodes (mem_p2, 2 events).
+            {
+                const fs::path work = base / "e-live-pending";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto prepared = reach_live(work, store);
+                check(prepared.has_value(), "E1h.reach_live");
+                if (prepared.has_value()) {
+                    rc::Run2Returned ret;
+                    ret.raw_status = AHFL_CAP_PENDING;
+                    ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p2);
+                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    check(fin.has_value(), "E1h.pending_accepted");
+                    if (fin.has_value()) {
+                        check(std::holds_alternative<rc::FormNewPendingCoordinatePlan>(*fin),
+                              "E1h.pending_plan");
+                        if (std::holds_alternative<rc::FormNewPendingCoordinatePlan>(*fin)) {
+                            const auto &plan =
+                                std::get<rc::FormNewPendingCoordinatePlan>(*fin);
+                            check(plan.expected_generation() == 2, "E1h.expected_gen_2");
+                            const auto &rec = plan.record();
+                            check(rec.resume_state == ResumeState::Suspended,
+                                  "E1h.record_suspended");
+                            check(rec.suspended_node_id == CoreWorkflowNodeId{42},
+                                  "E1h.suspended_node_42");
+                            check(rec.nodes.size() == 3, "E1h.three_nodes");
+                            if (rec.nodes.size() == 3) {
+                                const auto &frontier = rec.nodes.back();
+                                check(frontier.workflow_node_id == CoreWorkflowNodeId{42},
+                                      "E1h.frontier_node_42");
+                                check(frontier.pending.has_value(), "E1h.frontier_pending");
+                                if (frontier.pending.has_value()) {
+                                    check(frontier.pending->capability == CoreCapabilityId{4},
+                                          "E1h.pending_cap4");
+                                    check(frontier.pending->source_symbol == 901,
+                                          "E1h.pending_sym901");
+                                    check(frontier.pending->arg_hash == ah1,
+                                          "E1h.pending_arg_hash");
+                                }
+                                check(frontier.memo.empty(), "E1h.frontier_memo_empty");
+                            }
+                            // The unchanged admitted slot set: entry + injected.
+                            check(plan.slots().size() == 2, "E1h.two_slots");
+                        }
+                    }
+                }
+                nuke(work);
+            }
+            // E1i: ack_publish_pending commits the new coordinate and moves to
+            // the terminal Suspended phase; a duplicate ACK -> TransitionInvalid.
+            {
+                const fs::path work = base / "e-live-pending-ack";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto prepared = reach_live(work, store);
+                check(prepared.has_value(), "E1i.reach_live");
+                if (prepared.has_value() && store.has_value()) {
+                    rc::Run2Returned ret;
+                    ret.raw_status = AHFL_CAP_PENDING;
+                    ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p2);
+                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    check(fin.has_value(), "E1i.pending_accepted");
+                    if (fin.has_value() &&
+                        std::holds_alternative<rc::FormNewPendingCoordinatePlan>(*fin)) {
+                        const auto &plan = std::get<rc::FormNewPendingCoordinatePlan>(*fin);
+                        auto pub = store->publish_available(wf, ckpt, plan.expected_generation(),
+                                                            plan.record(), plan.slots(), id_span,
+                                                            key);
+                        check(pub.has_value() && *pub == 3, "E1i.published_gen3");
+                        auto ack = rc::ack_publish_pending(*prepared, pub);
+                        check(ack.has_value(), "E1i.ack_ok");
+                        // The new coordinate is the live Available gen 3.
+                        auto after = store->load(wf, ckpt, id_span, key);
+                        check(after.has_value() &&
+                                  std::holds_alternative<ps::ResolvedAvailable>(*after),
+                              "E1i.available_gen3");
+                        if (after.has_value() &&
+                            std::holds_alternative<ps::ResolvedAvailable>(*after)) {
+                            check(std::get<ps::ResolvedAvailable>(*after).generation == 3,
+                                  "E1i.live_gen3");
+                        }
+                        // Duplicate ACK -> TransitionInvalid + Failed.
+                        auto dup = rc::ack_publish_pending(
+                            *prepared, std::expected<std::uint64_t, ps::PayloadStoreError>(3));
+                        check(!dup.has_value() &&
+                                  is_step_reason(dup.error(),
+                                                 rc::ResumeStepReason::TransitionInvalid),
+                              "E1i.duplicate_ack_invalid");
+                    }
+                }
+                nuke(work);
+            }
+            // E1j: finish_run(PENDING) with a WRONG event prefix ->
+            // CoordinateMismatch. The suspended node writes no event, so the
+            // prefix must join exactly the committed nodes (2); mem_p3 (3
+            // events) is a mismatch.
+            {
+                const fs::path work = base / "e-live-pending-prefix";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto prepared = reach_live(work, store);
+                check(prepared.has_value(), "E1j.reach_live");
+                if (prepared.has_value()) {
+                    rc::Run2Returned ret;
+                    ret.raw_status = AHFL_CAP_PENDING;
+                    ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p3);
+                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    check(!fin.has_value() &&
+                              is_step_reason(fin.error(),
+                                             rc::ResumeStepReason::CoordinateMismatch),
+                          "E1j.pending_prefix_mismatch");
                 }
                 nuke(work);
             }

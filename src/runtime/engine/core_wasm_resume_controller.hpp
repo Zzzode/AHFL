@@ -176,6 +176,7 @@ struct GatedResumeOptions {
 //   Replaying -> AwaitingSlot -> AwaitingPublishAck -> Replaying
 //             -> AwaitingLiveResult (follow-on; step APIs TransitionInvalid here)
 //             -> AwaitingConsumedAck -> Consumed
+//             -> AwaitingPendingPublishAck -> Suspended (D2b-8: a live PENDING)
 //             -> Failed (any controller fault or store error)
 // exercised only through the free functions below. Every span it hands out stays
 // valid for the whole `PreparedResume` lifetime.
@@ -363,6 +364,41 @@ struct MarkConsumedPlan {
     std::uint64_t expected_generation_{0};
 };
 
+// D2b-8: the COMPLETE, controller-owned publish plan for the Injected->Suspended
+// transition when an after-frontier live capability returns PENDING. The
+// controller decides every byte: the updated record (the committed record plus a
+// NEW frontier node carrying the suspended call site's ResumePendingEntry --
+// empty memo, no result_slot) and the UNCHANGED admitted slot set (a pending
+// entry publishes no new slot). The adapter (D2a) only calls
+// `store.publish_available(..., expected_generation(), record(), slots(), ...)`;
+// it cannot rewrite the coordinate. Every view points into controller-owned
+// storage that stays stable at least until the store result is ACKed.
+struct FormNewPendingCoordinatePlan {
+    [[nodiscard]] std::uint64_t expected_generation() const noexcept {
+        return expected_generation_;
+    }
+    [[nodiscard]] const core_wasm_resume::CoreWasmResumeRecord &record() const noexcept {
+        return *record_;
+    }
+    [[nodiscard]] std::span<const payload_store::Slot> slots() const noexcept { return slots_; }
+
+  private:
+    friend struct detail::PreparedState;
+    FormNewPendingCoordinatePlan(std::uint64_t expected_generation,
+                                 const core_wasm_resume::CoreWasmResumeRecord *record,
+                                 std::span<const payload_store::Slot> slots) noexcept
+        : expected_generation_(expected_generation), record_(record), slots_(slots) {}
+
+    std::uint64_t expected_generation_{0};
+    const core_wasm_resume::CoreWasmResumeRecord *record_{nullptr};
+    std::span<const payload_store::Slot> slots_{};
+};
+
+// The terminal run2-exit plan: a completed replay tombstones the consumed
+// generation (MarkConsumedPlan); a suspended replay persists a new pending
+// coordinate (FormNewPendingCoordinatePlan, D2b-8).
+using FinishRunPlan = std::variant<MarkConsumedPlan, FormNewPendingCoordinatePlan>;
+
 // -------------------------------------------------------------------------------
 // PHASE 1: digest + coordinate / A2-baseline gates. NO slot admission, NO
 // eligibility. The module is captured for later phases; the snapshot is moved in.
@@ -427,16 +463,23 @@ ack_publish_injected(
     std::expected<std::uint64_t, payload_store::PayloadStoreError> store_result);
 
 // -------------------------------------------------------------------------------
-// Terminal run2-exit gate. Only valid in the Replaying phase. The controller
-// classifies the raw exit:
+// Terminal run2-exit gate. Valid in the Replaying phase (a complete replay) or
+// the AwaitingLiveResult phase (D2b-5: the driver served the live result and the
+// module finished). The controller classifies the raw exit:
 //   Run2Returned raw OK       -> full published-prefix gate -> MarkConsumedPlan
 //                                (moves to AwaitingConsumedAck)
-//   Run2Returned raw PENDING  -> TransitionInvalid (a second PENDING is ineligible)
+//   Run2Returned raw PENDING  -> D2b-8: valid ONLY in AwaitingLiveResult (the
+//                                live call returned PENDING). Forms a new pending
+//                                coordinate (the retained suspended call site +
+//                                its computed arg_hash) and yields a
+//                                FormNewPendingCoordinatePlan (moves to
+//                                AwaitingPendingPublishAck). In any other phase
+//                                (incl. Replaying -- a module that returns PENDING
+//                                without a PENDING import) it is TransitionInvalid.
 //   Run2Returned raw ERROR/*  -> ModuleError
 //   Run2Trapped               -> ModuleTrap
-// Only the OK path yields a plan / emits a tombstone.
 // -------------------------------------------------------------------------------
-[[nodiscard]] std::expected<MarkConsumedPlan, ResumeStepError>
+[[nodiscard]] std::expected<FinishRunPlan, ResumeStepError>
 finish_run(PreparedResume &prepared, const Run2Exit &exit);
 
 // ACK the `mark_consumed` store result. Only valid in AwaitingConsumedAck. On error
@@ -445,5 +488,14 @@ finish_run(PreparedResume &prepared, const Run2Exit &exit);
 [[nodiscard]] std::expected<void, ResumeStepError>
 ack_mark_consumed(PreparedResume &prepared,
                   std::expected<std::uint64_t, payload_store::PayloadStoreError> store_result);
+
+// ACK the `publish_available` store result for a D2b-8 pending coordinate. Only
+// valid in AwaitingPendingPublishAck. On error keeps the `PayloadStoreError` and
+// fails; on success checks N+1 == M, commits the new Suspended record +
+// generation, and moves to the terminal Suspended phase. A duplicate ACK is
+// `TransitionInvalid`.
+[[nodiscard]] std::expected<void, ResumeStepError>
+ack_publish_pending(PreparedResume &prepared,
+                    std::expected<std::uint64_t, payload_store::PayloadStoreError> store_result);
 
 } // namespace ahfl::runtime::core_wasm_resume_controller

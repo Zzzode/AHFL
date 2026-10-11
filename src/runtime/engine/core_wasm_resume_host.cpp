@@ -8,6 +8,7 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
+#include "ahfl/runtime/ahfl_host.h" // AHFL_CAP_OK/ERROR/PENDING (ABI SSOT)
 #include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp"
@@ -286,14 +287,18 @@ struct ReplayState {
                                             ok.canonical_result_json);
                                     },
                                     [&](LivePending) -> Result {
-                                        // The Pending row stays sealed: no
-                                        // record, no frame. A future resume's
-                                        // preview sees it and issues
-                                        // RecoverPending (D2b-7); the
-                                        // suspend/persist decision that forms a
-                                        // new pending coordinate is D2b-8.
-                                        return abort_with(state,
-                                            host_failure(ResumeHostReason::LiveCapabilityPending));
+                                        // D2b-8: the Pending row stays sealed
+                                        // (no record, no frame) and the PENDING
+                                        // status is propagated to the module:
+                                        // the import reply carries
+                                        // AHFL_CAP_PENDING and the module ends
+                                        // run2 with a PENDING exit, which the
+                                        // controller accepts in
+                                        // AwaitingLiveResult and persists as a
+                                        // new Suspended coordinate.
+                                        return ImportCallbackResult{
+                                            engine::ImportReply{AHFL_CAP_PENDING,
+                                                                engine::GuestPointer{0}, 0}};
                                     },
                                     [&](LiveError &err) -> Result {
                                         // Record the failure bytes so a future
@@ -445,10 +450,10 @@ std::string_view host_code(const ResumeFailure &failure) noexcept {
                     return host_code_for(rc::ResumeStepReason::TransitionInvalid);
                 // D2b-5 live capability outcomes. The F2 catalogue is LOCKED
                 // with no resume.capability.* arm: a non-OK capability outcome
-                // is the non-OK import status code, and a Pending row that
-                // needs reconciliation is an ineligible transition.
+                // is the non-OK import status code. A PENDING outcome is NOT a
+                // failure (D2b-8): it persists a new Suspended coordinate and
+                // surfaces as ResumeSuspended.
                 case ResumeHostReason::LiveCapabilityFault:
-                case ResumeHostReason::LiveCapabilityPending:
                 case ResumeHostReason::LiveCapabilityError:
                 case ResumeHostReason::LiveCapabilityReplayedFailure:
                     return host_code_for(rc::ResumeStepReason::ModuleError);
@@ -470,7 +475,7 @@ std::string_view host_code(const ResumeFailure &failure) noexcept {
         failure);
 }
 
-std::expected<ResumeCompleted, ResumeFailure> run_resume(const ResumeRequest &request) {
+std::expected<ResumeOutcome, ResumeFailure> run_resume(const ResumeRequest &request) {
     if (request.module == nullptr || request.module_bytes.empty() ||
         request.key_id.size() != 16 || request.key.empty()) {
         return std::unexpected(host_failure(ResumeHostReason::EngineFailure,
@@ -614,40 +619,66 @@ std::expected<ResumeCompleted, ResumeFailure> run_resume(const ResumeRequest &re
         return std::unexpected(host_failure(ResumeHostReason::ArtifactMemoryContractMismatch));
     }
 
-    // (6) Terminal gate on the raw status + full published prefix.
+    // (6) Terminal gate on the raw status + full published prefix. The plan is
+    // one of two terminal transactions (D2b-8): a MarkConsumedPlan (OK run ->
+    // tombstone + output frame) or a FormNewPendingCoordinatePlan (PENDING run
+    // -> publish the new Suspended coordinate, no output frame).
     rc::Run2Returned returned;
     returned.raw_status = tuple.raw_status;
     returned.whole_linear_memory = *whole;
-    auto consumed_plan = rc::finish_run(prepared, rc::Run2Exit{returned});
-    if (!consumed_plan.has_value()) {
-        return std::unexpected(map_step_error(consumed_plan.error()));
+    auto terminal_plan = rc::finish_run(prepared, rc::Run2Exit{returned});
+    if (!terminal_plan.has_value()) {
+        return std::unexpected(map_step_error(terminal_plan.error()));
     }
 
-    // Copy the forwarded output out of guest memory before the instance is
-    // torn down. An out-of-page tuple pointer is a fail-closed module fault.
-    const std::uint64_t out_begin = tuple.output_ptr.value;
-    const std::uint64_t out_end = out_begin + tuple.output_len;
-    if (out_end > whole->size() || out_begin > out_end) {
-        return std::unexpected(host_failure(ResumeHostReason::EngineFailure,
-                                            EngineError::InvalidSequence));
-    }
-    ResumeCompleted completed;
-    completed.raw_status = tuple.raw_status;
-    completed.output.assign(whole->begin() + static_cast<std::ptrdiff_t>(out_begin),
-                            whole->begin() + static_cast<std::ptrdiff_t>(out_end));
+    return std::visit(
+        ahfl::Overloaded{
+            [&](const rc::MarkConsumedPlan &plan)
+                -> std::expected<ResumeOutcome, ResumeFailure> {
+                // Copy the forwarded output out of guest memory before the
+                // instance is torn down. An out-of-page tuple pointer is a
+                // fail-closed module fault.
+                const std::uint64_t out_begin = tuple.output_ptr.value;
+                const std::uint64_t out_end = out_begin + tuple.output_len;
+                if (out_end > whole->size() || out_begin > out_end) {
+                    return std::unexpected(host_failure(ResumeHostReason::EngineFailure,
+                                                        EngineError::InvalidSequence));
+                }
+                ResumeCompleted completed;
+                completed.raw_status = tuple.raw_status;
+                completed.output.assign(whole->begin() + static_cast<std::ptrdiff_t>(out_begin),
+                                        whole->begin() + static_cast<std::ptrdiff_t>(out_end));
 
-    // Tombstone the consumed generation (CAS) and ACK the N+1 == M result.
-    const std::uint64_t consumed_from = consumed_plan->expected_generation();
-    auto marked = request.store->mark_consumed(request.workflow, request.checkpoint,
-                                               consumed_from, key_id_16, request.key);
-    auto ack = rc::ack_mark_consumed(prepared, marked);
-    if (!ack.has_value()) {
-        return std::unexpected(map_step_error(ack.error()));
-    }
+                // Tombstone the consumed generation (CAS) and ACK the N+1 == M result.
+                const std::uint64_t consumed_from = plan.expected_generation();
+                auto marked = request.store->mark_consumed(request.workflow, request.checkpoint,
+                                                           consumed_from, key_id_16, request.key);
+                auto ack = rc::ack_mark_consumed(prepared, marked);
+                if (!ack.has_value()) {
+                    return std::unexpected(map_step_error(ack.error()));
+                }
 
-    completed.consumed_from = consumed_from;
-    completed.consumed_generation = *marked;
-    return completed;
+                completed.consumed_from = consumed_from;
+                completed.consumed_generation = *marked;
+                return ResumeOutcome{std::move(completed)};
+            },
+            [&](const rc::FormNewPendingCoordinatePlan &plan)
+                -> std::expected<ResumeOutcome, ResumeFailure> {
+                // D2b-8: publish the new pending coordinate (the committed
+                // record plus the new Suspended frontier node) under the
+                // unchanged admitted slot set, and ACK the N+1 == M generation.
+                // No output frame: the run ended Suspended, not OK.
+                auto published = request.store->publish_available(
+                    request.workflow, request.checkpoint, plan.expected_generation(),
+                    plan.record(), plan.slots(), key_id_16, request.key);
+                auto ack = rc::ack_publish_pending(prepared, published);
+                if (!ack.has_value()) {
+                    return std::unexpected(map_step_error(ack.error()));
+                }
+                return ResumeOutcome{ResumeSuspended{*published}};
+            },
+        },
+        *terminal_plan);
 }
 
 } // namespace ahfl::runtime::core_wasm_resume_host

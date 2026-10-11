@@ -233,6 +233,16 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
             }
             const auto &frame = std::get<eng::ImportReply>(reply);
             import_raw_statuses_.push_back(frame.raw_status);
+            // D2b-8: a PENDING import reply ends run2 immediately with a
+            // PENDING exit: the suspended node writes NO completion event and
+            // no subsequent node runs (the driver persists the new coordinate).
+            if (frame.raw_status == AHFL_CAP_PENDING) {
+                eng::Run2ResultTuple pending_tuple;
+                pending_tuple.raw_status = AHFL_CAP_PENDING;
+                pending_tuple.output_ptr = eng::GuestPointer{0};
+                pending_tuple.output_len = 0;
+                return eng::Run2Outcome{pending_tuple};
+            }
             last_output_ptr = frame.result_ptr.value;
             last_output_len = frame.result_len;
             ++cap_index;
@@ -664,9 +674,11 @@ int main(int argc, char **argv) {
         auto done = host::run_resume(request);
         check(done.has_value(), "S1.resume_ok");
         if (done.has_value()) {
-            check(done->raw_status == AHFL_CAP_OK, "S1.raw_ok");
-            check(done->output == injected, "S1.forwarded_output_is_injected");
-            check(done->consumed_from == 2 && done->consumed_generation == 3, "S1.consumed_3_2");
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.raw_status == AHFL_CAP_OK, "S1.raw_ok");
+            check(completed.output == injected, "S1.forwarded_output_is_injected");
+            check(completed.consumed_from == 2 && completed.consumed_generation == 3,
+                  "S1.consumed_3_2");
         }
 
         // The host performed exactly the L0 + two memo + one injected frame
@@ -741,8 +753,10 @@ int main(int argc, char **argv) {
         auto done = host::run_resume(request);
         check(done.has_value(), "S2.resume_ok");
         if (done.has_value()) {
-            check(done->output == injected, "S2.frontier_memo_forwarded");
-            check(done->consumed_from == 1 && done->consumed_generation == 2, "S2.consumed_2_1");
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.output == injected, "S2.frontier_memo_forwarded");
+            check(completed.consumed_from == 1 && completed.consumed_generation == 2,
+                  "S2.consumed_2_1");
         }
         // L0 entry + the single frontier memo transfer: there was NO new CAS.
         check(engine.host_allocations().size() == 2, "S2.two_transfers_no_cas");
@@ -1424,9 +1438,10 @@ int main(int argc, char **argv) {
         auto done = host::run_resume(request);
         check(done.has_value(), "S15.resume_ok");
         if (done.has_value()) {
-            check(done->raw_status == AHFL_CAP_OK, "S15.raw_ok");
-            check(done->output == bytes_of(kStringResultJson), "S15.output_is_live_result");
-            check(done->consumed_from == 2 && done->consumed_generation == 3,
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.raw_status == AHFL_CAP_OK, "S15.raw_ok");
+            check(completed.output == bytes_of(kStringResultJson), "S15.output_is_live_result");
+            check(completed.consumed_from == 2 && completed.consumed_generation == 3,
                   "S15.consumed_3_2");
         }
         check(invoker_calls == 1, "S15.invoker_called_once");
@@ -1463,9 +1478,12 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
-    // ============ S16: ReadyForLive + PENDING leaves the row sealed =========
+    // ============ S16: ReadyForLive + PENDING persists a new coordinate =====
     // The invoker returns PENDING: no Result frame, no terminal recorded. The
-    // Pending row stays sealed for recovery and the resume fails closed.
+    // Pending row stays sealed and the driver persists a new Suspended
+    // coordinate (D2b-8): the gen-2 Injected record plus a new frontier node
+    // for the after-frontier cap 42 call site, published at gen 3. The outcome
+    // is ResumeSuspended (no output frame), not a failure.
     {
         const fs::path work = base / "s16-live-pending";
         ModuleSpec spec = live_module_spec();
@@ -1491,11 +1509,14 @@ int main(int argc, char **argv) {
                                       host::LiveCapabilityOutcome{host::LivePending{}}));
 
         auto done = host::run_resume(request);
-        check(!done.has_value(), "S16.fails_closed");
-        if (!done.has_value()) {
-            check(is_host_failure(done.error(), host::ResumeHostReason::LiveCapabilityPending),
-                  "S16.pending");
-            check(host::host_code(done.error()) == "resume.module.error", "S16.host_code");
+        check(done.has_value(), "S16.resume_suspended");
+        if (done.has_value()) {
+            check(std::holds_alternative<host::ResumeSuspended>(*done),
+                  "S16.outcome_suspended");
+            if (std::holds_alternative<host::ResumeSuspended>(*done)) {
+                const auto &suspended = std::get<host::ResumeSuspended>(*done);
+                check(suspended.suspended_generation == 3, "S16.suspended_gen_3");
+            }
         }
         check(invoker_calls == 1, "S16.invoker_called_once");
         // The Pending row stays sealed (no terminal recorded).
@@ -1508,10 +1529,41 @@ int main(int argc, char **argv) {
             auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
             check(rows.has_value() && rows->size() == 1, "S16.one_pending_row");
         }
-        // The generation stays Available / unconsumed.
+        // The new coordinate is an Available gen-3 Suspended record: 3 nodes,
+        // the frontier (cap 42 / sym 901) carrying the pending entry.
         auto after = store->load(kWf, kCkpt, id_span, key);
         check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
-              "S16.still_available");
+              "S16.available_gen3");
+        if (after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after)) {
+            const auto &available = std::get<ps::ResolvedAvailable>(*after);
+            check(available.generation == 3, "S16.gen3");
+            const auto &rec = available.record;
+            check(rec.resume_state == ResumeState::Suspended, "S16.record_suspended");
+            check(rec.nodes.size() == 3, "S16.three_nodes");
+            if (rec.nodes.size() == 3) {
+                const auto &frontier = rec.nodes.back();
+                check(frontier.workflow_node_id == CoreWorkflowNodeId{42},
+                      "S16.frontier_node_42");
+                check(frontier.pending.has_value(), "S16.frontier_pending");
+                if (frontier.pending.has_value()) {
+                    check(frontier.pending->capability == CoreCapabilityId{4},
+                          "S16.pending_cap4");
+                    check(frontier.pending->source_symbol == 901, "S16.pending_sym901");
+                    check(frontier.pending->arg_hash == param_arg_hash(mod, 1, kIntParamJson),
+                          "S16.pending_arg_hash");
+                }
+                check(frontier.memo.empty(), "S16.frontier_memo_empty");
+            }
+            // The unchanged admitted slot set: entry slot 9 + injected slot 5.
+            check(available.slots.size() == 2, "S16.two_slots");
+        }
+        // The import replies: memo OK for cap 41, PENDING for cap 42.
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_PENDING,
+              "S16.replies_ok_then_pending");
+        // L0 entry + injected L4: 2 transfers (no live result frame).
+        check(engine.host_allocations().size() == 2, "S16.two_transfers");
         nuke(work);
     }
 
@@ -1661,7 +1713,8 @@ int main(int argc, char **argv) {
         if (done.has_value()) {
             // The packed result is the COMPETING terminal's bytes, not the
             // invoker's (which was never called).
-            check(done->output == bytes_of("\"cached\""), "S19.output_is_cached");
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.output == bytes_of("\"cached\""), "S19.output_is_cached");
         }
         check(invoker_calls == 0, "S19.invoker_not_called");
         // The replayed result was packed with a raw OK reply.
@@ -1807,9 +1860,10 @@ int main(int argc, char **argv) {
         if (done.has_value()) {
             // The packed result is the RECORDED terminal's bytes, not the
             // invoker's (which was never called).
-            check(done->raw_status == AHFL_CAP_OK, "S22.raw_ok");
-            check(done->output == bytes_of("\"cached\""), "S22.output_is_cached");
-            check(done->consumed_from == 2 && done->consumed_generation == 3,
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.raw_status == AHFL_CAP_OK, "S22.raw_ok");
+            check(completed.output == bytes_of("\"cached\""), "S22.output_is_cached");
+            check(completed.consumed_from == 2 && completed.consumed_generation == 3,
                   "S22.consumed_3_2");
         }
         check(invoker_calls == 0, "S22.invoker_not_called");
@@ -1989,6 +2043,74 @@ int main(int argc, char **argv) {
                   "S25.host_code");
         }
         check(invoker_calls == 0, "S25.invoker_not_called");
+        nuke(work);
+    }
+
+    // ============ S26: D2b-8 pending publish CAS failure ===================
+    // A competitor publishes gen 3 between the live PENDING call and the
+    // driver's pending-coordinate publish. The driver's CAS (expected 2) fails
+    // GenerationMismatch: the resume fails closed, the competitor's gen 3 stays
+    // the live generation (the driver's coordinate was never published), and
+    // the Pending row stays sealed.
+    {
+        const fs::path work = base / "s26-pending-cas";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S26.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S26.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        script.before_callback = [&](std::size_t cap_index) {
+            if (cap_index != 1 || !store.has_value()) {
+                return;
+            }
+            // Race the driver's pending publish: re-publish the gen-2 Injected
+            // record as gen 3 so the driver's CAS (expected 2) fails.
+            auto live = store->load(kWf, kCkpt, id_span, key);
+            if (!live.has_value() || !std::holds_alternative<ps::ResolvedAvailable>(*live)) {
+                return;
+            }
+            const auto &available = std::get<ps::ResolvedAvailable>(*live);
+            std::vector<ps::Slot> slots;
+            slots.reserve(available.slots.size());
+            for (const auto &s : available.slots) {
+                slots.push_back(ps::Slot{s.slot, std::span<const std::uint8_t>(s.payload)});
+            }
+            auto raced = store->publish_available(kWf, kCkpt, available.generation,
+                                                  available.record, slots, id_span, key);
+            check(raced.has_value() && *raced == 3, "S26.competitor_published_gen3");
+        };
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{host::LivePending{}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S26.fails_closed");
+        if (!done.has_value()) {
+            check(is_store(done.error(), ps::PayloadStoreError::GenerationMismatch),
+                  "S26.generation_mismatch");
+        }
+        check(invoker_calls == 1, "S26.invoker_called_once");
+        // The competitor's gen 3 is the live generation; the driver's pending
+        // coordinate was never published.
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S26.still_available");
+        if (after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after)) {
+            check(std::get<ps::ResolvedAvailable>(*after).generation == 3, "S26.live_gen3");
+        }
         nuke(work);
     }
 

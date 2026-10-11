@@ -30,16 +30,22 @@
 //        ReadyForLive -> D2b-5: seal the effect intent (begin_effect) BEFORE
 //                             the caller-supplied live_invoker call, record the
 //                             OK/ERROR terminal, pack the canonical result;
-//                             PENDING leaves the row sealed and aborts. An empty
-//                             live_invoker keeps the fail-closed baseline.
+//                             PENDING leaves the row sealed and the run ends
+//                             Suspended (D2b-8). An empty live_invoker keeps
+//                             the fail-closed baseline.
 //        DedupReplay -> D2b-6: read the recorded SUCCEEDED terminal and pack
 //                             it; NO live call, NO second effect.
 //        DedupReplayFailure -> D2b-6: re-surface the recorded FAILED terminal;
 //                             NO live call, NO second effect.
 //        RecoverPending -> D2b-7: abort with RecoverPendingRequired; the host
 //                             must reconcile the Pending row.
-//   6. rc::finish_run(Run2Exit) -> store.mark_consumed ->
-//      rc::ack_mark_consumed.
+//   6. rc::finish_run(Run2Exit) -> FinishRunPlan:
+//        MarkConsumedPlan -> store.mark_consumed -> rc::ack_mark_consumed
+//                             (ResumeCompleted, output frame forwarded);
+//        FormNewPendingCoordinatePlan -> store.publish_available ->
+//                             rc::ack_publish_pending (D2b-8: the new Suspended
+//                             coordinate is persisted; ResumeSuspended, no
+//                             output frame).
 //
 // Every failure is fail-CLOSED: no frame is transferred on a failing step, and
 // a failed resume leaves the authenticated generation Available / unconsumed.
@@ -64,9 +70,12 @@
 // DedupReplay / DedupReplayFailure arms landed in D2b-6 (read the recorded
 // terminal and pack / re-surface it; no live call) and RecoverPending in
 // D2b-7 (abort with RecoverPendingRequired; the host reconciles the Pending
-// row). An empty live_invoker keeps the ReadyForLiveBlocked baseline. B2 /
-// KR6.5 stay false until D2b-8 (PENDING suspend/persist) and D2b-9
-// (RecoverPending idempotency re-drive) land.
+// row). An empty live_invoker keeps the ReadyForLiveBlocked baseline. D2b-8
+// (PENDING suspend/persist) landed: a live PENDING no longer aborts -- the
+// driver publishes the new pending coordinate (finish_run ->
+// FormNewPendingCoordinatePlan -> publish_available -> ack_publish_pending)
+// and returns ResumeSuspended. B2 / KR6.5 stay false until D2b-9
+// (RecoverPending idempotency re-drive) lands.
 
 #include <cstdint>
 #include <expected>
@@ -145,8 +154,8 @@ struct LiveOk {
     std::vector<std::uint8_t> canonical_result_json;
 };
 // The capability returned PENDING: no Result frame exists. The driver leaves
-// the sealed Pending row for recovery and aborts (the follow-on
-// suspend/persist decision that forms a new pending coordinate is D2b-8).
+// the sealed Pending row and (D2b-8) persists a new Suspended coordinate for
+// it, surfacing ResumeSuspended instead of a failure.
 struct LivePending {};
 // The capability returned ERROR/Timeout/RetryExhausted/CircuitOpen. The
 // diagnostic is abort-diagnostic only; it is recorded in the authority as
@@ -230,6 +239,19 @@ struct ResumeCompleted {
     std::uint64_t consumed_from{0};       // the Available generation N it consumed
 };
 
+// D2b-8: a live PENDING outcome. The driver published the new pending
+// coordinate (the committed record plus a new Suspended frontier node) and the
+// store advanced to `suspended_generation`; there is NO output frame (the run
+// ended Suspended, not OK). A future resume admits the new record and
+// reconciles the sealed Pending row (D2b-9 recovery).
+struct ResumeSuspended {
+    std::uint64_t suspended_generation{0}; // the Available generation M of the new coordinate
+};
+
+// The closed set of run_resume success outcomes: a completed (Consumed) replay
+// or a D2b-8 Suspended persist.
+using ResumeOutcome = std::variant<ResumeCompleted, ResumeSuspended>;
+
 // The closed set of fail-closed reasons. Prepare/step arms carry the
 // controller's typed reason; store arms the verbatim PayloadStoreError; the
 // integrity split states which admission phase observed it; the D2a-owned
@@ -256,11 +278,11 @@ enum class ResumeHostReason : std::uint8_t {
                          // the live frontier stays fail-closed
     EngineFailure,      // the engine port returned EngineError
     // D2b-5 live capability outcomes. The F2 catalogue is LOCKED with no
-    // resume.capability.* code, so the four capability-fault arms map to the
-    // non-OK import status code (resume.module.error) and the pending-recovery
-    // arm to the ineligible-transition code (resume.transition.invalid).
+    // resume.capability.* code, so the capability-fault arms map to the
+    // non-OK import status code (resume.module.error). A PENDING outcome is
+    // NOT a failure (D2b-8): it persists a new Suspended coordinate and
+    // surfaces as ResumeSuspended.
     LiveCapabilityFault,           // the invoker returned a LiveCapabilityFault
-    LiveCapabilityPending,         // the capability returned PENDING; row sealed
     LiveCapabilityError,           // the capability returned ERROR; failure recorded
     LiveCapabilityReplayedFailure, // (D2b-6) begin_effect raced to a prior FAILED terminal
     RecoverPendingRequired,        // (D2b-7) a Pending row needs host reconciliation
@@ -282,10 +304,12 @@ using ResumeFailure = std::variant<StoreFailure,
 // production turns a typed replay failure into the stable resume.* string.
 [[nodiscard]] std::string_view host_code(const ResumeFailure &failure) noexcept;
 
-// Run the full host transaction over `request`'s engine + store. On success
-// the live generation is a ResolvedConsumed tombstone and the output frame is
-// returned; on failure the generation is left Available / unconsumed.
-[[nodiscard]] std::expected<ResumeCompleted, ResumeFailure>
+// Run the full host transaction over `request`'s engine + store. On a
+// completed replay the live generation is a ResolvedConsumed tombstone and the
+// output frame is returned (ResumeCompleted); on a D2b-8 live PENDING the new
+// Suspended coordinate is published and its generation returned
+// (ResumeSuspended). On failure the generation is left Available / unconsumed.
+[[nodiscard]] std::expected<ResumeOutcome, ResumeFailure>
 run_resume(const ResumeRequest &request);
 
 } // namespace ahfl::runtime::core_wasm_resume_host
