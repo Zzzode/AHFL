@@ -114,7 +114,8 @@ namespace ir = ahfl::ir;
 
 } // namespace
 
-std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program) {
+std::expected<std::vector<K8sCrdConfig>, std::string>
+lower_k8s_crd(const ir::AhflIr &program) {
     std::vector<K8sCrdConfig> result;
     for (const auto &decl : program.declarations) {
         if (const auto *agent = std::get_if<ir::AgentDecl>(&decl)) {
@@ -127,9 +128,20 @@ std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program) {
             config.initial_state = agent->initial_state;
             config.final_states = agent->final_states;
             config.capabilities = symbol_names(agent->capability_refs);
-            config.input_type = agent->input_type_ref.canonical_name;
-            config.context_type = agent->context_type_ref.canonical_name;
-            config.output_type = agent->output_type_ref.canonical_name;
+
+            // KR7.4: map the agent's port types to real JSON Schema trees via
+            // the shared OpenApiTypeMapper. Scalar types render inline;
+            // struct/enum types render as $ref to the definitions table.
+            // Fail closed on unresolved nominal types (dangling $refs).
+            OpenApiTypeMapper mapper(program);
+            config.input_schema = mapper.map_type(agent->input_type_ref);
+            config.context_schema = mapper.map_type(agent->context_type_ref);
+            config.output_schema = mapper.map_type(agent->output_type_ref);
+            if (!mapper.errors().empty()) {
+                return std::unexpected("K8s CRD lowering failed: " + mapper.errors().front());
+            }
+            config.definitions = mapper.release_components();
+
             result.push_back(std::move(config));
         }
     }

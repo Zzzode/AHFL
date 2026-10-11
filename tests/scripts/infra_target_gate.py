@@ -223,12 +223,17 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
                 f"FAIL: k8s-crd metadata.name {name!r} exceeds 253 bytes"
             )
         # A stateless agent (omitted `context` clause) must not publish a
-        # context port placeholder with a blank canonical type.
-        properties = (
+        # context port. KR7.4: ports that are present must carry a real schema
+        # ($ref to definitions or an inline type), not a type:string placeholder.
+        openapi_schema = (
             doc.get("spec", {})
             .get("versions", [{}])[0]
             .get("schema", {})
             .get("openAPIV3Schema", {})
+        )
+        definitions = openapi_schema.get("definitions", {})
+        properties = (
+            openapi_schema
             .get("properties", {})
             .get("spec", {})
             .get("properties", {})
@@ -236,10 +241,45 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
         if "context" not in properties:
             no_context_seen += 1
         else:
-            description = properties["context"].get("description", "")
-            if description.rstrip().endswith("canonical type"):
+            ctx = properties["context"]
+            if not isinstance(ctx, dict):
                 raise SystemExit(
-                    f"FAIL: k8s-crd {name!r} context port has a blank canonical type"
+                    f"FAIL: k8s-crd {name!r} context port is not a mapping"
+                )
+            has_ref = isinstance(ctx.get("$ref"), str)
+            has_type = isinstance(ctx.get("type"), str)
+            if not has_ref and not has_type:
+                raise SystemExit(
+                    f"FAIL: k8s-crd {name!r} context port has no $ref or type "
+                    f"(placeholder string?)"
+                )
+            if has_ref:
+                ref = ctx["$ref"]
+                if not ref.startswith("#/definitions/"):
+                    raise SystemExit(
+                        f"FAIL: k8s-crd {name!r} context $ref {ref!r} is not a "
+                        f"local definitions ref"
+                    )
+                def_key = ref[len("#/definitions/"):]
+                if def_key not in definitions:
+                    raise SystemExit(
+                        f"FAIL: k8s-crd {name!r} context $ref {ref!r} does not "
+                        f"resolve to a definitions entry"
+                    )
+        # Every $ref in the document must resolve to a definitions entry.
+        all_refs: list[str] = []
+        collect_refs(openapi_schema, all_refs)
+        for ref in all_refs:
+            if not ref.startswith("#/definitions/"):
+                raise SystemExit(
+                    f"FAIL: k8s-crd {name!r} $ref {ref!r} is not a local "
+                    f"definitions ref"
+                )
+            def_key = ref[len("#/definitions/"):]
+            if def_key not in definitions:
+                raise SystemExit(
+                    f"FAIL: k8s-crd {name!r} $ref {ref!r} does not resolve to "
+                    f"a definitions entry"
                 )
         # The fully qualified identity must survive, but only outside RFC 1123
         # identity fields.

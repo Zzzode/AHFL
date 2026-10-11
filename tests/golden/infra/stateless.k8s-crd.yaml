@@ -37,11 +37,12 @@ spec:
                     type: string
                   default: [infra::stateless::Ping, infra::stateless::Echo]
                 input:
-                  type: string
-                  description: "AHFL input port; canonical type infra::stateless::Empty"
+                  $ref: "#/definitions/infra__stateless__Empty"
                 output:
-                  type: string
-                  description: "AHFL output port; canonical type infra::stateless::Empty"
+                  $ref: "#/definitions/infra__stateless__Empty"
+          definitions:
+            infra__stateless__Empty:
+              type: object
   scope: Namespaced
   names:
     plural: pingers-5f4d0e4af8

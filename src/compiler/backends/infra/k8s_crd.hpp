@@ -1,7 +1,10 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
+
+#include "compiler/backends/infra/openapi_spec.hpp"
 
 namespace ahfl::backends {
 
@@ -18,13 +21,18 @@ struct K8sCrdConfig {
     std::string initial_state;
     std::vector<std::string> final_states;
     std::vector<std::string> capabilities;
-    // Canonical type names of the agent's input/context/output ports. The CRD
-    // schema emits object properties named input/context/output keyed to the
-    // OpenAPI components published alongside (placeholders until a shared
-    // schema export lands).
-    std::string input_type;
-    std::string context_type;
-    std::string output_type;
+    // KR7.4: real JSON Schema trees for the agent's input/context/output ports,
+    // mapped from the IR TypeRef via OpenApiTypeMapper. Scalar types render
+    // inline; struct/enum types render as $ref to the definitions table below.
+    // A schema without content (Unit / Any / Fn / Never / Unresolved) causes
+    // the port to be omitted entirely, matching the previous empty-canonical
+    // behavior.
+    OpenApiSchema input_schema;
+    OpenApiSchema context_schema;
+    OpenApiSchema output_schema;
+    // definitions/<key> entries for struct/enum types referenced by $ref from
+    // the port schemas. Sorted by key for deterministic output.
+    std::map<std::string, OpenApiSchema> definitions;
 };
 
 struct K8sCrdOutput {

@@ -37,14 +37,25 @@ spec:
                     type: string
                   default: [infra::palette::Pick, infra::palette::Fill]
                 input:
-                  type: string
-                  description: "AHFL input port; canonical type infra::palette::Can"
+                  $ref: "#/definitions/infra__palette__Can"
                 context:
-                  type: string
-                  description: "AHFL context port; canonical type infra::palette::Empty"
+                  $ref: "#/definitions/infra__palette__Empty"
                 output:
+                  $ref: "#/definitions/infra__palette__Can"
+          definitions:
+            infra__palette__Can:
+              type: object
+              properties:
+                color:
+                  $ref: "#/definitions/infra__palette__Color"
+                label:
                   type: string
-                  description: "AHFL output port; canonical type infra::palette::Can"
+              required: [color, label]
+            infra__palette__Color:
+              type: string
+              enum: [Red, Green, Blue]
+            infra__palette__Empty:
+              type: object
   scope: Namespaced
   names:
     plural: painters-c44f18787f

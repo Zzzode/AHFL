@@ -37,14 +37,29 @@ spec:
                     type: string
                   default: [infra::service_mesh::Classify, infra::service_mesh::Enrich, infra::service_mesh::Dispatch]
                 input:
-                  type: string
-                  description: "AHFL input port; canonical type infra::service_mesh::Request"
+                  $ref: "#/definitions/infra__service_mesh__Request"
                 context:
-                  type: string
-                  description: "AHFL context port; canonical type infra::service_mesh::Context"
+                  $ref: "#/definitions/infra__service_mesh__Context"
                 output:
+                  $ref: "#/definitions/infra__service_mesh__Response"
+          definitions:
+            infra__service_mesh__Context:
+              type: object
+              properties:
+                stage:
                   type: string
-                  description: "AHFL output port; canonical type infra::service_mesh::Response"
+            infra__service_mesh__Request:
+              type: object
+              properties:
+                payload:
+                  type: string
+              required: [payload]
+            infra__service_mesh__Response:
+              type: object
+              properties:
+                payload:
+                  type: string
+              required: [payload]
   scope: Namespaced
   names:
     plural: routers-f963dcc5e9

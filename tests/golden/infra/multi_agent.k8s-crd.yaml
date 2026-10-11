@@ -37,14 +37,34 @@ spec:
                     type: string
                   default: [infra::multi_agent::Analyze]
                 input:
-                  type: string
-                  description: "AHFL input port; canonical type infra::multi_agent::ReviewInput"
+                  $ref: "#/definitions/infra__multi_agent__ReviewInput"
                 context:
-                  type: string
-                  description: "AHFL context port; canonical type infra::multi_agent::ReviewContext"
+                  $ref: "#/definitions/infra__multi_agent__ReviewContext"
                 output:
+                  $ref: "#/definitions/infra__multi_agent__ReviewOutput"
+          definitions:
+            infra__multi_agent__ReviewContext:
+              type: object
+              properties:
+                stage:
                   type: string
-                  description: "AHFL output port; canonical type infra::multi_agent::ReviewOutput"
+            infra__multi_agent__ReviewInput:
+              type: object
+              properties:
+                text:
+                  type: string
+                score:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  maximum: 10
+              required: [text, score]
+            infra__multi_agent__ReviewOutput:
+              type: object
+              properties:
+                verdict:
+                  type: string
+              required: [verdict]
   scope: Namespaced
   names:
     plural: revieweras-5c37c18386
@@ -90,14 +110,34 @@ spec:
                     type: string
                   default: [infra::multi_agent::Sanitize]
                 input:
-                  type: string
-                  description: "AHFL input port; canonical type infra::multi_agent::ReviewInput"
+                  $ref: "#/definitions/infra__multi_agent__ReviewInput"
                 context:
-                  type: string
-                  description: "AHFL context port; canonical type infra::multi_agent::ReviewContext"
+                  $ref: "#/definitions/infra__multi_agent__ReviewContext"
                 output:
+                  $ref: "#/definitions/infra__multi_agent__ReviewOutput"
+          definitions:
+            infra__multi_agent__ReviewContext:
+              type: object
+              properties:
+                stage:
                   type: string
-                  description: "AHFL output port; canonical type infra::multi_agent::ReviewOutput"
+            infra__multi_agent__ReviewInput:
+              type: object
+              properties:
+                text:
+                  type: string
+                score:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  maximum: 10
+              required: [text, score]
+            infra__multi_agent__ReviewOutput:
+              type: object
+              properties:
+                verdict:
+                  type: string
+              required: [verdict]
   scope: Namespaced
   names:
     plural: reviewerbs-5c37c181d3

@@ -39,9 +39,9 @@ int main() {
         config.initial_state = "Idle";
         config.final_states = {"Done"};
         config.capabilities = {"infra::service_mesh::Classify"};
-        config.input_type = "infra::service_mesh::Request";
-        config.context_type = "infra::service_mesh::Context";
-        config.output_type = "infra::service_mesh::Response";
+        config.input_schema.type = "string";
+        config.context_schema.type = "string";
+        config.output_schema.type = "string";
 
         auto output = ahfl::backends::generate_crd(config);
 
@@ -372,9 +372,9 @@ int main() {
         config.initial_state = "Idle";
         config.final_states = {"Done"};
         // Empty context: stateless agent (omitted `context` clause).
-        config.input_type = "infra::long::Request";
-        config.context_type = "";
-        config.output_type = "infra::long::Response";
+        config.input_schema.type = "string";
+        // context_schema left default (no content) → port omitted
+        config.output_schema.type = "string";
 
         auto output = ahfl::backends::generate_crd(config);
 
@@ -394,9 +394,9 @@ int main() {
         config.states = {"Idle", "Done"};
         config.initial_state = "Idle";
         config.final_states = {"Done"};
-        config.input_type = "infra::long::Request";
-        config.context_type = "infra::long::Context";
-        config.output_type = "infra::long::Response";
+        config.input_schema.type = "string";
+        config.context_schema.type = "string";
+        config.output_schema.type = "string";
 
         auto output = ahfl::backends::generate_crd(config);
 

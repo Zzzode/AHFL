@@ -150,7 +150,10 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                        "Kubernetes CRD YAML per agent",
                                        [](const EmitContext &ctx) -> EmitResult {
                                            auto configs = backends::lower_k8s_crd(ctx.program);
-                                           if (configs.empty()) {
+                                           if (!configs) {
+                                               return std::unexpected(configs.error());
+                                           }
+                                           if (configs->empty()) {
                                                return std::unexpected<std::string>(
                                                    "no agents found in program");
                                            }
@@ -160,11 +163,11 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                            // the artifact is a valid multi-doc
                                            // YAML stream rather than
                                            // concatenated mappings.
-                                           for (std::size_t i = 0; i < configs.size(); ++i) {
+                                           for (std::size_t i = 0; i < configs->size(); ++i) {
                                                if (i > 0) {
                                                    ctx.out << "---\n";
                                                }
-                                               ctx.out << backends::generate_crd(configs[i]).yaml;
+                                               ctx.out << backends::generate_crd((*configs)[i]).yaml;
                                            }
                                            return {};
                                        }});

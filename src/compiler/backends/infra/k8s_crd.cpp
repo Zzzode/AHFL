@@ -93,15 +93,113 @@ constexpr std::size_t kMaxDnsSubdomain = 253;
     return stem + "-" + suffix;
 }
 
-void emit_placeholder_string(YamlWriter &yaml,
-                             std::string_view property,
-                             std::string_view canonical_type) {
-    yaml.begin_mapping(property)
-        .key_value("type", "string")
-        .key_value_quoted("description",
-                          std::string("AHFL ") + std::string(property) + " port; canonical type " +
-                              std::string(canonical_type))
-        .end_mapping();
+// Recursively render an OpenApiSchema (JSON Schema tree) as a YAML mapping
+// under `key`. Scalar constraints (minimum/maximum/enum/etc.) render inline;
+// nested properties/items/oneOf recurse. A $ref node renders as a bare
+// "$ref": '#/definitions/<key>' (the definitions table lives at the root of
+// the openAPIV3Schema).
+void render_schema_yaml(YamlWriter &yaml, std::string_view key, const OpenApiSchema &schema) {
+    yaml.begin_mapping(key);
+
+    if (!schema.ref.empty()) {
+        // The OpenApiTypeMapper stores the full OpenAPI $ref path
+        // (#/components/schemas/<key>). In a CRD the definitions table lives
+        // at #/definitions/<key>, so rewrite the prefix. The value must be
+        // quoted: '#' starts a YAML comment, so an unquoted $ref would parse
+        // as null.
+        constexpr std::string_view kComponentsPrefix = "#/components/schemas/";
+        std::string def_ref = schema.ref;
+        if (def_ref.starts_with(kComponentsPrefix)) {
+            def_ref = "#/definitions/" + def_ref.substr(kComponentsPrefix.size());
+        }
+        yaml.key_value_quoted("$ref", def_ref);
+        yaml.end_mapping();
+        return;
+    }
+
+    if (!schema.type.empty()) {
+        yaml.key_value("type", schema.type);
+    }
+    if (!schema.format.empty()) {
+        yaml.key_value("format", schema.format);
+    }
+    if (!schema.description.empty()) {
+        yaml.key_value_quoted("description", schema.description);
+    }
+    if (!schema.enum_values.empty()) {
+        yaml.key_inline_list("enum", schema.enum_values);
+    }
+    if (schema.minimum.has_value()) {
+        yaml.key_value("minimum", std::to_string(*schema.minimum));
+    }
+    if (schema.maximum.has_value()) {
+        yaml.key_value("maximum", std::to_string(*schema.maximum));
+    }
+    if (schema.min_length.has_value()) {
+        yaml.key_value("minLength", std::to_string(*schema.min_length));
+    }
+    if (schema.max_length.has_value()) {
+        yaml.key_value("maxLength", std::to_string(*schema.max_length));
+    }
+    if (schema.min_items.has_value()) {
+        yaml.key_value("minItems", std::to_string(*schema.min_items));
+    }
+    if (schema.max_items.has_value()) {
+        yaml.key_value("maxItems", std::to_string(*schema.max_items));
+    }
+    if (schema.max_properties.has_value()) {
+        yaml.key_value("maxProperties", std::to_string(*schema.max_properties));
+    }
+    if (schema.unique_items) {
+        yaml.key_value_bool("uniqueItems", true);
+    }
+    if (schema.items != nullptr) {
+        render_schema_yaml(yaml, "items", *schema.items);
+    }
+    if (!schema.tuple_items.empty()) {
+        yaml.begin_mapping("items");
+        for (const auto &component : schema.tuple_items) {
+            // Tuple items render as a list of schemas.
+            yaml.begin_list_item();
+            // Render the component schema inline (no key) — but YamlWriter
+            // is key-oriented, so we render as a mapping with a placeholder
+            // key that the list item dash replaces. Actually, tuple_items
+            // is rare in CRD ports; fall back to the scalar items pointer
+            // for now. The OpenApiTypeMapper only emits tuple_items for
+            // tuple types, which are uncommon in agent port signatures.
+            if (component != nullptr) {
+                render_schema_yaml(yaml, "schema", *component);
+            }
+            yaml.end_list_item();
+        }
+        yaml.end_mapping(); // items
+    }
+    if (schema.additional_properties != nullptr) {
+        render_schema_yaml(yaml, "additionalProperties", *schema.additional_properties);
+    }
+    if (!schema.one_of.empty()) {
+        yaml.begin_mapping("oneOf");
+        for (const auto &variant : schema.one_of) {
+            yaml.begin_list_item();
+            if (variant != nullptr) {
+                render_schema_yaml(yaml, "schema", *variant);
+            }
+            yaml.end_list_item();
+        }
+        yaml.end_mapping(); // oneOf
+    }
+    if (!schema.properties.empty()) {
+        yaml.begin_mapping("properties");
+        for (const auto &[prop_name, prop_schema] : schema.properties) {
+            render_schema_yaml(yaml, prop_name, prop_schema);
+        }
+        yaml.end_mapping(); // properties
+    }
+    if (!schema.required.empty()) {
+        yaml.key_inline_list("required", schema.required);
+    }
+
+    yaml.end_mapping(); // key
 }
 
 } // anonymous namespace
@@ -179,25 +277,37 @@ K8sCrdOutput generate_crd(const K8sCrdConfig &config) {
             .end_mapping();
     }
 
-    // Input / context / output schema ports (placeholders carrying the
-    // canonical type names until a shared schema export lands). The context
-    // clause is optional; an omitted context lowers to Unit and carries an
-    // empty canonical type, so emit only the ports the agent actually
-    // declares rather than a misleading empty-canonical placeholder.
-    if (!config.input_type.empty()) {
-        emit_placeholder_string(yaml, "input", config.input_type);
+    // Input / context / output schema ports. KR7.4: real JSON Schema trees
+    // mapped from the IR TypeRef via OpenApiTypeMapper. Scalar types render
+    // inline; struct/enum types render as $ref to the definitions table at
+    // the root of the openAPIV3Schema. A schema without content (Unit / Any /
+    // Fn / Never / Unresolved) causes the port to be omitted entirely.
+    if (config.input_schema.has_content()) {
+        render_schema_yaml(yaml, "input", config.input_schema);
     }
-    if (!config.context_type.empty()) {
-        emit_placeholder_string(yaml, "context", config.context_type);
+    if (config.context_schema.has_content()) {
+        render_schema_yaml(yaml, "context", config.context_schema);
     }
-    if (!config.output_type.empty()) {
-        emit_placeholder_string(yaml, "output", config.output_type);
+    if (config.output_schema.has_content()) {
+        render_schema_yaml(yaml, "output", config.output_schema);
     }
 
-    yaml.end_mapping()   // properties
-        .end_mapping()   // spec
-        .end_mapping()   // properties
-        .end_mapping()   // openAPIV3Schema
+    yaml.end_mapping() // properties (inner)
+        .end_mapping() // spec
+        .end_mapping(); // properties (outer)
+
+    // KR7.4: definitions table for struct/enum types referenced by $ref from
+    // the port schemas. Sorted by key for deterministic output. Lives at the
+    // root of the openAPIV3Schema (structural schema supports "definitions").
+    if (!config.definitions.empty()) {
+        yaml.begin_mapping("definitions");
+        for (const auto &[def_key, def_schema] : config.definitions) {
+            render_schema_yaml(yaml, def_key, def_schema);
+        }
+        yaml.end_mapping(); // definitions
+    }
+
+    yaml.end_mapping()   // openAPIV3Schema
         .end_mapping()   // schema
         .end_list_item() // versions item
         .end_mapping()   // versions

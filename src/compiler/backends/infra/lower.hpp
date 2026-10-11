@@ -18,7 +18,11 @@ namespace ahfl::backends {
 // zero-behavior-change annotation of the layer boundary.
 
 /// Lower AHFL-IR to K8s CRD configs (one per AgentDecl).
-[[nodiscard]] std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program);
+/// An unexpected error carries a human-readable message (e.g. an agent port
+/// type references a nominal the program does not declare), which the emitter
+/// must surface instead of rendering a CRD with dangling $refs.
+[[nodiscard]] std::expected<std::vector<K8sCrdConfig>, std::string>
+lower_k8s_crd(const ir::AhflIr &program);
 
 /// Lower AHFL-IR to an OpenAPI config (from the CapabilityDecl list).
 /// Success with nullopt means the program declares no capabilities. An
