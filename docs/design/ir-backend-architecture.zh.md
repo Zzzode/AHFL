@@ -1,4 +1,4 @@
-# AHFL IR And Backend Architecture
+# AHFL-IR And Backend Architecture
 
 本文说明 AHFL Core 中 `ir` 与 `backends` 层的实现概念，重点解释稳定 IR 边界、`ExprArena`、declaration provenance、shared `formal_observations`、Opt IR text / JSON artifact，以及 backend driver 的分层方式。
 

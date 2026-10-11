@@ -172,7 +172,7 @@ std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program) {
         if (const auto *workflow = std::get_if<ir::WorkflowDecl>(&decl)) {
             TerraformConfig config;
             config.workflow_name = workflow->name;
-            // Providers are intentionally left empty: the AHFL IR carries no
+            // Providers are intentionally left empty: the AHFL-IR carries no
             // deployment-target declarations, so the renderer omits the
             // terraform{required_providers} block rather than fabricating one.
             for (const auto &node : workflow->nodes) {

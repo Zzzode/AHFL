@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// AHFL IR Tower — layer identity and boundary (RFC 0026, slice P1 / KR6.2)
+// AHFL-IR Tower — layer identity and boundary (RFC 0026, slice P1 / KR6.2)
 // ---------------------------------------------------------------------------
 //
 // RFC 0026 replaces the historical single-layer `ir::Program` with a three-layer
@@ -37,7 +37,7 @@
 
 namespace ahfl::ir::tower {
 
-/// The three layers of the AHFL IR tower, in lowering order. Index-based
+/// The three layers of the AHFL-IR tower, in lowering order. Index-based
 /// identity (AGENTS.md Principle 2): the enum value is the canonical layer id;
 /// the name is diagnostic-only.
 enum class Layer : std::uint8_t {

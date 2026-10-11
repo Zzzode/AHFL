@@ -1,4 +1,4 @@
-# AHFL IR Format
+# AHFL-IR Format
 
 本文是 `docs/reference` 中 IR 格式参考的合并入口，统一覆盖原各版本 IR 格式文档。文本 / JSON IR 基础结构已合并到本文，不再保留独立入口。
 
@@ -19,7 +19,7 @@
 ## 当前口径摘要
 
 1. 机器消费应优先使用 JSON IR，而不是解析文本 IR 展示字符串。
-2. AHFL IR 格式是当前稳定的 IR 格式标识。
+2. AHFL-IR 格式是当前稳定的 IR 格式标识。
 3. 旧字符串字段保留为展示/兼容入口；稳定身份应优先读 `*_ref.canonical_name`。
 4. flow / workflow summary 是下游 consumer 的受限摘要，不替代完整 expression / statement tree。
 5. `formal_observations` 是 IR 与 formal backend 的共享 observation registry，不属于某个 backend 私有格式。
@@ -60,7 +60,7 @@ AHFL 的 IR 塔有三层，每层有自己的检查面投影：
 
 当前格式标识：
 
-- AHFL IR 格式
+- AHFL-IR 格式
 
 readonly 当前不是源码语法，也不是 AHFL-IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、AHFL-IR 与 JSON IR。
 
