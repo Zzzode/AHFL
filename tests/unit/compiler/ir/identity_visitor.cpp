@@ -2204,7 +2204,7 @@ TEST_CASE("Semantic IR backend-ready verifier rejects a match root pattern missi
         }
         if (auto *m = std::get_if<ahfl::ir::MatchExpr>(&expr->node)) {
             for (auto &arm : m->arms) {
-                arm.pattern.matched_enum = ahfl::ir::SymbolRef{};
+                arm.pattern.matched_nominal = ahfl::ir::SymbolRef{};
                 corrupted = true;
             }
         }
@@ -2213,15 +2213,15 @@ TEST_CASE("Semantic IR backend-ready verifier rejects a match root pattern missi
     const auto backend_ready =
         ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
     CHECK(backend_ready.has_errors());
-    // RFC 0026 P4-B: stripping matched_enum while the resolved matched_type_ref is
+    // RFC 0026 P4-B: stripping matched_nominal while the resolved matched_type_ref is
     // still a nominal (Enum) trips the bridge consistency lock — the nominal
-    // matched type's identity no longer agrees with the (now Unknown) matched_enum.
+    // matched type's identity no longer agrees with the (now Unknown) matched_nominal.
     CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
-                                       "resolved matched type nominal identity disagrees with matched_enum"));
+                                       "resolved matched type nominal identity disagrees with matched_nominal"));
 }
 
 TEST_CASE("Semantic IR backend-ready verifier rejects a variant whose owner enum differs from the scrutinee") {
-    // Both matched_enum and owner_enum resolve, but to DIFFERENT enums — a
+    // Both matched_nominal and owner_enum resolve, but to DIFFERENT enums — a
     // corrupted pairing that the presence-only check would miss.
     auto ir = lower_match_identity_program();
     bool corrupted = false;

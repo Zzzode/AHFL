@@ -1572,8 +1572,8 @@ class ProgramVerifier {
         //     (nominal_ref identity / shape), the same one every other TypeRef
         //     goes through;
         //   - a nominal (Struct/Enum) matched type's nominal_ref must name the
-        //     SAME symbol as the nominal-only `matched_enum`; a resolved
-        //     NON-nominal (primitive/Fn/...) matched type requires matched_enum to
+        //     SAME symbol as the nominal-only `matched_nominal`; a resolved
+        //     NON-nominal (primitive/Fn/...) matched type requires matched_nominal to
         //     be Unknown (a primitive scrutinee has no enum).
         // Structural (non-BackendReady) mode stays permissive for partial/legacy
         // programs; the type-ref shape recursion below still runs there.
@@ -1591,7 +1591,7 @@ class ProgramVerifier {
                     // Same-symbol identity: id-first (both ids present -> must
                     // match), else non-empty canonical-name equality; both Type.
                     const auto &a = mt.nominal_ref;
-                    const auto &b = pattern.matched_enum;
+                    const auto &b = pattern.matched_nominal;
                     const bool same = a.kind == SymbolRefKind::Type &&
                                       b.kind == SymbolRefKind::Type &&
                                       (a.id.has_value() && b.id.has_value()
@@ -1600,11 +1600,11 @@ class ProgramVerifier {
                                               a.canonical_name == b.canonical_name));
                     if (!same) {
                         add_error(path + ".matched_type_ref",
-                                  "resolved matched type nominal identity disagrees with matched_enum");
+                                  "resolved matched type nominal identity disagrees with matched_nominal");
                     }
-                } else if (pattern.matched_enum.kind != SymbolRefKind::Unknown) {
+                } else if (pattern.matched_nominal.kind != SymbolRefKind::Unknown) {
                     add_error(path + ".matched_type_ref",
-                              "non-nominal matched type must not carry a matched_enum identity");
+                              "non-nominal matched type must not carry a matched_nominal identity");
                 }
             }
         }
@@ -1614,25 +1614,25 @@ class ProgramVerifier {
         verify_type_ref(pattern.matched_type_ref, path + ".matched_type_ref");
         std::visit(Overloaded{
                        [this, &path, &pattern](const LiteralPattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                        [this, &path, &pattern](const IntRangePattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                        [this, &path, &pattern](const VariantPattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                        [this, &path, &pattern](const WildcardPattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                        [this, &path, &pattern](const BindingPattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                        [this, &path, &pattern](const TuplePattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                        [this, &path, &pattern](const OrPattern &p) {
-                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                           verify_match_pattern_node(p, path, pattern.matched_nominal);
                        },
                    },
                    pattern.node);
@@ -1647,7 +1647,7 @@ class ProgramVerifier {
     // handlers simply ignore it.
 #define VERIFY_PATTERN_LEAF(Name)                                                               \
     void verify_match_pattern_node(const Name & /*pattern*/, const std::string & /*path*/,      \
-                                   const SymbolRef & /*matched_enum*/) {}
+                                   const SymbolRef & /*matched_nominal*/) {}
 
 // Variant / binding / tuple / or patterns carry children and already have a
 // three-argument verifier definition further down this class, so their routing
@@ -1672,7 +1672,7 @@ class ProgramVerifier {
 #undef VERIFY_PATTERN_LEAF
 
     void verify_match_pattern_node(const VariantPattern &pattern, const std::string &path,
-                                   const SymbolRef &matched_enum) {
+                                   const SymbolRef &matched_nominal) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.path)) {
             add_error(path, "variant pattern contains sentinel path");
         }
@@ -1691,13 +1691,13 @@ class ProgramVerifier {
             // The variant's owner enum must be the SAME enum the pattern is
             // matched against — otherwise a "matched enum A, variant owner B"
             // pair could both be resolved yet inconsistent. A nested variant with
-            // no matched_enum (primitive context) is exempt.
-            if (matched_enum.kind == SymbolRefKind::Type &&
+            // no matched_nominal (primitive context) is exempt.
+            if (matched_nominal.kind == SymbolRefKind::Type &&
                 pattern.owner_enum.kind == SymbolRefKind::Type &&
-                matched_enum.canonical_name != pattern.owner_enum.canonical_name) {
+                matched_nominal.canonical_name != pattern.owner_enum.canonical_name) {
                 add_error(path,
                           "variant pattern owner enum '" + pattern.owner_enum.canonical_name +
-                              "' does not match the scrutinee enum '" + matched_enum.canonical_name +
+                              "' does not match the scrutinee enum '" + matched_nominal.canonical_name +
                               "'");
             }
         }
@@ -1720,7 +1720,7 @@ class ProgramVerifier {
     }
 
     void verify_match_pattern_node(const BindingPattern &pattern, const std::string &path,
-                                   const SymbolRef & /*matched_enum*/) {
+                                   const SymbolRef & /*matched_nominal*/) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.name)) {
             add_error(path, "binding pattern contains sentinel name");
         }
@@ -1730,7 +1730,7 @@ class ProgramVerifier {
     }
 
     void verify_match_pattern_node(const TuplePattern &pattern, const std::string &path,
-                                   const SymbolRef & /*matched_enum*/) {
+                                   const SymbolRef & /*matched_nominal*/) {
         for (std::uint32_t index = 0; index < pattern.elements.size(); ++index) {
             const auto element_path = path + ".elements[" + std::to_string(index) + "]";
             if (!pattern.elements[index]) {
@@ -1742,7 +1742,7 @@ class ProgramVerifier {
     }
 
     void verify_match_pattern_node(const OrPattern &pattern, const std::string &path,
-                                   const SymbolRef & /*matched_enum*/) {
+                                   const SymbolRef & /*matched_nominal*/) {
         for (std::uint32_t index = 0; index < pattern.branches.size(); ++index) {
             const auto branch_path = path + ".branches[" + std::to_string(index) + "]";
             if (!pattern.branches[index]) {

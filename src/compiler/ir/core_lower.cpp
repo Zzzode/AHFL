@@ -3254,7 +3254,7 @@ template <class RootPolicy> class ExprLowerer {
     [[nodiscard]] CorePatternNode lower_none_literal(const ir::MatchPattern &pattern,
                                                      SourceRangeOpt range, bool &ok) {
         CoreVariantPat out;
-        const auto type_id = types_.resolve(pattern.matched_enum);
+        const auto type_id = types_.resolve(pattern.matched_nominal);
         if (!type_id) {
             ok = false;
             error(diag::kUnresolvedEnumVariant,
@@ -3266,7 +3266,7 @@ template <class RootPolicy> class ExprLowerer {
         if (!vidx) {
             ok = false;
             error(diag::kUnresolvedEnumVariant,
-                  "literal `none` matched enum '" + pattern.matched_enum.canonical_name +
+                  "literal `none` matched enum '" + pattern.matched_nominal.canonical_name +
                       "' has no `None` variant",
                   range);
             return out;
@@ -3498,7 +3498,7 @@ template <class RootPolicy> class ExprLowerer {
         }
         ir::MatchPattern pattern;
         pattern.node = std::move(source_variant);
-        pattern.matched_enum = u.operand.ptr->resolved_type.nominal_ref;
+        pattern.matched_nominal = u.operand.ptr->resolved_type.nominal_ref;
         pattern.matched_type_ref = clone_type_ref(u.operand.ptr->resolved_type);
 
         CoreMatchStmt stmt;

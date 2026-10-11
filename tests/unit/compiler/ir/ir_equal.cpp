@@ -138,7 +138,7 @@ namespace {
     m.scrutinee = make_path(arena, "input", {"x"});
     MatchArmExpr arm;
     arm.pattern.text = "V";
-    arm.pattern.matched_enum = enum_ref(matched);
+    arm.pattern.matched_nominal = enum_ref(matched);
     VariantPattern v;
     v.path = "V";
     v.kind = VariantPatternKind::Unit;
@@ -166,7 +166,7 @@ TEST_CASE("ir structural equality: differing variant owner_enum is unequal (same
     CHECK_FALSE(exprs_structurally_equal(a, b));
 }
 
-TEST_CASE("ir structural equality: differing matched_enum is unequal (same text)") {
+TEST_CASE("ir structural equality: differing matched_nominal is unequal (same text)") {
     ExprArena arena;
     const auto a = make_variant_match(arena, "m::Colour", "m::Colour");
     const auto b = make_variant_match(arena, "m::Colour", "m::Shade");

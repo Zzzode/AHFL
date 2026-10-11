@@ -1017,7 +1017,7 @@ class TypedIrLowerer final {
     // resolved enum. Used to persist the RFC 0026 (3)-3b matched-enum fact so a
     // literal `none` (which stays a Literal in the TypedPattern) can still be
     // lowered to Option::None by symbol identity downstream.
-    [[nodiscard]] ir::SymbolRef matched_enum_ref(const TypedPattern *typed) const {
+    [[nodiscard]] ir::SymbolRef matched_nominal_ref(const TypedPattern *typed) const {
         if (typed == nullptr || typed->matched_type == nullptr) {
             return ir::SymbolRef{};
         }
@@ -1033,7 +1033,7 @@ class TypedIrLowerer final {
 
     // RFC 0026 P4-B: the FULL resolved TypeRef a TypedPattern is matched against
     // (from its `matched_type`), or an Unresolved ref when Sema had no resolved
-    // type. Unlike matched_enum_ref (nominal-only), this carries any type incl.
+    // type. Unlike matched_nominal_ref (nominal-only), this carries any type incl.
     // primitives + bounds, so a payload binding recovers its exact type. Reuses
     // type_ref_from_type so the nominal_ref bridge + refinements are populated
     // consistently with every other TypeRef.
@@ -1284,7 +1284,7 @@ class TypedIrLowerer final {
         // Persist the matched-enum fact (from TypedPattern.matched_type) on every
         // pattern, so literal `none` / wildcard etc. keep the scrutinee enum
         // identity for (3)-3c to resolve Option::None by symbol.
-        lowered.matched_enum = matched_enum_ref(typed);
+        lowered.matched_nominal = matched_nominal_ref(typed);
         lowered.matched_type_ref = matched_type_ref_of(typed);
         lowered.node = std::visit(
             Overloaded{
@@ -1319,7 +1319,7 @@ class TypedIrLowerer final {
                             }
                         }
                         if (variant.owner_enum.kind == ir::SymbolRefKind::Unknown) {
-                            variant.owner_enum = matched_enum_ref(typed);
+                            variant.owner_enum = matched_nominal_ref(typed);
                         }
                         variant.variant_name = typed->variant_name;
                     }
@@ -1374,7 +1374,7 @@ class TypedIrLowerer final {
                             }
                         }
                         if (variant.owner_enum.kind == ir::SymbolRefKind::Unknown) {
-                            variant.owner_enum = matched_enum_ref(typed);
+                            variant.owner_enum = matched_nominal_ref(typed);
                         }
                         variant.variant_name = typed->variant_name;
                         return variant;

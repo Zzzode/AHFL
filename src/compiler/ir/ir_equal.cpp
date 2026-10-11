@@ -20,7 +20,7 @@ namespace {
 }
 
 // RFC 0026 (3)-3b: match patterns compare STRUCTURALLY, including the typed
-// identity persisted at lowering (matched_enum on every pattern; owner_enum +
+// identity persisted at lowering (matched_nominal on every pattern; owner_enum +
 // variant_name on a variant pattern). Two arms with identical `text` but a
 // different owner/matched enum are NOT lowering-equivalent, so a backend / opt
 // pass consuming this fidelity boundary must see them as distinct.
@@ -40,7 +40,7 @@ namespace {
     }
     // The scrutinee-enum identity is part of the pattern's meaning (a `none` /
     // wildcard against a different enum is a different pattern).
-    if (!symbol_ref_equal(lhs.matched_enum, rhs.matched_enum)) {
+    if (!symbol_ref_equal(lhs.matched_nominal, rhs.matched_nominal)) {
         return false;
     }
     // RFC 0026 P4-B: the full resolved matched type is likewise part of identity

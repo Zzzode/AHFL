@@ -231,24 +231,21 @@ struct MatchPattern {
     SourceRangeOpt source_range;
     std::string text{};
     // The NOMINAL type this pattern is matched AGAINST, persisted from Sema's
-    // TypedPattern.matched_type (RFC 0026 (3)-3b). Despite the historical name,
-    // this resolves ANY nominal type — an enum OR a struct — via
-    // matched_enum_ref() / TypeEnv::resolve(). It is needed because (a) a literal
-    // pattern like `none` stays a LiteralPattern whose enum identity lives only
-    // in the scrutinee's matched type, so (3)-3c can lower `none` to the
-    // Option::None variant pattern by symbol identity (never by spelling); and
-    // (b) a payload BINDING carries the INSTANTIATED nominal payload type here
-    // (e.g. `Some(u)` on `Option<User>` records `User`), which the Core lowerer
-    // uses so `u.field` resolves even though the builtin generic Option's payload
-    // slot type is an unresolved type-parameter placeholder.
-    // `matched_enum.kind == Unknown` means the pattern is not matched against a
+    // TypedPattern.matched_type (RFC 0026 (3)-3b). This resolves ANY nominal
+    // type — an enum OR a struct — via matched_nominal_ref() / TypeEnv::resolve().
+    // It is needed because (a) a literal pattern like `none` stays a
+    // LiteralPattern whose enum identity lives only in the scrutinee's matched
+    // type, so (3)-3c can lower `none` to the Option::None variant pattern by
+    // symbol identity (never by spelling); and (b) a payload BINDING carries the
+    // INSTANTIATED nominal payload type here (e.g. `Some(u)` on `Option<User>`
+    // records `User`), which the Core lowerer uses so `u.field` resolves even
+    // though the builtin generic Option's payload slot type is an unresolved
+    // type-parameter placeholder.
+    // `matched_nominal.kind == Unknown` means the pattern is not matched against a
     // resolved nominal type (e.g. an integer/bool scrutinee), which is fine.
-    // TODO(rename): call this matched_nominal once the cross-file rename is worth
-    // its own churn-only commit; the semantics are "matched nominal type", not
-    // "enum".
-    SymbolRef matched_enum{};
+    SymbolRef matched_nominal{};
     // RFC 0026 P4-B: the FULL resolved type this pattern node is matched against,
-    // persisted from Sema's TypedPattern.matched_type. Unlike `matched_enum`
+    // persisted from Sema's TypedPattern.matched_type. Unlike `matched_nominal`
     // (nominal-only SymbolRef), this carries ANY type — primitive / bounded /
     // Fn / nominal-generic — so a payload binding like `Some(v)` on `Option<Int>`
     // recovers `Int` (and its bounds), which the nominal-only symbol cannot
@@ -257,8 +254,8 @@ struct MatchPattern {
     // resolved type for the node (e.g. a wildcard against an unresolved scrutinee);
     // a Core consumer that needs the type fails closed on Unresolved rather than
     // guessing. BackendReady invariant: when this is a nominal (Struct/Enum) type
-    // its `nominal_ref` agrees with `matched_enum`; when it is a primitive,
-    // `matched_enum` is Unknown.
+    // its `nominal_ref` agrees with `matched_nominal`; when it is a primitive,
+    // `matched_nominal` is Unknown.
     TypeRef matched_type_ref{};
 };
 

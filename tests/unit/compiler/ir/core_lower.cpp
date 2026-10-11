@@ -2036,7 +2036,7 @@ flow for A {
     CHECK(some->variant_name == "Some");
     CHECK(some->owner_enum.kind == ir::SymbolRefKind::Type);
     CHECK(some->owner_enum.canonical_name.find("Maybe") != std::string::npos);
-    CHECK(match->arms[0].pattern.matched_enum.canonical_name.find("Maybe") != std::string::npos);
+    CHECK(match->arms[0].pattern.matched_nominal.canonical_name.find("Maybe") != std::string::npos);
 
     // Arm 1: None — unit variant. Same typed identity.
     const ir::VariantPattern *none = variant_of(match->arms[1].pattern);
@@ -2049,7 +2049,7 @@ flow for A {
 TEST_CASE("(3)-3b: a non-variant (wildcard) arm still carries the matched-enum fact") {
     // A wildcard / literal arm is NOT a variant, so it has no owner_enum of its
     // own; its enum identity comes from the scrutinee's matched type. The
-    // matched_enum fact must be set on such a pattern so (3)-3c can still resolve
+    // matched_nominal fact must be set on such a pattern so (3)-3c can still resolve
     // the scrutinee enum (the same mechanism a literal `none` relies on).
     const std::string source = R"AHFL(
 module m;
@@ -2090,8 +2090,8 @@ flow for A {
     // matched enum by symbol identity.
     const ir::MatchPattern &wild = match->arms[1].pattern;
     CHECK(std::holds_alternative<ir::WildcardPattern>(wild.node));
-    CHECK(wild.matched_enum.kind == ir::SymbolRefKind::Type);
-    CHECK(wild.matched_enum.canonical_name.find("Colour") != std::string::npos);
+    CHECK(wild.matched_nominal.kind == ir::SymbolRefKind::Type);
+    CHECK(wild.matched_nominal.canonical_name.find("Colour") != std::string::npos);
 }
 
 TEST_CASE("(3)-3b: variant pattern identity survives IR JSON round-trip byte-exact") {
@@ -2140,7 +2140,7 @@ flow for A {
     const std::string json2 = second.str();
 
     // Byte-exact: print -> parse -> print reproduces the JSON verbatim, so the
-    // owner_enum SymbolRef + variant_name + matched_enum fields survive.
+    // owner_enum SymbolRef + variant_name + matched_nominal fields survive.
     CHECK(json1 == json2);
 
     // And the parsed-back program still carries typed variant identity.
@@ -2151,17 +2151,17 @@ flow for A {
     REQUIRE(some != nullptr);
     CHECK(some->variant_name == "Some");
     CHECK(some->owner_enum.canonical_name.find("Maybe") != std::string::npos);
-    CHECK(match->arms[0].pattern.matched_enum.canonical_name.find("Maybe") != std::string::npos);
+    CHECK(match->arms[0].pattern.matched_nominal.canonical_name.find("Maybe") != std::string::npos);
 
     // RFC 0026 P4-B: the resolved matched_type_ref bridge is populated and
     // survives the round-trip. The root arm matches against the enum `Maybe`, so
     // its matched_type_ref is a nominal Enum whose nominal_ref agrees with
-    // matched_enum (the BackendReady consistency the verifier locks).
+    // matched_nominal (the BackendReady consistency the verifier locks).
     const ir::TypeRef &some_mt = match->arms[0].pattern.matched_type_ref;
     CHECK(some_mt.kind == ir::TypeRefKind::Enum);
     CHECK(some_mt.canonical_name.find("Maybe") != std::string::npos);
     CHECK(some_mt.nominal_ref.canonical_name ==
-          match->arms[0].pattern.matched_enum.canonical_name);
+          match->arms[0].pattern.matched_nominal.canonical_name);
 }
 
 // ---------------------------------------------------------------------------
@@ -2365,7 +2365,7 @@ TEST_CASE("P4-B: a primitive-payload binding carries its resolved primitive matc
     CHECK_FALSE(
         ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady).has_errors());
     // Locate the Some(x) arm's inner binding pattern and assert its matched type
-    // is the resolved primitive Int (non-nominal, no stray matched_enum).
+    // is the resolved primitive Int (non-nominal, no stray matched_nominal).
     const ir::MatchExpr *match = nullptr;
     for (const ir::Expr *expr : program.expr_arena.span()) {
         if (expr != nullptr) {
@@ -2384,7 +2384,7 @@ TEST_CASE("P4-B: a primitive-payload binding carries its resolved primitive matc
     const ir::MatchPattern &binding = *variant->subpatterns[0];
     CHECK(binding.matched_type_ref.kind == ir::TypeRefKind::Int);
     CHECK(binding.matched_type_ref.nominal_ref.kind == ir::SymbolRefKind::Unknown);
-    CHECK(binding.matched_enum.kind == ir::SymbolRefKind::Unknown);
+    CHECK(binding.matched_nominal.kind == ir::SymbolRefKind::Unknown);
 }
 
 TEST_CASE("P4-B: a binding whose recorded type disagrees with matched_type fails closed") {
