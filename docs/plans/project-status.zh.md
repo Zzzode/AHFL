@@ -222,4 +222,5 @@ Runtime 提供单路径真实执行；Formal 提供安全/活性属性验证。�
 | Bounded soak / network matrix / OTel adapter | controlled pilot | 已实现 |
 | Hour-scale soak / RSS trend | production confidence | 仅由 `Production Confidence` GitHub Actions workflow 执行；本地只读取 live gate，不运行 hour-scale，文档不缓存 ready 状态 |
 | 唯一执行路径(wasm3 内嵌) | runtime execution | WH-9 后已实现——Core-IR → wasm codegen + vendored wasm3;树步解释器已删除 |
+| WASM 单 lane 执行(P6 frame) | RFC 0026 dual-track 消除 | 已实现——WireJson lane / `ahfl_xcode` transcode adapter / opaque runner / stash table 已 big-bang 删除(`9e528d85`),bridge `(i32)->(i32,i32)` 为唯一 import functype,每个 agent 都是 P6-frame;agent 入口 `runv`、workflow scheduler 入口 `run2`(保留决策见 RFC 0026 2026-10-11 Decision History);残留 `is_p6_frame` 字段与 stale 注释清理 `9d60302a` |
 | LLM Provider、tooling、formal/infra 扩展 | 当前重点 | 已落库但未产品化 |
