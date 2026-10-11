@@ -2086,7 +2086,7 @@ class TypedIrLowerer final {
                     }
                 }
                 // If the callee is a builtin function, use its builtin name
-                // directly so the evaluator can dispatch to the C++ builtin
+                // directly so the runtime can dispatch to the C++ builtin
                 // table instead of trying to interpret it as a capability call.
                 const TypedDecl *decl = find_decl_by_symbol(*expr.resolved_symbol);
                 if (decl != nullptr) {
@@ -2099,13 +2099,13 @@ class TypedIrLowerer final {
                 // instance key whenever the call carries concrete type
                 // arguments. Non-generic / monomorphic calls keep the
                 // canonical name. The mangled form matches the key stored on
-                // InstanceDecl so the evaluator's find_function(mangled) can
+                // InstanceDecl so the runtime's find_function(mangled) can
                 // locate the body without re-entering type information.
                 //
                 // Stdlib fns (`std::*` canonical prefix) deliberately keep
                 // the canonical name: their bodies are either declared in
                 // stdlib facade modules (installed separately by the stdlib
-                // evaluator runtime) or mapped to C++ builtin hooks, neither
+                // WASM runtime) or mapped to C++ builtin hooks, neither
                 // of which participates in the user-side mangled fn-instance
                 // runtime table.
                 if (expr.call_target_kind == TypedCallTargetKind::Builtin) {
@@ -2320,7 +2320,7 @@ class TypedIrLowerer final {
         // (QuantifierCollection / QuantifierBody roles); the binder names and
         // forall/exists kind are mirrored on the TypedExpr. The formal backend
         // unrolls this over the collection's static bound; the runtime
-        // evaluator never executes it.
+        // runtime never executes it.
         ir::ExprRef visit_quantifier(const TypedExpr &e) const {
             const TypedExpr *collection = TypedIrLowerer::resolve_child_by_role(
                 self, e, TypedExprChildRole::QuantifierCollection);
@@ -2342,7 +2342,7 @@ class TypedIrLowerer final {
             // keeps the receiver and method distinct, rather than flattening
             // the receiver into a CallExpr's first positional argument. The
             // resolved dispatch target string (impl#N::name / builtin) is the
-            // same one a CallExpr callee held, so the runtime evaluator can
+            // same one a CallExpr callee held, so the runtime can
             // dispatch it identically.
             ir::MethodCallExpr call{
                 .receiver = ir::ExprRef{}, .method = self.render_method_target(e), .arguments = {}};

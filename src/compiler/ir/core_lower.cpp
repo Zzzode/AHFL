@@ -3407,7 +3407,7 @@ template <class RootPolicy> class ExprLowerer {
     }
 
     // `unwrap(operand)` (CORE-GAPS 1): no new Core node is introduced. The
-    // evaluator semantics are:
+    // runtime semantics are:
     //   * Option::Some(x) / Result::Ok(x) -> x
     //   * Option::None / Result::Err      -> runtime failure (trap)
     //   * anything else                   -> type error (Sema already rejects)
@@ -3608,7 +3608,7 @@ template <class RootPolicy> class ExprLowerer {
     //    evaluated once at the construction site (§3.2 rule 4);
     //  * a bare name that is neither a parameter / in-body binder nor a visible
     //    outer binding is fail-closed (covers a self-referential / fixpoint
-    //    lambda, which the snapshot-closure evaluator semantics cannot run).
+    //    lambda, which the snapshot-closure runtime semantics cannot run).
     //
     // Frame expressions are materialized HERE (in the constructing body region)
     // so each slot dominates the closure construction. Returns the resolved,
@@ -4074,7 +4074,7 @@ template <class RootPolicy> class ExprLowerer {
                             SourceRangeOpt range, CoreRegion &region) {
         const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
         // Receiver-first argument order (design §5.1): exact mirror of the
-        // evaluator's MethodCallExpr flattening.
+        // runtime's MethodCallExpr flattening.
         std::vector<CoreValueId> args;
         args.reserve(call.arguments.size() + 1);
         if (call.receiver.ptr != nullptr) {

@@ -4524,7 +4524,7 @@ class ExpressionChecker final {
         }
 
         // P5.6a: @builtin("list_from_array") / @builtin("set_from_array") /
-        // @builtin("map_from_entries") are variadic — the runtime evaluator
+        // @builtin("map_from_entries") are variadic — the runtime
         // accepts any arity (they are the compiler lowering targets for
         // sugar-style collection literals). Skip arity checking for these.
         const bool is_variadic_collection_builtin =

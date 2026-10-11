@@ -3,15 +3,15 @@
 // Canonical decoding of an AHFL source STRING LITERAL spelling into the exact
 // UTF-8 bytes the runtime value carries (without the surrounding quotes).
 //
-// This is the ONE authority shared by the tree-walking evaluator
-// (eval_string_literal) and the Core-Wasm backend's rodata literal pool
+// This is the ONE authority for string literal decoding, shared by the
+// frontend (parser/sema) and the Core-Wasm backend's rodata literal pool
 // (frame-bridge v2 D1), so a String a computed module returns and the String
-// the evaluator returns are byte-identical by construction — a differential
+// the runtime returns are byte-identical by construction — a differential
 // fixture never has to guess which escape table a lane applied.
 //
 // Accepted escapes (the source spelling is front-end validated): \n \r \t
 // \\ \". Any other backslash sequence keeps the escaped character verbatim
-// (the evaluator's permissive historical rule). A spelling that is not wrapped
+// (the runtime's permissive historical rule). A spelling that is not wrapped
 // in quotes is returned unchanged.
 
 #include <cstddef>

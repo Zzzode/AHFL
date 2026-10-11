@@ -61,7 +61,7 @@ enum class Path : std::uint8_t {
     Diagnostics = 0,
     /// Verification + view backends (SMV / SMT-BMC / K8s / Terraform / OpenAPI).
     Verification = 1,
-    /// Execution backend (WASM codegen; transitional evaluator).
+    /// Execution backend (WASM codegen).
     Execution = 2,
 };
 

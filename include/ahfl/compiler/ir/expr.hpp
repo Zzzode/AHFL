@@ -42,7 +42,7 @@ struct MatchPattern;
 ///
 /// The index is the durable identity used by Program::expr_arena; the cached
 /// pointer keeps existing recursive IR algorithms cheap and avoids threading
-/// arena lookups through every visitor/printer/evaluator call site.
+/// arena lookups through every visitor/printer call site.
 struct ExprRef {
     using Index = std::uint32_t;
     static constexpr Index kInvalid = UINT32_MAX;
@@ -313,7 +313,7 @@ struct CallExpr {
 /// the receiver into the first positional argument of a CallExpr. `method`
 /// holds the resolved dispatch target string (a `impl#<index>::<name>` handle
 /// or a `@builtin` hook name — the same string a CallExpr callee carried
-/// before this node existed), so the runtime evaluator can dispatch it exactly
+/// before this node existed), so the runtime can dispatch it exactly
 /// like the equivalent free call. `method_ref` is the resolved impl/trait
 /// method symbol; strings are display/diagnostic only (Principle 2).
 struct MethodCallExpr {
@@ -389,7 +389,7 @@ struct MatchExpr {
 
 /// P4-02: unwrap(operand) as a right-hand-side expression.  Produces T from
 /// an Option<T>-typed operand at runtime; when the operand is the None
-/// variant the evaluator raises ExecAssertFailed with the message stored in
+/// variant the runtime raises ExecAssertFailed with the message stored in
 /// `fallback_none_message` (or the built-in default when null).
 struct UnwrapExpr {
     ExprRef operand;
@@ -403,7 +403,7 @@ struct UnitLiteralExpr {};
 /// RFC 0024: bounded collection quantifier `forall x in coll: body` /
 /// `exists (k, v) in coll: body`. A verification-only predicate: the SMT-BMC
 /// backend unrolls it over the collection's static bound, substituting the
-/// binder(s) with per-index element symbols. The runtime evaluator never
+/// binder(s) with per-index element symbols. The runtime never
 /// executes it (quantifiers appear only in contract clauses / pure predicate
 /// position). Binders are name-based, mirroring LambdaExpr — the body
 /// references them through PathExpr, so no new value-identity concept is
@@ -722,7 +722,7 @@ struct RequiresStatement {
 
 /// Unreachable statement: unreachable[("message")];
 ///
-/// A hard dynamic failure: evaluator throws ExecAssertFailed whenever this
+/// A hard dynamic failure: runtime throws ExecAssertFailed whenever this
 /// statement is executed. Static reachability proofs are a separate pass.
 struct UnreachableStatement {
     ExprRef message{nullptr}; // Optional failure message

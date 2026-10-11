@@ -1212,7 +1212,7 @@ std::string DebugSession::variables_json(const int variables_reference) {
 
     if (variables_reference >= 100 && variables_reference < 200) {
         // Agent State scope: the current state name for the agent. State
-        // variables (handler locals) are mutated inside the evaluator and not
+        // variables (handler locals) are mutated inside the WASM engine and not
         // exposed by the runtime; only the state name is observable.
         const std::string agent_id = std::to_string(variables_reference - 100);
         for (const auto &frame : frames_) {
@@ -1229,7 +1229,7 @@ std::string DebugSession::variables_json(const int variables_reference) {
         }
     } else if (variables_reference >= 200 && variables_reference < 300) {
         // Context scope: agent context fields are assigned inside state
-        // handlers (evaluator ctx scope) and not exposed by any runtime hook,
+        // handlers (WASM engine ctx scope) and not exposed by any runtime hook,
         // so this scope is honestly empty.
     } else if (variables_reference >= 300 && variables_reference < 400) {
         // Input/Output scope: the agent's live input (resolved from the
@@ -1397,7 +1397,7 @@ std::string DebugSession::evaluate_json(const std::string &expression, const int
         current = &node_it->second;
     } else {
         // Unqualified identifier: try resolving as a field of the agent's
-        // input (the evaluator flattens input struct fields into the input
+        // input (the WASM engine flattens input struct fields into the input
         // scope).
         const runtime::Value *agent_input = nullptr;
         if (const auto node_it = agent_node_.find(agent_id);

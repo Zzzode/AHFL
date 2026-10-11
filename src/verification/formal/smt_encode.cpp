@@ -176,7 +176,7 @@ struct Encoder {
 
         // Divide / Modulo: SMT-LIB integer div/mod, plus a divisor != 0
         // verification obligation aligned with the runtime's divide-by-zero
-        // error (evaluator.cpp).
+        // error (runtime).
         if (bin.op == ir::ExprBinaryOp::Divide || bin.op == ir::ExprBinaryOp::Modulo) {
             obligations.push_back(SmtObligation{"(not (= " + *rhs + " 0))"});
             const std::string_view fn = bin.op == ir::ExprBinaryOp::Divide ? "div" : "mod";

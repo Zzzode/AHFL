@@ -584,7 +584,7 @@ struct CoreCoerceExpr {
 ///                    each live entry's key and yields the matching VALUE (Map
 ///                    type argument #1, read at the container's P4-D
 ///                    `value_offset`). No match is a runtime trap (the wasm
-///                    counterpart of the evaluator's "key not found" error).
+///                    counterpart of the runtime's "key not found" error).
 ///                    Distinct from the positional `ElementGet`: a Map never
 ///                    accepts a positional read.
 ///   * `Contains`   : Set/Map KEYED membership test. `index` holds the search
@@ -985,7 +985,7 @@ enum class CoreTrapKind {
     /// A match with no matching arm (structural totality fallback).
     NonExhaustiveMatch,
     /// `unwrap(v)` hit the nullary failure variant (`Option::None` /
-    /// `Result::Err`). Mirrors the evaluator's ExecAssertFailed on unwrap.
+    /// `Result::Err`). Mirrors the runtime's ExecAssertFailed on unwrap.
     UnwrapFailed,
 };
 
@@ -2235,7 +2235,7 @@ instantiate_member_template(CoreProgram &program,
                             std::string *reason);
 
 /// Supplied-arena form of `instantiate_member_template`. This is the same P4-C
-/// evaluator, factored so the P4-D layout side pass can seed a private copy of
+/// runtime, factored so the P4-D layout side pass can seed a private copy of
 /// the logical value-type arena and compute its member closure without mutating
 /// CoreProgram. `value_types` must use ids in the same domain as `types` and
 /// `owner_args`; successful materialization hash-conses into that supplied

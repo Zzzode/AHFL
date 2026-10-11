@@ -144,7 +144,7 @@ inline constexpr std::size_t kMaxJsonNestingDepth = 4096;
 /// single float renderer shared by the runtime `value_to_json` path and the
 /// conformance-case canonicality gate, so a given double has exactly one
 /// canonical wire spelling everywhere. Non-finite values are not representable
-/// in JSON; callers must handle them before calling (the evaluator maps them
+/// in JSON; callers must handle them before calling (the runtime maps them
 /// to "null" / "NaN" / "Infinity").
 [[nodiscard]] std::string format_wire_float(double value);
 

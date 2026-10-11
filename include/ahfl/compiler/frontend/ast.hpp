@@ -529,7 +529,7 @@ struct GroupExpr {
 ///
 /// Runtime behaviour: operand must be an Optional<T> with variant Some(x),
 /// in which case the expression evaluates to x (type T). If the operand is
-/// the None variant, the evaluator raises ExecAssertFailed with the same
+/// the None variant, the runtime raises ExecAssertFailed with the same
 /// default message used by the statement-level `unwrap(...)`.
 struct UnwrapExprSyntax {
     Owned<ExprSyntax> operand;

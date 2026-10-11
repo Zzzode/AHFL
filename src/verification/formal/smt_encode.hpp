@@ -38,7 +38,7 @@ enum class SmtEncodeRejection {
 
 // A divide/modulo node emits a `divisor != 0` verification obligation: the
 // SMT-LIB predicate that must hold for the expression to be free of a
-// runtime divide-by-zero (aligns with the evaluator, which raises an error on
+// runtime divide-by-zero (aligns with the runtime, which raises an error on
 // zero divisor). The obligation is carried alongside the encoded term so the
 // BMC engine can assert it as a proof goal.
 struct SmtObligation {

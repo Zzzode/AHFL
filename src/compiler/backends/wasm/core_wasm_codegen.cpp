@@ -5645,7 +5645,7 @@ class P6ComputationHandlerBuilder {
 
     // CORE-GAPS: emit a bounded Map KEYED lookup. Leaves the matched VALUE word
     // on the stack; no match is a runtime trap (the wasm counterpart of the
-    // evaluator's "key not found"). A linear scan walks the live entries:
+    // runtime's "key not found"). A linear scan walks the live entries:
     //
     //   cursor in [0, min(header_len, capacity)); entry i is at
     //   [ptr@0] + cursor*stride; its key is the first word and its value is at
@@ -5781,7 +5781,7 @@ class P6ComputationHandlerBuilder {
         body_.byte(kOpEnd); // B
         --label_depth_;
 
-        // No match -> KeyGet TRAPS (the evaluator returns "key not found"); a
+        // No match -> KeyGet TRAPS (the runtime returns "key not found"); a
         // membership test is total and falls through to the found flag below.
         if (!is_contains) {
             body_.byte(kOpLocalGet);
@@ -7208,7 +7208,7 @@ class P6ComputationHandlerBuilder {
         // (PENDING,0,0) to the scheduler, which converts it into a run2-level
         // suspend. On the agent lane there is no runner/scheduler to suspend,
         // so PENDING traps (the sealed single-run contract). ERROR (and any
-        // other non-OK status) traps on BOTH lanes, matching the evaluator's
+        // other non-OK status) traps on BOTH lanes, matching the runtime's
         // CapabilityFailed -> NodeFailed parity.
         body_.byte(kOpLocalGet);
         body_.u32(bridge_status_local_);
@@ -15623,7 +15623,7 @@ make_runv_body(const AgentPlan &plan, const FunctionTable &functions) {
             // after the node runner call and propagates the suspend. On the
             // agent lane there is no runner/scheduler to suspend, so PENDING
             // traps (the sealed single-run contract). ERROR (and any other
-            // non-OK status) traps on BOTH lanes, matching the evaluator's
+            // non-OK status) traps on BOTH lanes, matching the runtime's
             // CapabilityFailed -> NodeFailed parity.
             body.byte(kOpLocalGet);
             body.u32(1);
@@ -16588,7 +16588,7 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
                     // kWorkflowGlobalPendingLatched and returns (PENDING, 0,
                     // 0); the scheduler checks the latch after the node
                     // runner call and propagates the suspend. ERROR (and any
-                    // other non-OK status) traps, matching the evaluator's
+                    // other non-OK status) traps, matching the runtime's
                     // CapabilityFailed -> NodeFailed parity.
                     append_indexed_op(body, kOpLocalGet, 4);
                     append_const(body, AHFL_CAP_PENDING);
@@ -19063,7 +19063,7 @@ runner_last_cap_walk_index(const CoreProgram &program,
     descriptor.is_workflow = true;
     // WH-4 fix-forward P1-2: carry the canonical workflow name so the wasm
     // lane populates ExecutionMetadataStore with the SAME display name the
-    // evaluator uses (metadata parity for ahfl.run-report byte-compare).
+    // runtime uses (metadata parity for ahfl.run-report byte-compare).
     {
         const auto &workflow_decl = program.workflows[plan.workflow.value];
         descriptor.workflow_name = workflow_decl.symbol_ref.canonical_name.empty()
