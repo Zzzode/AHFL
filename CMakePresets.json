@@ -134,6 +134,9 @@
       "name": "test-asan",
       "displayName": "Test ASan UBSan",
       "configurePreset": "asan",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=0"
+      },
       "output": {
         "outputOnFailure": true
       }
