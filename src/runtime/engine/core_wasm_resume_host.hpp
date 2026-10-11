@@ -32,8 +32,12 @@
 //                             OK/ERROR terminal, pack the canonical result;
 //                             PENDING leaves the row sealed and aborts. An empty
 //                             live_invoker keeps the fail-closed baseline.
-//        DedupReplay / DedupReplayFailure / RecoverPending -> fail closed
-//                             (the D2b-6 / D2b-7 follow-ons).
+//        DedupReplay -> D2b-6: read the recorded SUCCEEDED terminal and pack
+//                             it; NO live call, NO second effect.
+//        DedupReplayFailure -> D2b-6: re-surface the recorded FAILED terminal;
+//                             NO live call, NO second effect.
+//        RecoverPending -> D2b-7: abort with RecoverPendingRequired; the host
+//                             must reconcile the Pending row.
 //   6. rc::finish_run(Run2Exit) -> store.mark_consumed ->
 //      rc::ack_mark_consumed.
 //
@@ -57,9 +61,12 @@
 // live-result API landed for ReadyForLive in D2b-5 (seal -> invoke ->
 // record -> pack): with a caller-supplied live_invoker the driver invokes a
 // live capability past the frontier under the dedup authority's seal. The
-// DedupReplay / DedupReplayFailure / RecoverPending arms remain the blocked
-// D2b-6 / D2b-7 follow-on, and an empty live_invoker keeps the
-// ReadyForLiveBlocked baseline. B2 / KR6.5 stay false until those land.
+// DedupReplay / DedupReplayFailure arms landed in D2b-6 (read the recorded
+// terminal and pack / re-surface it; no live call) and RecoverPending in
+// D2b-7 (abort with RecoverPendingRequired; the host reconciles the Pending
+// row). An empty live_invoker keeps the ReadyForLiveBlocked baseline. B2 /
+// KR6.5 stay false until D2b-8 (PENDING suspend/persist) and D2b-9
+// (RecoverPending idempotency re-drive) land.
 
 #include <cstdint>
 #include <expected>
@@ -198,8 +205,9 @@ struct ResumeRequest {
     // via gated_options' dedup authority BEFORE the live call (a crash during
     // the call leaves a Pending row for recovery), invokes the capability, and
     // records the OK/ERROR terminal; a PENDING outcome leaves the row sealed.
-    // The DedupReplay / DedupReplayFailure / RecoverPending arms stay blocked
-    // (D2b-6 / D2b-7).
+    // The DedupReplay / DedupReplayFailure arms (D2b-6) read the recorded
+    // terminal and pack / re-surface it without invoking the invoker; the
+    // RecoverPending arm (D2b-7) aborts with RecoverPendingRequired.
     LiveCapabilityInvoker live_invoker{};
     // RFC 0026 dual-track elimination: the bridge lane packs P4-D frames at
     // fixed addresses (the entry node's I block and the bridge result blocks).

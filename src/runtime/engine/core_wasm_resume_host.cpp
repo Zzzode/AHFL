@@ -358,18 +358,54 @@ struct ReplayState {
                     },
                     *begun);
             },
-            // The D2b replay feed-back arms stay blocked (D2b-6 / D2b-7): a
-            // controller-issued replay/recover verdict cannot be served by
-            // this driver yet. Fail closed with no fabricated frame; the
-            // generation stays Available / unconsumed.
-            [&](const rc::DedupReplay &) -> Result {
-                return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+            // D2b-6: the controller's read-only preview found a SUCCEEDED
+            // terminal for this token. Read the recorded result and pack it;
+            // NO live call, NO second effect (a pure replay). A read failure
+            // after the terminal was observed is a backend fault or race: fail
+            // closed. The controller issues this verdict only after consulting
+            // the authority, so a null one is an invariant fault -- fail closed
+            // as the no-dedup baseline.
+            [&](const rc::DedupReplay &replay) -> Result {
+                const auto *authority = state.request->gated_options.dedup_authority;
+                if (authority == nullptr) {
+                    return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+                }
+                auto bytes = authority->read_result(replay.handle);
+                if (!bytes.has_value()) {
+                    return abort_with(state, host_failure(ResumeHostReason::EngineFailure,
+                                                          EngineError::InvalidSequence));
+                }
+                if (!state.request->pack_bridge_result) {
+                    return abort_with(state, host_failure(ResumeHostReason::EngineFailure,
+                                                          EngineError::InvalidSequence));
+                }
+                return state.request->pack_bridge_result(engine, observation, call_site,
+                                                         *bytes);
             },
-            [&](const rc::DedupReplayFailure &) -> Result {
-                return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+
+            // D2b-6: the controller's preview found a FAILED terminal.
+            // Re-surface the recorded failure; NO live call, NO second effect.
+            // The terminal state is authoritative regardless of whether the
+            // diagnostic bytes are readable.
+            [&](const rc::DedupReplayFailure &replay) -> Result {
+                const auto *authority = state.request->gated_options.dedup_authority;
+                if (authority == nullptr) {
+                    return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+                }
+                static_cast<void>(authority->read_result(replay.handle));
+                return abort_with(state,
+                    host_failure(ResumeHostReason::LiveCapabilityReplayedFailure));
             },
+
+            // D2b-7: the authority holds a PENDING row for this token (a
+            // crashed prior attempt sealed the effect but never recorded a
+            // terminal). Re-driving risks a duplicate effect; the host must
+            // reconcile the row (re-drive or abort). This is the
+            // controller-issued counterpart of the ReadyForLive arm's
+            // EffectReplayPending case.
             [&](const rc::RecoverPending &) -> Result {
-                return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+                return abort_with(state,
+                    host_failure(ResumeHostReason::RecoverPendingRequired));
             },
         },
         *decision);

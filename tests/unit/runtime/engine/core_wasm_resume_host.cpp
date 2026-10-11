@@ -1759,6 +1759,239 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
+    // ============ S22: DedupReplay -- SUCCEEDED terminal replay ============
+    // D2b-6: the authority already has a SUCCEEDED terminal for the
+    // after-frontier cap 42 token. The controller's read-only preview issues
+    // DedupReplay; the driver reads the recorded result and packs it. NO live
+    // call, NO second effect; the workflow resumes past the frontier and
+    // Consumes.
+    {
+        const fs::path work = base / "s22-dedup-replay";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S22.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S22.store");
+
+        // Pre-seal a SUCCEEDED terminal for the EXACT token the controller's
+        // preview will mint for cap 42 (same authority/namespace/call-site/param).
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S22.intent_minted");
+        if (intent.has_value()) {
+            auto begun = dedup.begin_effect(*intent);
+            check(begun.has_value() && std::holds_alternative<dea::EffectNew>(*begun),
+                  "S22.pre_sealed_new");
+            auto recorded = dedup.record_result(intent->token(), bytes_of("\"cached\""));
+            check(recorded.has_value(), "S22.terminal_recorded");
+        }
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(done.has_value(), "S22.resume_ok");
+        if (done.has_value()) {
+            // The packed result is the RECORDED terminal's bytes, not the
+            // invoker's (which was never called).
+            check(done->raw_status == AHFL_CAP_OK, "S22.raw_ok");
+            check(done->output == bytes_of("\"cached\""), "S22.output_is_cached");
+            check(done->consumed_from == 2 && done->consumed_generation == 3,
+                  "S22.consumed_3_2");
+        }
+        check(invoker_calls == 0, "S22.invoker_not_called");
+        // The replayed result was packed with a raw OK reply.
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_OK,
+              "S22.replies_raw_ok");
+        // L0 + injected L4 + the replayed result frame: 3 transfers.
+        check(engine.host_allocations().size() == 3, "S22.three_transfers");
+        if (engine.host_allocations().size() == 3) {
+            check(engine.host_allocations()[2].bytes == bytes_of("\"cached\""),
+                  "S22.replayed_frame_bytes");
+        }
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedConsumed>(*after),
+              "S22.tombstone");
+        nuke(work);
+    }
+
+    // ============ S23: DedupReplayFailure -- FAILED terminal replay ========
+    // D2b-6: the authority already has a FAILED terminal for the after-frontier
+    // cap 42 token. The controller's preview issues DedupReplayFailure; the
+    // driver re-surfaces LiveCapabilityReplayedFailure. NO live call, NO
+    // second effect.
+    {
+        const fs::path work = base / "s23-dedup-replay-failure";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S23.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S23.store");
+
+        // Pre-seal a FAILED terminal for the exact token the controller's
+        // preview will mint for cap 42.
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S23.intent_minted");
+        if (intent.has_value()) {
+            auto begun = dedup.begin_effect(*intent);
+            check(begun.has_value() && std::holds_alternative<dea::EffectNew>(*begun),
+                  "S23.pre_sealed_new");
+            auto recorded = dedup.record_failure(intent->token(), bytes_of("boom"));
+            check(recorded.has_value(), "S23.failure_terminal_recorded");
+        }
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S23.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::LiveCapabilityReplayedFailure),
+                  "S23.replayed_failure");
+            check(host::host_code(done.error()) == "resume.module.error", "S23.host_code");
+        }
+        check(invoker_calls == 0, "S23.invoker_not_called");
+        // The generation stays Available / unconsumed.
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S23.still_available");
+        nuke(work);
+    }
+
+    // ============ S24: RecoverPending -- Pending row reconciliation =========
+    // D2b-7: the authority holds a PENDING row for the after-frontier cap 42
+    // token (a crashed prior attempt sealed the effect but never recorded a
+    // terminal). The controller's preview issues RecoverPending; the driver
+    // surfaces RecoverPendingRequired. NO live call (re-driving risks a
+    // duplicate effect); the host must reconcile the row.
+    {
+        const fs::path work = base / "s24-recover-pending";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S24.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S24.store");
+
+        // Pre-seal a PENDING row (no terminal) for the exact token the
+        // controller's preview will mint for cap 42.
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S24.intent_minted");
+        if (intent.has_value()) {
+            auto begun = dedup.begin_effect(*intent);
+            check(begun.has_value() && std::holds_alternative<dea::EffectNew>(*begun),
+                  "S24.pre_sealed_pending");
+        }
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S24.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::RecoverPendingRequired),
+                  "S24.recover_pending_required");
+            check(host::host_code(done.error()) == "resume.transition.invalid",
+                  "S24.host_code");
+        }
+        check(invoker_calls == 0, "S24.invoker_not_called");
+        // The Pending row stays sealed for host reconciliation.
+        if (intent.has_value()) {
+            auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
+            check(rows.has_value() && rows->size() == 1, "S24.one_pending_row");
+        }
+        // The generation stays Available / unconsumed.
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S24.still_available");
+        nuke(work);
+    }
+
+    // ============ S25: null authority -- no-dedup baseline =================
+    // With no dedup authority bound the controller always issues ReadyForLive
+    // (it can never issue a replay verdict). With an invoker but no authority
+    // to seal under, the driver fails closed ReadyForLiveBlocked: the no-dedup
+    // baseline is structurally unchanged.
+    {
+        const fs::path work = base / "s25-null-authority";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S25.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S25.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, /*dedup=*/nullptr,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S25.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::ReadyForLiveBlocked),
+                  "S25.ready_for_live_blocked");
+            check(host::host_code(done.error()) == "resume.transition.invalid",
+                  "S25.host_code");
+        }
+        check(invoker_calls == 0, "S25.invoker_not_called");
+        nuke(work);
+    }
+
     if (g_failures != 0) {
         std::cerr << "core_wasm_resume_host: " << g_failures << " of " << g_total
                   << " check(s) failed\n";
