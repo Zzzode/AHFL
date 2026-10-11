@@ -3,6 +3,7 @@
 #include "runtime/engine/core_wasm_resume_host.hpp"
 
 #include <optional>
+#include <span>
 #include <utility>
 
 #include "ahfl/base/support/overloaded.hpp"
@@ -10,6 +11,8 @@
 #include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp"
+#include "runtime/engine/durable_effect_intent.hpp"
+#include "runtime/engine/durable_effect_live_mint.hpp"
 
 namespace ahfl::runtime::core_wasm_resume_host {
 
@@ -33,6 +36,9 @@ using rc::ImportStepDecision;
 using rc::NeedInjectedSlot;
 using rc::PreparedResume;
 using rc::ReturnMemo;
+
+namespace dea = durable_effect_authority;
+namespace dei = durable_effect_intent;
 
 // Fail-closed shorthand constructors.
 [[nodiscard]] ResumeFailure store_failure(PayloadStoreError error, AdmissionPhase phase) {
@@ -83,6 +89,26 @@ using rc::ReturnMemo;
             },
             [](durable_effect_authority::DurableEffectBackendError backend_error)
                 -> ResumeFailure { return ResumeFailure{DedupBackendFailure{backend_error}}; },
+        },
+        error);
+}
+
+// Map a record_result / record_failure terminal error. A backend storage
+// fault stays the verbatim DedupBackendFailure arm; an EffectTerminalError
+// (the row is already terminal or the token is unknown, neither of which the
+// driver's begin(New) -> record sequence permits) fails closed as an invalid
+// effect transition -- the Pending row stays for recovery.
+[[nodiscard]] ResumeFailure
+map_record_error(const std::variant<dea::EffectTerminalError, dea::DurableEffectBackendError> &error) {
+    return std::visit(
+        ahfl::Overloaded{
+            [](dea::DurableEffectBackendError backend) -> ResumeFailure {
+                return ResumeFailure{DedupBackendFailure{backend}};
+            },
+            [](dea::EffectTerminalError) -> ResumeFailure {
+                return host_failure(ResumeHostReason::EngineFailure,
+                                    EngineError::InvalidSequence);
+            },
         },
         error);
 }
@@ -197,14 +223,145 @@ struct ReplayState {
                                                          *injected);
             },
 
-            // After-frontier verdicts. The live OK/PENDING/ERROR response API
-            // and the D2b replay feed-back are the blocked D2b follow-on: this
-            // adapter never invokes a live capability and cannot consume here.
-            // Fail closed with no fabricated frame; the generation stays
-            // Available / unconsumed.
-            [&](const rc::ReadyForLive &) -> Result {
-                return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+            // D2b-5: the after-frontier live verdict. With no caller-supplied
+            // invoker the frontier stays fail-closed (the no-dedup baseline).
+            // With one, seal the effect intent BEFORE the live call (a crash
+            // during the call leaves a Pending row for recovery), invoke, and
+            // record the OK/ERROR terminal; a PENDING outcome leaves the row
+            // sealed. The non-New begin_effect outcomes are the race between
+            // the controller's read-only preview and this sealing begin (a
+            // concurrent caller sealed the same token first).
+            [&](const rc::ReadyForLive &live) -> Result {
+                if (!state.request->live_invoker) {
+                    return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+                }
+                const auto *authority = state.request->gated_options.dedup_authority;
+                if (authority == nullptr) {
+                    // A live invoker without the dedup authority cannot seal
+                    // the effect before the call; fail closed.
+                    return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
+                }
+                // Mint under the SAME canonicalization authority the
+                // controller consulted (shared helper: identical token for
+                // identical namespace/call-site/param).
+                auto minted = durable_effect_live_mint::mint_live_effect_intent(
+                    state.request->gated_options.authority_id,
+                    dei::CheckpointNamespace{state.request->workflow,
+                                             state.request->checkpoint},
+                    live.call_site, live.params.front());
+                if (!minted.has_value()) {
+                    return abort_with(state, host_failure(ResumeHostReason::EngineFailure,
+                                                          EngineError::InvalidSequence));
+                }
+                auto begun = authority->begin_effect(*minted);
+                if (!begun.has_value()) {
+                    return abort_with(state, ResumeFailure{DedupBackendFailure{begun.error()}});
+                }
+                return std::visit(
+                    ahfl::Overloaded{
+                        [&](dea::EffectNew) -> Result {
+                            auto outcome = state.request->live_invoker(live, observation);
+                            if (!outcome.has_value()) {
+                                // The Pending row stays sealed: the invoker
+                                // faulted before a terminal existed.
+                                return abort_with(state,
+                                    host_failure(ResumeHostReason::LiveCapabilityFault));
+                            }
+                            return std::visit(
+                                ahfl::Overloaded{
+                                    [&](LiveOk &ok) -> Result {
+                                        auto recorded = authority->record_result(
+                                            minted->token(), ok.canonical_result_json);
+                                        if (!recorded.has_value()) {
+                                            return abort_with(state,
+                                                map_record_error(recorded.error()));
+                                        }
+                                        if (!state.request->pack_bridge_result) {
+                                            return abort_with(state,
+                                                host_failure(ResumeHostReason::EngineFailure,
+                                                             EngineError::InvalidSequence));
+                                        }
+                                        return state.request->pack_bridge_result(
+                                            engine, observation, call_site,
+                                            ok.canonical_result_json);
+                                    },
+                                    [&](LivePending) -> Result {
+                                        // The Pending row stays sealed: no
+                                        // record, no frame. A future resume's
+                                        // preview sees it and issues
+                                        // RecoverPending (D2b-7); the
+                                        // suspend/persist decision that forms a
+                                        // new pending coordinate is D2b-8.
+                                        return abort_with(state,
+                                            host_failure(ResumeHostReason::LiveCapabilityPending));
+                                    },
+                                    [&](LiveError &err) -> Result {
+                                        // Record the failure bytes so a future
+                                        // resume replays the terminal failure
+                                        // (DedupReplayFailure, D2b-6). The
+                                        // surfaced fault is the capability's
+                                        // error regardless of the record's
+                                        // outcome: the row stays Pending for
+                                        // recovery either way.
+                                        static_cast<void>(authority->record_failure(
+                                            minted->token(),
+                                            std::span<const std::uint8_t>(
+                                                reinterpret_cast<const std::uint8_t *>(
+                                                    err.diagnostic.data()),
+                                                err.diagnostic.size())));
+                                        return abort_with(state,
+                                            host_failure(ResumeHostReason::LiveCapabilityError));
+                                    },
+                                },
+                                *outcome);
+                        },
+                        [&](dea::EffectReplaySucceeded replay) -> Result {
+                            // Race: a concurrent caller sealed + recorded a
+                            // SUCCEEDED terminal between the controller's
+                            // preview and this begin. Read the recorded result
+                            // and pack it; NO live call, NO second effect.
+                            auto bytes = authority->read_result(replay.handle);
+                            if (!bytes.has_value()) {
+                                return abort_with(state,
+                                    host_failure(ResumeHostReason::EngineFailure,
+                                                 EngineError::InvalidSequence));
+                            }
+                            if (!state.request->pack_bridge_result) {
+                                return abort_with(state,
+                                    host_failure(ResumeHostReason::EngineFailure,
+                                                 EngineError::InvalidSequence));
+                            }
+                            return state.request->pack_bridge_result(engine, observation,
+                                                                     call_site, *bytes);
+                        },
+                        [&](dea::EffectReplayFailed replay) -> Result {
+                            // Race: the effect already has a FAILED terminal.
+                            // Re-surface the recorded failure; NO live call, NO
+                            // second effect.
+                            static_cast<void>(authority->read_result(replay.handle));
+                            return abort_with(state,
+                                host_failure(ResumeHostReason::LiveCapabilityReplayedFailure));
+                        },
+                        [&](dea::EffectReplayPending) -> Result {
+                            // A Pending row owns the token (a crashed prior
+                            // attempt). Re-driving risks a duplicate effect;
+                            // the host must reconcile it (D2b-7).
+                            return abort_with(state,
+                                host_failure(ResumeHostReason::RecoverPendingRequired));
+                        },
+                        [&](dea::EffectDiverged) -> Result {
+                            // Same call site, DIFFERENT param digest sealed by
+                            // the same authority: fail closed.
+                            return abort_with(state,
+                                step_failure(rc::ResumeStepReason::CoordinateMismatch));
+                        },
+                    },
+                    *begun);
             },
+            // The D2b replay feed-back arms stay blocked (D2b-6 / D2b-7): a
+            // controller-issued replay/recover verdict cannot be served by
+            // this driver yet. Fail closed with no fabricated frame; the
+            // generation stays Available / unconsumed.
             [&](const rc::DedupReplay &) -> Result {
                 return abort_with(state, host_failure(ResumeHostReason::ReadyForLiveBlocked));
             },
@@ -249,6 +406,17 @@ std::string_view host_code(const ResumeFailure &failure) noexcept {
                 // A live frontier is ineligible to move to consumed under a
                 // replay-only adapter.
                 case ResumeHostReason::ReadyForLiveBlocked:
+                    return host_code_for(rc::ResumeStepReason::TransitionInvalid);
+                // D2b-5 live capability outcomes. The F2 catalogue is LOCKED
+                // with no resume.capability.* arm: a non-OK capability outcome
+                // is the non-OK import status code, and a Pending row that
+                // needs reconciliation is an ineligible transition.
+                case ResumeHostReason::LiveCapabilityFault:
+                case ResumeHostReason::LiveCapabilityPending:
+                case ResumeHostReason::LiveCapabilityError:
+                case ResumeHostReason::LiveCapabilityReplayedFailure:
+                    return host_code_for(rc::ResumeStepReason::ModuleError);
+                case ResumeHostReason::RecoverPendingRequired:
                     return host_code_for(rc::ResumeStepReason::TransitionInvalid);
                 case ResumeHostReason::EngineFailure:
                     switch (f.engine_error) {

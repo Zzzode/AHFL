@@ -1950,7 +1950,11 @@ int main(int argc, char **argv) {
                 }
                 nuke(work);
             }
-            // E1c: finish_run in AwaitingLiveResult (fresh fixture) -> TransitionInvalid.
+            // E1c: finish_run in AwaitingLiveResult (fresh fixture) -> ACCEPTED.
+            // D2b-5: the driver served the live result (seal -> invoke -> record
+            // -> pack) and the module finished, so the parked phase is a valid OK
+            // predecessor. The cursor advanced past the observed call site, so the
+            // completeness check (cursor == call_site_count) also passes.
             {
                 const fs::path work = base / "e-live-finish";
                 std::optional<ps::IntegrityPayloadStore> store;
@@ -1961,9 +1965,7 @@ int main(int argc, char **argv) {
                     ret.raw_status = AHFL_CAP_OK;
                     ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p3);
                     auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
-                    check(!fin.has_value() &&
-                              is_step_reason(fin.error(), rc::ResumeStepReason::TransitionInvalid),
-                          "E.awaiting_live_finish_invalid");
+                    check(fin.has_value(), "E.awaiting_live_finish_accepted");
                 }
                 nuke(work);
             }

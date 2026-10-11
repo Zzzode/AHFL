@@ -34,6 +34,7 @@ add_library(ahfl_runtime_engine STATIC
     host_event_envelope.cpp
     durable_effect_intent.cpp
     durable_effect_authority.cpp
+    durable_effect_live_mint.cpp
     payload_store_codec.cpp
     payload_store.cpp
 )

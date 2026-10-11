@@ -17,6 +17,7 @@
 #include "runtime/engine/core_wire_canonical_size.hpp" // max_canonical_json_size
 #include "runtime/engine/core_wire_codec.hpp"          // wire_codec::decode_json
 #include "runtime/engine/durable_effect_intent.hpp"    // FrozenAuthorityNamespaceBuilder
+#include "runtime/engine/durable_effect_live_mint.hpp" // mint_live_effect_intent
 #include "runtime/value/value_json.hpp"            // hash_values, value_to_json
 
 namespace ahfl::runtime::core_wasm_resume_controller {
@@ -888,25 +889,6 @@ supply_injected_result(PendingInjection &&pending, std::span<const std::uint8_t>
 
 namespace {
 
-// D2b-4: the SHA-256 of one arity-1 Param's canonical typed bytes. The canonical
-// byte form is the codebase's canonical strict wire-JSON SSOT
-// (`try_value_to_json`, the same deterministic encoding the optional
-// `hash_values` length-delimits): it is what a future host seals and what this
-// controller consults under, so there is exactly one canonicalization
-// authority. A param that is not wire-encodable is an internal invariant fault
-// (every param here was decoded from wire JSON under its binding and can never
-// be a closure); the caller fails closed.
-[[nodiscard]] std::optional<support::Sha256Digest>
-canonical_param_digest(const runtime::Value &param) {
-    const auto canonical = runtime::try_value_to_json(param);
-    if (!canonical.has_value()) {
-        return std::nullopt;
-    }
-    return support::sha256(
-        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(canonical->data()),
-                                      canonical->size()));
-}
-
 // D2b-4 READ-ONLY dedup consultation at one AFTER-frontier call site. With no
 // authority bound this is the no-dedup baseline verdict (ReadyForLive). With an
 // authority, mint the D0 token from the AUTHENTICATED namespace + host-bound
@@ -916,6 +898,11 @@ canonical_param_digest(const runtime::Value &param) {
 // CoordinateMismatch; a backend storage fault is carried verbatim. Every
 // returned decision leaves the caller responsible for the AwaitingLiveResult
 // transition; this helper never touches the phase.
+//
+// The intent itself is minted through the SHARED durable_effect_live_mint
+// helper (D2b-5): the host driver's sealing begin_effect mints the SAME token
+// from the same canonicalization authority, so a preview verdict and the
+// driver's later begin can never diverge.
 [[nodiscard]] std::expected<ImportStepDecision, ResumeStepError>
 consult_live_dedup(const DedupContext &dedup,
                    const core_wasm_schema_module::VerifiedCoreWasmCallSite &call_site,
@@ -928,30 +915,13 @@ consult_live_dedup(const DedupContext &dedup,
         return ImportStepDecision{std::move(live)};
     }
     // Arity-1 is enforced by next_import's decode path.
-    const auto param_digest = canonical_param_digest(live.params.front());
-    if (!param_digest.has_value()) {
-        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
-    }
-
-    dei::FrozenAuthorityNamespaceBuilder builder;
-    if (!builder
-             .bind(dedup.authority_id,
-                   dei::CheckpointNamespace{dedup.workflow, dedup.checkpoint})
-             .has_value()) {
-        // The namespace ids come from the authenticated manifest (validated at
-        // open_snapshot) and the authority id is bound once: a bind failure is
-        // an internal fault, fail closed.
-        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
-    }
-    dei::IntentCoordinate coordinate;
-    coordinate.checkpoint_namespace = {dedup.workflow, dedup.checkpoint};
-    coordinate.node = call_site.workflow_node_id();
-    coordinate.ordinal = call_site.invocation_ordinal();
-    coordinate.capability = call_site.capability();
-    coordinate.source_symbol = call_site.source_symbol();
-    coordinate.param_digest = *param_digest;
-    auto minted = builder.mint(coordinate);
+    auto minted = durable_effect_live_mint::mint_live_effect_intent(
+        dedup.authority_id,
+        dei::CheckpointNamespace{dedup.workflow, dedup.checkpoint}, call_site,
+        live.params.front());
     if (!minted.has_value()) {
+        // A non-wire-encodable param or a bind/mint rejection is an internal
+        // invariant fault, fail closed.
         return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
     }
 
@@ -1080,12 +1050,15 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
     // authority preview may instead suppress the live call (DedupReplay /
     // DedupReplayFailure / RecoverPending) or fail closed on a same-site
     // param-digest divergence / backend fault. Every verdict (live or replay)
-    // parks in AwaitingLiveResult -- the follow-on live-response API is blocked.
+    // parks in AwaitingLiveResult; the cursor advances past the observed call
+    // site so a served live verdict can finish (D2b-5: the driver serves the
+    // result and the module completes -> finish_run accepts AwaitingLiveResult).
     auto verdict = consult_live_dedup(st.dedup, *expected.call_site, arg_hash, std::move(params));
     if (!verdict.has_value()) {
         st.phase = Phase::Failed;
         return std::unexpected(verdict.error());
     }
+    st.replay_cursor = j + 1;
     st.phase = Phase::AwaitingLiveResult;
     return verdict;
 }
@@ -1196,7 +1169,10 @@ ack_publish_injected(PreparedResume &prepared,
 std::expected<MarkConsumedPlan, ResumeStepError>
 finish_run(PreparedResume &prepared, const Run2Exit &exit) {
     detail::PreparedState &st = detail::PreparedState::unwrap(prepared);
-    if (st.phase != Phase::Replaying) {
+    // D2b-5: an after-frontier live verdict parks in AwaitingLiveResult. The
+    // driver served the result (seal -> invoke -> record -> pack) and the
+    // module finished, so the parked phase is a valid OK predecessor.
+    if (st.phase != Phase::Replaying && st.phase != Phase::AwaitingLiveResult) {
         st.phase = Phase::Failed;
         return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
     }

@@ -27,17 +27,21 @@
 //                             store.publish_available(plan),
 //                             rc::ack_publish_injected, alloc/write the exact
 //                             new bytes, reply (OK, ptr, len);
-//        ReadyForLive / dedup arms -> fail closed (the live OK/PENDING/ERROR
-//                             response API is the blocked D2b follow-on).
+//        ReadyForLive -> D2b-5: seal the effect intent (begin_effect) BEFORE
+//                             the caller-supplied live_invoker call, record the
+//                             OK/ERROR terminal, pack the canonical result;
+//                             PENDING leaves the row sealed and aborts. An empty
+//                             live_invoker keeps the fail-closed baseline.
+//        DedupReplay / DedupReplayFailure / RecoverPending -> fail closed
+//                             (the D2b-6 / D2b-7 follow-ons).
 //   6. rc::finish_run(Run2Exit) -> store.mark_consumed ->
 //      rc::ack_mark_consumed.
 //
-// Every failure is fail-CLOSED: no frame is transferred on a failing step, no
-// live capability is ever invoked by this driver, and a failed resume leaves
-// the authenticated generation Available / unconsumed. Errors surface through
-// a CLOSED typed variant; `host_code()` maps each arm to the F2 locked
-// resume.* catalogue (range-less, no-echo), the stable string production hosts
-// report.
+// Every failure is fail-CLOSED: no frame is transferred on a failing step, and
+// a failed resume leaves the authenticated generation Available / unconsumed.
+// Errors surface through a CLOSED typed variant; `host_code()` maps each arm
+// to the F2 locked resume.* catalogue (range-less, no-echo), the stable string
+// production hosts report.
 //
 // ENGINE EVIDENCE (WH-3, 2026-09-30): the driver is verified on three engine
 // ports: (1) the synchronous in-test double (FakeResumeEngine, F4 unit tests),
@@ -50,14 +54,18 @@
 // state.abort_failure (CoordinateMismatch). The same TU also exercises the
 // capability-import executor on wasm3 (bridge lane, live OK/ERROR/
 // PENDING, Suspended->Injected->Consumed replay, ImportAbort). The D2b
-// live-result API (ReadyForLive / dedup / recover) remains the blocked
-// follow-on: this driver never invokes a live capability and the live
-// frontier stays ReadyForLiveBlocked. B2 / KR6.5 stay false until that lands.
+// live-result API landed for ReadyForLive in D2b-5 (seal -> invoke ->
+// record -> pack): with a caller-supplied live_invoker the driver invokes a
+// live capability past the frontier under the dedup authority's seal. The
+// DedupReplay / DedupReplayFailure / RecoverPending arms remain the blocked
+// D2b-6 / D2b-7 follow-on, and an empty live_invoker keeps the
+// ReadyForLiveBlocked baseline. B2 / KR6.5 stay false until those land.
 
 #include <cstdint>
 #include <expected>
 #include <functional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -111,6 +119,53 @@ using BridgeArgHasher =
                                                const engine::ImportObservation &obs,
                                                const csm::VerifiedCoreWasmCallSite &call_site)>;
 
+// D2b-5: the caller-supplied live capability response API. The driver is
+// engine-agnostic: it has no string names (workflow/agent/state), no
+// name_resolver and no frame_section, so the caller (which holds the
+// Program/IR + capability registry + frame layout) closes over its
+// ContextualCapabilityInvoker inside this lambda, exactly as it does for the
+// pack_entry_frame / pack_bridge_result / bridge_arg_hasher seams.
+//
+// The invoker receives the TYPED params (ReadyForLive.params), never
+// wire-JSON bytes. It is responsible for serialize -> Verified-decode ->
+// canonical re-encode -> length-check <= the bridge site's reserved result
+// bound, and returns the canonical bytes on success. The driver sees only
+// canonical bytes; it never depends on the wire codec or frame_section.
+
+// A verified live OK: the canonical wire-JSON result bytes, already
+// Verified-decoded + canonical re-encoded + length-checked by the invoker.
+struct LiveOk {
+    std::vector<std::uint8_t> canonical_result_json;
+};
+// The capability returned PENDING: no Result frame exists. The driver leaves
+// the sealed Pending row for recovery and aborts (the follow-on
+// suspend/persist decision that forms a new pending coordinate is D2b-8).
+struct LivePending {};
+// The capability returned ERROR/Timeout/RetryExhausted/CircuitOpen. The
+// diagnostic is abort-diagnostic only; it is recorded in the authority as
+// the failure bytes so a future resume replays the terminal failure.
+struct LiveError {
+    std::string diagnostic;
+};
+using LiveCapabilityOutcome = std::variant<LiveOk, LivePending, LiveError>;
+
+// A host-decision fault of the invoker lambda itself (NOT a capability
+// execution fault): the capability name is unknown, the result failed
+// Verified-decode, the canonical result exceeded the reserved bound, or the
+// invoker failed outright.
+enum class LiveCapabilityFault : std::uint8_t {
+    CapabilityNameUnknown,
+    ResultVerificationFailed,
+    ResultTooLarge,
+    InvokerFailed,
+};
+
+// Invoke the live capability for one ReadyForLive decision. Returns the
+// outcome, or a fault if the invoker itself could not produce one.
+using LiveCapabilityInvoker =
+    std::function<std::expected<LiveCapabilityOutcome, LiveCapabilityFault>(
+        const rc::ReadyForLive &, const engine::ImportObservation &)>;
+
 struct ResumeRequest {
     const csm::VerifiedCoreWasmSchemaModule *module{nullptr};
     // The exact digest-admitted artifact bytes handed to the engine. They are
@@ -137,6 +192,15 @@ struct ResumeRequest {
     // returns ReadyForLive; the read/recover/dedup authority lands in D2b-3,
     // which then fails closed at this driver's blocked live frontier).
     rc::GatedResumeOptions gated_options{};
+    // Optional D2b-5 live capability invoker. Empty = the ReadyForLive
+    // frontier stays fail-closed (ReadyForLiveBlocked): the no-dedup baseline
+    // is structurally unchanged. When set, the driver seals the effect intent
+    // via gated_options' dedup authority BEFORE the live call (a crash during
+    // the call leaves a Pending row for recovery), invokes the capability, and
+    // records the OK/ERROR terminal; a PENDING outcome leaves the row sealed.
+    // The DedupReplay / DedupReplayFailure / RecoverPending arms stay blocked
+    // (D2b-6 / D2b-7).
+    LiveCapabilityInvoker live_invoker{};
     // RFC 0026 dual-track elimination: the bridge lane packs P4-D frames at
     // fixed addresses (the entry node's I block and the bridge result blocks).
     // The packers are the engine-agnostic seam: the caller (which has the
@@ -180,8 +244,18 @@ enum class ResumeHostReason : std::uint8_t {
     // do not hash to the verified handle's module_sha256(); or the engine
     // returned a post-run2 page other than the fixed 64 KiB.
     ArtifactMemoryContractMismatch,
-    ReadyForLiveBlocked,            // frontier passed; live result API is the D2b follow-on
-    EngineFailure,                  // the engine port returned EngineError
+    ReadyForLiveBlocked, // no live_invoker (or no dedup authority to seal under):
+                         // the live frontier stays fail-closed
+    EngineFailure,      // the engine port returned EngineError
+    // D2b-5 live capability outcomes. The F2 catalogue is LOCKED with no
+    // resume.capability.* code, so the four capability-fault arms map to the
+    // non-OK import status code (resume.module.error) and the pending-recovery
+    // arm to the ineligible-transition code (resume.transition.invalid).
+    LiveCapabilityFault,           // the invoker returned a LiveCapabilityFault
+    LiveCapabilityPending,         // the capability returned PENDING; row sealed
+    LiveCapabilityError,           // the capability returned ERROR; failure recorded
+    LiveCapabilityReplayedFailure, // (D2b-6) begin_effect raced to a prior FAILED terminal
+    RecoverPendingRequired,        // (D2b-7) a Pending row needs host reconciliation
 };
 struct HostFailure {
     ResumeHostReason reason{ResumeHostReason::EngineFailure};

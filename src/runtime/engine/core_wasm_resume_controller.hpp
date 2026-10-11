@@ -259,8 +259,10 @@ struct NeedInjectedSlot {};
 // argument hash, and the EXACT arity-1 typed, Verified-decoded Param value (owned, so
 // never dangling). AFTER-frontier only. `arg_hash` is the wire-canonical value hash;
 // it is NEVER the D0 IdempotencyToken. Returning this moves the controller to
-// AwaitingLiveResult (a follow-on state -- step APIs are TransitionInvalid there in
-// this slice).
+// AwaitingLiveResult and advances the replay cursor past the observed call site.
+// D2b-5: the driver serves the live result (seal -> invoke -> record -> pack) and the
+// module completes, so finish_run accepts AwaitingLiveResult as a valid OK predecessor.
+// Other step APIs (next_import, bind/ack) remain TransitionInvalid in this parked state.
 struct ReadyForLive {
     core_wasm_schema_module::VerifiedCoreWasmCallSite call_site;
     std::uint64_t arg_hash{0};

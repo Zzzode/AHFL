@@ -31,9 +31,13 @@
 #include <vector>
 
 #include "ahfl/runtime/ahfl_host.h"
+#include "runtime/engine/core_wasm_idempotency_token.hpp"
 #include "runtime/engine/core_wasm_node_events.hpp"
 #include "runtime/engine/core_wasm_resume_engine.hpp"
 #include "runtime/engine/core_wasm_resume_host.hpp"
+#include "runtime/engine/durable_effect_authority.hpp"
+#include "runtime/engine/durable_effect_intent.hpp"
+#include "runtime/engine/durable_effect_live_mint.hpp"
 
 namespace {
 
@@ -44,6 +48,10 @@ namespace host = ahfl::runtime::core_wasm_resume_host;
 namespace nev = ahfl::runtime::core_wasm_node_events;
 namespace ps = ahfl::runtime::payload_store;
 namespace rc = ahfl::runtime::core_wasm_resume_controller;
+namespace dea = ahfl::runtime::durable_effect_authority;
+namespace dei = ahfl::runtime::durable_effect_intent;
+namespace delm = ahfl::runtime::durable_effect_live_mint;
+namespace tok = ahfl::runtime::core_wasm_idempotency_token;
 
 using ahfl::ir::core::CoreWireSchemaNodeId;
 using ahfl::ir::core::CoreWorkflowId;
@@ -371,6 +379,142 @@ constexpr ResumeCheckpointId kCkpt{3};
 const PayloadSlotId kEntrySlot{9};
 const PayloadSlotId kInjectedSlot{5};
 
+// ---- D2b-5 live-frontier fixtures ------------------------------------------
+
+// The D2b-5 host-bound authority id for the live tests (opaque 16 bytes,
+// never derived from key_id/path/hostname).
+constexpr std::array<std::uint8_t, 16> kLiveAuthorityRaw = {
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f};
+const tok::IdempotencyAuthorityId kLiveAuthorityId{kLiveAuthorityRaw};
+
+// The after-frontier live topology: identity 40, cap 41 (the Suspended
+// frontier), cap 42 (the after-frontier ReadyForLive node the live arm serves).
+ModuleSpec live_module_spec() {
+    ModuleSpec spec;
+    spec.entry_id = 7;
+    spec.extra_schema_nodes = {bounded_string_node(8)};
+    spec.caps = {CapSpec{3, 900, CoreWireSchemaNodeId{1}},
+                 CapSpec{4, 901, CoreWireSchemaNodeId{1}}};
+    spec.nodes = {ManifestNodeSpec{40, 0, 0, 0},
+                  ManifestNodeSpec{41, 1, 3, 900},
+                  ManifestNodeSpec{42, 1, 4, 901}};
+    return spec;
+}
+
+[[nodiscard]] ahfl::support::Sha256Digest
+flipped_digest(ahfl::support::Sha256Digest d) {
+    d[0] = static_cast<std::uint8_t>(d[0] ^ 0xFFu);
+    return d;
+}
+[[nodiscard]] tok::IdempotencyToken flipped_token(tok::IdempotencyToken t) {
+    t.bytes[0] = static_cast<std::uint8_t>(t.bytes[0] ^ 0xFFu);
+    return t;
+}
+
+// A backend wrapper that delegates every call unchanged. Subclasses override
+// seal_or_load to inject a race between the controller's READ-ONLY preview
+// (find_registration_at_call_site, which sees an empty site) and the driver's
+// SEALING begin_effect (seal_or_load).
+class DelegatingBackend : public dea::IDurableEffectBackend {
+  public:
+    explicit DelegatingBackend(std::shared_ptr<dea::IDurableEffectBackend> inner)
+        : inner_(std::move(inner)) {}
+
+    [[nodiscard]] std::optional<dea::SealedEffectRegistration>
+    find_registration(const tok::IdempotencyToken &token) const override {
+        return inner_->find_registration(token);
+    }
+
+    [[nodiscard]] std::expected<dea::SealOutcome, dea::DurableEffectBackendError>
+    seal_or_load(dea::SealedEffectRegistration candidate) override {
+        return inner_->seal_or_load(std::move(candidate));
+    }
+
+    [[nodiscard]] std::expected<dea::ResultHandle,
+                                std::variant<dea::RegistrationConflict,
+                                             dea::DurableEffectBackendError>>
+    complete_pending(const tok::IdempotencyToken &token, bool succeeded,
+                     std::span<const std::uint8_t> typed_payload) override {
+        return inner_->complete_pending(token, succeeded, typed_payload);
+    }
+
+    [[nodiscard]] std::expected<std::vector<dea::PendingRecoveryEntry>,
+                                dea::DurableEffectBackendError>
+    list_pending(const dei::CheckpointNamespace &checkpoint_namespace) const override {
+        return inner_->list_pending(checkpoint_namespace);
+    }
+
+    [[nodiscard]] std::expected<dea::CallSiteLookup, dea::DurableEffectBackendError>
+    find_registration_at_call_site(const tok::IdempotencyAuthorityId &authority,
+                                   const dei::CheckpointNamespace &checkpoint_namespace,
+                                   CoreWorkflowNodeId node, InvocationOrdinal ordinal,
+                                   CoreCapabilityId capability,
+                                   std::uint64_t source_symbol) const override {
+        return inner_->find_registration_at_call_site(authority, checkpoint_namespace, node,
+                                                      ordinal, capability, source_symbol);
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::uint8_t>,
+                                std::variant<dea::PayloadReadConflict,
+                                             dea::DurableEffectBackendError>>
+    read_payload(dea::ResultHandle handle) const override {
+        return inner_->read_payload(handle);
+    }
+
+  protected:
+    std::shared_ptr<dea::IDurableEffectBackend> inner_;
+};
+
+// On the FIRST seal_or_load, first seal a competing SUCCEEDED terminal for the
+// SAME token (a concurrent caller won between the controller's preview and the
+// driver's begin), so the driver's begin_effect returns EffectReplaySucceeded.
+class ReplaySucceededRacingBackend final : public DelegatingBackend {
+  public:
+    ReplaySucceededRacingBackend(std::shared_ptr<dea::IDurableEffectBackend> inner,
+                                 std::vector<std::uint8_t> competing_result)
+        : DelegatingBackend(std::move(inner)),
+          competing_result_(std::move(competing_result)) {}
+
+    [[nodiscard]] std::expected<dea::SealOutcome, dea::DurableEffectBackendError>
+    seal_or_load(dea::SealedEffectRegistration candidate) override {
+        if (!primed_) {
+            primed_ = true;
+            static_cast<void>(inner_->seal_or_load(candidate));
+            static_cast<void>(
+                inner_->complete_pending(candidate.token, true, competing_result_));
+        }
+        return inner_->seal_or_load(std::move(candidate));
+    }
+
+  private:
+    std::vector<std::uint8_t> competing_result_;
+    bool primed_{false};
+};
+
+// On the FIRST seal_or_load, first seal a DIVERGENT row (same call site, same
+// authority, DIFFERENT param digest + its own token), so the driver's
+// begin_effect returns EffectDiverged.
+class DivergedRacingBackend final : public DelegatingBackend {
+  public:
+    using DelegatingBackend::DelegatingBackend;
+
+    [[nodiscard]] std::expected<dea::SealOutcome, dea::DurableEffectBackendError>
+    seal_or_load(dea::SealedEffectRegistration candidate) override {
+        if (!primed_) {
+            primed_ = true;
+            auto diverging = candidate;
+            diverging.coordinate.param_digest = flipped_digest(diverging.coordinate.param_digest);
+            diverging.token = flipped_token(diverging.token);
+            static_cast<void>(inner_->seal_or_load(std::move(diverging)));
+        }
+        return inner_->seal_or_load(std::move(candidate));
+    }
+
+  private:
+    bool primed_{false};
+};
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -394,6 +538,87 @@ int main(int argc, char **argv) {
         }
         nuke(probe);
     }
+
+    // ============ D2b-5 shared live-frontier setup ==========================
+    // Seed the 2-node Suspended ledger (identity 40 + cap 41 frontier) for the
+    // live topology at gen 1; cap 42 is the after-frontier ReadyForLive node.
+    const auto seed_live_store = [&](const fs::path &work,
+                                     const csm::VerifiedCoreWasmSchemaModule &mod,
+                                     const ModuleSpec &spec)
+        -> std::optional<ps::IntegrityPayloadStore> {
+        auto store = open_store(work);
+        if (!store.has_value()) {
+            return std::nullopt;
+        }
+        const std::vector<ManifestNodeSpec> ledger_nodes{spec.nodes[0], spec.nodes[1]};
+        const auto record = make_suspended_record(
+            mod, kWf, ledger_nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
+        auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
+        if (!pub0.has_value() || *pub0 != 1) {
+            return std::nullopt;
+        }
+        return store;
+    };
+
+    // Fill the common ResumeRequest fields for a D2b-5 live resume.
+    const auto fill_request = [&](host::ResumeRequest &request,
+                                  const csm::VerifiedCoreWasmSchemaModule &mod,
+                                  const std::vector<std::uint8_t> &module_bytes,
+                                  eng::CoreWasmResumeEngine &engine,
+                                  ps::IntegrityPayloadStore &store,
+                                  const dea::DurableEffectAuthority *dedup,
+                                  host::LiveCapabilityInvoker invoker) {
+        request.pack_entry_frame = make_bump_entry_packer();
+        request.pack_bridge_result = make_bump_result_packer();
+        request.module = &mod;
+        request.module_bytes = std::span<const std::uint8_t>(module_bytes);
+        request.engine = &engine;
+        request.store = &store;
+        request.workflow = kWf;
+        request.checkpoint = kCkpt;
+        request.key_id = id_span;
+        request.key = std::span<const std::uint8_t>(key);
+        request.injected_result = std::span<const std::uint8_t>(injected);
+        request.chosen_injected_slot = kInjectedSlot;
+        request.gated_options.authority_id = kLiveAuthorityId;
+        request.gated_options.dedup_authority = dedup;
+        request.live_invoker = std::move(invoker);
+    };
+
+    // Mint the effect intent for the after-frontier cap 42 call site under the
+    // live authority, using the PRODUCTION helper (the same one the driver
+    // uses), so a test can assert the authority's terminal state for the exact
+    // token the driver sealed under.
+    const auto live_intent = [&](const csm::VerifiedCoreWasmSchemaModule &mod)
+        -> std::optional<dei::DurableEffectIntent> {
+        auto cs = mod.resolve(csm::ManifestCallSiteIndex{1});
+        if (!cs.ok() || !cs.call_site.has_value()) {
+            return std::nullopt;
+        }
+        auto dom = ahfl::json::parse_json(kIntParamJson);
+        if (!dom.has_value()) {
+            return std::nullopt;
+        }
+        auto decoded =
+            ahfl::runtime::wire_codec::decode_json(**dom, cs.call_site->param_binding());
+        if (!decoded.ok()) {
+            return std::nullopt;
+        }
+        return delm::mint_live_effect_intent(
+            kLiveAuthorityId, dei::CheckpointNamespace{kWf, kCkpt}, *cs.call_site,
+            *decoded.value);
+    };
+
+    // A scripted invoker that counts its calls and returns a fixed outcome.
+    const auto counting_invoker = [](int &calls, host::LiveCapabilityOutcome outcome) {
+        return [&calls, outcome = std::move(outcome)](
+                   const rc::ReadyForLive &, const eng::ImportObservation &)
+                   -> std::expected<host::LiveCapabilityOutcome, host::LiveCapabilityFault> {
+            ++calls;
+            return outcome;
+        };
+    };
 
     // ============ S1: full Suspended replay, memo x2 + inject, Consumed =====
     {
@@ -1166,7 +1391,376 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
-    if (g_failures != 0) {        std::cerr << "core_wasm_resume_host: " << g_failures << " of " << g_total
+    // ============ S15: ReadyForLive + OK seals, records, packs ==============
+    // D2b-5: the after-frontier cap 42 is ReadyForLive. With a live invoker +
+    // dedup authority the driver seals the effect (begin_effect) BEFORE the
+    // call, invokes, records the SUCCEEDED terminal, and packs the canonical
+    // result. The workflow resumes past the frontier and Consumes.
+    {
+        const fs::path work = base / "s15-live-ok";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S15.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S15.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(done.has_value(), "S15.resume_ok");
+        if (done.has_value()) {
+            check(done->raw_status == AHFL_CAP_OK, "S15.raw_ok");
+            check(done->output == bytes_of(kStringResultJson), "S15.output_is_live_result");
+            check(done->consumed_from == 2 && done->consumed_generation == 3,
+                  "S15.consumed_3_2");
+        }
+        check(invoker_calls == 1, "S15.invoker_called_once");
+        // The authority sealed + recorded a SUCCEEDED terminal for the call.
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S15.intent_minted");
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectSucceeded>(*resolved),
+                  "S15.authority_succeeded");
+            if (resolved.has_value() &&
+                std::holds_alternative<dea::EffectSucceeded>(*resolved)) {
+                auto bytes =
+                    dedup.read_result(std::get<dea::EffectSucceeded>(*resolved).handle);
+                check(bytes.has_value() && *bytes == bytes_of(kStringResultJson),
+                      "S15.recorded_bytes_roundtrip");
+            }
+        }
+        // L0 + injected L4 + the live result frame: 3 transfers, and the live
+        // reply carried raw AHFL_CAP_OK.
+        check(engine.host_allocations().size() == 3, "S15.three_transfers");
+        if (engine.host_allocations().size() == 3) {
+            check(engine.host_allocations()[2].bytes == bytes_of(kStringResultJson),
+                  "S15.live_frame_bytes");
+        }
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_OK,
+              "S15.replies_raw_ok");
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedConsumed>(*after),
+              "S15.tombstone");
+        nuke(work);
+    }
+
+    // ============ S16: ReadyForLive + PENDING leaves the row sealed =========
+    // The invoker returns PENDING: no Result frame, no terminal recorded. The
+    // Pending row stays sealed for recovery and the resume fails closed.
+    {
+        const fs::path work = base / "s16-live-pending";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S16.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S16.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{host::LivePending{}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S16.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(), host::ResumeHostReason::LiveCapabilityPending),
+                  "S16.pending");
+            check(host::host_code(done.error()) == "resume.module.error", "S16.host_code");
+        }
+        check(invoker_calls == 1, "S16.invoker_called_once");
+        // The Pending row stays sealed (no terminal recorded).
+        auto intent = live_intent(mod);
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectPending>(*resolved),
+                  "S16.authority_pending");
+            auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
+            check(rows.has_value() && rows->size() == 1, "S16.one_pending_row");
+        }
+        // The generation stays Available / unconsumed.
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S16.still_available");
+        nuke(work);
+    }
+
+    // ============ S17: ReadyForLive + ERROR records the failure ============
+    // The invoker returns ERROR: the failure bytes are recorded in the
+    // authority (a future resume replays the terminal failure) and the resume
+    // fails closed with LiveCapabilityError.
+    {
+        const fs::path work = base / "s17-live-error";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S17.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S17.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveError{std::string{"boom"}}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S17.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(), host::ResumeHostReason::LiveCapabilityError),
+                  "S17.error");
+            check(host::host_code(done.error()) == "resume.module.error", "S17.host_code");
+        }
+        check(invoker_calls == 1, "S17.invoker_called_once");
+        // The failure bytes are recorded: the authority has a FAILED terminal.
+        auto intent = live_intent(mod);
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() && std::holds_alternative<dea::EffectFailed>(*resolved),
+                  "S17.authority_failed");
+            if (resolved.has_value() &&
+                std::holds_alternative<dea::EffectFailed>(*resolved)) {
+                auto bytes =
+                    dedup.read_result(std::get<dea::EffectFailed>(*resolved).handle);
+                check(bytes.has_value() && *bytes == bytes_of("boom"),
+                      "S17.failure_bytes");
+            }
+        }
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S17.still_available");
+        nuke(work);
+    }
+
+    // ============ S18: ReadyForLive + invoker fault leaves the row sealed ==
+    // The invoker returns a LiveCapabilityFault: the Pending row stays sealed
+    // (the invoker faulted before a terminal existed) and the resume fails
+    // closed with LiveCapabilityFault.
+    {
+        const fs::path work = base / "s18-live-fault";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S18.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S18.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     [&](const rc::ReadyForLive &, const eng::ImportObservation &)
+                         -> std::expected<host::LiveCapabilityOutcome,
+                                          host::LiveCapabilityFault> {
+                         ++invoker_calls;
+                         return std::unexpected(
+                             host::LiveCapabilityFault::InvokerFailed);
+                     });
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S18.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(), host::ResumeHostReason::LiveCapabilityFault),
+                  "S18.fault");
+            check(host::host_code(done.error()) == "resume.module.error", "S18.host_code");
+        }
+        check(invoker_calls == 1, "S18.invoker_called_once");
+        // The Pending row stays sealed (the invoker faulted before a terminal).
+        auto intent = live_intent(mod);
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectPending>(*resolved),
+                  "S18.authority_pending");
+        }
+        nuke(work);
+    }
+
+    // ============ S19: begin_effect races to ReplaySucceeded ===============
+    // A concurrent caller sealed + recorded a SUCCEEDED terminal for the SAME
+    // token between the controller's read-only preview and the driver's sealing
+    // begin. The driver reads the recorded result and packs it; the invoker is
+    // NEVER called (no second effect).
+    {
+        const fs::path work = base / "s19-race-replay-succeeded";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S19.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto inner = dea::make_in_memory_durable_effect_backend();
+        auto racing = std::make_shared<ReplaySucceededRacingBackend>(
+            inner, bytes_of("\"cached\""));
+        dea::DurableEffectAuthority dedup{racing};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S19.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(done.has_value(), "S19.resume_ok");
+        if (done.has_value()) {
+            // The packed result is the COMPETING terminal's bytes, not the
+            // invoker's (which was never called).
+            check(done->output == bytes_of("\"cached\""), "S19.output_is_cached");
+        }
+        check(invoker_calls == 0, "S19.invoker_not_called");
+        // The replayed result was packed with a raw OK reply.
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_OK,
+              "S19.replay_reply_raw_ok");
+        if (engine.host_allocations().size() == 3) {
+            check(engine.host_allocations()[2].bytes == bytes_of("\"cached\""),
+                  "S19.replayed_frame_bytes");
+        }
+        nuke(work);
+    }
+
+    // ============ S20: begin_effect races to Diverged ======================
+    // A concurrent caller sealed the SAME call site under the SAME authority
+    // with a DIFFERENT param digest. The driver fails closed CoordinateMismatch;
+    // the invoker is NEVER called.
+    {
+        const fs::path work = base / "s20-race-diverged";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S20.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto inner = dea::make_in_memory_durable_effect_backend();
+        auto racing = std::make_shared<DivergedRacingBackend>(inner);
+        dea::DurableEffectAuthority dedup{racing};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S20.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S20.fails_closed");
+        if (!done.has_value()) {
+            check(is_step(done.error(), rc::ResumeStepReason::CoordinateMismatch),
+                  "S20.diverged");
+            check(host::host_code(done.error()) == "resume.coordinate.mismatch",
+                  "S20.host_code");
+        }
+        check(invoker_calls == 0, "S20.invoker_not_called");
+        nuke(work);
+    }
+
+    // ============ S21: structural gate -- authority bound, no invoker ======
+    // The dedup authority is bound (the controller consults it and issues
+    // ReadyForLive) but the request carries NO live_invoker: the live frontier
+    // stays fail-closed ReadyForLiveBlocked and no effect is sealed. The
+    // no-dedup baseline behavior is structurally unchanged.
+    {
+        const fs::path work = base / "s21-no-invoker";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S21.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S21.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     host::LiveCapabilityInvoker{});
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S21.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::ReadyForLiveBlocked),
+                  "S21.ready_for_live_blocked");
+            check(host::host_code(done.error()) == "resume.transition.invalid",
+                  "S21.host_code");
+        }
+        // The driver never reached begin_effect: no effect row was sealed.
+        auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
+        check(rows.has_value() && rows->empty(), "S21.no_effect_sealed");
+        nuke(work);
+    }
+
+    if (g_failures != 0) {
+        std::cerr << "core_wasm_resume_host: " << g_failures << " of " << g_total
                   << " check(s) failed\n";
         return 1;
     }
