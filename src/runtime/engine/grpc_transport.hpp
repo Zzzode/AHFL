@@ -93,6 +93,6 @@ execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request);
 
 /// Build the curl command string for a JSON-transcoding request (exposed for testing).
 [[nodiscard]] std::string
-build_grpc_json_transcoding_curl_command(const GrpcJsonTranscodingRequest &request);
+describe_grpc_json_transcoding_request(const GrpcJsonTranscodingRequest &request);
 
 } // namespace ahfl::runtime

@@ -33,7 +33,7 @@ class HttpTransport {
     [[nodiscard]] HttpResponse execute(const HttpRequest &request);
 
     /// Build the curl command string (exposed for testing).
-    [[nodiscard]] static std::string build_curl_command(const HttpRequest &request);
+    [[nodiscard]] static std::string describe_request(const HttpRequest &request);
 };
 
 } // namespace ahfl::runtime

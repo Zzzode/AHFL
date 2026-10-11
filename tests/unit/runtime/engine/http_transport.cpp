@@ -21,7 +21,7 @@ void check(bool condition, const std::string &test_name) {
 }
 
 // ============================================================================
-// Test 1: build_curl_command basic POST
+// Test 1: describe_request basic POST
 // ============================================================================
 
 void test_build_curl_basic_post() {
@@ -31,7 +31,7 @@ void test_build_curl_basic_post() {
     request.body = R"({"key":"value"})";
     request.timeout_seconds = 30;
 
-    auto cmd = HttpTransport::build_curl_command(request);
+    auto cmd = HttpTransport::describe_request(request);
 
     check(cmd.find("curl --config -") != std::string::npos, "basic_post.has_curl_config");
     check(cmd.find("POST") != std::string::npos, "basic_post.method_post");
@@ -42,7 +42,7 @@ void test_build_curl_basic_post() {
 }
 
 // ============================================================================
-// Test 2: build_curl_command with headers
+// Test 2: describe_request with headers
 // ============================================================================
 
 void test_build_curl_with_headers() {
@@ -53,7 +53,7 @@ void test_build_curl_with_headers() {
     request.headers["Authorization"] = "Bearer token123";
     request.timeout_seconds = 10;
 
-    auto cmd = HttpTransport::build_curl_command(request);
+    auto cmd = HttpTransport::describe_request(request);
 
     check(cmd.find("headers=2") != std::string::npos, "headers.count");
     check(cmd.find("Content-Type: application/json") == std::string::npos,
@@ -64,7 +64,7 @@ void test_build_curl_with_headers() {
 }
 
 // ============================================================================
-// Test 3: build_curl_command GET with no body
+// Test 3: describe_request GET with no body
 // ============================================================================
 
 void test_build_curl_get_no_body() {
@@ -73,7 +73,7 @@ void test_build_curl_get_no_body() {
     request.method = "GET";
     request.timeout_seconds = 5;
 
-    auto cmd = HttpTransport::build_curl_command(request);
+    auto cmd = HttpTransport::describe_request(request);
 
     check(cmd.find("GET") != std::string::npos, "get.method");
     check(cmd.find("body_bytes=") == std::string::npos, "get.no_body_flag");
@@ -81,7 +81,7 @@ void test_build_curl_get_no_body() {
 }
 
 // ============================================================================
-// Test 4: build_curl_command with special characters in body
+// Test 4: describe_request with special characters in body
 // ============================================================================
 
 void test_build_curl_shell_quoting() {
@@ -91,7 +91,7 @@ void test_build_curl_shell_quoting() {
     request.body = R"({"msg":"it's a test"})";
     request.timeout_seconds = 30;
 
-    auto cmd = HttpTransport::build_curl_command(request);
+    auto cmd = HttpTransport::describe_request(request);
 
     check(cmd.find("it's a test") == std::string::npos, "quoting.body_redacted");
 }
@@ -124,7 +124,7 @@ void test_http_response_helpers() {
 }
 
 // ============================================================================
-// Test 6: build_curl_command PUT method
+// Test 6: describe_request PUT method
 // ============================================================================
 
 void test_build_curl_put() {
@@ -134,7 +134,7 @@ void test_build_curl_put() {
     request.body = R"({"name":"updated"})";
     request.timeout_seconds = 15;
 
-    auto cmd = HttpTransport::build_curl_command(request);
+    auto cmd = HttpTransport::describe_request(request);
 
     check(cmd.find("PUT") != std::string::npos, "put.method");
     check(cmd.find("--max-time 15") != std::string::npos, "put.timeout");

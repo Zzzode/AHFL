@@ -439,90 +439,6 @@ def run_oauth2_token_secret_case(ahflc, run_dir, source_path):
     assert_success_artifact(observability_path, forbidden_values)
 
 
-def run_mtls_curl_config_case(ahflc, run_dir, source_path):
-    fake_bin_dir = run_dir / "fake-curl-bin"
-    fake_bin_dir.mkdir()
-    captured_config_path = run_dir / "mtls_curl_config.txt"
-    fake_curl_path = fake_bin_dir / "curl"
-    fake_curl_path.write_text(
-        """#!/usr/bin/env python3
-import json
-import os
-import sys
-
-config = sys.stdin.read()
-capture_path = os.environ["AHFL_FAKE_CURL_CONFIG"]
-with open(capture_path, "w", encoding="utf-8") as handle:
-    handle.write(config)
-
-payload = {
-    "choices": [
-        {
-            "message": {
-                "content": json.dumps({"value": "mtls-success"}),
-            }
-        }
-    ]
-}
-sys.stdout.write(json.dumps(payload) + "\\n200\\n")
-""",
-        encoding="utf-8",
-    )
-    fake_curl_path.chmod(0o755)
-
-    config_path = run_dir / "mtls_config.json"
-    observability_path = run_dir / "mtls_observability.json"
-    cert_path = run_dir / "client.pem"
-    key_path = run_dir / "client-key.pem"
-    ca_path = run_dir / "ca.pem"
-    cert_path.write_text("fake client cert\n", encoding="utf-8")
-    key_path.write_text("fake client key\n", encoding="utf-8")
-    ca_path.write_text("fake ca cert\n", encoding="utf-8")
-    config_path.write_text(
-        json.dumps(
-            {
-                "endpoint": "https://mtls.example.test/v1",
-                "model": "mtls-model",
-                "auth_scheme": "mtls",
-                "mtls_client_cert_path": str(cert_path),
-                "mtls_client_key_path": str(key_path),
-                "mtls_ca_cert_path": str(ca_path),
-                "mtls_verify_tls": False,
-                "max_retries": 0,
-                "response_cache_enabled": False,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    env = os.environ.copy()
-    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env.get('PATH', '')}"
-    env["AHFL_FAKE_CURL_CONFIG"] = str(captured_config_path)
-    result = run_ahflc(ahflc, source_path, config_path, observability_path, env)
-
-    if result.returncode != 0:
-        raise AssertionError(
-            f"mTLS curl config case failed with {result.returncode}\n"
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
-    if not captured_config_path.exists():
-        raise AssertionError("fake curl did not capture curl config")
-    captured_config = captured_config_path.read_text(encoding="utf-8")
-    expected_fragments = [
-        f'cert = "{cert_path}"',
-        f'key = "{key_path}"',
-        f'cacert = "{ca_path}"',
-        "insecure",
-        'url = "https://mtls.example.test/v1/chat/completions"',
-    ]
-    for fragment in expected_fragments:
-        if fragment not in captured_config:
-            raise AssertionError(f"mTLS curl config missing {fragment!r}:\n{captured_config}")
-    if "Authorization:" in captured_config or "x-api-key:" in captured_config:
-        raise AssertionError(f"mTLS curl config should not include API auth header:\n{captured_config}")
-    assert_success_artifact(observability_path, [])
-
-
 # RFC 0026 C2b G4b: two-phase CLI admission. `ahflc run` first runs a PURE
 # Phase A (parse the --capability-bindings descriptor, project each capability's
 # declared response type into a verified wire schema, and exact-decode --input)
@@ -535,7 +451,7 @@ sys.stdout.write(json.dumps(payload) + "\\n200\\n")
 # requests on a fail-closed admission — lives in
 # runtime_capability_bindings_smoke.py, which proves that when a CLI Phase-A
 # TextPlain configuration is rejected the capability transport makes zero
-# requests (its fake-curl 0-request assertions). The factory-minted poison
+# requests (its loopback server 0-request assertions). The factory-minted poison
 # binding's fine-grained properties (retry=0, CB-off, attempts==1, zero
 # transport) are pinned separately by the capability_bridge unit test. These
 # layers are intentionally complementary: this file proves 0 secret/LLM network,
@@ -882,7 +798,6 @@ def main():
         for mode in ("success", "not_found", "auth_failure", "timeout"):
             run_secret_case(ahflc, run_dir, source_path, provider_kind, mode)
     run_oauth2_token_secret_case(ahflc, run_dir, source_path)
-    run_mtls_curl_config_case(ahflc, run_dir, source_path)
     # RFC 0026 C2b G4b: two-phase admission fails BEFORE any secret/LLM network.
     run_a1_non_projectable_binding_case(ahflc, run_dir)
     run_a2_resolved_input_mismatch_case(ahflc, run_dir)

@@ -9,7 +9,7 @@
 namespace ahfl::runtime {
 
 /// Connection pool that manages concurrency limits per host.
-/// Since the transport uses popen+curl, this acts as a concurrency limiter
+/// Since the transport uses in-process libcurl, this acts as a concurrency limiter
 /// rather than a true TCP connection pool.
 class ConnectionPool {
   public:

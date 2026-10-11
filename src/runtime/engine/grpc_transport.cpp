@@ -176,7 +176,7 @@ parse_grpc_message_from_headers(const std::vector<std::pair<std::string, std::st
 // serialize helpers
 // ============================================================================
 
-std::string build_grpc_json_transcoding_curl_command(const GrpcJsonTranscodingRequest &request) {
+std::string describe_grpc_json_transcoding_request(const GrpcJsonTranscodingRequest &request) {
     return describe_wire_transport(request);
 }
 

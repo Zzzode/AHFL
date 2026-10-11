@@ -22,6 +22,8 @@
 
 namespace ahfl::llm_provider {
 
+class SSEParser;
+
 /// Structured content extracted from an LLM response.
 struct LLMResponseContent {
     std::string content;
@@ -292,11 +294,17 @@ class LLMCapabilityProvider {
     [[nodiscard]] std::vector<ProviderCandidate> provider_candidates() const;
     [[nodiscard]] HttpResponse send_chat_completion(const LLMProviderConfig &config,
                                                     const std::string &request_json) const;
+    [[nodiscard]] HttpResponse send_chat_completion_streaming(
+        const LLMProviderConfig &config, const std::string &request_json,
+        const std::function<void(std::string_view chunk)> &on_chunk,
+        SSEParser &parser) const;
     [[nodiscard]] std::expected<ProviderHttpResult, runtime::CapabilityCallResult>
     chat_with_provider_fallback(
         std::string_view capability_name,
         const runtime::CapabilityInvocationContext &context,
-        const std::function<std::string(const LLMProviderConfig &)> &request_factory) const;
+        const std::function<std::string(const LLMProviderConfig &)> &request_factory,
+        const std::function<void(std::string_view chunk)> *on_stream_chunk = nullptr,
+        SSEParser *stream_parser = nullptr) const;
     void record_response_cache_event(LLMResponseCacheAuditEventKind kind,
                                      const std::string &system_prompt,
                                      const std::string &user_prompt,

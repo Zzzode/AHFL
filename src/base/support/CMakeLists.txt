@@ -1,7 +1,6 @@
 add_library(ahfl_base_support STATIC
     atomic_file.cpp
     const_literal.cpp
-    curl.cpp
     diagnostic_serialization.cpp
     http.cpp
     process.cpp
@@ -14,6 +13,7 @@ add_library(ahfl_base_support STATIC
 target_link_libraries(ahfl_base_support
     PUBLIC
         ahfl_base_public
+        CURL::libcurl
     PRIVATE
         ahfl_base_json
 )

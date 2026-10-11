@@ -139,6 +139,17 @@ endif()
 if(AHFL_ENABLE_BACKEND_FORMAL)
     add_subdirectory(third_party/z3)
 endif()
+# mbedTLS (Apache-2.0), nghttp2 (MIT), zlib (zlib), and curl (curl License)
+# are the vendored HTTP/2 + TLS stack for the in-process HTTP transport
+# (gRPC plan, docs/plans/grpc-libcurl-vendoring-plan.md). They replace the
+# curl subprocess with an in-process libcurl easy-handle pool, enabling true
+# streaming, connection reuse, and embeddability (RFC 0020).
+# Dependency order: mbedTLS + nghttp2 + zlib (no deps) → curl (all three).
+enable_language(C)
+add_subdirectory(third_party/mbedtls)
+add_subdirectory(third_party/nghttp2)
+add_subdirectory(third_party/zlib)
+add_subdirectory(third_party/curl)
 add_subdirectory(src)
 
 enable_testing()

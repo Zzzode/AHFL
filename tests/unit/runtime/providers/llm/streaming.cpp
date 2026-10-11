@@ -71,6 +71,99 @@ bool test_content_without_done_keeps_stream_open() {
     return true;
 }
 
+// --- feed() incremental byte-feeding tests ---
+
+bool test_feed_incremental_partial_lines() {
+    SSEParser parser;
+    std::string accumulated;
+    auto on_chunk = [&](std::string_view chunk) { accumulated += chunk; };
+
+    // Feed the SSE stream one byte at a time to prove partial-line buffering.
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n"
+        "data: [DONE]\n";
+    for (char c : stream) {
+        parser.feed(std::string_view(&c, 1), on_chunk);
+    }
+    if (accumulated != "hello")
+        return false;
+    if (!parser.is_done())
+        return false;
+    return true;
+}
+
+bool test_feed_multiple_lines_one_chunk() {
+    SSEParser parser;
+    std::string accumulated;
+    auto on_chunk = [&](std::string_view chunk) { accumulated += chunk; };
+
+    // Feed the entire stream in one call.
+    parser.feed(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"abc\"}}]}\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"def\"}}]}\n"
+        "data: [DONE]\n",
+        on_chunk);
+    if (accumulated != "abcdef")
+        return false;
+    if (!parser.is_done())
+        return false;
+    return true;
+}
+
+bool test_feed_split_across_calls() {
+    SSEParser parser;
+    std::string accumulated;
+    auto on_chunk = [&](std::string_view chunk) { accumulated += chunk; };
+
+    // Split a single SSE line across two feed calls.
+    parser.feed("data: {\"choices\":[{\"delta\":{\"content\":\"spl", on_chunk);
+    parser.feed("it\"}}]}\n", on_chunk);
+    if (accumulated != "split")
+        return false;
+    if (parser.is_done())
+        return false;
+    return true;
+}
+
+bool test_feed_reset_clears_state() {
+    SSEParser parser;
+    std::string accumulated;
+    auto on_chunk = [&](std::string_view chunk) { accumulated += chunk; };
+
+    // Feed a partial line, then reset.
+    parser.feed("data: {\"choices\":[{\"delta\":{\"content\":\"orphan", on_chunk);
+    parser.reset();
+    if (parser.is_done())
+        return false;
+
+    // After reset, a fresh stream should parse correctly.
+    parser.feed(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"fresh\"}}]}\n"
+        "data: [DONE]\n",
+        on_chunk);
+    if (accumulated != "fresh")
+        return false;
+    if (!parser.is_done())
+        return false;
+    return true;
+}
+
+bool test_feed_done_stops_processing() {
+    SSEParser parser;
+    std::string accumulated;
+    auto on_chunk = [&](std::string_view chunk) { accumulated += chunk; };
+
+    // [DONE] should stop all further processing.
+    parser.feed("data: [DONE]\n", on_chunk);
+    parser.feed("data: {\"choices\":[{\"delta\":{\"content\":\"after-done\"}}]}\n", on_chunk);
+    if (!accumulated.empty())
+        return false;
+    if (!parser.is_done())
+        return false;
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -88,6 +181,11 @@ int main() {
     run(test_feed_line_done_signal, "test_feed_line_done_signal");
     run(test_feed_line_comment_returns_nullopt, "test_feed_line_comment_returns_nullopt");
     run(test_content_without_done_keeps_stream_open, "test_content_without_done_keeps_stream_open");
+    run(test_feed_incremental_partial_lines, "test_feed_incremental_partial_lines");
+    run(test_feed_multiple_lines_one_chunk, "test_feed_multiple_lines_one_chunk");
+    run(test_feed_split_across_calls, "test_feed_split_across_calls");
+    run(test_feed_reset_clears_state, "test_feed_reset_clears_state");
+    run(test_feed_done_stops_processing, "test_feed_done_stops_processing");
 
     if (failures > 0) {
         std::cerr << failures << " test(s) failed\n";

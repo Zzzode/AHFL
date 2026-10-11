@@ -1,0 +1,5 @@
+mbedTLS 3.6.4
+source https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.4.tar.gz
+sha256 722a1d9af69f5ec5a5b728de93cdf90aad4355deac2842862ea924ec0e5c4a97
+vendored 2026-10-11
+full upstream source (no subset)

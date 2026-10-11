@@ -4,7 +4,7 @@
 
 namespace ahfl::runtime {
 
-std::string HttpTransport::build_curl_command(const HttpRequest &request) {
+std::string HttpTransport::describe_request(const HttpRequest &request) {
     return describe_wire_transport(request);
 }
 

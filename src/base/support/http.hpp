@@ -1,7 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -50,8 +52,23 @@ struct HttpResponse {
     }
 };
 
+/// Callbacks for incremental streaming HTTP responses.
+struct HttpStreamCallbacks {
+    /// Called for each chunk of response body data as it arrives.
+    std::function<void(std::string_view bytes)> on_body;
+    /// Called periodically during the transfer; return true to abort.
+    std::function<bool()> should_cancel;
+};
+
+/// Execute an HTTP request and buffer the full response.
 [[nodiscard]] HttpResponse execute_http(const HttpRequest &request);
 
+/// Execute an HTTP request and deliver response body incrementally.
+/// The response body is also returned in full for convenience.
+[[nodiscard]] HttpResponse execute_http_streaming(const HttpRequest &request,
+                                                   HttpStreamCallbacks callbacks);
+
+/// Describe the request as a human-readable curl-style command string.
 [[nodiscard]] std::string describe_http_command(const HttpRequest &request);
 
 } // namespace ahfl::support

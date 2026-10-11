@@ -7,6 +7,7 @@ AHFL (Agent Handoff Flow Language) — A strongly typed DSL compiler oriented to
 - **Language**: C++23
 - **Build**: CMake / Ninja
 - **Parser**: ANTLR4 (vendored in `third_party/antlr4/`)
+- **HTTP client**: libcurl + nghttp2 + mbedTLS + zlib (all vendored in `third_party/`)
 - **License**: Apache-2.0
 
 ## Core Design Principles (Non-Negotiable)
@@ -197,7 +198,7 @@ ctest --preset test-asan -j$(nproc) --output-on-failure
 - `Owned<T>` (unique_ptr alias) for AST/IR node ownership
 - `std::variant` for tagged unions (IR nodes, Value types)
 - Diagnostics via `DiagnosticBuilder` with source ranges
-- No external runtime dependencies besides vendored ANTLR4
+- No external runtime dependencies besides vendored ANTLR4, libcurl, nghttp2, mbedTLS, zlib
 
 ## Key Files
 

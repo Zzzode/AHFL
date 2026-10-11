@@ -1,11 +1,14 @@
 #include "runtime/engine/grpc_transport.hpp"
 
+#include <arpa/inet.h>
+#include <cstdint>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
+#include <cstring>
 #include <iostream>
+#include <netinet/in.h>
 #include <string>
-#include <sys/stat.h>
+#include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -131,10 +134,10 @@ void test_grpc_response_is_ok() {
 }
 
 // ============================================================================
-// Test 10: build_grpc_json_transcoding_curl_command - plaintext h2c
+// Test 10: describe_grpc_json_transcoding_request - plaintext h2c
 // ============================================================================
 
-void test_build_curl_command_h2c() {
+void test_describe_request_h2c() {
     GrpcJsonTranscodingRequest req;
     req.endpoint.host = "localhost";
     req.endpoint.port = 50051;
@@ -144,7 +147,7 @@ void test_build_curl_command_h2c() {
     req.serialized_body = R"({"key":"val"})";
     req.timeout = std::chrono::seconds{10};
 
-    auto cmd = build_grpc_json_transcoding_curl_command(req);
+    auto cmd = describe_grpc_json_transcoding_request(req);
 
     check(cmd.find("curl --config -") != std::string::npos, "curl_h2c.has_curl_config");
     check(cmd.find("POST") != std::string::npos, "curl_h2c.post_method");
@@ -158,10 +161,10 @@ void test_build_curl_command_h2c() {
 }
 
 // ============================================================================
-// Test 11: build_grpc_json_transcoding_curl_command - TLS h2
+// Test 11: describe_grpc_json_transcoding_request - TLS h2
 // ============================================================================
 
-void test_build_curl_command_tls() {
+void test_describe_request_tls() {
     GrpcJsonTranscodingRequest req;
     req.endpoint.host = "grpc.example.com";
     req.endpoint.port = 443;
@@ -171,7 +174,7 @@ void test_build_curl_command_tls() {
     req.serialized_body = "{}";
     req.timeout = std::chrono::seconds{30};
 
-    auto cmd = build_grpc_json_transcoding_curl_command(req);
+    auto cmd = describe_grpc_json_transcoding_request(req);
 
     check(cmd.find("https://grpc.example.com:443/api.v1.Service/Get") != std::string::npos,
           "curl_tls.url");
@@ -179,10 +182,10 @@ void test_build_curl_command_tls() {
 }
 
 // ============================================================================
-// Test 12: build_grpc_json_transcoding_curl_command - with metadata
+// Test 12: describe_grpc_json_transcoding_request - with metadata
 // ============================================================================
 
-void test_build_curl_command_metadata() {
+void test_describe_request_metadata() {
     GrpcJsonTranscodingRequest req;
     req.endpoint.host = "localhost";
     req.endpoint.port = 8080;
@@ -193,7 +196,7 @@ void test_build_curl_command_metadata() {
     req.metadata = {{"Authorization", "Bearer token123"}, {"x-request-id", "abc-def"}};
     req.timeout = std::chrono::seconds{5};
 
-    auto cmd = build_grpc_json_transcoding_curl_command(req);
+    auto cmd = describe_grpc_json_transcoding_request(req);
 
     check(cmd.find("headers=4") != std::string::npos, "curl_meta.header_count");
     check(cmd.find("Authorization: Bearer token123") == std::string::npos,
@@ -202,10 +205,10 @@ void test_build_curl_command_metadata() {
 }
 
 // ============================================================================
-// Test 13: build_grpc_json_transcoding_curl_command - empty body sends {}
+// Test 13: describe_grpc_json_transcoding_request - empty body sends {}
 // ============================================================================
 
-void test_build_curl_command_empty_body() {
+void test_describe_request_empty_body() {
     GrpcJsonTranscodingRequest req;
     req.endpoint.host = "localhost";
     req.endpoint.port = 50051;
@@ -215,7 +218,7 @@ void test_build_curl_command_empty_body() {
     req.serialized_body = "";
     req.timeout = std::chrono::seconds{30};
 
-    auto cmd = build_grpc_json_transcoding_curl_command(req);
+    auto cmd = describe_grpc_json_transcoding_request(req);
 
     check(cmd.find("body_bytes=2") != std::string::npos, "curl_empty_body.sends_empty_object");
     check(cmd.find("{}") == std::string::npos, "curl_empty_body.body_redacted");
@@ -297,45 +300,216 @@ void test_parse_grpc_message_missing() {
 }
 
 // ============================================================================
+// Minimal HTTP/2 loopback server (h2c with prior knowledge)
+// ============================================================================
+
+namespace {
+
+void read_full(int fd, void *buf, size_t len) {
+    auto *p = static_cast<uint8_t *>(buf);
+    while (len > 0) {
+        ssize_t n = ::read(fd, p, len);
+        if (n <= 0) {
+            return;
+        }
+        p += n;
+        len -= static_cast<size_t>(n);
+    }
+}
+
+void write_full(int fd, const void *buf, size_t len) {
+    const auto *p = static_cast<const uint8_t *>(buf);
+    while (len > 0) {
+        ssize_t n = ::write(fd, p, len);
+        if (n <= 0) {
+            return;
+        }
+        p += n;
+        len -= static_cast<size_t>(n);
+    }
+}
+
+void send_frame(int fd, uint8_t type, uint8_t flags, uint32_t stream_id,
+                const uint8_t *payload, size_t length) {
+    uint8_t header[9];
+    header[0] = (length >> 16) & 0xFF;
+    header[1] = (length >> 8) & 0xFF;
+    header[2] = length & 0xFF;
+    header[3] = type;
+    header[4] = flags;
+    header[5] = (stream_id >> 24) & 0xFF;
+    header[6] = (stream_id >> 16) & 0xFF;
+    header[7] = (stream_id >> 8) & 0xFF;
+    header[8] = stream_id & 0xFF;
+    write_full(fd, header, 9);
+    if (length > 0) {
+        write_full(fd, payload, length);
+    }
+}
+
+void hpack_encode_int(std::vector<uint8_t> &out, size_t value, int prefix_bits) {
+    const size_t max_prefix = (1U << prefix_bits) - 1U;
+    if (value < max_prefix) {
+        out.push_back(static_cast<uint8_t>(value));
+    } else {
+        out.push_back(static_cast<uint8_t>(max_prefix));
+        value -= max_prefix;
+        while (value >= 128) {
+            out.push_back(static_cast<uint8_t>((value % 128) + 128));
+            value /= 128;
+        }
+        out.push_back(static_cast<uint8_t>(value));
+    }
+}
+
+[[nodiscard]] std::vector<uint8_t>
+hpack_encode(const std::vector<std::pair<std::string, std::string>> &headers) {
+    std::vector<uint8_t> out;
+    for (const auto &[name, value] : headers) {
+        if (name == ":status" && value == "200") {
+            out.push_back(0x88); // indexed: :status: 200 (static table index 8, high bit set)
+        } else {
+            out.push_back(0x00); // literal without indexing, new name
+            hpack_encode_int(out, name.size(), 7);
+            out.insert(out.end(), name.begin(), name.end());
+            hpack_encode_int(out, value.size(), 7);
+            out.insert(out.end(), value.begin(), value.end());
+        }
+    }
+    return out;
+}
+
+/// Minimal HTTP/2 cleartext server that handles one request and returns a
+/// canned response (headers + body + trailers). Used to test the gRPC JSON
+/// transcoding transport without a fake curl binary.
+class LoopbackHttp2Server {
+  public:
+    LoopbackHttp2Server(std::string body,
+                        std::vector<std::pair<std::string, std::string>> response_headers,
+                        std::vector<std::pair<std::string, std::string>> trailers)
+        : body_(std::move(body)), response_headers_(std::move(response_headers)),
+          trailers_(std::move(trailers)) {
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        int opt = 1;
+        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        ::bind(listen_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+        ::listen(listen_fd_, 1);
+        socklen_t len = sizeof(addr);
+        ::getsockname(listen_fd_, reinterpret_cast<sockaddr *>(&addr), &len);
+        port_ = ntohs(addr.sin_port);
+    }
+
+    ~LoopbackHttp2Server() {
+        if (listen_fd_ >= 0) {
+            ::close(listen_fd_);
+        }
+    }
+
+    LoopbackHttp2Server(const LoopbackHttp2Server &) = delete;
+    LoopbackHttp2Server &operator=(const LoopbackHttp2Server &) = delete;
+
+    [[nodiscard]] uint16_t port() const { return port_; }
+
+    /// Handle one HTTP/2 request (blocks until a connection arrives).
+    void serve_once() {
+        int conn = ::accept(listen_fd_, nullptr, nullptr);
+        if (conn < 0) {
+            return;
+        }
+
+        // Read the HTTP/2 client connection preface (24 bytes).
+        char preface[24];
+        read_full(conn, preface, sizeof(preface));
+
+        // Read frames until we see END_STREAM on the request.
+        bool request_complete = false;
+        uint32_t request_stream = 0;
+        while (!request_complete) {
+            uint8_t fh[9];
+            read_full(conn, fh, sizeof(fh));
+            const uint32_t length = (static_cast<uint32_t>(fh[0]) << 16) |
+                                    (static_cast<uint32_t>(fh[1]) << 8) | fh[2];
+            const uint8_t type = fh[3];
+            const uint8_t flags = fh[4];
+            const uint32_t stream_id = ((static_cast<uint32_t>(fh[5]) << 24) |
+                                        (static_cast<uint32_t>(fh[6]) << 16) |
+                                        (static_cast<uint32_t>(fh[7]) << 8) | fh[8]) &
+                                       0x7FFFFFFFU;
+            std::vector<uint8_t> payload(length);
+            if (length > 0) {
+                read_full(conn, payload.data(), length);
+            }
+
+            if (type == 0x4 && !(flags & 0x1)) { // SETTINGS (not ACK)
+                send_frame(conn, 0x4, 0x0, 0, nullptr, 0);       // SETTINGS (empty)
+                send_frame(conn, 0x4, 0x1, 0, nullptr, 0);       // SETTINGS ACK
+            } else if (type == 0x1) {                            // HEADERS
+                request_stream = stream_id;
+                if (flags & 0x1) { // END_STREAM
+                    request_complete = true;
+                }
+            } else if (type == 0x0) { // DATA
+                if (flags & 0x1) {  // END_STREAM
+                    request_complete = true;
+                }
+            }
+        }
+
+        // Send response: HEADERS (status + metadata)
+        auto hpack = hpack_encode(response_headers_);
+        send_frame(conn, 0x1, 0x4, request_stream, hpack.data(), hpack.size());
+
+        // DATA (body, no END_STREAM — trailers follow)
+        if (!body_.empty()) {
+            send_frame(conn, 0x0, 0x0, request_stream,
+                       reinterpret_cast<const uint8_t *>(body_.data()), body_.size());
+        }
+
+        // Trailers HEADERS (END_STREAM)
+        auto trailer_hpack = hpack_encode(trailers_);
+        send_frame(conn, 0x1, 0x5, request_stream, trailer_hpack.data(),
+                   trailer_hpack.size());
+
+        ::shutdown(conn, SHUT_WR);
+        ::close(conn);
+    }
+
+  private:
+    std::string body_;
+    std::vector<std::pair<std::string, std::string>> response_headers_;
+    std::vector<std::pair<std::string, std::string>> trailers_;
+    int listen_fd_{-1};
+    uint16_t port_{0};
+};
+
+} // namespace
+
+// ============================================================================
 // Test 21: execute_grpc_json_transcoding captures response metadata and trailers
 // ============================================================================
 
 void test_execute_captures_metadata_and_trailers() {
-    const auto test_dir = std::filesystem::temp_directory_path() /
-                          ("ahfl-grpc-curl-test-" + std::to_string(getpid()));
-    std::filesystem::remove_all(test_dir);
-    std::filesystem::create_directories(test_dir);
-    const auto curl_path = test_dir / "curl";
+    const std::string body = R"("ignored")";
+    const std::vector<std::pair<std::string, std::string>> response_headers = {
+        {":status", "200"},
+        {"content-type", "application/json"},
+        {"x-request-id", "req-123"},
+    };
+    const std::vector<std::pair<std::string, std::string>> trailers = {
+        {"grpc-status", "7"},
+        {"grpc-message", "permission%20denied"},
+    };
 
-    {
-        std::ofstream script(curl_path);
-        script << "#!/bin/sh\n";
-        script << "config=$(cat)\n";
-        script << "header_path=$(printf '%s\\n' \"$config\" | "
-                  "sed -n 's/^dump-header = \"\\(.*\\)\"$/\\1/p' | tail -n 1)\n";
-        script << "if [ -n \"$header_path\" ]; then\n";
-        script << "cat > \"$header_path\" <<'EOF'\n";
-        script << "HTTP/2 200\r\n";
-        script << "content-type: application/json\r\n";
-        script << "x-request-id: req-123\r\n";
-        script << "\r\n";
-        script << "grpc-status: 7\r\n";
-        script << "grpc-message: permission%20denied\r\n";
-        script << "\r\n";
-        script << "EOF\n";
-        script << "fi\n";
-        script << "printf '\"ignored\"\\n200\\n'\n";
-    }
-    chmod(curl_path.c_str(), S_IRWXU);
-
-    const char *old_path_cstr = std::getenv("PATH");
-    const std::string old_path = old_path_cstr != nullptr ? old_path_cstr : "";
-    const std::string scoped_path = test_dir.string() + ":" + old_path;
-    setenv("PATH", scoped_path.c_str(), 1);
+    LoopbackHttp2Server server(body, response_headers, trailers);
+    std::thread server_thread([&server] { server.serve_once(); });
 
     GrpcJsonTranscodingRequest request;
-    request.endpoint.host = "localhost";
-    request.endpoint.port = 50051;
+    request.endpoint.host = "127.0.0.1";
+    request.endpoint.port = server.port();
     request.endpoint.service_name = "svc.Test";
     request.endpoint.method_name = "Call";
     request.endpoint.use_tls = false;
@@ -344,12 +518,7 @@ void test_execute_captures_metadata_and_trailers() {
 
     const auto response = execute_grpc_json_transcoding(request);
 
-    if (old_path_cstr != nullptr) {
-        setenv("PATH", old_path.c_str(), 1);
-    } else {
-        unsetenv("PATH");
-    }
-    std::filesystem::remove_all(test_dir);
+    server_thread.join();
 
     check(response.status_code == GrpcStatusCode::Ok, "execute_capture.status_ok");
     check(response.body == R"("ignored")", "execute_capture.body");
@@ -371,10 +540,10 @@ int main() {
     test_endpoint_to_path();
     test_grpc_status_name();
     test_grpc_response_is_ok();
-    test_build_curl_command_h2c();
-    test_build_curl_command_tls();
-    test_build_curl_command_metadata();
-    test_build_curl_command_empty_body();
+    test_describe_request_h2c();
+    test_describe_request_tls();
+    test_describe_request_metadata();
+    test_describe_request_empty_body();
     test_parse_grpc_status_found();
     test_parse_grpc_status_missing();
     test_parse_grpc_status_case_insensitive();

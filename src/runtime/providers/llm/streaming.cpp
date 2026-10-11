@@ -1,10 +1,10 @@
 #include "runtime/providers/llm/streaming.hpp"
 
 #include "base/json/json_value.hpp"
-#include "base/support/http.hpp"
 
-#include <sstream>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace ahfl::llm_provider {
@@ -50,68 +50,43 @@ std::optional<std::string> SSEParser::feed_line(std::string_view line) {
     return std::nullopt;
 }
 
-StreamingClient::StreamingClient(std::string_view endpoint,
-                                 std::string_view api_key,
-                                 std::string_view model)
-    : endpoint_(endpoint), api_key_(api_key), model_(model) {}
-
-StreamingClient::StreamingClient(std::string_view endpoint,
-                                 std::string_view api_key,
-                                 std::string_view model,
-                                 HttpAuthConfig auth_config)
-    : endpoint_(endpoint), api_key_(api_key), model_(model), auth_config_(std::move(auth_config)) {}
-
-StreamResult StreamingClient::stream(const std::string &request_json, StreamChunkCallback cb) {
-    StreamResult result;
-
-    ahfl::support::HttpRequest request;
-    request.method = "POST";
-    request.url = endpoint_;
-    request.headers = chat_completion_headers(api_key_, auth_config_);
-    request.body = request_json;
-
-    const auto response = ahfl::support::execute_http(request);
-    if (response.status_code == 0 && !response.error.empty()) {
-        result.error = response.error;
-        return result;
+void SSEParser::feed(std::string_view bytes,
+                     const std::function<void(std::string_view chunk)> &on_chunk) {
+    if (done_) {
+        return;
     }
 
-    SSEParser parser;
-    std::string line;
-    std::istringstream lines(response.body);
-    while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (line.empty()) {
-            continue;
-        }
-        auto chunk = parser.feed_line(line);
-        if (chunk.has_value()) {
-            result.full_content += *chunk;
-            if (cb) {
-                cb(*chunk, false);
-            }
-        }
-        if (parser.is_done()) {
+    line_buffer_.append(bytes);
+
+    // Process all complete lines in the buffer.
+    std::size_t pos = 0;
+    while (true) {
+        const auto newline = line_buffer_.find('\n', pos);
+        if (newline == std::string::npos) {
             break;
         }
+        std::string_view line(line_buffer_.data() + pos, newline - pos);
+        // Strip trailing \r
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        if (!line.empty()) {
+            auto chunk = feed_line(line);
+            if (chunk.has_value() && on_chunk) {
+                on_chunk(*chunk);
+            }
+        }
+        if (done_) {
+            line_buffer_.clear();
+            return;
+        }
+        pos = newline + 1;
     }
 
-    const bool completed = parser.is_done();
-    if (cb && completed) {
-        cb("", true);
+    // Remove consumed lines from the buffer.
+    if (pos > 0) {
+        line_buffer_.erase(0, pos);
     }
-
-    result.success = response.is_success() && completed;
-    if (response.is_success() && !completed) {
-        result.error = "stream request ended before [DONE]";
-    } else if (!result.success) {
-        result.error = response.error.empty() ? "stream request failed with status " +
-                                                    std::to_string(response.status_code)
-                                              : response.error;
-    }
-    return result;
 }
 
 } // namespace ahfl::llm_provider

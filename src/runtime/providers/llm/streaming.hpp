@@ -5,21 +5,28 @@
 #include <string>
 #include <string_view>
 
-#include "runtime/providers/llm/http_client.hpp"
-
 namespace ahfl::llm_provider {
-
-/// Callback invoked for each streaming chunk.
-/// @param chunk The content delta text.
-/// @param done  True if this is the final chunk.
-using StreamChunkCallback = std::function<void(std::string_view chunk, bool done)>;
 
 /// Parses Server-Sent Events (SSE) lines from an LLM streaming response.
 class SSEParser {
   public:
-    /// Feed a single line from the SSE stream.
+    /// Feed raw bytes from the HTTP stream. Buffers partial lines and
+    /// calls on_chunk for each content delta extracted from completed
+    /// data events.
+    void feed(std::string_view bytes,
+              const std::function<void(std::string_view chunk)> &on_chunk);
+
+    /// Feed a single complete line from the SSE stream.
     /// Returns the extracted content delta if a data event was parsed, or nullopt.
     [[nodiscard]] std::optional<std::string> feed_line(std::string_view line);
+
+    /// Reset the parser to its initial state. Call before reusing the
+    /// parser for a new HTTP request so leftover bytes from a previous
+    /// (e.g. error) response do not contaminate the new stream.
+    void reset() {
+        done_ = false;
+        line_buffer_.clear();
+    }
 
     /// Check if the stream has signaled completion ([DONE]).
     [[nodiscard]] bool is_done() const {
@@ -28,34 +35,7 @@ class SSEParser {
 
   private:
     bool done_{false};
-};
-
-/// Result of a streaming request.
-struct StreamResult {
-    bool success{false};
-    std::string full_content;
-    std::string error;
-};
-
-/// Streaming client for SSE chat completion responses.
-class StreamingClient {
-  public:
-    explicit StreamingClient(std::string_view endpoint,
-                             std::string_view api_key,
-                             std::string_view model);
-    StreamingClient(std::string_view endpoint,
-                    std::string_view api_key,
-                    std::string_view model,
-                    HttpAuthConfig auth_config);
-
-    /// Execute a streaming chat completion request.
-    [[nodiscard]] StreamResult stream(const std::string &request_json, StreamChunkCallback cb);
-
-  private:
-    std::string endpoint_;
-    std::string api_key_;
-    std::string model_;
-    HttpAuthConfig auth_config_;
+    std::string line_buffer_;
 };
 
 } // namespace ahfl::llm_provider

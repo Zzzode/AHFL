@@ -3,6 +3,7 @@
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 
 #include "base/support/atomic_file.hpp"
+#include "base/support/http.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/providers/llm/streaming.hpp"
@@ -194,58 +195,6 @@ void apply_invocation_context(LLMTokenBudgetEvent &event,
     }
     summary += ")";
     return summary;
-}
-
-struct StreamExtraction {
-    std::string content;
-    bool completed{false};
-    std::vector<LLMStreamingEvent> events;
-};
-
-[[nodiscard]] StreamExtraction extract_stream_content(const std::string &response_body,
-                                                      std::string_view provider_name) {
-    SSEParser parser;
-    StreamExtraction extraction;
-    std::size_t chunk_index = 0;
-    std::string line;
-    std::istringstream lines(response_body);
-    while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (line.empty()) {
-            continue;
-        }
-        auto chunk = parser.feed_line(line);
-        if (chunk.has_value()) {
-            ++chunk_index;
-            extraction.content += *chunk;
-            extraction.events.push_back(LLMStreamingEvent{
-                .kind = LLMStreamingEventKind::Chunk,
-                .provider_name = std::string(provider_name),
-                .chunk_index = chunk_index,
-                .chunk_bytes = chunk->size(),
-                .total_content_bytes = extraction.content.size(),
-                .completed = false,
-                .secret_free = true,
-            });
-        }
-        if (parser.is_done()) {
-            break;
-        }
-    }
-    extraction.completed = parser.is_done();
-    extraction.events.push_back(LLMStreamingEvent{
-        .kind = extraction.completed ? LLMStreamingEventKind::Completed
-                                     : LLMStreamingEventKind::Interrupted,
-        .provider_name = std::string(provider_name),
-        .chunk_index = chunk_index,
-        .chunk_bytes = 0,
-        .total_content_bytes = extraction.content.size(),
-        .completed = extraction.completed,
-        .secret_free = true,
-    });
-    return extraction;
 }
 
 [[nodiscard]] std::unique_ptr<ResponseCache> make_response_cache(const LLMProviderConfig &config) {
@@ -953,11 +902,83 @@ HttpResponse LLMCapabilityProvider::send_chat_completion(const LLMProviderConfig
     return client.chat_completions(request_json);
 }
 
+HttpResponse LLMCapabilityProvider::send_chat_completion_streaming(
+    const LLMProviderConfig &config, const std::string &request_json,
+    const std::function<void(std::string_view chunk)> &on_chunk,
+    SSEParser &parser) const {
+    // Each HTTP request gets a fresh parser state — a previous attempt's
+    // error body (no trailing newline) would otherwise concatenate with
+    // the first SSE line and swallow the first content delta.
+    parser.reset();
+
+    // When a transport override is set (tests), fall back to the buffered
+    // path and parse SSE lines from the full body — the override returns a
+    // complete response, not a stream.
+    if (transport_.has_value()) {
+        auto response = send_chat_completion(config, request_json);
+        if (response.success()) {
+            std::string line;
+            std::istringstream lines(response.body);
+            while (std::getline(lines, line)) {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                if (line.empty()) {
+                    continue;
+                }
+                auto chunk = parser.feed_line(line);
+                if (chunk.has_value() && on_chunk) {
+                    on_chunk(*chunk);
+                }
+                if (parser.is_done()) {
+                    break;
+                }
+            }
+        }
+        return response;
+    }
+
+    // Production path: true incremental streaming via libcurl.
+    const auto auth_config = HttpAuthConfig{
+        .scheme = config.auth_scheme,
+        .header = config.auth_header,
+        .mtls_client_cert_path = config.mtls_client_cert_path,
+        .mtls_client_key_path = config.mtls_client_key_path,
+        .mtls_ca_cert_path = config.mtls_ca_cert_path,
+        .mtls_verify_tls = config.mtls_verify_tls,
+    };
+    const auto headers = chat_completion_headers(config.api_key, auth_config);
+
+    ahfl::support::HttpRequest request;
+    request.method = "POST";
+    request.url = config.endpoint + "/chat/completions";
+    request.headers = headers;
+    request.body = request_json;
+    request.timeout_seconds = config.timeout_seconds;
+    request.tls_client_certificate_path = auth_config.mtls_client_cert_path;
+    request.tls_client_key_path = auth_config.mtls_client_key_path;
+    request.tls_ca_certificate_path = auth_config.mtls_ca_cert_path;
+    request.verify_tls = auth_config.mtls_verify_tls;
+
+    ahfl::support::HttpStreamCallbacks callbacks;
+    callbacks.on_body = [&parser, &on_chunk](std::string_view bytes) {
+        parser.feed(bytes, on_chunk);
+    };
+
+    const auto response = ahfl::support::execute_http_streaming(request, std::move(callbacks));
+    if (response.status_code == 0 && !response.error.empty()) {
+        return HttpResponse{0, response.error};
+    }
+    return HttpResponse{response.status_code, response.body};
+}
+
 std::expected<LLMCapabilityProvider::ProviderHttpResult, runtime::CapabilityCallResult>
 LLMCapabilityProvider::chat_with_provider_fallback(
     std::string_view capability_name,
     const runtime::CapabilityInvocationContext &context,
-    const std::function<std::string(const LLMProviderConfig &)> &request_factory) const {
+    const std::function<std::string(const LLMProviderConfig &)> &request_factory,
+    const std::function<void(std::string_view chunk)> *on_stream_chunk,
+    SSEParser *stream_parser) const {
     std::vector<std::string> failures;
     std::vector<std::string> degraded_providers;
     std::size_t total_attempts = 0;
@@ -968,7 +989,12 @@ LLMCapabilityProvider::chat_with_provider_fallback(
         HttpResponse response;
         for (int attempt = 1; attempt <= candidate_config.max_retries + 1; ++attempt) {
             ++total_attempts;
-            response = send_chat_completion(candidate_config, request_json);
+            if (on_stream_chunk != nullptr) {
+                response = send_chat_completion_streaming(candidate_config, request_json,
+                                                           *on_stream_chunk, *stream_parser);
+            } else {
+                response = send_chat_completion(candidate_config, request_json);
+            }
             if (response.success()) {
                 auto usage = record_token_usage_event(candidate.name,
                                                       capability_name,
@@ -1220,12 +1246,38 @@ runtime::CapabilityCallResult LLMCapabilityProvider::invoke_with_context_impl(
             }
         }
 
+        // Set up streaming state before the HTTP call so chunks are
+        // delivered incrementally as they arrive (true streaming, not
+        // buffered-then-parsed).
+        SSEParser stream_parser;
+        std::string stream_content;
+        std::size_t stream_chunk_index = 0;
+        const auto stream_events_start = streaming_events_.size();
+        std::function<void(std::string_view chunk)> on_stream_chunk;
+        if (config_.stream) {
+            on_stream_chunk = [&](std::string_view chunk) {
+                ++stream_chunk_index;
+                stream_content += chunk;
+                streaming_events_.push_back(LLMStreamingEvent{
+                    .kind = LLMStreamingEventKind::Chunk,
+                    .provider_name = {}, // filled in after provider is selected
+                    .chunk_index = stream_chunk_index,
+                    .chunk_bytes = chunk.size(),
+                    .total_content_bytes = stream_content.size(),
+                    .completed = false,
+                    .secret_free = true,
+                });
+            };
+        }
+
         auto http_result = chat_with_provider_fallback(
             capability_name,
             context,
             [&](const LLMProviderConfig &provider_config) {
                 return build_request_json(provider_config, system_prompt, user_prompt);
-            });
+            },
+            on_stream_chunk ? &on_stream_chunk : nullptr,
+            config_.stream ? &stream_parser : nullptr);
 
         if (!http_result.has_value()) {
             auto failure = std::move(http_result.error());
@@ -1237,12 +1289,23 @@ runtime::CapabilityCallResult LLMCapabilityProvider::invoke_with_context_impl(
 
         std::string content;
         if (config_.stream) {
-            auto stream =
-                extract_stream_content(http_result->response.body, http_result->provider_name);
-            for (auto &event : stream.events) {
-                streaming_events_.push_back(std::move(event));
+            // Fill in provider name for all streaming events collected
+            // during this call.
+            for (std::size_t i = stream_events_start; i < streaming_events_.size(); ++i) {
+                streaming_events_[i].provider_name = http_result->provider_name;
             }
-            if (!stream.completed) {
+            // Emit terminal event (Completed or Interrupted).
+            streaming_events_.push_back(LLMStreamingEvent{
+                .kind = stream_parser.is_done() ? LLMStreamingEventKind::Completed
+                                                : LLMStreamingEventKind::Interrupted,
+                .provider_name = http_result->provider_name,
+                .chunk_index = stream_chunk_index,
+                .chunk_bytes = 0,
+                .total_content_bytes = stream_content.size(),
+                .completed = stream_parser.is_done(),
+                .secret_free = true,
+            });
+            if (!stream_parser.is_done()) {
                 return runtime::CapabilityCallResult{
                     .status = runtime::CapabilityCallStatus::Error,
                     .value = std::nullopt,
@@ -1251,7 +1314,7 @@ runtime::CapabilityCallResult LLMCapabilityProvider::invoke_with_context_impl(
                     .failure_kind = runtime::CapabilityFailureKind::Interrupted,
                 };
             }
-            content = std::move(stream.content);
+            content = std::move(stream_content);
         } else {
             content = extract_content_from_response(http_result->response.body);
         }

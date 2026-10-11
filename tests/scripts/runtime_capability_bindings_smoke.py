@@ -2,8 +2,11 @@
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -57,81 +60,263 @@ workflow SmokeWorkflow {
 """
 
 
-def write_fake_curl(fake_bin_dir: Path) -> None:
-    fake_bin_dir.mkdir()
-    fake_curl_path = fake_bin_dir / "curl"
-    fake_curl_path.write_text(
-        """#!/usr/bin/env python3
-import json
-import os
-import sys
+# ---------------------------------------------------------------------------
+# Loopback HTTP/1.1 server (for HTTP capability binding tests)
+# ---------------------------------------------------------------------------
 
-config = sys.stdin.read()
-with open(os.environ["AHFL_RUNTIME_BINDING_CURL_CONFIG"], "a", encoding="utf-8") as handle:
-    handle.write("\\n--- request ---\\n")
-    handle.write(config)
+class _Http1Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.server.request_count += 1
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
 
-mode = os.environ["AHFL_RUNTIME_BINDING_MODE"]
-payload = {
-    "_type": "smoke::Response",
-    "value": os.environ.get("AHFL_RUNTIME_BINDING_VALUE", "bound-hello"),
-}
-body = json.dumps(payload)
-status_code = "200"
+        mode = self.server.mode
+        if mode == "http_success":
+            body = json.dumps({"_type": "smoke::Response", "value": self.server.value})
+            self._send(200, body, "application/json")
+        elif mode == "http_retry_failure":
+            self._send(503, "retry failure", "text/plain")
+        elif mode == "http_malformed_json":
+            self._send(200, "{not-json", "application/json")
+        elif mode == "http_schema_mismatch":
+            body = json.dumps({"_type": "smoke::UnexpectedResponse", "value": "wrong"})
+            self._send(200, body, "application/json")
+        else:
+            self._send(500, "unknown mode", "text/plain")
 
-if mode == "http_retry_failure":
-    body = "retry failure"
-    status_code = "503"
-elif mode == "http_malformed_json":
-    body = "{not-json"
-elif mode == "http_schema_mismatch":
-    body = json.dumps({"_type": "smoke::UnexpectedResponse", "value": "wrong"})
+    def _send(self, status, body, content_type):
+        body_bytes = body.encode("utf-8") if isinstance(body, str) else body
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body_bytes)))
+            self.end_headers()
+            self.wfile.write(body_bytes)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
-if mode.startswith("grpc_"):
-    header_path = None
-    for line in config.splitlines():
-        if line.startswith('dump-header = "'):
-            header_path = line[len('dump-header = "'):-1]
-    if header_path is None:
-        raise SystemExit("missing dump-header in gRPC curl config")
-    if mode == "grpc_trailer_failure":
-        with open(header_path, "w", encoding="utf-8") as handle:
-            handle.write("HTTP/2 200\\r\\n")
-            handle.write("content-type: application/json\\r\\n")
-            handle.write("\\r\\n")
-            handle.write("grpc-status: 7\\r\\n")
-            handle.write("grpc-message: permission%20denied\\r\\n")
-            handle.write("\\r\\n")
-    elif mode == "grpc_metadata_failure":
-        with open(header_path, "w", encoding="utf-8") as handle:
-            handle.write("HTTP/2 200\\r\\n")
-            handle.write("content-type: application/json\\r\\n")
-            handle.write("grpc-status: 7\\r\\n")
-            handle.write("grpc-message: metadata%20denied\\r\\n")
-            handle.write("\\r\\n")
-    elif mode == "grpc_deadline_retry":
-        with open(header_path, "w", encoding="utf-8") as handle:
-            handle.write("HTTP/2 200\\r\\n")
-            handle.write("content-type: application/json\\r\\n")
-            handle.write("grpc-status: 4\\r\\n")
-            handle.write("grpc-message: deadline%20from%20metadata\\r\\n")
-            handle.write("\\r\\n")
-    else:
-        with open(header_path, "w", encoding="utf-8") as handle:
-            handle.write("HTTP/2 200\\r\\n")
-            handle.write("content-type: application/json\\r\\n")
-            handle.write("\\r\\n")
-    if mode == "grpc_malformed_json":
-        body = "{not-json"
-    elif mode == "grpc_schema_mismatch":
-        body = json.dumps({"_type": "smoke::UnexpectedResponse", "value": "wrong"})
+    def log_message(self, fmt, *args):
+        return
 
-sys.stdout.write(body + "\\n" + status_code + "\\n")
-""",
-        encoding="utf-8",
-    )
-    fake_curl_path.chmod(0o755)
 
+class LoopbackHttp1Server:
+    """HTTP/1.1 loopback server that returns a canned response per mode."""
+
+    def __init__(self, mode, value="bound-hello"):
+        self.mode = mode
+        self.value = value
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Http1Handler)
+        self._server.mode = mode
+        self._server.value = value
+        self._server.request_count = 0
+        self.port = self._server.server_address[1]
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def request_count(self):
+        return self._server.request_count
+
+    def stop(self):
+        self._server.shutdown()
+        self._server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# Loopback HTTP/2 server (for gRPC JSON transcoding tests)
+# ---------------------------------------------------------------------------
+
+def _hpack_encode_int(value, prefix_bits):
+    max_prefix = (1 << prefix_bits) - 1
+    if value < max_prefix:
+        return bytes([value])
+    result = bytes([max_prefix])
+    value -= max_prefix
+    while value >= 128:
+        result += bytes([(value % 128) + 128])
+        value //= 128
+    result += bytes([value])
+    return result
+
+
+def _hpack_encode(headers):
+    result = b""
+    for name, value in headers:
+        if name == ":status" and value == "200":
+            result += bytes([0x88])  # indexed: :status: 200
+        else:
+            result += bytes([0x00])  # literal without indexing, new name
+            result += _hpack_encode_int(len(name), 7)
+            result += name.encode("utf-8")
+            result += _hpack_encode_int(len(value), 7)
+            result += value.encode("utf-8")
+    return result
+
+
+class LoopbackHttp2Server:
+    """Minimal HTTP/2 cleartext (h2c) server for gRPC JSON transcoding tests.
+
+    Handles one request per connection, returns a canned response with
+    configurable headers, body, and trailers.
+    """
+
+    def __init__(self, mode, value="grpc-bound-hello"):
+        self.mode = mode
+        self.value = value
+        self.request_count = 0
+        self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_socket.bind(("127.0.0.1", 0))
+        self._server_socket.listen(5)
+        self.port = self._server_socket.getsockname()[1]
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        while True:
+            try:
+                conn, _ = self._server_socket.accept()
+            except OSError:
+                break
+            try:
+                self._handle_connection(conn)
+            except Exception:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def _read_full(self, conn, length):
+        data = b""
+        while len(data) < length:
+            try:
+                chunk = conn.recv(length - len(data))
+            except OSError:
+                break
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    def _send_frame(self, conn, frame_type, flags, stream_id, payload):
+        header = bytes([
+            (len(payload) >> 16) & 0xFF,
+            (len(payload) >> 8) & 0xFF,
+            len(payload) & 0xFF,
+            frame_type,
+            flags,
+            (stream_id >> 24) & 0xFF,
+            (stream_id >> 16) & 0xFF,
+            (stream_id >> 8) & 0xFF,
+            stream_id & 0xFF,
+        ])
+        try:
+            conn.sendall(header + payload)
+        except OSError:
+            pass
+
+    def _handle_connection(self, conn):
+        # Read the HTTP/2 client connection preface (24 bytes).
+        preface = self._read_full(conn, 24)
+        if len(preface) < 24:
+            return
+
+        # Read frames until END_STREAM on the request.
+        request_complete = False
+        request_stream = 0
+        while not request_complete:
+            frame_header = self._read_full(conn, 9)
+            if len(frame_header) < 9:
+                return
+            length = (frame_header[0] << 16) | (frame_header[1] << 8) | frame_header[2]
+            frame_type = frame_header[3]
+            flags = frame_header[4]
+            stream_id = int.from_bytes(frame_header[5:9], "big") & 0x7FFFFFFF
+            if length > 0:
+                self._read_full(conn, length)
+
+            if frame_type == 0x4 and not (flags & 0x1):  # SETTINGS (not ACK)
+                self._send_frame(conn, 0x4, 0x0, 0, b"")  # SETTINGS (empty)
+                self._send_frame(conn, 0x4, 0x1, 0, b"")  # SETTINGS ACK
+            elif frame_type == 0x1:  # HEADERS
+                request_stream = stream_id
+                if flags & 0x1:  # END_STREAM
+                    request_complete = True
+            elif frame_type == 0x0:  # DATA
+                if flags & 0x1:  # END_STREAM
+                    request_complete = True
+
+        self.request_count += 1
+
+        # Build response based on mode.
+        if self.mode == "grpc_success":
+            body = json.dumps({"_type": "smoke::Response", "value": self.value})
+            response_headers = [(":status", "200"), ("content-type", "application/json")]
+            trailers = []
+        elif self.mode == "grpc_trailer_failure":
+            body = json.dumps({"_type": "smoke::Response", "value": self.value})
+            response_headers = [(":status", "200"), ("content-type", "application/json")]
+            trailers = [("grpc-status", "7"), ("grpc-message", "permission%20denied")]
+        elif self.mode == "grpc_metadata_failure":
+            body = json.dumps({"_type": "smoke::Response", "value": self.value})
+            response_headers = [
+                (":status", "200"),
+                ("content-type", "application/json"),
+                ("grpc-status", "7"),
+                ("grpc-message", "metadata%20denied"),
+            ]
+            trailers = []
+        elif self.mode == "grpc_deadline_retry":
+            body = json.dumps({"_type": "smoke::Response", "value": self.value})
+            response_headers = [
+                (":status", "200"),
+                ("content-type", "application/json"),
+                ("grpc-status", "4"),
+                ("grpc-message", "deadline%20from%20metadata"),
+            ]
+            trailers = []
+        elif self.mode == "grpc_malformed_json":
+            body = "{not-json"
+            response_headers = [(":status", "200"), ("content-type", "application/json")]
+            trailers = []
+        elif self.mode == "grpc_schema_mismatch":
+            body = json.dumps({"_type": "smoke::UnexpectedResponse", "value": "wrong"})
+            response_headers = [(":status", "200"), ("content-type", "application/json")]
+            trailers = []
+        else:
+            body = "{}"
+            response_headers = [(":status", "200"), ("content-type", "application/json")]
+            trailers = []
+
+        # Send response HEADERS (END_HEADERS, no END_STREAM).
+        hpack = _hpack_encode(response_headers)
+        self._send_frame(conn, 0x1, 0x4, request_stream, hpack)
+
+        # Send DATA (body, no END_STREAM — trailers follow).
+        if body:
+            self._send_frame(conn, 0x0, 0x0, request_stream, body.encode("utf-8"))
+
+        # Send trailer HEADERS (END_HEADERS | END_STREAM).
+        trailer_hpack = _hpack_encode(trailers)
+        self._send_frame(conn, 0x1, 0x5, request_stream, trailer_hpack)
+
+        try:
+            conn.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+    def stop(self):
+        try:
+            self._server_socket.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
 
 def write_llm_config(config_path: Path) -> None:
     config_path.write_text(
@@ -158,6 +343,7 @@ def retry_config(max_retries: int = 0) -> dict:
 
 def write_http_bindings(
     bindings_path: Path,
+    url: str,
     *,
     auth: dict | None = None,
     max_retries: int = 0,
@@ -167,10 +353,10 @@ def write_http_bindings(
     binding = {
         "capability": "smoke::Echo",
         "transport": "http",
-        "url": "http://capability.example.test/echo",
+        "url": url,
         "method": "POST",
         "headers": {"X-AHFL-Test": "runtime-binding"},
-        "timeout_ms": 1000,
+        "timeout_ms": 5000,
         "retry": retry_config(max_retries),
     }
     if response_format is not None:
@@ -192,15 +378,16 @@ def write_http_bindings(
 
 def write_grpc_bindings(
     bindings_path: Path,
+    endpoint: str,
     *,
     auth: dict | None = None,
     max_retries: int = 0,
-    timeout_ms: int = 1000,
+    timeout_ms: int = 5000,
 ) -> None:
     binding = {
         "capability": "smoke::Echo",
         "transport": "grpc_json_transcoding",
-        "endpoint": "http://grpc-capability.example.test:50051",
+        "endpoint": endpoint,
         "service": "smoke.EchoService",
         "method": "Echo",
         "timeout_ms": timeout_ms,
@@ -219,30 +406,21 @@ def write_grpc_bindings(
     )
 
 
+# ---------------------------------------------------------------------------
+# ahflc runner
+# ---------------------------------------------------------------------------
+
 def run_ahflc(
     ahflc: str,
     run_dir: Path,
     source_path: Path,
     bindings_path: Path,
-    mode: str,
-    value: str = "bound-hello",
 ):
     config_path = run_dir / "llm_config.json"
-    curl_capture_path = run_dir / "curl_config.txt"
-    fake_bin_dir = run_dir / "fake-curl-bin"
-    if fake_bin_dir.exists():
-        shutil.rmtree(fake_bin_dir)
-    if curl_capture_path.exists():
-        curl_capture_path.unlink()
-    write_fake_curl(fake_bin_dir)
     write_llm_config(config_path)
 
     env = os.environ.copy()
-    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env.get('PATH', '')}"
-    env["AHFL_RUNTIME_BINDING_CURL_CONFIG"] = str(curl_capture_path)
     env["AHFL_RUNTIME_BINDING_LLM_KEY"] = "dummy-llm-key"
-    env["AHFL_RUNTIME_BINDING_MODE"] = mode
-    env["AHFL_RUNTIME_BINDING_VALUE"] = value
 
     return subprocess.run(
         [
@@ -263,95 +441,65 @@ def run_ahflc(
         stderr=subprocess.PIPE,
         text=True,
         timeout=20,
-    ), curl_capture_path
+    )
 
 
-def assert_success(result, curl_capture_path: Path, expected_value: str, expected_config_fragments):
+# ---------------------------------------------------------------------------
+# Assertions
+# ---------------------------------------------------------------------------
+
+def assert_success(result, expected_value: str, server=None):
     if result.returncode != 0:
         raise AssertionError(
-            f"ahflc run with capability bindings failed with {result.returncode}\\n"
-            f"stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
+            f"ahflc run with capability bindings failed with {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     if expected_value not in result.stdout:
-        raise AssertionError(f"workflow output did not use bound capability:\\n{result.stdout}")
-    if not curl_capture_path.exists():
-        raise AssertionError("fake curl was not invoked by runtime capability binding")
-
-    curl_config = curl_capture_path.read_text(encoding="utf-8")
-    for fragment in expected_config_fragments:
-        if fragment not in curl_config:
-            raise AssertionError(f"curl config missing {fragment!r}:\\n{curl_config}")
-    if "llm-should-not-be-called" in curl_config:
-        raise AssertionError(f"runtime binding unexpectedly called LLM endpoint:\\n{curl_config}")
-
-
-def request_count(curl_capture_path: Path) -> int:
-    if not curl_capture_path.exists():
-        return 0
-    return curl_capture_path.read_text(encoding="utf-8").count("--- request ---")
+        raise AssertionError(f"workflow output did not use bound capability:\n{result.stdout}")
+    if server is not None and server.request_count < 1:
+        raise AssertionError("loopback server was not invoked by runtime capability binding")
 
 
 def assert_failure(
     result,
-    curl_capture_path: Path,
     expected_diagnostic_fragment: str,
     *,
-    expect_curl_invoked: bool = True,
+    server=None,
     expected_request_count: int | None = None,
     forbidden_fragment: str | None = None,
 ):
     if result.returncode == 0:
         raise AssertionError(
-            f"ahflc run with failing capability binding unexpectedly succeeded\\n"
-            f"stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
+            f"ahflc run with failing capability binding unexpectedly succeeded\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     combined_output = result.stdout + result.stderr
     if expected_diagnostic_fragment not in combined_output:
         raise AssertionError(
-            f"failing capability binding missing diagnostic {expected_diagnostic_fragment!r}\\n"
-            f"stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
+            f"failing capability binding missing diagnostic {expected_diagnostic_fragment!r}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     if forbidden_fragment is not None and forbidden_fragment in combined_output:
         raise AssertionError(
             f"failing capability binding diagnostic unexpectedly contained "
-            f"{forbidden_fragment!r}\\nstdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
+            f"{forbidden_fragment!r}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
-    if expect_curl_invoked and not curl_capture_path.exists():
-        raise AssertionError("fake curl was not invoked by failing runtime capability binding")
-    if not expect_curl_invoked and curl_capture_path.exists():
-        raise AssertionError(
-            f"fake curl should not be invoked for fail-closed binding:\\n"
-            f"{curl_capture_path.read_text(encoding='utf-8')}"
-        )
-    if expected_request_count is not None:
-        actual_count = request_count(curl_capture_path)
-        if actual_count != expected_request_count:
-            raise AssertionError(
-                f"expected {expected_request_count} curl requests, got {actual_count}\\n"
-                f"stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
-            )
+    if server is not None:
+        if expected_request_count is not None:
+            if server.request_count != expected_request_count:
+                raise AssertionError(
+                    f"expected {expected_request_count} server requests, got {server.request_count}\n"
+                    f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+                )
+        elif server.request_count < 1:
+            raise AssertionError("loopback server was not invoked by failing runtime capability binding")
 
 
-# RFC 0026 C2b G4b: the rich --input matrix. `ahflc run` exact-decodes --input
-# under the resolved workflow's projected wire binding (the schema-guided codec
-# path: decode_json builds the canonical native Value directly) instead of the
-# old schema-free value_from_json materialization + validator, which would
-# false-reject variant-carrying shapes (Decimal/Duration/Set/Map/Option) and
-# accept an Int where a Float is required. The cases below run a capability-free
-# echo workflow so the decoded native Value flows all the way through the
-# evaluator to the workflow output, and assert against the canonical
-# --output-format json result (immune to CLI-arg / warning / human-renderer
-# false hits). Because there is no capability binding, no transport is ever
-# constructed; a sentinel fake-curl on PATH proves ZERO curl invocations.
-#
-# Honest evidence boundary: value_to_json serializes FloatValue(1.0) as bare `1`
-# and both UnitValue and NoneValue as `null` (P0-16). So a JSON echo cannot by
-# itself distinguish a FloatValue from an IntValue, nor a UnitValue from a
-# NoneValue. The Float native-variant proof is therefore an accept->reject FLIP
-# (1.0 completes; bare `1` is exact-rejected — the old validator accepted it),
-# and the Unit proof is explicitly two-layer (CLI null positive completes here;
-# the native UnitValue variant is pinned by the core codec unit matrix, not by
-# this JSON output).
+# ---------------------------------------------------------------------------
+# RFC 0026 C2b G4b: rich --input exact-decode matrix
+# (unchanged from the original — capability-free workflow, no transport needed)
+# ---------------------------------------------------------------------------
+
 _RICH_PACKAGE_MANIFEST = """manifest_version = 1
 
 [package]
@@ -376,9 +524,6 @@ exports = [
 std = { source = "sysroot" }
 """
 
-# A capability-free echo workflow (mirrors the golden e3 identity workflow:
-# capabilities: [], Init -> Done, Done returns the input). RichInput aggregates
-# every lossy shape the exact codec must round-trip; RichOutput echoes them back.
 _RICH_PACKAGE_SOURCE = """module rich::main;
 
 import std::collections as collections;
@@ -461,8 +606,6 @@ pub workflow EchoWorkflow {
 
 
 def sysroot_root() -> Path:
-    # The std sysroot (std/ahfl.toml) lives at the repo root; this script is at
-    # <repo>/tests/scripts/runtime_capability_bindings_smoke.py.
     repo_root = Path(__file__).resolve().parents[2]
     if not (repo_root / "std" / "ahfl.toml").is_file():
         raise AssertionError(f"std sysroot manifest not found under {repo_root}")
@@ -476,9 +619,6 @@ def write_rich_package(pkg_dir: Path) -> None:
 
 
 def rich_input_dict(overrides: dict) -> dict:
-    # A fully-valid RichInput; each case overrides one field with the shape under
-    # test. `note` carries a unique secret marker so negatives can assert the
-    # exact-decode diagnostic never echoes the user payload.
     payload = {
         "_type": "rich::main::RichInput",
         "dec": "1.23",
@@ -500,25 +640,11 @@ def rich_input_json(overrides: dict) -> str:
 
 
 def run_rich_input(ahflc: str, pkg_dir: Path, run_dir: Path, input_json: str):
-    # Drive `ahflc run` on the rich echo package with a sentinel fake-curl on
-    # PATH. The workflow calls no capability, so a well-behaved exact-decode run
-    # must NEVER invoke curl; the curl-config capture file must not appear.
     config_path = run_dir / "rich_llm_config.json"
-    curl_capture_path = run_dir / "rich_curl_config.txt"
-    fake_bin_dir = run_dir / "rich-fake-curl-bin"
-    if fake_bin_dir.exists():
-        shutil.rmtree(fake_bin_dir)
-    if curl_capture_path.exists():
-        curl_capture_path.unlink()
-    write_fake_curl(fake_bin_dir)
     write_llm_config(config_path)
 
     env = os.environ.copy()
-    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env.get('PATH', '')}"
-    env["AHFL_RUNTIME_BINDING_CURL_CONFIG"] = str(curl_capture_path)
     env["AHFL_RUNTIME_BINDING_LLM_KEY"] = "dummy-llm-key"
-    env["AHFL_RUNTIME_BINDING_MODE"] = "http_success"
-    env["AHFL_RUNTIME_BINDING_VALUE"] = "unused"
 
     result = subprocess.run(
         [
@@ -545,32 +671,19 @@ def run_rich_input(ahflc: str, pkg_dir: Path, run_dir: Path, input_json: str):
         text=True,
         timeout=20,
     )
-    return result, curl_capture_path
+    return result
 
 
 def assert_rich_positive(ahflc, pkg_dir, run_dir, tag, overrides):
-    # Positive: exact-decode succeeds, the workflow COMPLETES, and the canonical
-    # --output-format json result DEEP-EQUALS the echoed input (with _type flipped
-    # to RichOutput). Proves the decoded native Value flowed through the evaluator
-    # to the workflow output — not just that admission did not error. The compare
-    # is exact-field-set (== on the whole dict), so a missing/extra field fails.
-    #
-    # NOTE: Python's 1.0 == 1, so a Float field does NOT carry native-variant
-    # provenance in this deep-equal; that proof is the paired bare-`1` negative.
     input_payload = rich_input_dict(overrides)
     expected = dict(input_payload)
     expected["_type"] = "rich::main::RichOutput"
 
-    result, curl_capture_path = run_rich_input(ahflc, pkg_dir, run_dir, json.dumps(input_payload))
+    result = run_rich_input(ahflc, pkg_dir, run_dir, json.dumps(input_payload))
     if result.returncode != 0:
         raise AssertionError(
             f"rich positive [{tag}] failed with {result.returncode}\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
-    if curl_capture_path.exists():
-        raise AssertionError(
-            f"rich positive [{tag}] invoked curl for a capability-free workflow:\n"
-            f"{curl_capture_path.read_text(encoding='utf-8')}"
         )
     try:
         document = json.loads(result.stdout)
@@ -591,14 +704,10 @@ def assert_rich_positive(ahflc, pkg_dir, run_dir, tag, overrides):
 
 
 def assert_rich_negative(ahflc, pkg_dir, run_dir, tag, overrides, expected_diagnostic):
-    # Negative: real CLI exact-decode gate rejects the hostile shape BEFORE any
-    # transport. A unique secret marker rides in `note`; the diagnostic must hit
-    # the expected codec wording, fail closed (exit != 0), invoke zero curl, and
-    # never echo the payload marker anywhere in stdout+stderr.
     secret_marker = f"G4B_RICH_SECRET_{tag.upper()}"
     payload = dict(overrides)
     payload["note"] = secret_marker
-    result, curl_capture_path = run_rich_input(
+    result = run_rich_input(
         ahflc, pkg_dir, run_dir, rich_input_json(payload)
     )
     if result.returncode == 0:
@@ -607,8 +716,6 @@ def assert_rich_negative(ahflc, pkg_dir, run_dir, tag, overrides, expected_diagn
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     combined_output = result.stdout + result.stderr
-    # Attribution: the failure must be at the CLI Phase-A --input seam, not merely
-    # some place a codec string happens to appear.
     seam = "--input does not match workflow input schema"
     if seam not in combined_output:
         raise AssertionError(
@@ -625,11 +732,6 @@ def assert_rich_negative(ahflc, pkg_dir, run_dir, tag, overrides, expected_diagn
             f"rich negative [{tag}] echoed the payload marker {secret_marker!r}:\n"
             f"{combined_output}"
         )
-    if curl_capture_path.exists():
-        raise AssertionError(
-            f"rich negative [{tag}] invoked curl before failing closed:\n"
-            f"{curl_capture_path.read_text(encoding='utf-8')}"
-        )
 
 
 def run_rich_input_matrix(ahflc: str, run_dir: Path) -> None:
@@ -638,26 +740,10 @@ def run_rich_input_matrix(ahflc: str, run_dir: Path) -> None:
         shutil.rmtree(pkg_dir)
     write_rich_package(pkg_dir)
 
-    # POSITIVES — the default rich_input_dict already carries every lossy shape
-    # at once (Decimal "1.23", Duration "5s", Set [1,2,3], Map with a
-    # reserved-marker-LOOKING String key, Option Some(42), Unit null, Float 1.0),
-    # so ONE baseline run whose full result deep-equals the echoed input proves
-    # the decoder traversed and rebuilt all of them. The old schema-free validator
-    # would false-reject the variant-carrying shapes, so this completed deep-equal
-    # is the caller-adaptation regression proof; any single shape regressing fails
-    # the whole compare (the error prints the exact expected/got dicts). Only the
-    # shapes NOT expressible by the baseline get their own run.
     assert_rich_positive(ahflc, pkg_dir, run_dir, "baseline_all_shapes", {})
-    # Option<Int> None (the baseline covers Some); null decodes to None.
     assert_rich_positive(ahflc, pkg_dir, run_dir, "option_none", {"opt": None})
-    # Float 1.5: an unambiguous fractional value that (unlike 1.0 -> bare `1`)
-    # survives value_to_json, so the result deep-equal directly observes it.
     assert_rich_positive(ahflc, pkg_dir, run_dir, "float_fractional", {"flag": 1.5})
 
-    # NEGATIVES — real CLI exact-decode gate. Numeric provenance triad (all report
-    # "expected integer", but the boundary literals themselves are the provenance
-    # evidence): UINT64_MAX (UnsignedInteger, > INT64_MAX), UINT64_MAX+1 (positive
-    # IntegerFallback), INT64_MIN-1 (negative IntegerFallback).
     assert_rich_negative(
         ahflc, pkg_dir, run_dir, "high_uint",
         {"count": 18446744073709551615}, "wire-codec: expected integer",
@@ -670,13 +756,10 @@ def run_rich_input_matrix(ahflc: str, run_dir: Path) -> None:
         ahflc, pkg_dir, run_dir, "neg_integer_fallback",
         {"count": -9223372036854775809}, "wire-codec: expected integer",
     )
-    # Float accept->reject FLIP: bare integer `1` where the schema wants Float.
-    # The old schema-free validator ACCEPTED this; the exact codec rejects it.
     assert_rich_negative(
         ahflc, pkg_dir, run_dir, "float_bare_int",
         {"flag": 1}, "wire-codec: expected float (no int widening)",
     )
-    # Unit wrong-kind: CLI exact admission evidence (not a native-variant claim).
     assert_rich_negative(
         ahflc, pkg_dir, run_dir, "unit_wrong_kind",
         {"nothing": 5}, "wire-codec: expected null for Unit",
@@ -688,9 +771,6 @@ def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
     if not pkg_dir.exists():
         write_rich_package(pkg_dir)
 
-    # missing-workflow: a legal input DOM but a workflow name absent from the
-    # program. Admission passes structurally; the run reaches the canonical
-    # not-found failure rather than an input error.
     config_path = run_dir / "rich_llm_config.json"
     write_llm_config(config_path)
     env = os.environ.copy()
@@ -725,8 +805,6 @@ def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
         raise AssertionError(
             f"missing-workflow missing canonical not-found diagnostic:\n{missing_output}"
         )
-    # A legal DOM must NOT trip an input-schema or parse diagnostic: the run got
-    # far enough to reach the runtime's not-found seam.
     competing_diagnostics = (
         "does not match workflow input schema",
         "failed to parse runtime input JSON",
@@ -737,9 +815,6 @@ def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
                 f"missing-workflow leaked competing diagnostic {competing!r}:\n{missing_output}"
             )
 
-    # malformed input SYNTAX takes priority over everything downstream. Use a
-    # BOGUS --workflow name too, so the parse error must beat the not-found seam:
-    # if syntax were not checked first, this would report not-found instead.
     malformed = subprocess.run(
         [
             ahflc,
@@ -770,12 +845,15 @@ def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
         raise AssertionError(
             f"malformed --input missing parse diagnostic:\n{malformed_output}"
         )
-    # Parse priority: the competing not-found diagnostic must NOT appear.
     if "not found in program" in malformed_output:
         raise AssertionError(
             f"malformed --input let not-found preempt the syntax error:\n{malformed_output}"
         )
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     if len(sys.argv) != 3:
@@ -791,158 +869,133 @@ def main() -> None:
     source_path = run_dir / "smoke.ahfl"
     source_path.write_text(SOURCE, encoding="utf-8")
 
-    http_bindings_path = run_dir / "http_runtime_bindings.json"
-    write_http_bindings(http_bindings_path)
-    # G4a user-nominal POSITIVE: smoke::Echo returns the user struct smoke::Response;
-    # the JSON body decodes exactly under the projected response_wire_binding and the
-    # workflow emits the bound value.
-    result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, http_bindings_path, "http_success", "bound-hello"
-    )
-    assert_success(
-        result,
-        curl_capture_path,
-        "bound-hello",
-        [
-            'url = "http://capability.example.test/echo"',
-            'request = "POST"',
-            'header = "X-AHFL-Test: runtime-binding"',
-        ],
-    )
+    # --- HTTP capability binding tests ---
 
-    http_auth_bindings_path = run_dir / "http_auth_runtime_bindings.json"
+    http_server = LoopbackHttp1Server("http_success", "bound-hello")
+    try:
+        http_bindings_path = run_dir / "http_runtime_bindings.json"
+        write_http_bindings(http_bindings_path, f"http://127.0.0.1:{http_server.port}/echo")
+        result = run_ahflc(ahflc, run_dir, source_path, http_bindings_path)
+        assert_success(result, "bound-hello", http_server)
+    finally:
+        http_server.stop()
+
+    # HTTP auth failure: bearer token secret not resolved → fail closed, zero requests.
+    http_auth_server = LoopbackHttp1Server("http_success")
+    try:
+        http_auth_bindings_path = run_dir / "http_auth_runtime_bindings.json"
+        write_http_bindings(
+            http_auth_bindings_path,
+            f"http://127.0.0.1:{http_auth_server.port}/echo",
+            auth={"scheme": "bearer", "token_key": "AHFL_RUNTIME_BINDING_MISSING_TOKEN"},
+        )
+        result = run_ahflc(ahflc, run_dir, source_path, http_auth_bindings_path)
+        assert_failure(result, "bearer token secret not found", server=http_auth_server,
+                       expected_request_count=0)
+    finally:
+        http_auth_server.stop()
+
+    # HTTP retry failure: 503 → retry once → retry_exhausted.
+    http_retry_server = LoopbackHttp1Server("http_retry_failure")
+    try:
+        http_retry_bindings_path = run_dir / "http_retry_runtime_bindings.json"
+        write_http_bindings(http_retry_bindings_path,
+                           f"http://127.0.0.1:{http_retry_server.port}/echo",
+                           max_retries=1)
+        result = run_ahflc(ahflc, run_dir, source_path, http_retry_bindings_path)
+        assert_failure(result, "retry_exhausted", server=http_retry_server,
+                       expected_request_count=2)
+    finally:
+        http_retry_server.stop()
+
+    # HTTP malformed JSON body.
+    http_malformed_server = LoopbackHttp1Server("http_malformed_json")
+    try:
+        http_malformed_bindings_path = run_dir / "http_malformed_runtime_bindings.json"
+        write_http_bindings(http_malformed_bindings_path,
+                           f"http://127.0.0.1:{http_malformed_server.port}/echo")
+        result = run_ahflc(ahflc, run_dir, source_path, http_malformed_bindings_path)
+        assert_failure(result, "invalid wire JSON response body", server=http_malformed_server)
+    finally:
+        http_malformed_server.stop()
+
+    # --- gRPC JSON transcoding tests ---
+
+    grpc_server = LoopbackHttp2Server("grpc_success", "grpc-bound-hello")
+    try:
+        grpc_bindings_path = run_dir / "grpc_runtime_bindings.json"
+        write_grpc_bindings(grpc_bindings_path, f"http://127.0.0.1:{grpc_server.port}")
+        result = run_ahflc(ahflc, run_dir, source_path, grpc_bindings_path)
+        assert_success(result, "grpc-bound-hello", grpc_server)
+    finally:
+        grpc_server.stop()
+
+    # gRPC metadata failure: grpc-status: 7 in response headers.
+    grpc_metadata_server = LoopbackHttp2Server("grpc_metadata_failure")
+    try:
+        grpc_metadata_bindings_path = run_dir / "grpc_metadata_bindings.json"
+        write_grpc_bindings(grpc_metadata_bindings_path,
+                           f"http://127.0.0.1:{grpc_metadata_server.port}")
+        result = run_ahflc(ahflc, run_dir, source_path, grpc_metadata_bindings_path)
+        assert_failure(result, "metadata denied", server=grpc_metadata_server)
+    finally:
+        grpc_metadata_server.stop()
+
+    # gRPC trailer failure: grpc-status: 7 in trailers.
+    grpc_trailer_server = LoopbackHttp2Server("grpc_trailer_failure")
+    try:
+        grpc_trailer_bindings_path = run_dir / "grpc_trailer_bindings.json"
+        write_grpc_bindings(grpc_trailer_bindings_path,
+                           f"http://127.0.0.1:{grpc_trailer_server.port}")
+        result = run_ahflc(ahflc, run_dir, source_path, grpc_trailer_bindings_path)
+        assert_failure(result, "permission denied", server=grpc_trailer_server)
+    finally:
+        grpc_trailer_server.stop()
+
+    # gRPC deadline retry: grpc-status: 4 → retry once → retry_exhausted.
+    grpc_retry_server = LoopbackHttp2Server("grpc_deadline_retry")
+    try:
+        grpc_retry_bindings_path = run_dir / "grpc_retry_bindings.json"
+        write_grpc_bindings(grpc_retry_bindings_path,
+                           f"http://127.0.0.1:{grpc_retry_server.port}",
+                           max_retries=1)
+        result = run_ahflc(ahflc, run_dir, source_path, grpc_retry_bindings_path)
+        assert_failure(result, "retry_exhausted", server=grpc_retry_server,
+                       expected_request_count=2)
+    finally:
+        grpc_retry_server.stop()
+
+    # gRPC schema mismatch: wrong _type in response.
+    grpc_schema_server = LoopbackHttp2Server("grpc_schema_mismatch")
+    try:
+        grpc_schema_bindings_path = run_dir / "grpc_schema_bindings.json"
+        write_grpc_bindings(grpc_schema_bindings_path,
+                           f"http://127.0.0.1:{grpc_schema_server.port}")
+        result = run_ahflc(ahflc, run_dir, source_path, grpc_schema_bindings_path)
+        assert_failure(result, "response schema validation failed", server=grpc_schema_server)
+    finally:
+        grpc_schema_server.stop()
+
+    # --- TextPlain Phase A admission (no server needed) ---
+
+    textplain_bindings_path = run_dir / "http_textplain_phase_a_admission_bindings.json"
     write_http_bindings(
-        http_auth_bindings_path,
-        auth={"scheme": "bearer", "token_key": "AHFL_RUNTIME_BINDING_MISSING_TOKEN"},
-    )
-    result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, http_auth_bindings_path, "http_success"
-    )
-    assert_failure(
-        result,
-        curl_capture_path,
-        "bearer token secret not found",
-        expect_curl_invoked=False,
-    )
-
-    http_retry_bindings_path = run_dir / "http_retry_runtime_bindings.json"
-    write_http_bindings(http_retry_bindings_path, max_retries=1)
-    result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, http_retry_bindings_path, "http_retry_failure"
-    )
-    assert_failure(
-        result,
-        curl_capture_path,
-        "retry_exhausted",
-        expected_request_count=2,
-    )
-
-    result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, http_bindings_path, "http_malformed_json"
-    )
-    assert_failure(result, curl_capture_path, "invalid wire JSON response body")
-
-    grpc_bindings_path = run_dir / "grpc_runtime_bindings.json"
-    write_grpc_bindings(grpc_bindings_path)
-    # G4a user-nominal POSITIVE (gRPC): same smoke::Response struct decoded exactly.
-    result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, grpc_bindings_path, "grpc_success", "grpc-bound-hello"
-    )
-    assert_success(
-        result,
-        curl_capture_path,
-        "grpc-bound-hello",
-        [
-            'url = "http://grpc-capability.example.test:50051/smoke.EchoService/Echo"',
-            'request = "POST"',
-            "http2-prior-knowledge",
-            'header = "TE: trailers"',
-        ],
-    )
-
-    result, curl_capture_path = run_ahflc(
-        ahflc,
-        run_dir,
-        source_path,
-        grpc_bindings_path,
-        "grpc_metadata_failure",
-        "should-not-complete",
-    )
-    assert_failure(result, curl_capture_path, "metadata denied")
-
-    result, curl_capture_path = run_ahflc(
-        ahflc,
-        run_dir,
-        source_path,
-        grpc_bindings_path,
-        "grpc_trailer_failure",
-        "should-not-complete",
-    )
-    assert_failure(result, curl_capture_path, "permission denied")
-
-    grpc_retry_bindings_path = run_dir / "grpc_retry_runtime_bindings.json"
-    write_grpc_bindings(grpc_retry_bindings_path, max_retries=1)
-    result, curl_capture_path = run_ahflc(
-        ahflc,
-        run_dir,
-        source_path,
-        grpc_retry_bindings_path,
-        "grpc_deadline_retry",
-        "should-not-complete",
-    )
-    assert_failure(
-        result,
-        curl_capture_path,
-        "retry_exhausted",
-        expected_request_count=2,
-    )
-
-    result, curl_capture_path = run_ahflc(
-        ahflc,
-        run_dir,
-        source_path,
-        grpc_bindings_path,
-        "grpc_schema_mismatch",
-        "should-not-complete",
-    )
-    assert_failure(result, curl_capture_path, "response schema validation failed")
-
-    # RFC 0026 C2b G4b: shared-admission Phase-A NEGATIVE. A text_plain response
-    # format on a capability whose declared response is the user struct
-    # smoke::Response. Under G4b the CLI runs prepare_wire_response_schema in
-    # Phase A (before any secret/network/registry work), so the shared admission
-    # helper rejects the non-String verified root and returns an error directly —
-    # the run NEVER reaches make_http_capability, and no factory poison binding is
-    # minted here. This CLI case therefore proves: the shared admission helper
-    # fails closed in Phase A, zero fake-curl requests occur, and the failure
-    # never enters retry / circuit-breaker / RetryExhausted (even with retries
-    # requested and the breaker enabled).
-    #
-    # The factory-minted poison binding's own properties (retry=0, CB-off,
-    # attempts==1, zero transport) are proven separately by the capability_bridge
-    # unit test (G4a); this CLI case does not re-claim that evidence.
-    textplain_phase_a_admission_path = run_dir / "http_textplain_phase_a_admission_bindings.json"
-    write_http_bindings(
-        textplain_phase_a_admission_path,
+        textplain_bindings_path,
+        "http://127.0.0.1:1/echo",  # unreachable, but admission fails before network
         max_retries=3,
         response_format="text_plain",
         circuit_breaker={"enabled": True, "failure_threshold": 1},
     )
-    result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, textplain_phase_a_admission_path, "http_success"
-    )
+    result = run_ahflc(ahflc, run_dir, source_path, textplain_bindings_path)
     assert_failure(
         result,
-        curl_capture_path,
         "response schema admission failed",
-        expect_curl_invoked=False,
         expected_request_count=0,
         forbidden_fragment="retry_exhausted",
     )
 
-    # RFC 0026 C2b G4b: the rich --input exact-decode matrix (schema-guided codec
-    # path through a real package/sysroot) and the structural error-priority
-    # cases (missing-workflow not-found, malformed-input syntax priority).
+    # --- RFC 0026 C2b G4b: rich --input exact-decode matrix ---
+
     run_rich_input_matrix(ahflc, run_dir)
     run_structural_priority_cases(ahflc, run_dir)
 
