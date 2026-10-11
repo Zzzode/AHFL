@@ -32,10 +32,10 @@ flowchart TD
     Validate --> SemanticIR[AHFL-IR: ir::Program]
     SemanticIR --> SemanticPasses[optional AHFL-IR passes]
     SemanticPasses --> Backend[emit_backend]
-    SemanticIR -. "emit opt-ir / opt-ir-json" .-> OptIR[Optimization IR: ir::opt::OptProgram]
+    SemanticIR -. "emit opt-ir / opt-ir-json" .-> OptIR[Opt IR: ir::opt::OptProgram]
     OptIR -. "-O" .-> OptPasses[Opt IR passes]
     OptPasses -. "text / JSON" .-> OptArtifact[Opt IR artifact]
-    SemanticIR -. "emit core-ir-json" .-> CoreIR[Core IR: CoreProgram]
+    SemanticIR -. "emit core-ir-json" .-> CoreIR[Core-IR: CoreProgram]
     CoreIR -. "ahfl.core.v1" .-> CoreArtifact[Core-IR layered JSON artifact]
 ```
 

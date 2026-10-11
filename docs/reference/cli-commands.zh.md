@@ -29,7 +29,7 @@
    不会隐式加载 `std` package。
 4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
 5. 运行期 replay、audit、scheduler、checkpoint 和 recovery 都由 `WasmWorkflowRuntime`（wasm3 内嵌执行）的 event log 投影，不再暴露平行 artifact catalog。
-6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 AHFL-IR。
+6. Opt IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 AHFL-IR。
 7. Public API artifact 通过 `emit public-api` / `emit public-api-docs` / `emit public-api-diff` 输出 visibility facts 驱动的 API snapshot、Markdown docs 和 API diff。
 8. `init --single-file` 是从 detached 裸文件迁移到正式 `ahfl.toml` package 的显式脚手架入口，不改变 detached mode 语义。
 9. `package archive` 是 registry publishing 的源码打包入口，生成 normalized source archive payload 和对应 metadata manifest。
@@ -439,7 +439,7 @@ HTML canvas 功能：
 
 trace 文件由 `ahflc run --format jsonl` 生成（`ahfl.run-event.v1` JSONL）。
 
-## Optimization IR Artifact
+## Opt IR Artifact
 
 `emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR_V1` JSON artifact。二者都会在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 AHFL-IR lowering 之后，把 `ir::Program` 降到 `ir::opt::OptProgram`。artifact 包含 OptFunction、local、basic block、statement、terminator、source range，以及无法降为 pure expression fragment 的 temporal atom `skipped_temporal` 记录。
 

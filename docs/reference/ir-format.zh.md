@@ -90,7 +90,7 @@ JSON IR 适合：
 - downstream tooling
 - 对 declaration / observation / summary 做结构化遍历
 
-Optimization IR：
+Opt IR：
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc emit opt-ir tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl

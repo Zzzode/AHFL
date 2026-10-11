@@ -108,7 +108,7 @@
 * **IR 早就把构造式节点输入/返回降级好了**:`input_region` 由
   `lower_value_region` 生成,可含 `CoreConstructExpr`
   (`src/compiler/ir/core_lower.cpp:5098-5099`),只是被后端 validator 拒绝;
-  工作流返回区同理。v2 不需要改 Core IR。
+  工作流返回区同理。v2 不需要改 Core-IR。
 * **String 长度上界只可能来自有界 String 类型**;裸 `String` 没有
   length_bounds(`src/compiler/semantics/type_resolver.cpp:56-66`,
   `CoreVtString.length_bounds` 为 optional)。5 个目标用例的 String 全部

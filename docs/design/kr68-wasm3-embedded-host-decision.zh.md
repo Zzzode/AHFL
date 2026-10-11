@@ -1229,7 +1229,7 @@ error: ahflc run requires the embedded wasm engine; this build was configured wi
 | `EvalError` | **不产生** | wasm 车道无 evaluator;`EvalError` 枚举保留到 WH-9(`workflow_result.hpp:48` 注释明文) |
 | `Suspended` | `Suspended`(WH-4b) | 会话 `raw_status==2` 臂(§12.6.4);`result.suspended` 填充 |
 
-**编译错误(facade ctor):** CLI 在 `cli_driver.cpp:3958-3963` 已把源码 lower 到 IR(parse/resolve/typecheck 错误更早以 SourceRange 诊断 + exit 1 暴露)。facade ctor 的编译是 IR→Core→wasm(`lower_ahfl_to_core` → `compute_core_layouts` → `emit_core_wasm`),其失败是 lowering/codegen 错误(如 wasm 不支持的构造),携带 Core IR SourceRange。按 §12.7.8 裁决,ctor 把诊断存入 `DiagnosticBag`,run() 返回带该 bag 的失败 `WorkflowResult`;CLI 经 `:1888-1890` `diagnostics.render` 渲染(SourceRange 保留,Principle 5),exit 1。evaluator ctor 假设已编译 Program、不失败——wasm ctor 可能失败,但失败在 run() 诚实暴露(与 evaluator 的 run()-surfaces-failure 形状对齐)。
+**编译错误(facade ctor):** CLI 在 `cli_driver.cpp:3958-3963` 已把源码 lower 到 IR(parse/resolve/typecheck 错误更早以 SourceRange 诊断 + exit 1 暴露)。facade ctor 的编译是 IR→Core→wasm(`lower_ahfl_to_core` → `compute_core_layouts` → `emit_core_wasm`),其失败是 lowering/codegen 错误(如 wasm 不支持的构造),携带 Core-IR SourceRange。按 §12.7.8 裁决,ctor 把诊断存入 `DiagnosticBag`,run() 返回带该 bag 的失败 `WorkflowResult`;CLI 经 `:1888-1890` `diagnostics.render` 渲染(SourceRange 保留,Principle 5),exit 1。evaluator ctor 假设已编译 Program、不失败——wasm ctor 可能失败,但失败在 run() 诚实暴露(与 evaluator 的 run()-surfaces-failure 形状对齐)。
 
 **compile-all 语义:** facade ctor 编译程序中**所有** workflow(`wasm_workflow_runtime.cpp:47-70` 循环)。若 sibling workflow 用了 wasm 不支持的构造,整个 run 失败(诊断命名失败的 workflow)。接受:① 程序是一个编译单元,typechecker 已拒绝坏掉的 sibling,wasm codegen 子集更窄,诚实报告 codegen 失败而非静默跳过;② per-entry 过滤(只编译目标)是隐藏 sibling 失败的并行路径,不诚实。参照 Rustc(编译整个 crate)。
 
@@ -5116,7 +5116,7 @@ agent or drop the construct terminal")。
 - runner 作用域:`site.runner == policy.wf_runner` 把共享 registry 上的检查限定到当前打包 runner,
   先前 runner 的已压缩位点携带不同 tag,被排除。
 
-**测试**:`make_p2a_construct_plus_bridge_program()` 手构最小 Core IR(agent 同时有 Init 的
+**测试**:`make_p2a_construct_plus_bridge_program()` 手构最小 Core-IR(agent 同时有 Init 的
 bridge 调用与 Done 的构造终态),断言 `emit_core_wasm` 返回无 artifact + `kUnsupportedCapabilityFrame`。
 变异测试验证:禁用 P2-A 检查后,打包 pass 发射 artifact(manifest 丢弃构造调用),测试失败;
 恢复后通过。

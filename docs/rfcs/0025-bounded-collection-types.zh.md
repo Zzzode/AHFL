@@ -140,7 +140,7 @@ hash-consing (Principle 3) treats capacity as part of structural identity.
 
 The lowered IR `TypeRef` (`include/ahfl/compiler/ir/types.hpp:169`) gains a
 parallel `std::optional<std::uint64_t> collection_capacity`, populated during
-Typed-HIR → IR lowering next to the existing `int_bounds` handling
+Typed HIR → IR lowering next to the existing `int_bounds` handling
 (`src/compiler/ir/typed_hir_lower.cpp:1137-1139`).
 
 ### Assignability

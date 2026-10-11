@@ -339,7 +339,7 @@ already uses (`ir_json.cpp` §symbol ref: `kind`, `canonical_name`, `local_name`
 **Decision: an arena owned by a decl is projected as a nested array inside that
 decl. It is never hoisted to a top-level id-addressed pool.**
 
-The Core IR has four arena classes, with different ownership:
+The Core-IR has four arena classes, with different ownership:
 
 | Arena | Owner | Id | Serialized as |
 |---|---|---|---|
