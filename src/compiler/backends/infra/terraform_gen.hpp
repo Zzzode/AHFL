@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -14,11 +15,24 @@ namespace ahfl::backends {
 using TerraformAttributeValue =
     std::variant<std::string, std::int64_t, bool, std::vector<std::string>>;
 
+// Nested manifest object for kubernetes_manifest resources. Carries the
+// apiVersion/kind/metadata/spec fields that identify a custom resource
+// instance in the cluster.
+struct TerraformManifest {
+    std::string api_version;   // e.g. "ahfl.io/v1alpha1"
+    std::string kind;          // e.g. "ReviewerA"
+    std::string metadata_name; // metadata.name
+    std::string initial_state; // spec.state
+};
+
 struct TerraformResource {
     std::string resource_type;
     std::string resource_name;
     std::vector<std::pair<std::string, TerraformAttributeValue>> attributes;
-    // Unqualified resource references ("ahfl_workflow_node.<dep>"), rendered
+    // kubernetes_manifest resources carry a nested manifest object; other
+    // resource types leave this unset.
+    std::optional<TerraformManifest> manifest;
+    // Unqualified resource references ("<resource_type>.<dep>"), rendered
     // into depends_on in order.
     std::vector<std::string> depends_on;
 };

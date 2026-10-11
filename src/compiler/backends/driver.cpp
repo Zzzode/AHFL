@@ -193,11 +193,14 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                        "Terraform HCL from workflows",
                                        [](const EmitContext &ctx) -> EmitResult {
                                            auto configs = backends::lower_terraform(ctx.program);
-                                           if (configs.empty()) {
+                                           if (!configs) {
+                                               return std::unexpected(configs.error());
+                                           }
+                                           if (configs->empty()) {
                                                return std::unexpected<std::string>(
                                                    "no workflows found in program");
                                            }
-                                           for (const auto &c : configs) {
+                                           for (const auto &c : *configs) {
                                                ctx.out << backends::generate_terraform(c).hcl;
                                            }
                                            return {};

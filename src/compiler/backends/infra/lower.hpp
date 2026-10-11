@@ -33,6 +33,10 @@ lower_k8s_crd(const ir::AhflIr &program);
 lower_openapi(const ir::AhflIr &program);
 
 /// Lower AHFL-IR to Terraform configs (one per WorkflowDecl).
-[[nodiscard]] std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program);
+/// An unexpected error carries a human-readable message (e.g. a workflow node
+/// references an agent the program does not declare), which the emitter must
+/// surface instead of rendering a manifest with a dangling target.
+[[nodiscard]] std::expected<std::vector<TerraformConfig>, std::string>
+lower_terraform(const ir::AhflIr &program);
 
 } // namespace ahfl::backends

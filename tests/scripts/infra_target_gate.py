@@ -45,8 +45,8 @@ RFC1123_SUBDOMAIN = re.compile(r"^[a-z0-9]([a-z0-9.\-]{0,251}[a-z0-9])?$")
 #   no_request_body_paths: operation paths that must NOT carry a requestBody
 #   no_context_ports: number of CRD documents expected without a context port
 FIXTURES = [
-    ("service_mesh", 1, ["ahfl_workflow_node.primary"], {}),
-    ("multi_agent", 2, ["ahfl_workflow_node.first"], {}),
+    ("service_mesh", 1, ["kubernetes_manifest.primary"], {}),
+    ("multi_agent", 2, ["kubernetes_manifest.first"], {}),
     (
         "stateless",
         1,
@@ -312,6 +312,30 @@ def check_terraform(text: str, golden: Path, ahflc: str, source: Path, edges) ->
     for edge in edges:
         if f"depends_on = [{edge}]" not in text:
             raise SystemExit(f"FAIL: terraform missing expected depends_on edge {edge}")
+    # KR7.4: production-grade Terraform must declare the kubernetes provider
+    # and emit kubernetes_manifest resources (not a fictional resource type).
+    if 'source = "hashicorp/kubernetes"' not in text:
+        raise SystemExit(
+            "FAIL: terraform missing hashicorp/kubernetes provider requirement"
+        )
+    if 'provider "kubernetes"' not in text:
+        raise SystemExit("FAIL: terraform missing provider kubernetes block")
+    if 'resource "kubernetes_manifest"' not in text:
+        raise SystemExit("FAIL: terraform has no kubernetes_manifest resources")
+    if 'resource "ahfl_workflow_node"' in text:
+        raise SystemExit(
+            "FAIL: terraform still emits fictional ahfl_workflow_node resources"
+        )
+    # Every kubernetes_manifest must carry a manifest with apiVersion/kind.
+    manifest_blocks = text.count('manifest = {')
+    resource_blocks = text.count('resource "kubernetes_manifest"')
+    if manifest_blocks != resource_blocks:
+        raise SystemExit(
+            f"FAIL: terraform has {resource_blocks} kubernetes_manifest resources "
+            f"but {manifest_blocks} manifest blocks"
+        )
+    if 'apiVersion = "ahfl.io/v1alpha1"' not in text:
+        raise SystemExit("FAIL: terraform manifest missing apiVersion")
     print(f"  ok terraform: snapshot, balanced braces, {len(edges)} depends_on edge(s)")
 
 

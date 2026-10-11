@@ -2,9 +2,9 @@
 
 #include "base/support/hash.hpp"
 #include "base/support/structured_writer.hpp"
+#include "compiler/backends/infra/k8s_naming.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -13,35 +13,6 @@
 namespace ahfl::backends {
 
 namespace {
-
-[[nodiscard]] std::string capitalize(std::string_view s) {
-    if (s.empty())
-        return {};
-    std::string result(s);
-    result[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(result[0])));
-    return result;
-}
-
-// DNS-1123 label charset: [a-z0-9-], lowercased. Any other byte is replaced
-// with '-'; runs of separators are collapsed and leading/trailing separators
-// trimmed.
-[[nodiscard]] std::string dns_safe(std::string_view value) {
-    std::string out;
-    out.reserve(value.size());
-    for (const unsigned char ch : value) {
-        if (ch >= 'A' && ch <= 'Z') {
-            out.push_back(static_cast<char>(std::tolower(ch)));
-        } else if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
-            out.push_back(static_cast<char>(ch));
-        } else if (!out.empty() && out.back() != '-') {
-            out.push_back('-');
-        }
-    }
-    while (!out.empty() && out.back() == '-') {
-        out.pop_back();
-    }
-    return out;
-}
 
 // RFC 1123: a DNS label is at most 63 bytes; the CRD metadata.name
 // (plural + "." + group) is a DNS subdomain capped at 253 bytes.

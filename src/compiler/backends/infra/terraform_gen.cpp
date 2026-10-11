@@ -62,6 +62,23 @@ TerraformOutput generate_terraform(const TerraformConfig &config) {
     // Emit resource blocks
     for (const auto &resource : config.resources) {
         hcl.begin_block("resource", resource.resource_type, resource.resource_name);
+
+        // kubernetes_manifest resources carry a nested manifest object that
+        // identifies the custom resource instance in the cluster.
+        if (resource.manifest.has_value()) {
+            const auto &manifest = *resource.manifest;
+            hcl.begin_object("manifest");
+            hcl.attribute("apiVersion", manifest.api_version);
+            hcl.attribute("kind", manifest.kind);
+            hcl.begin_object("metadata");
+            hcl.attribute("name", manifest.metadata_name);
+            hcl.end_block(); // metadata
+            hcl.begin_object("spec");
+            hcl.attribute("state", manifest.initial_state);
+            hcl.end_block(); // spec
+            hcl.end_block(); // manifest
+        }
+
         for (const auto &[key, value] : resource.attributes) {
             emit_attribute(hcl, key, value);
         }

@@ -1,9 +1,47 @@
-resource "ahfl_workflow_node" "primary" {
-  target = "infra::service_mesh::Router"
+terraform {
+  required_providers {
+    kubernetes = {
+      source = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
+
+  }
+
 }
 
-resource "ahfl_workflow_node" "secondary" {
-  target = "infra::service_mesh::Router"
-  depends_on = [ahfl_workflow_node.primary]
+provider "kubernetes" {
+}
+
+resource "kubernetes_manifest" "primary" {
+  manifest = {
+    apiVersion = "ahfl.io/v1alpha1"
+    kind = "Router"
+    metadata = {
+      name = "primary"
+    }
+
+    spec = {
+      state = "Idle"
+    }
+
+  }
+
+}
+
+resource "kubernetes_manifest" "secondary" {
+  manifest = {
+    apiVersion = "ahfl.io/v1alpha1"
+    kind = "Router"
+    metadata = {
+      name = "secondary"
+    }
+
+    spec = {
+      state = "Idle"
+    }
+
+  }
+
+  depends_on = [kubernetes_manifest.primary]
 }
 

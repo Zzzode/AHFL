@@ -1,6 +1,7 @@
 #include "compiler/backends/infra/lower.hpp"
 
 #include "ahfl/compiler/ir/identity.hpp"
+#include "compiler/backends/infra/k8s_naming.hpp"
 #include "compiler/backends/infra/type_schema.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -178,21 +180,54 @@ std::expected<std::optional<OpenApiConfig>, std::string> lower_openapi(const ir:
     return config;
 }
 
-std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program) {
+std::expected<std::vector<TerraformConfig>, std::string>
+lower_terraform(const ir::AhflIr &program) {
+    // Build a lookup from agent canonical name to AgentDecl so workflow nodes
+    // can resolve their target_ref to the agent's kind and initial state.
+    std::unordered_map<std::string, const ir::AgentDecl *> agents;
+    agents.reserve(program.declarations.size());
+    for (const auto &decl : program.declarations) {
+        if (const auto *agent = std::get_if<ir::AgentDecl>(&decl)) {
+            agents.emplace(agent->name, agent);
+        }
+    }
+
     std::vector<TerraformConfig> result;
     for (const auto &decl : program.declarations) {
         if (const auto *workflow = std::get_if<ir::WorkflowDecl>(&decl)) {
             TerraformConfig config;
             config.workflow_name = workflow->name;
-            // Providers are intentionally left empty: the AHFL-IR carries no
-            // deployment-target declarations, so the renderer omits the
-            // terraform{required_providers} block rather than fabricating one.
+            // KR7.4: declare the hashicorp/kubernetes provider so
+            // `terraform init` installs it and `kubernetes_manifest`
+            // resources are usable out of the box.
+            config.providers.push_back({"kubernetes", "hashicorp/kubernetes", "~> 2.0"});
+
             for (const auto &node : workflow->nodes) {
+                const auto target_name =
+                    std::string(ir::symbol_canonical_name(node.target_ref));
+                const auto it = agents.find(target_name);
+                if (it == agents.end()) {
+                    return std::unexpected(
+                        "Terraform lowering failed: workflow node '" + node.name +
+                        "' references unknown agent '" + target_name + "'");
+                }
+                const auto &agent = *it->second;
+
                 TerraformResource resource;
-                resource.resource_type = "ahfl_workflow_node";
+                resource.resource_type = "kubernetes_manifest";
                 resource.resource_name = node.name;
-                resource.attributes.emplace_back(
-                    "target", std::string(ir::symbol_canonical_name(node.target_ref)));
+
+                // The manifest identifies the custom resource instance:
+                // apiVersion/kind match the CRD the k8s-crd backend emits;
+                // metadata.name is the workflow node name (sanitized to an
+                // RFC 1123 label); spec.state is the agent's initial state.
+                TerraformManifest manifest;
+                manifest.api_version = "ahfl.io/v1alpha1";
+                manifest.kind = capitalize(last_segment(agent.name));
+                manifest.metadata_name = dns_safe(node.name);
+                manifest.initial_state = agent.initial_state;
+                resource.manifest = std::move(manifest);
+
                 // WorkflowNode.after is the DAG edge set. Sort + dedupe so the
                 // depends_on list is deterministic independent of source order.
                 resource.depends_on = node.after;

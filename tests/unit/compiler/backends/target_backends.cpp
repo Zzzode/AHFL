@@ -100,16 +100,17 @@ int main() {
               "openapi emits components/schemas");
     }
 
-    // Test 3: generate_terraform renders typed attributes and depends_on.
+    // Test 3: generate_terraform renders typed attributes, manifest, and depends_on.
     {
         ahfl::backends::TerraformConfig config;
         config.workflow_name = "deploy_agent";
-        config.providers = {{"aws", "hashicorp/aws", "~> 5.0"}};
+        config.providers = {{"kubernetes", "hashicorp/kubernetes", "~> 2.0"}};
 
         ahfl::backends::TerraformResource primary;
-        primary.resource_type = "ahfl_workflow_node";
+        primary.resource_type = "kubernetes_manifest";
         primary.resource_name = "primary";
-        primary.attributes.emplace_back("target", std::string{"router"});
+        primary.manifest = ahfl::backends::TerraformManifest{
+            "ahfl.io/v1alpha1", "Router", "primary", "Idle"};
         primary.attributes.emplace_back("max_retries", std::int64_t{3});
         primary.attributes.emplace_back("enabled", true);
         primary.attributes.emplace_back("aliases", std::vector<std::string>{"a", "b"});
@@ -117,7 +118,7 @@ int main() {
         ahfl::backends::TerraformResource secondary = primary;
         secondary.resource_name = "secondary";
         secondary.attributes.clear();
-        secondary.attributes.emplace_back("target", std::string{"router"});
+        secondary.manifest->metadata_name = "secondary";
         secondary.depends_on = {"primary"};
 
         config.resources = {std::move(primary), std::move(secondary)};
@@ -126,18 +127,26 @@ int main() {
 
         check(contains(output.hcl, "required_providers"),
               "terraform emits a required_providers block when configured");
-        check(contains(output.hcl, "source = \"hashicorp/aws\"") &&
-                  contains(output.hcl, "version = \"~> 5.0\""),
+        check(contains(output.hcl, "source = \"hashicorp/kubernetes\"") &&
+                  contains(output.hcl, "version = \"~> 2.0\""),
               "terraform emits schema-driven provider requirements");
-        check(contains(output.hcl, "resource \"ahfl_workflow_node\" \"primary\"") &&
-                  contains(output.hcl, "resource \"ahfl_workflow_node\" \"secondary\""),
+        check(contains(output.hcl, "resource \"kubernetes_manifest\" \"primary\"") &&
+                  contains(output.hcl, "resource \"kubernetes_manifest\" \"secondary\""),
               "terraform emits one resource block per workflow node");
+        check(contains(output.hcl, "apiVersion = \"ahfl.io/v1alpha1\"") &&
+                  contains(output.hcl, "kind = \"Router\""),
+              "terraform emits the manifest apiVersion and kind");
+        check(contains(output.hcl, "name = \"primary\"") &&
+                  contains(output.hcl, "name = \"secondary\""),
+              "terraform emits the manifest metadata.name");
+        check(contains(output.hcl, "state = \"Idle\""),
+              "terraform emits the manifest spec.state");
         check(contains(output.hcl, "max_retries = 3"),
               "terraform emits numeric attributes unquoted");
         check(contains(output.hcl, "enabled = true"), "terraform emits bool attributes unquoted");
         check(contains(output.hcl, "aliases = [\"a\", \"b\"]"),
               "terraform emits string-list attributes");
-        check(contains(output.hcl, "depends_on = [ahfl_workflow_node.primary]"),
+        check(contains(output.hcl, "depends_on = [kubernetes_manifest.primary]"),
               "terraform emits the DAG edge as depends_on");
     }
 
@@ -146,9 +155,10 @@ int main() {
         ahfl::backends::TerraformConfig config;
         config.workflow_name = "solo";
         ahfl::backends::TerraformResource resource;
-        resource.resource_type = "ahfl_workflow_node";
+        resource.resource_type = "kubernetes_manifest";
         resource.resource_name = "only";
-        resource.attributes.emplace_back("target", std::string{"agent"});
+        resource.manifest = ahfl::backends::TerraformManifest{
+            "ahfl.io/v1alpha1", "Agent", "only", "Idle"};
         config.resources.push_back(std::move(resource));
 
         auto output = ahfl::backends::generate_terraform(config);
@@ -157,6 +167,10 @@ int main() {
               "terraform omits required_providers when no providers are configured");
         check(!contains(output.hcl, "provider \""),
               "terraform omits provider config blocks when unconfigured");
+        check(contains(output.hcl, "resource \"kubernetes_manifest\" \"only\""),
+              "terraform still emits the resource block");
+        check(contains(output.hcl, "apiVersion = \"ahfl.io/v1alpha1\""),
+              "terraform still emits the manifest");
     }
 
     // Test 5: OpenApiTypeMapper maps primitives and nested/bounded collections.
