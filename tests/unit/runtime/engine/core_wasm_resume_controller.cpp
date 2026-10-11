@@ -3235,8 +3235,25 @@ int main(int argc, char **argv) {
                     check(d.has_value() && std::holds_alternative<rc::RecoverPending>(*d),
                           "H.recover_pending_arm");
                     if (d.has_value() && std::holds_alternative<rc::RecoverPending>(*d)) {
-                        check(std::get<rc::RecoverPending>(*d).token == intent.token(),
+                        const auto &recover = std::get<rc::RecoverPending>(*d);
+                        check(recover.token == intent.token(),
                               "H.recover_pending_token_matches");
+                        // D2b-9: the arm carries the live-call target so the
+                        // driver can re-drive. Its coordinate matches the
+                        // minted intent's (node 42 / ord 0 / cap 4 / sym 901).
+                        check(recover.live.call_site.workflow_node_id() ==
+                                  CoreWorkflowNodeId{42},
+                              "H.recover_live_node");
+                        check(recover.live.call_site.invocation_ordinal() ==
+                                  InvocationOrdinal{0},
+                              "H.recover_live_ordinal");
+                        check(recover.live.call_site.capability() == CoreCapabilityId{4},
+                              "H.recover_live_capability");
+                        check(recover.live.call_site.source_symbol() == 901,
+                              "H.recover_live_source_symbol");
+                        check(recover.live.arg_hash == param_arg_hash(hm, 1, kIntParamJson),
+                              "H.recover_live_arg_hash");
+                        check(recover.live.params.size() == 1, "H.recover_live_params");
                     }
                 }
                 nuke(work);

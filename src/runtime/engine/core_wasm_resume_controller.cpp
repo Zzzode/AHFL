@@ -963,8 +963,11 @@ consult_live_dedup(const DedupContext &dedup,
             [&live](dea::PreviewFresh) -> ConsultResult {
                 return ImportStepDecision{std::move(live)};
             },
-            [](dea::PreviewReplayPending p) -> ConsultResult {
-                return ImportStepDecision{RecoverPending{p.token}};
+            [&live](dea::PreviewReplayPending p) -> ConsultResult {
+                // D2b-9: carry the live-call target so the driver can
+                // idempotently re-drive the capability over the same invoker
+                // seam and record the terminal on the EXISTING Pending row.
+                return ImportStepDecision{RecoverPending{std::move(live), p.token}};
             },
             [](dea::PreviewReplaySucceeded p) -> ConsultResult {
                 return ImportStepDecision{DedupReplay{p.token, p.handle}};

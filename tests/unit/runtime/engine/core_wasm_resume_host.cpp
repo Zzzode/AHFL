@@ -502,6 +502,27 @@ class ReplaySucceededRacingBackend final : public DelegatingBackend {
     bool primed_{false};
 };
 
+// On the FIRST seal_or_load, first seal a competing PENDING row (no terminal)
+// for the SAME token (a concurrent caller sealed between the controller's
+// preview and the driver's begin), so the driver's begin_effect returns
+// EffectReplayPending. D2b-9: the driver re-drives instead of aborting.
+class ReplayPendingRacingBackend final : public DelegatingBackend {
+  public:
+    using DelegatingBackend::DelegatingBackend;
+
+    [[nodiscard]] std::expected<dea::SealOutcome, dea::DurableEffectBackendError>
+    seal_or_load(dea::SealedEffectRegistration candidate) override {
+        if (!primed_) {
+            primed_ = true;
+            static_cast<void>(inner_->seal_or_load(candidate));
+        }
+        return inner_->seal_or_load(std::move(candidate));
+    }
+
+  private:
+    bool primed_{false};
+};
+
 // On the FIRST seal_or_load, first seal a DIVERGENT row (same call site, same
 // authority, DIFFERENT param digest + its own token), so the driver's
 // begin_effect returns EffectDiverged.
@@ -1728,6 +1749,77 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
+    // ============ S19b: EffectReplayPending race re-drives (D2b-9) =========
+    // A concurrent caller sealed a PENDING row (no terminal) for the SAME
+    // token between the controller's read-only preview and the driver's
+    // sealing begin. D2b-9: the driver re-drives the live capability through
+    // the SAME invoker seam and records the terminal on the EXISTING row (no
+    // second effect). The invoker IS called once; the resume completes.
+    {
+        const fs::path work = base / "s19b-race-replay-pending";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S19b.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto inner = dea::make_in_memory_durable_effect_backend();
+        auto racing = std::make_shared<ReplayPendingRacingBackend>(inner);
+        dea::DurableEffectAuthority dedup{racing};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S19b.store");
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveOk{bytes_of(kStringResultJson)}}));
+
+        auto done = host::run_resume(request);
+        check(done.has_value(), "S19b.resume_ok");
+        if (done.has_value()) {
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.raw_status == AHFL_CAP_OK, "S19b.raw_ok");
+            check(completed.output == bytes_of(kStringResultJson),
+                  "S19b.output_is_live_result");
+            check(completed.consumed_from == 2 && completed.consumed_generation == 3,
+                  "S19b.consumed_3_2");
+        }
+        // The invoker WAS called: the re-drive happened (key D2b-9 change).
+        check(invoker_calls == 1, "S19b.invoker_called_once");
+        // The terminal was recorded on the EXISTING (racing) Pending row.
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S19b.intent_minted");
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectSucceeded>(*resolved),
+                  "S19b.authority_succeeded");
+            if (resolved.has_value() &&
+                std::holds_alternative<dea::EffectSucceeded>(*resolved)) {
+                auto bytes =
+                    dedup.read_result(std::get<dea::EffectSucceeded>(*resolved).handle);
+                check(bytes.has_value() && *bytes == bytes_of(kStringResultJson),
+                      "S19b.recorded_bytes_roundtrip");
+            }
+        }
+        // The live reply carried raw AHFL_CAP_OK.
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_OK,
+              "S19b.replies_raw_ok");
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedConsumed>(*after),
+              "S19b.tombstone");
+        nuke(work);
+    }
+
     // ============ S20: begin_effect races to Diverged ======================
     // A concurrent caller sealed the SAME call site under the SAME authority
     // with a DIFFERENT param digest. The driver fails closed CoordinateMismatch;
@@ -1942,12 +2034,14 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
-    // ============ S24: RecoverPending -- Pending row reconciliation =========
-    // D2b-7: the authority holds a PENDING row for the after-frontier cap 42
-    // token (a crashed prior attempt sealed the effect but never recorded a
-    // terminal). The controller's preview issues RecoverPending; the driver
-    // surfaces RecoverPendingRequired. NO live call (re-driving risks a
-    // duplicate effect); the host must reconcile the row.
+    // ============ S24: RecoverPending re-drives LiveOk (D2b-9) =============
+    // The authority holds a PENDING row for the after-frontier cap 42 token
+    // (a crashed prior attempt sealed the effect but never recorded a
+    // terminal). The controller's preview issues RecoverPending; D2b-9 the
+    // driver re-drives the live capability through the SAME invoker seam and
+    // records the SUCCEEDED terminal on the EXISTING row (no redundant
+    // begin_effect). The invoker IS called once; the resume completes and
+    // Consumes.
     {
         const fs::path work = base / "s24-recover-pending";
         ModuleSpec spec = live_module_spec();
@@ -1984,24 +2078,230 @@ int main(int argc, char **argv) {
                                           host::LiveOk{bytes_of(kStringResultJson)}}));
 
         auto done = host::run_resume(request);
-        check(!done.has_value(), "S24.fails_closed");
-        if (!done.has_value()) {
-            check(is_host_failure(done.error(),
-                                  host::ResumeHostReason::RecoverPendingRequired),
-                  "S24.recover_pending_required");
-            check(host::host_code(done.error()) == "resume.transition.invalid",
-                  "S24.host_code");
+        check(done.has_value(), "S24.resume_ok");
+        if (done.has_value()) {
+            const auto &completed = std::get<host::ResumeCompleted>(*done);
+            check(completed.raw_status == AHFL_CAP_OK, "S24.raw_ok");
+            check(completed.output == bytes_of(kStringResultJson),
+                  "S24.output_is_live_result");
+            check(completed.consumed_from == 2 && completed.consumed_generation == 3,
+                  "S24.consumed_3_2");
         }
-        check(invoker_calls == 0, "S24.invoker_not_called");
-        // The Pending row stays sealed for host reconciliation.
+        // The invoker WAS called: the re-drive happened (key D2b-9 change).
+        check(invoker_calls == 1, "S24.invoker_called_once");
+        // The terminal was recorded on the EXISTING Pending row.
         if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectSucceeded>(*resolved),
+                  "S24.authority_succeeded");
+            if (resolved.has_value() &&
+                std::holds_alternative<dea::EffectSucceeded>(*resolved)) {
+                auto bytes =
+                    dedup.read_result(std::get<dea::EffectSucceeded>(*resolved).handle);
+                check(bytes.has_value() && *bytes == bytes_of(kStringResultJson),
+                      "S24.recorded_bytes_roundtrip");
+            }
+            // The row is terminal: no Pending rows remain.
             auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
-            check(rows.has_value() && rows->size() == 1, "S24.one_pending_row");
+            check(rows.has_value() && rows->empty(), "S24.no_pending_rows");
+        }
+        // The live reply carried raw AHFL_CAP_OK.
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_OK,
+              "S24.replies_raw_ok");
+        // The generation is Consumed (tombstoned).
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedConsumed>(*after),
+              "S24.tombstone");
+        nuke(work);
+    }
+
+    // ============ S24b: RecoverPending + LivePending suspends (D2b-9) =======
+    // The controller's preview issues RecoverPending; the re-driven invoker
+    // returns PENDING. The Pending row stays sealed and the driver persists a
+    // new Suspended coordinate (D2b-8): the outcome is ResumeSuspended.
+    {
+        const fs::path work = base / "s24b-recover-pending-pending";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S24b.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S24b.store");
+
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S24b.intent_minted");
+        if (intent.has_value()) {
+            auto begun = dedup.begin_effect(*intent);
+            check(begun.has_value() && std::holds_alternative<dea::EffectNew>(*begun),
+                  "S24b.pre_sealed_pending");
+        }
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{host::LivePending{}}));
+
+        auto done = host::run_resume(request);
+        check(done.has_value(), "S24b.resume_suspended");
+        if (done.has_value()) {
+            check(std::holds_alternative<host::ResumeSuspended>(*done),
+                  "S24b.outcome_suspended");
+            if (std::holds_alternative<host::ResumeSuspended>(*done)) {
+                const auto &suspended = std::get<host::ResumeSuspended>(*done);
+                check(suspended.suspended_generation == 3, "S24b.suspended_gen_3");
+            }
+        }
+        check(invoker_calls == 1, "S24b.invoker_called_once");
+        // The Pending row stays sealed (no terminal recorded).
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectPending>(*resolved),
+                  "S24b.authority_pending");
+            auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
+            check(rows.has_value() && rows->size() == 1, "S24b.one_pending_row");
+        }
+        // The import replies: memo OK for cap 41, PENDING for cap 42.
+        check(engine.import_reply_statuses().size() == 2 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK &&
+                  engine.import_reply_statuses()[1] == AHFL_CAP_PENDING,
+              "S24b.replies_ok_then_pending");
+        nuke(work);
+    }
+
+    // ============ S24c: RecoverPending + LiveError records FAILED (D2b-9) ===
+    // The controller's preview issues RecoverPending; the re-driven invoker
+    // returns ERROR. The failure bytes are recorded on the EXISTING Pending
+    // row (a future resume sees DedupReplayFailure) and the resume fails
+    // closed with LiveCapabilityError.
+    {
+        const fs::path work = base / "s24c-recover-pending-error";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S24c.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S24c.store");
+
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S24c.intent_minted");
+        if (intent.has_value()) {
+            auto begun = dedup.begin_effect(*intent);
+            check(begun.has_value() && std::holds_alternative<dea::EffectNew>(*begun),
+                  "S24c.pre_sealed_pending");
+        }
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        int invoker_calls = 0;
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     counting_invoker(invoker_calls,
+                                      host::LiveCapabilityOutcome{
+                                          host::LiveError{std::string{"boom"}}}));
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S24c.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(), host::ResumeHostReason::LiveCapabilityError),
+                  "S24c.error");
+            check(host::host_code(done.error()) == "resume.module.error", "S24c.host_code");
+        }
+        check(invoker_calls == 1, "S24c.invoker_called_once");
+        // The failure bytes are recorded on the EXISTING row: the authority
+        // has a FAILED terminal.
+        if (intent.has_value()) {
+            auto resolved = dedup.resolve(intent->token());
+            check(resolved.has_value() &&
+                      std::holds_alternative<dea::EffectFailed>(*resolved),
+                  "S24c.authority_failed");
+            if (resolved.has_value() &&
+                std::holds_alternative<dea::EffectFailed>(*resolved)) {
+                auto bytes =
+                    dedup.read_result(std::get<dea::EffectFailed>(*resolved).handle);
+                check(bytes.has_value() && *bytes == bytes_of("boom"),
+                      "S24c.failure_bytes");
+            }
         }
         // The generation stays Available / unconsumed.
         auto after = store->load(kWf, kCkpt, id_span, key);
         check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
-              "S24.still_available");
+              "S24c.still_available");
+        nuke(work);
+    }
+
+    // ============ S24d: RecoverPending + no invoker stays blocked (D2b-9) ===
+    // The controller's preview issues RecoverPending but the request carries
+    // NO live_invoker: the re-drive cannot happen and the frontier stays
+    // fail-closed ReadyForLiveBlocked. The Pending row stays sealed.
+    {
+        const fs::path work = base / "s24d-recover-pending-no-invoker";
+        ModuleSpec spec = live_module_spec();
+        auto mod_res = admit_module(spec);
+        check(mod_res.ok(), "S24d.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(spec);
+
+        auto backend = dea::make_in_memory_durable_effect_backend();
+        dea::DurableEffectAuthority dedup{backend};
+        auto store = seed_live_store(work, mod, spec);
+        check(store.has_value(), "S24d.store");
+
+        auto intent = live_intent(mod);
+        check(intent.has_value(), "S24d.intent_minted");
+        if (intent.has_value()) {
+            auto begun = dedup.begin_effect(*intent);
+            check(begun.has_value() && std::holds_alternative<dea::EffectNew>(*begun),
+                  "S24d.pre_sealed_pending");
+        }
+
+        FakeScript script;
+        script.nodes = spec.nodes;
+        script.caps = cap_steps(2);
+        FakeResumeEngine engine(std::move(script));
+
+        host::ResumeRequest request;
+        fill_request(request, mod, module_bytes, engine, *store, &dedup,
+                     host::LiveCapabilityInvoker{});
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S24d.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::ReadyForLiveBlocked),
+                  "S24d.ready_for_live_blocked");
+            check(host::host_code(done.error()) == "resume.transition.invalid",
+                  "S24d.host_code");
+        }
+        // The Pending row stays sealed (no invoker, no re-drive).
+        if (intent.has_value()) {
+            auto rows = dedup.recover(dei::CheckpointNamespace{kWf, kCkpt});
+            check(rows.has_value() && rows->size() == 1, "S24d.one_pending_row");
+        }
+        // The generation stays Available / unconsumed.
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S24d.still_available");
         nuke(work);
     }
 

@@ -37,8 +37,10 @@
 //                             it; NO live call, NO second effect.
 //        DedupReplayFailure -> D2b-6: re-surface the recorded FAILED terminal;
 //                             NO live call, NO second effect.
-//        RecoverPending -> D2b-7: abort with RecoverPendingRequired; the host
-//                             must reconcile the Pending row.
+//        RecoverPending -> D2b-9: re-drive the live capability through the
+//                             SAME invoker seam and record the terminal on the
+//                             EXISTING Pending row (no redundant begin_effect);
+//                             an empty invoker keeps the fail-closed baseline.
 //   6. rc::finish_run(Run2Exit) -> FinishRunPlan:
 //        MarkConsumedPlan -> store.mark_consumed -> rc::ack_mark_consumed
 //                             (ResumeCompleted, output frame forwarded);
@@ -69,13 +71,13 @@
 // live capability past the frontier under the dedup authority's seal. The
 // DedupReplay / DedupReplayFailure arms landed in D2b-6 (read the recorded
 // terminal and pack / re-surface it; no live call) and RecoverPending in
-// D2b-7 (abort with RecoverPendingRequired; the host reconciles the Pending
-// row). An empty live_invoker keeps the ReadyForLiveBlocked baseline. D2b-8
-// (PENDING suspend/persist) landed: a live PENDING no longer aborts -- the
-// driver publishes the new pending coordinate (finish_run ->
+// D2b-9 (re-drive the live capability through the same invoker seam and
+// record the terminal on the EXISTING Pending row; no redundant
+// begin_effect). An empty live_invoker keeps the ReadyForLiveBlocked
+// baseline. D2b-8 (PENDING suspend/persist) landed: a live PENDING no longer
+// aborts -- the driver publishes the new pending coordinate (finish_run ->
 // FormNewPendingCoordinatePlan -> publish_available -> ack_publish_pending)
-// and returns ResumeSuspended. B2 / KR6.5 stay false until D2b-9
-// (RecoverPending idempotency re-drive) lands.
+// and returns ResumeSuspended.
 
 #include <cstdint>
 #include <expected>
@@ -216,7 +218,8 @@ struct ResumeRequest {
     // records the OK/ERROR terminal; a PENDING outcome leaves the row sealed.
     // The DedupReplay / DedupReplayFailure arms (D2b-6) read the recorded
     // terminal and pack / re-surface it without invoking the invoker; the
-    // RecoverPending arm (D2b-7) aborts with RecoverPendingRequired.
+    // RecoverPending arm (D2b-9) re-drives the capability through this same
+    // invoker and records the terminal on the EXISTING Pending row.
     LiveCapabilityInvoker live_invoker{};
     // RFC 0026 dual-track elimination: the bridge lane packs P4-D frames at
     // fixed addresses (the entry node's I block and the bridge result blocks).
@@ -285,7 +288,6 @@ enum class ResumeHostReason : std::uint8_t {
     LiveCapabilityFault,           // the invoker returned a LiveCapabilityFault
     LiveCapabilityError,           // the capability returned ERROR; failure recorded
     LiveCapabilityReplayedFailure, // (D2b-6) begin_effect raced to a prior FAILED terminal
-    RecoverPendingRequired,        // (D2b-7) a Pending row needs host reconciliation
 };
 struct HostFailure {
     ResumeHostReason reason{ResumeHostReason::EngineFailure};

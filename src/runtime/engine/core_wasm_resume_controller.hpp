@@ -291,12 +291,16 @@ struct DedupReplayFailure {
     durable_effect_authority::ResultHandle handle;
 };
 
-// D2b-4 decision: the authority holds a PENDING row for this exact token (a
-// prior attempt crashed/reopened before a terminal was recorded). The host MUST
-// reconcile that row (recover) rather than invoke a fresh live effect; no
-// result bytes exist yet, so this arm carries only the token. Decision-only;
-// moves to AwaitingLiveResult.
+// D2b-9 decision: the authority holds a PENDING row for this exact token (a
+// prior attempt crashed/reopened before a terminal was recorded). The arm
+// carries the live-call target (call site + arg hash + typed params) so the
+// driver can IDEMPOTENTLY RE-DRIVE the live capability over the SAME
+// LiveCapabilityInvoker seam and record the terminal on the EXISTING Pending
+// row (no redundant begin_effect). Decision-only; moves to AwaitingLiveResult.
+// `token` is the D0 token minted from the controller's
+// wf/ckpt/authority/call-site/canonical-param coordinate.
 struct RecoverPending {
+    ReadyForLive live;
     core_wasm_idempotency_token::IdempotencyToken token;
 };
 
