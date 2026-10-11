@@ -14,6 +14,12 @@ copy of the committed golden source, per the B4 ruling) and locks, precisely:
   * byte identity between the ahflc package entry and the emit-only Core producer;
   * cross-run determinism of the CLI emission;
   * the import section is present (the ahfl_cap ABI);
+  * the run2 tuple functype (i32,i32)->(i32,i32,i32) sits at type index 4 on
+    EVERY workflow artifact (2026-10-11 run2-retention decision): it is the
+    workflow scheduler entry + node runner functype, a defined-function
+    functype only -- no import may reference type 4, and every capability
+    import must use the bridge functype (i32)->(i32,i32) at type index 6;
+  * no import names the deleted ahfl_xcode transcode family;
   * the exec-manifest (AHFLXM) custom section carries the exact hardcoded golden
     payload and appears EXACTLY ONCE IMMEDIATELY BEFORE the wire-schema (AHFLWS)
     section, which is the module's FINAL section at EOF.
@@ -122,6 +128,51 @@ def parse_sections(data: bytes):
     return sections
 
 
+def section_payload(sections, section_id: int) -> bytes:
+    for sid, _, payload in sections:
+        if sid == section_id:
+            return payload
+    fail(f"section id {section_id} is absent")
+
+
+def function_types(payload: bytes) -> "list[tuple[list[int], list[int]]]":
+    """Parse a wasm type section payload into [(params, results), ...]."""
+    count, offset = read_u32(payload, 0)
+    result: "list[tuple[list[int], list[int]]]" = []
+    for _ in range(count):
+        if offset >= len(payload) or payload[offset] != 0x60:
+            fail("invalid function type")
+        offset += 1
+        param_count, offset = read_u32(payload, offset)
+        params = list(payload[offset : offset + param_count])
+        offset += param_count
+        result_count, offset = read_u32(payload, offset)
+        results = list(payload[offset : offset + result_count])
+        offset += result_count
+        result.append((params, results))
+    if offset != len(payload):
+        fail("trailing bytes in type section")
+    return result
+
+
+def imports(payload: bytes) -> "list[tuple[str, str, int, int]]":
+    """Parse a wasm import section payload into [(module, field, kind, type_index), ...]."""
+    count, offset = read_u32(payload, 0)
+    result: "list[tuple[str, str, int, int]]" = []
+    for _ in range(count):
+        module, offset = read_name(payload, offset)
+        field, offset = read_name(payload, offset)
+        if offset >= len(payload):
+            fail("truncated import")
+        kind = payload[offset]
+        offset += 1
+        type_index, offset = read_u32(payload, offset)
+        result.append((module, field, kind, type_index))
+    if offset != len(payload):
+        fail("trailing bytes in import section")
+    return result
+
+
 def emit_via_cli(ahflc: Path, manifest: Path, golden: Path) -> bytes:
     with tempfile.TemporaryDirectory(prefix="ahfl-b2c-") as td:
         work = Path(td)
@@ -228,6 +279,46 @@ def main(argv: "list[str]") -> int:
     # Import section (id 2) must be present (the ahfl_cap ABI).
     if not any(sid == 2 for sid, _ in order):
         fail("capability workflow has no import section")
+
+    # RFC 0026 workflow run2 retention decision (2026-10-11): the workflow
+    # scheduler entry + node runners KEEP the run2 tuple functype
+    # (i32,i32)->(i32,i32,i32) at type index 4. It is a defined-function
+    # functype ONLY -- the tuple type must never appear on an import, and the
+    # deleted ahfl_xcode transcode import family must never reappear. The gate
+    # asserts this on every workflow artifact it emits (identity, pure-P6,
+    # capability): type index 4 is emitted unconditionally on the workflow
+    # path, so a regression that moves or removes it breaks all three.
+    i32 = 0x7F
+    run2_tuple = ([i32, i32], [i32, i32, i32])
+    for label, artifact in (("E3 identity", e3_bytes),
+                            ("pure-P6", p6_bytes),
+                            ("capability", cli_first)):
+        artifact_types = function_types(section_payload(parse_sections(artifact), 1))
+        if len(artifact_types) <= 4 or artifact_types[4] != run2_tuple:
+            fail(f"{label} workflow: type index 4 is not the run2 tuple "
+                 f"(i32,i32)->(i32,i32,i32): {artifact_types}")
+
+    # The capability workflow's imports: every import is ahfl_cap.cap_<id>,
+    # a function import (kind 0), on the bridge functype (i32)->(i32,i32) at
+    # type index 6 -- never the run2 tuple at index 4, never ahfl_xcode.
+    capability_types = function_types(section_payload(sections, 1))
+    if (len(capability_types) <= 6
+            or capability_types[6] != ([i32], [i32, i32])):
+        fail("capability workflow: type index 6 is not the bridge functype "
+             f"(i32)->(i32,i32): {capability_types}")
+    for module, field, kind, type_index in imports(section_payload(sections, 2)):
+        if module == "ahfl_xcode" or module.startswith("ahfl_xcode."):
+            fail(f"deleted ahfl_xcode transcode import survives: {module}.{field}")
+        if module != "ahfl_cap":
+            fail(f"unexpected import module {module!r}; only ahfl_cap is defined")
+        if kind != 0:
+            fail(f"import {module}.{field} is not a function import (kind {kind})")
+        if type_index == 4:
+            fail(f"import {module}.{field} references the run2 tuple type 4; "
+                 "the tuple is a defined-function functype only")
+        if type_index != 6:
+            fail(f"import {module}.{field} references type {type_index}; "
+                 "capability imports must use the bridge functype at index 6")
 
     # The three custom sections must be exactly core-layout, AHFLXM, then
     # AHFLWS, and AHFLWS must be the module's FINAL section at EOF.

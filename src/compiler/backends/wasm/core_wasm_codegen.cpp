@@ -330,7 +330,7 @@ constexpr std::uint32_t kTypeNoArgsI32 = 0;
 constexpr std::uint32_t kTypeI32ToI32 = 1;
 constexpr std::uint32_t kTypeTwoI32ToVoid = 2;
 constexpr std::uint32_t kTypeTwoI32ToI32 = 3;
-constexpr std::uint32_t kTypeCapabilityTuple = 4;
+constexpr std::uint32_t kTypeWorkflowRun2 = 4; // (i32,i32)->(i32,i32,i32): workflow scheduler entry + node runners
 // RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): the additive capability
 // BRIDGE functype `(block_ptr:i32) -> (status:i32, result_root_ptr:i32)`. It is
 // appended at the very end of the agent module's type table (after every fixed
@@ -18442,10 +18442,12 @@ encode_workflow_module(const CoreProgram &program,
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
-    // V2-D emission half 2: a capability reached by an IN-HANDLER bridge uses
-    // the additive (i32)->(i32,i32) control-block functype (type index 6); a
-    // capability reached only by an opaque terminal keeps the tuple type 4.
-    // One capability has exactly one mode per module.
+    // V2-D emission half 2 (RFC 0026 dual-track elimination): every capability
+    // import uses the bridge control-block functype (i32)->(i32,i32) at type
+    // index 6 -- the opaque-terminal tuple mode was deleted with the WireJson
+    // lane. Type 6 is appended only when the module actually carries a bridge
+    // site; the run2 tuple at type 4 is a defined-function functype only and
+    // must never appear on an import (locked by wasm_workflow_cap_binary_gate.py).
     const auto workflow_import_is_bridge = [&](CoreCapabilityId id) {
         return std::any_of(plan.workflow_bridge_sites.begin(),
                            plan.workflow_bridge_sites.end(),
@@ -18520,10 +18522,10 @@ encode_workflow_module(const CoreProgram &program,
     functions_section.u32(kTypeNoArgsI32);
     functions_section.u32(kTypeNoArgsI32);
     for (std::uint32_t i = 0; i < functions.runner_count; ++i) {
-        functions_section.u32(kTypeCapabilityTuple);
+        functions_section.u32(kTypeWorkflowRun2);
     }
     functions_section.u32(kTypeTwoI32ToI32);
-    functions_section.u32(kTypeCapabilityTuple);
+    functions_section.u32(kTypeWorkflowRun2);
     // WH-5c.2: relocated handlers are per P6 NODE (p6-dense).
     for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
         for (const CompiledHandler &h : plan.relocated_handlers[p6]) {
