@@ -265,14 +265,14 @@ capstone)已全部落库并测试。
 > **阶段二(Objective 5)12/12 KR 已 ✅ —— 编译器基座完备性收官。**
 > **阶段三(Objective 6–7)15 ✅ / 19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
 > 阶段一最后一个曾被标为环境阻塞的 KR4.5(真实 LLM run 证据)已通过驱动真实本地 llama.cpp
-> 推理引擎解除。当前总盘:**54 个 KR,51 ✅ / 0 🔵 / 3 ⬜ / 0 🟡。** 阶段一+二(35 KR)已收官:KR5.5
+> 推理引擎解除。当前总盘:**54 个 KR,52 ✅ / 0 🔵 / 2 ⬜ / 0 🟡。** 阶段一+二(35 KR)已收官:KR5.5
 > (RFC 0013 → `implemented`)达成,frontmatter `implementing → implemented`(commit
 > `9ac22713`),以 §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经
 > clean-rebuild 全套件 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch
 > 崩溃(`c52f9730`)与 impl-level where-clause 静默漏检(`0a6d7898`)——均为 Objective-5
 > mandate 内的健壮性修复;P5 容器 trait impl 层(`8c4ec5b2`)、P4 `where length<=N` sugar
 > (`f93f6458`)、P6 `#![no_prelude]`(`139bce8f`)、first-class `MethodCallExpr`/`TraitDecl`/
-> `ImplDecl` IR 节点全部落地。**阶段三(Objective 6–7,19 KR:15 ✅ / 3 ⬜ / 1 🟡)是新的主要开放面:承接
+> `ImplDecl` IR 节点全部落地。**阶段三(Objective 6–7,19 KR:17 ✅ / 2 ⬜ / 0 🟡)是新的主要开放面:承接
 > 2026-08-28 架构重构想,把 RFC 0020 架构北极星 + RFC 0026(`stabilized`)/ 0027(`stabilized`)推到完整落地——
 > 三层 IR 塔、WASM 唯一执行引擎、evaluator 退役、query 前端、8-location sweep 消灭,以及
 > backlog §3 的产品化缺口收口。**
