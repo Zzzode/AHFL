@@ -7,6 +7,7 @@
 # CMakeLists.txt is used as-is via add_subdirectory(upstream).
 
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(upstream)
 
