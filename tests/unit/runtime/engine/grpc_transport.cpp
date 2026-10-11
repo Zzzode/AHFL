@@ -474,7 +474,23 @@ class LoopbackHttp2Server {
         send_frame(conn, 0x1, 0x5, request_stream, trailer_hpack.data(),
                    trailer_hpack.size());
 
+        // Graceful teardown. Half-close the write side, then drain any frames
+        // the client sends after the response (SETTINGS ACK, WINDOW_UPDATE).
+        // Calling close() with unread data in the receive buffer makes the
+        // kernel emit a TCP RST, which races the client's post-response sends
+        // and surfaces as CURLE_SEND_ERROR ("Failed sending data to the peer")
+        // under CPU contention. Draining first keeps the close graceful. The
+        // client keeps the HTTP/2 connection open (no FIN), so bound the drain
+        // with a short receive timeout.
         ::shutdown(conn, SHUT_WR);
+        timeval rcvtimeo{};
+        rcvtimeo.tv_sec = 0;
+        rcvtimeo.tv_usec = 100 * 1000; // 100 ms
+        ::setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
+        char drain_buf[512];
+        while (::read(conn, drain_buf, sizeof(drain_buf)) > 0) {
+            // discard post-response frames
+        }
         ::close(conn);
     }
 
@@ -514,7 +530,11 @@ void test_execute_captures_metadata_and_trailers() {
     request.endpoint.method_name = "Call";
     request.endpoint.use_tls = false;
     request.serialized_body = "{}";
-    request.timeout = std::chrono::seconds{5};
+    // Generous deadline: under heavy ctest -j load the loopback server thread
+    // can be starved for seconds before it is scheduled. This test verifies
+    // metadata/trailer capture, not timeout behavior, so use the same 30s
+    // default as GrpcJsonTranscodingRequest instead of an aggressive 5s.
+    request.timeout = std::chrono::seconds{30};
 
     const auto response = execute_grpc_json_transcoding(request);
 

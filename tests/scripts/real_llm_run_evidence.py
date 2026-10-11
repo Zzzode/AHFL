@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -39,8 +41,11 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BACKEND_PORT = 8091
-PROXY_PORT = 8090
+# Both servers bind OS-assigned ephemeral ports so parallel ctest workers (and
+# stale llama-server processes from earlier runs) cannot collide on fixed
+# ports. The backend port is read back from llama-server's startup log; the
+# proxy port from the bound socket.
+LISTENING_PORT_RE = re.compile(rb"127\.0\.0\.1:(\d+)")
 
 # Bounded GBNF grammar: forces {"value":"<1..8 lowercase>"} so the random-weight
 # model's raw bytes always form complete, parseable ASCII JSON that AHFL's
@@ -116,6 +121,73 @@ def wait_health(port: int, timeout: float = 40.0) -> None:
             last = str(exc)
         time.sleep(0.5)
     raise RuntimeError(f"llama-server on :{port} never became healthy: {last}")
+
+
+def read_backend_port(
+    log_path: Path, proc: "subprocess.Popen[bytes]", timeout: float = 20.0
+) -> int | None:
+    """Read the OS-assigned port from llama-server's startup log.
+
+    Returns None if the process exits or no listening line appears in time
+    (e.g. an older llama-server that does not support --port 0).
+    """
+    deadline = time.monotonic() + timeout
+    with open(log_path, "rb") as log:
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                return None
+            line = log.readline()
+            if not line:
+                time.sleep(0.1)
+                continue
+            if b"listening" in line:
+                match = LISTENING_PORT_RE.search(line)
+                if match and int(match.group(1)) > 0:
+                    return int(match.group(1))
+    return None
+
+
+def reserve_free_port() -> int:
+    """Reserve a free port via a temporary socket (fallback path)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def start_backend(
+    llama_server: Path, model: Path, work: Path
+) -> "tuple[subprocess.Popen[bytes], int]":
+    """Start llama-server on an OS-assigned port.
+
+    Primary path: --port 0 and parse the real port from the startup log.
+    Fallback (llama-server without --port 0 support): reserve a free port
+    via a temporary socket and pass it explicitly.
+    """
+    log_path = work / "llama-backend.log"
+
+    def launch(port: int) -> "subprocess.Popen[bytes]":
+        return subprocess.Popen(
+            [
+                str(llama_server), "-m", str(model), "--host", "127.0.0.1",
+                "--port", str(port), "-c", "2048", "--parallel", "1",
+                "--no-warmup",
+            ],
+            stdout=open(log_path, "wb"),
+            stderr=subprocess.STDOUT,
+        )
+
+    backend = launch(0)
+    backend_port = read_backend_port(log_path, backend)
+    if backend_port is None:
+        backend.terminate()
+        try:
+            backend.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            backend.kill()
+        backend_port = reserve_free_port()
+        log(f"llama-server did not report an ephemeral port; reserved :{backend_port}")
+        backend = launch(backend_port)
+    return backend, backend_port
 
 
 def make_proxy(backend_port: int):
@@ -214,30 +286,23 @@ def main() -> int:
     source = work / "realllm.ahfl"
     source.write_text(SOURCE, encoding="utf-8")
 
-    proxy_cls = make_proxy(BACKEND_PORT)
-    backend = subprocess.Popen(
-        [
-            str(llama_server), "-m", str(model), "--host", "127.0.0.1",
-            "--port", str(BACKEND_PORT), "-c", "2048", "--parallel", "1",
-            "--no-warmup",
-        ],
-        stdout=open(work / "llama-backend.log", "wb"),
-        stderr=subprocess.STDOUT,
-    )
-    proxy = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), proxy_cls)
+    backend, backend_port = start_backend(llama_server, model, work)
+    proxy_cls = make_proxy(backend_port)
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), proxy_cls)
+    proxy_port = proxy.server_address[1]
     proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
     result: subprocess.CompletedProcess[str] | None = None
     try:
-        wait_health(BACKEND_PORT)
-        log(f"llama.cpp backend healthy on :{BACKEND_PORT}")
+        wait_health(backend_port)
+        log(f"llama.cpp backend healthy on :{backend_port}")
         proxy_thread.start()
-        log(f"translation proxy on :{PROXY_PORT}")
+        log(f"translation proxy on :{proxy_port}")
 
         config = work / "real-llm.json"
         config.write_text(
             json.dumps(
                 {
-                    "endpoint": f"http://127.0.0.1:{PROXY_PORT}/v1",
+                    "endpoint": f"http://127.0.0.1:{proxy_port}/v1",
                     "model": "tiny-llama-real",
                     "api_key_secret": "AHFL_REAL_LLM_KEY",
                     "max_retries": 0,

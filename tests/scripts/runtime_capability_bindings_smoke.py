@@ -223,13 +223,24 @@ class LoopbackHttp2Server:
         if len(preface) < 24:
             return
 
+        # HTTP/2 keep-alive: handle multiple requests on the same connection.
+        # The gRPC retry logic retries on the same HTTP/2 connection (stream
+        # multiplexing), so closing after one request breaks the retry test.
+        # A bounded keep-alive timeout prevents hanging when the client is
+        # done; EOF (recv returns 0) exits immediately on client disconnect.
+        conn.settimeout(5.0)
+        while self._handle_one_request(conn):
+            pass
+
+    def _handle_one_request(self, conn) -> bool:
+        """Handle one HTTP/2 request. Returns False to close the connection."""
         # Read frames until END_STREAM on the request.
         request_complete = False
         request_stream = 0
         while not request_complete:
             frame_header = self._read_full(conn, 9)
             if len(frame_header) < 9:
-                return
+                return False
             length = (frame_header[0] << 16) | (frame_header[1] << 8) | frame_header[2]
             frame_type = frame_header[3]
             flags = frame_header[4]
@@ -240,6 +251,8 @@ class LoopbackHttp2Server:
             if frame_type == 0x4 and not (flags & 0x1):  # SETTINGS (not ACK)
                 self._send_frame(conn, 0x4, 0x0, 0, b"")  # SETTINGS (empty)
                 self._send_frame(conn, 0x4, 0x1, 0, b"")  # SETTINGS ACK
+            elif frame_type == 0x7:  # GOAWAY: client is closing the connection
+                return False
             elif frame_type == 0x1:  # HEADERS
                 request_stream = stream_id
                 if flags & 0x1:  # END_STREAM
@@ -302,10 +315,7 @@ class LoopbackHttp2Server:
         trailer_hpack = _hpack_encode(trailers)
         self._send_frame(conn, 0x1, 0x5, request_stream, trailer_hpack)
 
-        try:
-            conn.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
+        return True  # keep-alive
 
     def stop(self):
         try:
@@ -440,7 +450,7 @@ def run_ahflc(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=20,
+        timeout=120,
     )
 
 
@@ -669,7 +679,7 @@ def run_rich_input(ahflc: str, pkg_dir: Path, run_dir: Path, input_json: str):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=20,
+        timeout=120,
     )
     return result
 
@@ -796,7 +806,7 @@ def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=20,
+        timeout=120,
     )
     if missing.returncode == 0:
         raise AssertionError("missing-workflow run unexpectedly succeeded")
@@ -836,7 +846,7 @@ def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=20,
+        timeout=120,
     )
     if malformed.returncode == 0:
         raise AssertionError("malformed --input run unexpectedly succeeded")
