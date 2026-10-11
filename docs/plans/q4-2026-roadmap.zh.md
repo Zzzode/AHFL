@@ -30,7 +30,7 @@
 「架构北极星」,RFC 0026 IR 塔+执行模型、RFC 0027 query 前端+IR 单一真相源已 draft),新增
 **Objective 6**(编译器架构升级:三层 IR 塔取代单层、WASM 唯一执行引擎、tree-walking
 evaluator 退役、前端 query 化、消灭 8-location sweep)与 **Objective 7**(backlog §3 已落库
-能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 48 ✅ / 1 🔵 / 4 ⬜ / 1 🟡。**
+能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 49 ✅ / 1 🔵 / 3 ⬜ / 1 🟡。**
 
 ---
 
@@ -239,7 +239,7 @@ capstone)已全部落库并测试。
 | KR7.3 | 质量门禁趋势化(§3.7):compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值;真实 mutation score(非仅 config report) | ✅ | **非从零**:真实 mutation runner/score 已完成(backlog 记录 9 个 mutant + 真实 score)。**SMV-size 趋势基线已扩到全 5 个代表样本**(2 个 formal-semantics + 3 个产品化:`pass_productization`/`workflow_simplification`/`refund_audit`),报告 schema 升到 `ahfl.smv-size-trend.v2` 并为每个 fixture 钉住 `-O` pass order(`--update` 只重写已声明字段)。**compile-time/memory-proxy 趋势报告已落库**:两个 bench 增加 opt-in 机器可读报告(`--report`/`AHFL_BENCH_REPORT`,schema `ahfl.bench-report.v1`,共享 `bench_harness.hpp` 单一 row 定义),`benchmark_trend_gate.py` 对 committed baseline(`config/benchmark-baseline.json`,schema `ahfl.benchmark-baseline.v1`)比对:结构指标(`source_bytes`/`typed_exprs`/`typed_statements`/`ir_decls`/`ir_exprs`)精确钉住,`proxy_bytes` 相对容差 10% 阻塞,`duration_us` 仅报告(墙钟仍由二进制静态 ceiling 把关);产出 `ahfl.benchmark-trend.v1`,并断言两 bench 对同一 budget 的结构指标一致。`ahflc.quality.benchmark_trend` 带 benchmarks+quality-gates 标签。**mutation 真实 score floor 已闭合**:fallback runner 重构为 target-agnostic —— 每个代表目标在 `fallback/<target>/<target>.target.json` 自带 mutant 集(`match`/`replace` 字面量)、逐 mutant `expect`(killed/survived)与 `score_floor`;`fallback/targets.json` 为已签署的目标集(目标 + mutant 数)。第二个代表目标 `structured_writer/`(canonical JSON-ish writer:field separator/字符串转义/对象标点)与 `arithmetic/` 并列,各含 1 个刻意 expected survivor(score 0.8889 / 0.8571,非 rigged 100%)。`ahfl.mutation.fallback_score` 由结构性校验升级为 release-blocking gate(schema `ahfl.mutation.fallback.v2`):目标集与 manifest 逐一对应、每个 mutant 的 outcome 钉到 spec 的 `expect`、每个目标 score 不得低于 committed `score_floor`;仅带 `environment: ` 前缀的 `tool_unavailable`(缺编译器/python3)被接受,spec 与源码漂移等 fixture 断裂一律 fail。(顺带修复:awk `-v` 会对反斜杠做转义处理,含 `\` 的 pattern 被静默变成 no-op —— 改为经环境变量传入;string(JSON) 把 JSON `null` 读成空串,原 `STREQUAL "null"` 判定永不成立 —— 改为空串判定。)**KR7.3 收官**(2026-10-05):第三个代表目标 `state_machine/`(agent-style 状态机:transition table index swap、terminal equality、validity boundary、guard connective、guard negation、count boundary、constant replacement;8 mutants,7 killed + 1 deliberate survivor,score 0.875/floor 0.85)。三个目标覆盖三个独立 bug family(arithmetic operators、JSON writer punctuation、state machine transitions),总计 24 mutants/21 killed/3 survived/score 0.875。对抗评审无 P0/P1,仅 4 处 stale "two/both" 引用已修复。`ahfl.mutation.fallback_score` 全绿。**KR7.3 全部关闭**。 |
 | KR7.4 | Pass / target backend 产品化(§3.6):扩大 `-O` 收益指标 + target 验收;K8s/Terraform/OpenAPI 视图后端从骨架到产品级语义 | ⬜ | **非从零**:已有 backend/schema baseline。**剩余**:产品级语义 + 验收。passes + infra 后端 |
 | KR7.5 | VS Code 真实 Marketplace 发布闭环(§3.3/§四):真实发布演练 + workspace folder extension 序列 + 更深真实编辑序列回归 | ⬜ | **非从零**:extension 已可用。**剩余**:真实 Marketplace 发布 + workspace-folder extension 序列 + 更深真实编辑回归。tools/vscode + 发布脚本 |
-| KR7.6 | Distributed scheduler 生产语义(§3.1/四):确定性 + restore 语义债务收口,向真实多 region control plane 推进(或明确记为 P3 冻结依赖) | ⬜ | **种子代码已删除**(2026-10-10,Principle 1:`distributed.cpp`/`parallel_scheduler.cpp` 零非测试生产调用者)。多 region 调度作为概念仍冻结;未来复活从 RFC + RFC 0022 resume machinery 开始,不从旧代码开始。 |
+| KR7.6 | Distributed scheduler 生产语义(§3.1/四):确定性 + restore 语义债务收口,向真实多 region control plane 推进(或明确记为 P3 冻结依赖) | ✅ | **P3 冻结依赖路径已收口**(2026-10-10,Principle 1):种子代码 `distributed.cpp`/`parallel_scheduler.cpp` 零非测试生产调用者,已原子删除(+其测试/flag/adapter)。restore 语义债务 = production-dead 代码本身,删除即收口。多 region 调度作为概念明确冻结为 P3 依赖;未来复活从 RFC + RFC 0022 resume machinery 开始,不从旧代码开始。确定性判据随代码删除而 moot(无可不确定的对象)。KR 自身提供的"或明确记为 P3 冻结依赖"选项已行使 |
 
 ---
 
@@ -263,16 +263,16 @@ capstone)已全部落库并测试。
 
 > **阶段一(Objective 1–4)23/23 KR 已 ✅ —— 可嵌入性 / 验证 / 产品化全部收官。**
 > **阶段二(Objective 5)12/12 KR 已 ✅ —— 编译器基座完备性收官。**
-> **阶段三(Objective 6–7)13 ✅ + 1 🔵 / 19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
+> **阶段三(Objective 6–7)14 ✅ + 1 🔵 / 19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
 > 阶段一最后一个曾被标为环境阻塞的 KR4.5(真实 LLM run 证据)已通过驱动真实本地 llama.cpp
-> 推理引擎解除。当前总盘:**54 个 KR,48 ✅ / 1 🔵 / 4 ⬜ / 1 🟡。** 阶段一+二(35 KR)已收官:KR5.5
+> 推理引擎解除。当前总盘:**54 个 KR,49 ✅ / 1 🔵 / 3 ⬜ / 1 🟡。** 阶段一+二(35 KR)已收官:KR5.5
 > (RFC 0013 → `implemented`)达成,frontmatter `implementing → implemented`(commit
 > `9ac22713`),以 §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经
 > clean-rebuild 全套件 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch
 > 崩溃(`c52f9730`)与 impl-level where-clause 静默漏检(`0a6d7898`)——均为 Objective-5
 > mandate 内的健壮性修复;P5 容器 trait impl 层(`8c4ec5b2`)、P4 `where length<=N` sugar
 > (`f93f6458`)、P6 `#![no_prelude]`(`139bce8f`)、first-class `MethodCallExpr`/`TraitDecl`/
-> `ImplDecl` IR 节点全部落地。**阶段三(Objective 6–7,19 KR:13 ✅ / 1 🔵 / 4 ⬜ / 1 🟡)是新的主要开放面:承接
+> `ImplDecl` IR 节点全部落地。**阶段三(Objective 6–7,19 KR:14 ✅ / 1 🔵 / 3 ⬜ / 1 🟡)是新的主要开放面:承接
 > 2026-08-28 架构重构想,把 RFC 0020 架构北极星 + RFC 0026(`stabilized`)/ 0027(`stabilized`)推到完整落地——
 > 三层 IR 塔、WASM 唯一执行引擎、evaluator 退役、query 前端、8-location sweep 消灭,以及
 > backlog §3 的产品化缺口收口。**
