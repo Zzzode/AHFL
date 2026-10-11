@@ -8988,7 +8988,7 @@ void test_signature_help_capability() {
 void test_signature_help_nested_struct_literal_active_param() {
     // Regression: text-based comma counting counted commas inside struct
     // literal braces as argument separators, producing an inflated
-    // activeParameter. The Typed-HIR-based count understands nested brackets.
+    // activeParameter. The Typed HIR-based count understands nested brackets.
     //
     // Source: get_data(OrderInfo { order_id: "x", user_id: "y" }, |)
     // The cursor is after the comma following the struct literal.
@@ -9495,7 +9495,7 @@ void test_completion_survives_typecheck_failure() {
           "completion.broken_source_offers_struct_symbol");
 }
 
-/// Typed-HIR member completion: local struct with inherent impl methods.
+/// Typed HIR member completion: local struct with inherent impl methods.
 /// Verifies that member completion at `c.` offers both the struct's fields
 /// and the inherent impl's methods (not just the flow-scoped fallback).
 /// Regression: find_impls() only returns trait impls, so inherent impl
@@ -9529,7 +9529,7 @@ void test_completion_local_struct_inherent_impl_methods() {
           "completion.local_struct_offers_inherent_method");
 }
 
-/// Typed-HIR member completion: generic struct with generic inherent impl.
+/// Typed HIR member completion: generic struct with generic inherent impl.
 /// Verifies that the nominal-symbol fallback matches generic impls
 /// (impl<T> Box<T>) against concrete receivers (Box<Int>).
 /// Regression: normalize_type_key equality fails for generic impl targets
@@ -9562,7 +9562,7 @@ void test_completion_generic_type_inherent_impl_methods() {
           "completion.generic_type_offers_inherent_method");
 }
 
-/// Typed-HIR member completion: field-access chain root resolution.
+/// Typed HIR member completion: field-access chain root resolution.
 /// Verifies that completion at `o.` in `o.inner` offers the root type's
 /// (Outer) members, not the result type's (Inner) members.
 /// Regression: find_expr_containing returned the flat MemberAccess expr
@@ -9594,11 +9594,11 @@ void test_completion_field_access_chain_root_type() {
           "completion.field_chain_rejects_result_field");
 }
 
-/// Typed-HIR member completion: call-result root resolution.
+/// Typed HIR member completion: call-result root resolution.
 /// Verifies that completion at `make_item().` offers the returned type's
 /// (Item) members. The text-only member_root_before_cursor() heuristic
 /// cannot detect this case because ')' precedes the '.', not an identifier
-/// character. The Typed-HIR path (try_typed_member_completion) finds the
+/// character. The Typed HIR path (try_typed_member_completion) finds the
 /// Call expression and resolves its return type directly.
 void test_completion_call_result_root_type() {
     const std::string source =
@@ -13233,7 +13233,7 @@ void test_manifest_deletion_falls_back_to_detached() {
 }
 
 // ---------------------------------------------------------------------------
-// Typed-HIR hover enrichment: const value, effect, dispatch, variant facts.
+// Typed HIR hover enrichment: const value, effect, dispatch, variant facts.
 // ---------------------------------------------------------------------------
 
 void test_hover_const_value_fact() {
@@ -13568,7 +13568,7 @@ int main() {
     test_manifest_references_nonexistent_export_module();
     test_manifest_deletion_falls_back_to_detached();
 
-    // Typed-HIR hover enrichment: const value, effect, dispatch, variant,
+    // Typed HIR hover enrichment: const value, effect, dispatch, variant,
     // capability facts.
     test_hover_const_value_fact();
     test_hover_effect_fact();

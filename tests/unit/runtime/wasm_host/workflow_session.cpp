@@ -2461,7 +2461,7 @@ void test_set_bridge_fail_closed(const std::filesystem::path &repo_root) {
 
 // WH-5c.7 P2-3: the workflow-level kInvalidLayout diagnostic must carry the
 // workflow declaration's SourceRange. This test verifies the prerequisite:
-// the CoreWorkflowDecl's source_range is populated from the AHFL IR
+// the CoreWorkflowDecl's source_range is populated from the AHFL-IR
 // WorkflowDecl's provenance during lowering, and the range lands on the
 // `workflow` keyword in the source.
 void test_workflow_decl_source_range(const std::filesystem::path &repo_root) {

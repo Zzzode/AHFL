@@ -1430,7 +1430,7 @@ struct CoreFnDecl {
 // identity consumption)
 // ----------------------------------------------------------------------------
 //
-// The Typed-HIR -> AHFL-IR lowering already discovers every concrete
+// The Typed HIR -> AHFL-IR lowering already discovers every concrete
 // `(nominal symbol, dispatch types)` instance and mangles it into an
 // `ir::InstanceDecl` (dedup keyed by symbol + type args). Core-IR CONSUMES those
 // decls into a flat `CoreProgram::instances` table — it does NOT re-discover or

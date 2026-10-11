@@ -84,7 +84,7 @@ agent Worker {
 }
 )AHFL";
 
-// Lower the shared fixture source over the repo std sysroot to a verified AHFL IR.
+// Lower the shared fixture source over the repo std sysroot to a verified AHFL-IR.
 [[nodiscard]] std::optional<ir::AhflIr> lower_fixture(std::string_view unique) {
     const auto root =
         std::filesystem::temp_directory_path() / ("ahfl_wire_migration_" + std::string(unique));

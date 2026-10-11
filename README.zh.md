@@ -139,7 +139,7 @@ flowchart LR
     TypedHIR --> Validate[Validator]
     Validate --> IR[AHFL-IR]
     IR --> Backends[Backends and artifact emitters]
-    IR --> OptIR[Optimization IR artifacts]
+    IR --> OptIR[Opt IR artifacts]
     Backends --> Native[Native runtime artifacts]
     Backends --> Formal[SMV formal backend]
     Native --> Runtime[Runtime and provider handoff]

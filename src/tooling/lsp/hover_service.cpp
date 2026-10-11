@@ -905,7 +905,7 @@ workflow_temporal_clause_payload(const LspAnalysisSnapshot &snapshot, const Hove
     return value.scalar;
 }
 
-// Surface Typed-HIR facts that enrich the expression hover beyond the
+// Surface Typed HIR facts that enrich the expression hover beyond the
 // resolved type: effect/purity, invoked capability, compile-time const value,
 // method dispatch target, and enum-variant construction facts.
 void add_expression_typed_facts(HoverPayload &payload,
@@ -988,7 +988,7 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
     // KR3.5: surface flow-narrowing facts this expression establishes (populated
     // for if-conditions during type checking).
     add_narrowing_facts(payload, expr);
-    // Typed-HIR enrichment: effect, capability, const value, dispatch target,
+    // Typed HIR enrichment: effect, capability, const value, dispatch target,
     // variant facts.
     add_expression_typed_facts(payload, snapshot, expr);
     return payload;
@@ -1313,7 +1313,7 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
     }
     // KR3.5: surface flow-narrowing facts this expression establishes.
     add_narrowing_facts(payload, *expr);
-    // Typed-HIR enrichment: effect, capability, const value, dispatch target,
+    // Typed HIR enrichment: effect, capability, const value, dispatch target,
     // variant facts.
     add_expression_typed_facts(payload, snapshot, *expr);
     return payload;

@@ -339,7 +339,7 @@ decode_typed_value(const ir::TypeRef &type,
 } // namespace detail
 
 /// Compiles one AHFL source file through the standard pipeline. Returns the
-/// lowered AHFL IR, or `nullopt` with the rendered diagnostics in `error_out`.
+/// lowered AHFL-IR, or `nullopt` with the rendered diagnostics in `error_out`.
 ///
 /// A fixture whose first line is `// @repo-std` compiles through a project
 /// parse with the repo std module root (so `import std::collections` resolves

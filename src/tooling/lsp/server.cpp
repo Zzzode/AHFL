@@ -3599,7 +3599,7 @@ void push_struct_field_completions(std::vector<CompletionItem> &items,
 
 // Push struct fields, enum variants, and impl methods for a resolved root
 // type. Returns true if any completions were added. Shared by the
-// text-heuristic path (push_member_completions) and the Typed-HIR path
+// text-heuristic path (push_member_completions) and the Typed HIR path
 // (try_typed_member_completion).
 [[nodiscard]] bool push_member_completions_for_type(
     std::vector<CompletionItem> &items,
@@ -4884,7 +4884,7 @@ find_enclosing_call_expr(const TypedProgram &program, std::optional<SourceId> so
 ///
 /// The active parameter is the 0-based index of the argument the cursor is
 /// currently positioned in. This is equivalent to the number of complete
-/// arguments before the cursor, which we derive from the Typed-HIR Argument
+/// arguments before the cursor, which we derive from the Typed HIR Argument
 /// children: an argument is "complete" (its comma has been typed) when its
 /// source range ends strictly before the cursor.
 ///
@@ -4979,7 +4979,7 @@ typed_call_signature_info(const LspAnalysisSnapshot &snapshot, const TypedExpr &
 }
 
 /// Resolve the parameter names for a typed Call / MethodCall expression.
-/// For MethodCall, params[0] is `self` and is skipped (the Typed-HIR
+/// For MethodCall, params[0] is `self` and is skipped (the Typed HIR
 /// Argument children do not include the Base/self).
 [[nodiscard]] std::vector<std::string>
 call_parameter_names(const LspAnalysisSnapshot &snapshot, const TypedExpr &call) {
@@ -5678,7 +5678,7 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
     std::vector<CompletionItem> items;
 
     if (try_typed_member_completion(items, *snapshot, *source, offset)) {
-        // Typed-HIR-based member completion. Handles complex root expressions
+        // Typed HIR-based member completion. Handles complex root expressions
         // (xs[i]., expr()., a.b.c.) that the text heuristic cannot detect.
     } else if (const auto root = member_root_before_cursor(*source->source, offset); root.has_value()) {
         push_member_completions(items, *snapshot, *source, offset, *root);
@@ -6602,9 +6602,9 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
 
     const auto context = call_context_before_cursor(*source->source, offset);
 
-    // Typed-HIR call resolution: locate the enclosing Call / MethodCall
+    // Typed HIR call resolution: locate the enclosing Call / MethodCall
     // expression and build the signature from its resolved symbol or
-    // dispatch target. The active parameter is derived from the Typed-HIR
+    // dispatch target. The active parameter is derived from the Typed HIR
     // Argument children (accurate for nested brackets/braces), with a
     // text-based fallback for incomplete arguments not yet in the HIR.
     if (has_typecheck) {
@@ -6619,7 +6619,7 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
                     help.active_signature = 0;
                     int active_parameter =
                         typed_active_parameter(*program, *call_expr, offset);
-                    // If the Typed-HIR count is 0 but the text-based comma
+                    // If the Typed HIR count is 0 but the text-based comma
                     // count is > 0, the HIR may not yet contain the argument
                     // the user is typing (parser dropped it, or the snapshot
                     // is stale). Fall back to the text-based count.
@@ -6628,7 +6628,7 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
                         active_parameter = context->second;
                     }
                     // MethodCall signatures include `self` as params[0], but
-                    // the Typed-HIR count counts only explicit arguments
+                    // the Typed HIR count counts only explicit arguments
                     // (Argument-role children, not the Base child). Skip self
                     // for method calls.
                     help.active_parameter =
