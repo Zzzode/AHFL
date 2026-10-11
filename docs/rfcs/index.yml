@@ -159,7 +159,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0027"
     title: "Query-Based Frontend and IR Single Source of Truth"
-    status: "implemented"
+    status: "stabilized"
     file: "0027-query-frontend-and-ir-ssot.zh.md"
     area: ["compiler", "ir", "tooling"]
     stability: "experimental"

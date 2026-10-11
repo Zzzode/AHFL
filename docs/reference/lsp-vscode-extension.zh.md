@@ -128,6 +128,21 @@ workspace 中存在 sibling `std/` 目录而把当前文件绑定到 sysroot pac
 
 完整规则见 [single-file-mode.zh.md](./single-file-mode.zh.md)。
 
+### Analysis architecture (QueryEngine)
+
+LSP server 的分析读取（diagnostics、hover、completion、rename 等）全部经
+`AnalysisService` 持有的 workspace 级 `query::FrontendQueries` 引擎求值
+（RFC 0027 P4/KR6.12）。每个打开文档一个 `FileId` slot，每个被分析的
+（URI × 项目语义输入）一个 `ProjectId` slot；编辑只失效依赖子图，未受影响
+的 slot 保持 Verified 并复用已有 memo。handler 行为与旧直接流水线逐位等价
+——迁移的实质是谁拥有/驱动 stage 结果（手跑流水线 → 工作区 QueryEngine），
+不是 handler 协议或诊断格式的变化。
+
+引擎成为唯一路由（`AHFL_QUERY_LEGACY_PIPELINE` 逃生舱已删除）；前端图无环，
+引擎报告 cycle 现为 internal error 而非静默旁路。typed-HIR 持久化缓存
+（RFC 0016 cache contract 重锚为 `ahfl_tooling_cache`）服务 LSP cold-start
+降级快照，服务端默认关闭。
+
 ## 四、本地打包 VSIX
 
 面向用户的 VSIX 应通过仓库根目录脚本生成：
