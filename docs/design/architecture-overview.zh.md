@@ -108,14 +108,29 @@ flowchart LR
 | Passes | IR pass pipeline、诊断式 Opt IR | `src/compiler/passes/`、`src/compiler/ir/opt/` |
 | Backends | IR → 各类 artifact | `src/compiler/backends/driver.cpp` |
 
-### 2.3 IR：语义枢纽
+### 2.3 IR：三层塔与语义枢纽
 
-IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系统的**唯一语义源**：
+IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系统的**唯一语义源**。
+经 [RFC 0026](../rfcs/0026-ir-tower-and-execution-model.zh.md) 重构后，IR 不再是单层结构，
+而是**三层塔**（three-layer tower），每层有明确的职责与消费者：
 
-- **唯一执行路径是 WASM**——验证后的 IR 降到 Core-IR,由 wasm 后端发射 wasm32 模块,vendored wasm3 内嵌引擎执行;WH-9 后树步解释器已退役,全仓库只有这一条执行引擎（见 [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md)）
-- **SMV 后端投影 IR**——agent 状态变量、workflow 生命周期、contract clauses → LTLSPEC
-- **可执行 wasm 后端从 Core-IR 发射二进制**——peer-tier 执行引擎(`src/compiler/backends/wasm/`),消费验证后的 Core-IR + P4-D layout,产出真实 wasm32 模块
-- **infra 后端消费 IR**——提取 agent/flow 结构生成部署描述(k8s/openapi/terraform)
+| 层 | 职责 | 消费者 |
+| --- | --- | --- |
+| **Typed HIR** | 类型化高层 IR——承载完整类型信息与 source range，服务于诊断、LSP、query 前端 | typecheck、LSP、diagnostics |
+| **AHFL-IR** | 验证/编排层——验证后的语义表示，服务于 formal verification、视图后端、编排分析 | SMV/SMT backend、k8s/openapi/terraform、execution-plan |
+| **Core-IR** | 执行层——最小化执行 IR，服务于 WASM codegen | wasm backend（唯一执行路径） |
+
+层间关系：Typed HIR →（lower pass）→ AHFL-IR →（Core-IR lowering）→ Core-IR。
+层身份由 `tower.hpp` 的 `Layer` 枚举（`TypedHir=0 → AhflIr=1 → CoreIr=2`）索引式标记，
+`Path` 编码 Dafny 式层间分叉，`LayerTag<L>` 零成本标记层归属。
+
+**唯一执行路径是 WASM**——验证后的 AHFL-IR 降到 Core-IR，由 wasm 后端发射 wasm32 模块，
+vendored wasm3 内嵌引擎执行；WH-9 后树步解释器已退役，全仓库只有这一条执行引擎
+（见 [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md)）。
+
+- **SMV 后端投影 AHFL-IR**——agent 状态变量、workflow 生命周期、contract clauses → LTLSPEC
+- **可执行 wasm 后端从 Core-IR 发射二进制**——peer-tier 执行引擎(`src/compiler/backends/wasm/`)，消费验证后的 Core-IR + P4-D layout，产出真实 wasm32 模块
+- **infra 后端消费 AHFL-IR**——提取 agent/flow 结构生成部署描述(k8s/openapi/terraform)
 - **IR 可 JSON 序列化**——typed HIR、const value tree、effect facts 都有稳定 schema gate
 
 设计约束（不可协商）：`std::variant` + visitor（无继承）、hash-consed 类型（指针相等 ⇔ 结构相等）、flat store + index 引用（无字符串身份）。

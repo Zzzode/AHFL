@@ -1,11 +1,11 @@
 ---
 rfc: "0013"
 title: "Corelib and Type System Evolution"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler", "stdlib", "runtime"]
-stability: "experimental"
+stability: "stable-language"
 created: "2026-06-21"
-updated: "2026-08-28"
+updated: "2026-10-11"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -405,3 +405,4 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
   - **P4 `where length <= N` sugar / P6 `#![no_prelude]`**：见上两条 2026-08-28 记录。
   - **验收核对（§Implementation Plan 验收表）**：P0 RFC+spec ✅;P1 ADT+match 穷尽 ✅;P2 `fn id<T>`+单态化+闭包高阶 ✅;P3 `impl<T> Foldable<T> for List<T>` 可写/resolution/调用 + 11 trait 定义 ✅;P4 Pure+decreases+bounded 进 invariant + SMV 编码 + 非 Pure 报错 ✅;P5 5 容器 stdlib 类型 + SMV golden 等价 ✅;P6 15 模块可 import + explicit prelude ✅;P7 Set/Map/UUID/Timestamp 可构造 ✅。
   - **明确的非验收项（不阻塞 `implemented`）**：cross-chain 泛型推断（Non-Goal #3）、effect 多态（Non-Goal #2）、闭包捕获列表（Non-Goal #4）、const 泛型（Non-Goal #5）;method-level where-clause 精化与 Set/Map Foldable/Iterable（后者需 runtime 枚举 @builtin 扩展,属 P7 后续 runtime 能力,非 P5 类型系统范围）——均为安全失败(报错或 parse error),无静默漏检 soundness 洞。clean rebuild 全套件 457/457 绿。
+- 2026-10-11: **RFC 0013 Status implemented → stabilized**(coordinator 评估;无人类 owner 门)。`stabilized` 标准(RFC line 347)全部满足:① **决策反映到 core-language.zh.md**——§1.1 语言演进路径引用 RFC 0013 为 fn/泛型/闭包/trait/ADT/effect 的权威来源,§1.2 演进原则、§1.3 表达力边界、§4.6.8 表达式 Effect 分级、§5.6 可验证子集均与 RFC 0013 对齐;修正 spec 中"四份 detail 附件"的过时引用(附件内容已合入 RFC 主体);② **CLI/reference 文档**——stdlib-cookbook 覆盖 Option/Result/String/List/Set/Map/cmp/Try operator,user-guide-authoring 覆盖 effect profile,cli-commands 覆盖 signature facts;③ **release evidence archive**——`ahfl.release_evidence_archive.smoke`(ctest -L release-evidence-archive)存在并通过。**RFC 0013 进入 stabilized;stability 升级为 stable-language。**

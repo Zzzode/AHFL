@@ -3,7 +3,7 @@ rfc: "0021"
 title: "Capability Embedding ABI"
 status: "implemented"
 area: ["runtime", "compiler", "tooling"]
-stability: "experimental"
+stability: "stable-artifact"
 created: "2026-08-25"
 updated: "2026-08-25"
 authors: ["zzzode"]
@@ -325,3 +325,8 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   分配器、`ahfl_invoke_args` size-prefixed 契约、durable-resume 挂起/恢复、原生 vs 直连
   等价性范围说明)。`stabilized` 剩余门槛为一个第三方语言绑定(Rust/Node),明确为 Q4
   范围外的后续工作;故本 RFC 保持 `implemented`。
+- 2026-10-11: **stability 升级 experimental → stable-artifact**(coordinator 评估;无人类
+  owner 门)。`ahfl_host.h` C ABI 契约自 2026-08-25 落地以来未发生破坏性变更,wire format
+  版本策略与三态状态码已在 `docs/reference/host-abi.zh.md` 稳定表述,原生 + WASM 两个绑定
+  与契约级测试全部落库。ABI 契约本身满足 stable-artifact 标准;RFC status 保持 `implemented`,
+  因 `stabilized` 仍需至少一个第三方语言绑定(Rust/Node)。

@@ -219,6 +219,8 @@ fn sum_parsed(csv: String) -> Int effect Pure decreases 0 {
 
 ## Try operator (`?`) — RFC 0014 / D3
 
+> **Stability**: stable — RFC 0014.
+
 Postfix `?` is a short-circuit combinator for `Option<T>` and `Result<T,E>`.
 It works like Rust's `?`:
 
@@ -279,12 +281,11 @@ fn div_chain(a: Int, b: Int, c: Int) -> result::Result<Int, String> effect Pure 
    any type that is not a nominal `Option<T>` / `Result<T,E>` raises
    `typecheck.TRY_OPERAND_NOT_SUPPORTED`.
 
-> **Tip.** Composable with any expression position — the early-return
-> signal propagates through binary ops, call arguments, method-receiver
-> expressions and index-access, so you can write `let z = (a? + b?) / 2;`
-> and the enclosing function returns `None` the moment either operand
-> does. See `tests/integration/stdlib_units/option_ut.ahfl` (`try_option_chain`)
-> and `result_ut.ahfl` (`try_result_chain`) for 16 runnable assertions.
+> **Tip.** `?` is currently restricted to let-binding direct-initializer
+> position (`let x = e?;`) inside `fn` bodies. Arbitrary expression positions
+> (e.g. `let z = (a? + b?) / 2;`) are rejected with
+> `typecheck.TRY_NOT_IN_LET_BINDING`. See the [language spec](../spec/core-language.zh.md)
+> §4.6.9 for full type rules and position constraints.
 
 ---
 

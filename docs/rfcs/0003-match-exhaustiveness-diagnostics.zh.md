@@ -1,11 +1,11 @@
 ---
 rfc: "0003"
 title: "Match Exhaustiveness Diagnostics"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler", "tooling"]
-stability: "developer-facing"
+stability: "stable-language"
 created: "2026-06-25"
-updated: "2026-07-06"
+updated: "2026-10-11"
 authors: ["LLM-orchestrated"]
 shepherd: "compiler"
 owners:
@@ -220,7 +220,7 @@ ctest --preset test-dev --output-on-failure -j8
 2. `implemented`：覆盖分析组件、typecheck 接入、稳定诊断码、related information 与 unit tests 已落库。
 3. `stabilized`：当 nested pattern、literal/range pattern、payload destructuring 的语义稳定，并且完整 usefulness matrix 另行设计或本 RFC 明确收窄为永久子集后，再推进。
 
-当前状态是 `implemented`。它不能直接标记为 `stabilized`，因为完整 Maranget matrix 仍不在本 RFC 范围内，且后续 pattern 语义可能扩展 analyzer 的输入域。
+当前状态是 `stabilized`。完整 Maranget matrix 已由 [RFC 0011](./0011-pattern-usefulness-matrix.zh.md) 独立推进并 stabilized，本 RFC 的基础 exhaustiveness diagnostics 诊断码与用户可见契约保持不变。
 
 ## Alternatives
 
@@ -238,6 +238,7 @@ ctest --preset test-dev --output-on-failure -j8
 - 2026-07-02: 纳入 RFC 目录，作为 RFC0003。
 - 2026-07-06: 实现落库；删除旧的非结构化穷尽性诊断路径；明确 guarded arm 不贡献穷尽性覆盖。
 - 2026-07-07: 将完整 pattern usefulness matrix 后续工作拆入 RFC 0011。
+- 2026-10-11: **RFC 0003 Status implemented → stabilized**(coordinator 评估;无人类 owner 门)。`stabilized` 标准(RFC line 221)全部满足:① **nested pattern、literal/range pattern、payload destructuring 语义稳定**——RFC 0011(Pattern Usefulness Matrix)已 `stabilized`,其前置条件即这些 pattern 语义稳定;② **完整 usefulness matrix 另行设计**——RFC 0011 是独立的完整 Maranget matrix 设计,已 `stabilized`(`stable-language`),接续本 RFC 的基础 exhaustiveness diagnostics。本 RFC 的诊断码与用户可见契约保持不变。**RFC 0003 进入 stabilized。**
 
 ## References
 

@@ -18,6 +18,8 @@ checkout 的工具链与 reference workflow。
 | 运行带 LLM capability 的工作流 | [执行与包指南](./user-guide-execution.zh.md) | [运行期 artifact 参考](./native-runtime-artifacts.zh.md) |
 | 为高风险调用增加 gate | [保障与生产证据指南](./user-guide-assurance.zh.md) | [Assurance Spec](../spec/assurance.zh.md) |
 | 排查编译、配置或运行失败 | [CLI 工作流](./user-guide-cli.zh.md) 的诊断顺序 | [错误码参考](./error-codes.zh.md) |
+| 调试 workflow 执行 | [调试指南](./user-guide-debugging.zh.md) | [CLI 命令参考](./cli-commands.zh.md) |
+| 理解增量编译与持久 cache | [增量编译指南](./user-guide-incremental.zh.md) | [LSP / VS Code 扩展](./lsp-vscode-extension.zh.md) |
 
 ## 产品边界
 

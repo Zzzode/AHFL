@@ -9,6 +9,8 @@
 
 若本文与其他设计说明冲突，以本文为准。
 
+**执行语义。** 本规范定义静态语义（类型、约束、文法）。动态执行语义由 WASM 引擎实现定义——验证后的 IR 经三层塔（Typed HIR → AHFL-IR → Core-IR）降到 Core-IR，由 wasm 后端发射 wasm32 模块，vendored wasm3 内嵌引擎执行。执行引擎是唯一的语义权威，见 [architecture-overview.zh.md](../design/architecture-overview.zh.md) §2.3 与 [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)。
+
 ## 1. 范围
 
 AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳定实现并可直接进入 parser/checker 阶段的核心能力：
@@ -31,7 +33,7 @@ AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳�
 
 ### 1.1 语言演进路径
 
-历史上本规范将"通用高阶函数与用户自定义泛型"列为 out-of-scope。该条目已被撤销：函数抽象（`fn`）、用户泛型（单态化实现）、一等闭包、`trait` / typeclass、ADT（`enum` 带 payload）以及统一 effect 系统不再由本规范排除，而是由 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) 定义的可验证演进路径统一承载。该 RFC 把上述能力的语法形态、类型规则、stdlib 库化（容器从关键字迁移为库类型）、以及进入 `contract` / `invariant` / `safety` / `liveness` / `flow guard` 的可验证子集（`effect Pure` + `decreases` 终止度量 + bounded refinement）一并规定，并给出 P0–P7 分阶段迁移计划。函数抽象 / 泛型 / 闭包 / `trait` / corelib 边界的最终定义以该 RFC 及其四份 detail 附件为准；本规范不再各自重复。
+历史上本规范将"通用高阶函数与用户自定义泛型"列为 out-of-scope。该条目已被撤销：函数抽象（`fn`）、用户泛型（单态化实现）、一等闭包、`trait` / typeclass、ADT（`enum` 带 payload）以及统一 effect 系统不再由本规范排除，而是由 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) 定义的可验证演进路径统一承载。该 RFC 把上述能力的语法形态、类型规则、stdlib 库化（容器从关键字迁移为库类型）、以及进入 `contract` / `invariant` / `safety` / `liveness` / `flow guard` 的可验证子集（`effect Pure` + `decreases` 终止度量 + bounded refinement）一并规定，并给出 P0–P7 分阶段迁移计划。函数抽象 / 泛型 / 闭包 / `trait` / corelib 边界的最终定义以该 RFC 为准；本规范不再各自重复。
 
 ### 1.2 语言演进原则
 
@@ -483,7 +485,7 @@ MulExpr             ::= UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } ;
 UnaryExpr           ::= ( "not" | "!" | "-" | "+" ) UnaryExpr
                       | PostfixExpr ;
 
-PostfixExpr         ::= PrimaryExpr { "." Ident | "." Ident "(" [ ExprList ] ")" | "[" Expr "]" } ;
+PostfixExpr         ::= PrimaryExpr { "." Ident | "." Ident "(" [ ExprList ] ")" | "[" Expr "]" | "?" } ;
 
 PrimaryExpr         ::= Literal
                       | QualifiedIdent
@@ -567,6 +569,7 @@ ConstExpr           ::= Expr ;
 13. `match` 的具体 top-level variant arm 会在 arm body 内窄化 scrutinee path；wildcard、catch-all binding 与 or-pattern 不产生唯一 variant fact。
 14. `if let` 使用同一套 `Pattern` 语义；当 pattern 已经覆盖 scrutinee enum 的所有 constructor 且仍写出 `else` 分支时，报告 `typecheck.UNREACHABLE_IF_LET_ELSE` warning。
 15. `is_some`、`is_none`、`is_ok`、`is_err` 的零参数 method call 在 `if` 条件中会产生局部分支 narrowing fact；receiver 必须是可窄化 path，否则不产生 fact。
+16. 后缀 `?`（try 运算符，[RFC 0014](../rfcs/0014-try-operator.zh.md)）的 operand 必须是 `Option<T>` 或 `Result<T, E>`；`?` 仅允许出现在 `fn` 函数体中 let 绑定的直接初始化式位置（`let x = e?;`），不得出现在 `predicate`、`contract`、`flow` handler、`workflow` 等上下文中。完整类型规则、语义与 HIR→IR 脱糖见 §4.6.9。
 
 ### 3.11 时序表达式
 
@@ -1024,6 +1027,93 @@ assignability 检查；`std::decimal::div` 必须覆盖显式 target scale 和 r
 4. `predicate` 声明的函数体若出现 `rank(ε) ≥ 3`，违反"predicate 不得调用 capability"约束（§3.4 语义约束 3）
 
 effect 等级不改变表达式的**值类型** `T`，仅作为附加静态事实参与合法性判定。
+
+#### 4.6.9 Try 运算符（`?`）
+
+`?` 是后缀失败传播运算符（[RFC 0014](../rfcs/0014-try-operator.zh.md)），语法上与
+`.member`、`[index]` 同级（§3.10 PostfixExpr），作用于
+`std::option::Option<T>` 与 `std::result::Result<T, E>`。
+
+**类型规则。**
+
+1. operand 必须是 `Option<T>` 或 `Result<T, E>`，否则报告
+   `typecheck.TRY_REQUIRES_OPTION_OR_RESULT`。
+2. 外层 fn 返回类型必须是兼容的 `Option<_>` 或 `Result<_, F>`；Result 情形要求
+   operand 的错误类型 `E` 可赋给外层返回错误类型 `F`（错误类型放宽），否则报告
+   `typecheck.TRY_INCOMPATIBLE_RETURN_TYPE`。
+3. `e?` 的表达式类型是成功载荷类型 `T`。
+4. 外层 fn 必须有可判定的返回签名；无 `-> T` 的 fn 中使用 `?` 报告
+   `typecheck.TRY_OUTSIDE_FUNCTION`。
+
+```text
+Σ ; Γ ⊢ e : std::option::Option<T>
+enclosing_fn_return = std::option::Option<U>
+-------------------------------------------------------
+Σ ; Γ ⊢ e? : T
+
+Σ ; Γ ⊢ e : std::result::Result<T, E>
+enclosing_fn_return = std::result::Result<U, F>
+E <: F
+-------------------------------------------------------
+Σ ; Γ ⊢ e? : T
+```
+
+当 operand 是 unit variant（`None` / `Err`）而无法从 operand 自身推导出成功载荷
+类型时，`T` 从外层 fn 返回类型的成功载荷推导（与 Rust 一致：返回
+`Option<Int>` 的 fn 中 `None?` yield `Int`）。
+
+**语义。** `e?` 是表达式位置的提前返回：
+
+| operand 值 | 行为 |
+| --- | --- |
+| `Some(v)` / `Ok(v)` | yield `v`（类型 `T`），求值继续 |
+| `None` | 外层 fn 提前返回 `Option::None` |
+| `Err(err)` | 外层 fn 提前返回 `Result::Err(err)` |
+
+**位置约束。** 当前实现中，`?` 仅允许作为 let 绑定的直接初始化式
+（`let x = e?;`）；在任意表达式位置（如 `f(e?)`、`a? + b?`）使用报告
+`typecheck.TRY_NOT_IN_LET_BINDING`。任意表达式位置需要 statement-buffer
+lowering（A-Normalization 式提升），是独立 follow-up。
+
+**禁止上下文。** `?` 只允许出现在 `fn` 函数体中。以下上下文在 sema 层拒绝：
+
+1. `predicate` 体
+2. `contract` 的 `requires` / `ensures` 表达式
+3. `flow` handler 体
+4. `workflow` 的 return 表达式与节点表达式
+5. 无显式返回类型的 `fn`（`typecheck.TRY_OUTSIDE_FUNCTION`）
+6. 无显式返回类型的闭包（`typecheck.TRY_IN_CLOSURE_WITHOUT_RETURN_TYPE`）
+
+**HIR→IR 脱糖。** `let x = e?;` 在 HIR→IR lowering 阶段做语句级展开，复用现有
+IR 构造（LetStatement / IfLetStatement / ReturnStatement / UnwrapExpr），不引入
+新 IR 节点：
+
+1. `let <tmp> = e;` — 求值 operand
+2. `if let None = <tmp> { return Option::None; }`（Option）或
+   `if let Err(err) = <tmp> { return Result::Err(err); }`（Result）— 失败分支
+   提前返回
+3. `let x = unwrap(<tmp>);` — 成功路径解包
+
+**示例。**
+
+Option 情形：
+
+```ahfl
+fn sum_options(a: Option<Int>, b: Option<Int>) -> Option<Int> {
+    let x: Int = a?;       // None → 提前返回 Option::None
+    let y: Int = b?;       // None → 提前返回 Option::None
+    return Option::Some(x + y);
+}
+```
+
+Result 情形：
+
+```ahfl
+fn parse_chain(s: String) -> Result<Int, String> {
+    let n: Int = parse_int(s)?;   // Err(e) → 提前返回 Result::Err(e)
+    return Result::Ok(n * 2);
+}
+```
 
 ### 4.7 合同与时序公式类型规则
 

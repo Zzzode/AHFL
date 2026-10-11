@@ -1,11 +1,11 @@
 ---
 rfc: "0016"
 title: "Incremental Cache Contract"
-status: "implemented"
+status: "stabilized"
 area: ["compiler", "tooling"]
-stability: "experimental"
+stability: "stable-artifact"
 created: "2026-08-23"
-updated: "2026-08-23"
+updated: "2026-10-11"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -288,3 +288,4 @@ cold-start cache; the cache-core contract tests moved to
 `ahfl.cache.cache_core_all`. The unresolved "which derived query results beyond
 typed HIR get persisted" question stays open by design — the first version
 persists at the parse/hir level only, matching the original OQ4 guidance.
+- 2026-10-11: **RFC 0016 Status implemented → stabilized**(coordinator 评估;无人类 owner 门)。`stabilized` 标准(RFC line 242)全部满足:① **docs/reference/ 补充增量编译指南**——新增 `docs/reference/user-guide-incremental.zh.md`,覆盖两层增量模型(QueryEngine 进程内重算 + RFC 0016 持久化 cache)、CacheKey 4 字段、XDG 目录布局、envelope JSON 格式、TTL/LRU 策略、LSP cold-start 持久缓存、CLI 与环境变量、故障排查、稳定性承诺与格式边界;② **cache format 标记为 stable-artifact**——stability 从 `experimental` 升级为 `stable-artifact`。**RFC 0016 进入 stabilized。**

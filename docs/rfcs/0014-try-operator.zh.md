@@ -1,11 +1,11 @@
 ---
 rfc: "0014"
 title: "Try Operator (expr?)"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler"]
-stability: "experimental"
+stability: "stable-language"
 created: "2026-08-21"
-updated: "2026-08-22"
+updated: "2026-10-11"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -148,3 +148,4 @@ grammar 脚手架已落地（`AHFL.g4` 的 `postfixExpr` `'?'` arm + 重新生�
 - 2026-06（D3，workplan decision register）：采纳 Rust 风格后缀 `expr?`，禁止用于 predicate / contract / flow-handler / workflow-return 上下文。
 - 2026-08-21：从 `docs/design/try-operator-impl-plan.zh.md` 转写为 RFC（按"RFC 即跟踪单元"惯例）；grammar 脚手架已落地，状态 `draft`。
 - 2026-08-22：Open Questions 全部决议，状态 `draft` → `review`。(1) 实现路径：dedicated `TryExpr` typed-HIR 节点 + HIR->IR statement-level lowering（let-binding 位置展开为 temp + if-return + unwrap），不走 desugar-to-match（IR match arm 是表达式，无法承载 return），不改 evaluator 表达式模型；Slice 1 限制 `?` 仅出现在 let-binding 位置，任意表达式位置是独立 follow-up。(2) Frontend child 步进：`?` 是单 terminal，`child_index += 1`。(3) 闭包中的 `?`：闭包无显式返回类型时报 SourceRange 诊断（Rust 一致）。
+- 2026-10-11: **RFC 0014 Status implemented → stabilized**(coordinator 评估;无人类 owner 门)。`stabilized` 标准(RFC line 132)全部满足:① **core-language.zh.md 补充 `?` 的语法与类型规则章节**——新增 §4.6.9 "Try 运算符(`?`)",覆盖类型规则(4 条推理规则)、语义表、位置约束(let-binding direct-initializer)、禁止上下文(6 项)、HIR→IR desugaring(3 步 statement-level expansion)、示例;§3.10 PostfixExpr EBNF 增补 `| "?"`;§3.10 语义约束新增第 16 条;② **cookbook 章节标记稳定**——`docs/reference/stdlib-cookbook.zh.md` Try operator 节顶部添加 `> **Stability**: stable — RFC 0014.`;同时修正 cookbook Tip 中关于"任意表达式位置可组合"的过时描述(Slice 1 仅支持 let-binding 位置,任意表达式位置报 `TRY_NOT_IN_LET_BINDING`);③ **stability 升级为 stable-language**。**RFC 0014 进入 stabilized。**
