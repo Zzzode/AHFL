@@ -764,11 +764,12 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-B: pin the Decimal/Duration
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-B: pin the Timestamp/UUID
     # computed-final decision — the module EMITS i64 words and a frame
     # section, yet the certified embedded host keeps both shapes outside
     # its pack/read walk subset (documented host-unobservable non-goal),
     # so the p6_scalar_kind rationale comment cannot drift again.
+    # Decimal/Duration/Map are supported (WH-5c.7 Node host port).
     add_test(NAME ahfl.wasm.v2b_builtin_frame_subset_gate
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_builtin_frame_subset_gate.py"

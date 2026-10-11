@@ -142,10 +142,10 @@ enum class WasmNodeObservationSkip {
     /// The module emits and the native wasm3 lane has a checked-in blessing,
     /// but the workflow's wire-type matrix carries shapes the
     /// Node oracle host's P6 frame packer/reader does not yet implement
-    /// (Map / Decimal / Duration / Float are outside the JS host's
-    /// rung-E frame subset). The C++ host supports them (WH-5c.7); the
-    /// Node observation is withheld until the JS host ports the rich
-    /// wire-type matrix.
+    /// (outside the JS host's rung-E frame subset). The C++ host supports
+    /// them (WH-5c.7); the Node observation is withheld until the JS host
+    /// ports the shape. Map / Decimal / Duration / Float are ported; the
+    /// skip reason is retained for future shapes (e.g. Timestamp / UUID).
     NodeHostAwaitsRichWireTypes,
 };
 

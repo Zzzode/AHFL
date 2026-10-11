@@ -179,20 +179,20 @@ function bridgeParamKind(W, wireId) {
     case "unit":
     case "string":
     case "float":
+    case "decimal":
+    case "duration":
       return "spill";
     case "struct":
     case "option":
     case "tuple":
+    case "map":
       return "root";
     case "enum": {
       const tagOnly = w.variants.every((v) => v.kind === "unit");
       return tagOnly ? "spill" : "root";
     }
-    case "decimal":
-    case "duration":
     case "timestamp":
     case "uuid":
-    case "map":
     case "sequence":
       frameFail(`a bridge parameter of wire shape '${w.t}' is outside the frame-bridge subset`);
       return "reject";
@@ -246,10 +246,12 @@ function readBridgeArgValue(e, lane, W, L, backing, currentSite, wireId, layoutI
     // the packed input frame, the fixed context frame, the constructor scratch
     // arena, or ANOTHER call site's result placement -- never this call's own
     // result (it is the call output, unwritten before the invocation).
-    if (l.t !== "struct" && l.t !== "enum") {
-      frameFail("an aggregate bridge parameter maps to a non-struct/non-enum layout");
+    // A Map is a handle-shaped aggregate root (the address of its inline
+    // (ptr,len) header); the P4-D container header is always 8 bytes.
+    if (l.t !== "struct" && l.t !== "enum" && l.t !== "container") {
+      frameFail("an aggregate bridge parameter maps to a non-struct/non-enum/non-container layout");
     }
-    const rootSize = Number(l.size);
+    const rootSize = l.t === "container" ? 8 : Number(l.size);
     if (len !== rootSize) {
       frameFail("an aggregate bridge parameter descriptor len disagrees with its dense layout " +
                 `root size (descriptor ${len}, layout ${rootSize})`);
@@ -665,6 +667,136 @@ function readRaw(e, addr, len) {
   return new Uint8Array(e.memory.buffer, addr, len);
 }
 
+// WH-5c.7: the JS-host spelling authority for Decimal and Duration, mirroring
+// frame_spelling.hpp + scalar_spelling.hpp EXACTLY. The P6 frame carries only
+// the bare i64 word (mantissa / millis); the spelling the reader rebuilds must
+// be provably the spelling the packer validated, so both sides go through
+// THESE helpers.
+
+function isDigitsAllowLeadingZero(s) {
+  if (s.length === 0) return false;
+  for (const c of s) {
+    if (c < "0" || c > "9") return false;
+  }
+  return true;
+}
+
+function isCanonicalUnsigned(s) {
+  return isDigitsAllowLeadingZero(s) &&
+         !(s.length > 1 && s[0] === "0");
+}
+
+// Parse a canonical signed i64 (optional '-', canonical unsigned, never "-0").
+// Returns a JS number or null.
+function parseCanonicalI64(text) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  let negative = false;
+  let digits = text;
+  if (text[0] === "-") {
+    negative = true;
+    digits = text.slice(1);
+  }
+  if (!isCanonicalUnsigned(digits)) return null;
+  if (negative && digits === "0") return null;
+  const value = BigInt(text);
+  if (value > 9223372036854775807n || value < -9223372036854775808n) return null;
+  return Number(value);
+}
+
+// Parse an unsigned i64 allowing leading zeros. Returns a JS number or null.
+function parseUnsignedI64AllowLeadingZero(text) {
+  if (!isDigitsAllowLeadingZero(text)) return null;
+  const value = BigInt(text);
+  if (value > 9223372036854775807n) return null;
+  return Number(value);
+}
+
+// Parse a Decimal spelling into {mantissa, scale} or null. Mirrors
+// scalar_spelling::parse_decimal: a source-literal `DIGIT+ "." DIGIT+ ["d"]`
+// or a builtin-canonical `s<scale>:<mantissa>`.
+function parseDecimalSpelling(spelling) {
+  if (typeof spelling !== "string") return null;
+  if (spelling.startsWith("s")) {
+    const rest = spelling.slice(1);
+    const colon = rest.indexOf(":");
+    if (colon < 0) return null;
+    const scale = parseCanonicalI64(rest.slice(0, colon));
+    const mantissa = parseCanonicalI64(rest.slice(colon + 1));
+    if (scale === null || mantissa === null) return null;
+    if (scale > 2147483647 || scale < -2147483648) return null;
+    return {mantissa, scale};
+  }
+  let s = spelling;
+  if (s.endsWith("d")) s = s.slice(0, -1);
+  const dot = s.indexOf(".");
+  if (dot < 0) return null;
+  if (s.indexOf(".", dot + 1) >= 0) return null;
+  const intPart = s.slice(0, dot);
+  const fracPart = s.slice(dot + 1);
+  if (!isDigitsAllowLeadingZero(intPart) || !isDigitsAllowLeadingZero(fracPart)) {
+    return null;
+  }
+  const scale = fracPart.length;
+  if (scale > 2147483647) return null;
+  const mantissa = parseUnsignedI64AllowLeadingZero(intPart + fracPart);
+  if (mantissa === null) return null;
+  return {mantissa, scale};
+}
+
+// Rebuild a source-literal Decimal spelling from (mantissa, scale).
+// Mirrors format_decimal_spelling: negative mantissas or scale <= 0 fall back
+// to the builtin canonical form `s<scale>:<mantissa>`.
+function formatDecimalSpelling(mantissa, scale) {
+  if (scale <= 0 || mantissa < 0) {
+    return `s${scale}:${mantissa}`;
+  }
+  let digits = String(mantissa);
+  const frac = scale;
+  if (digits.length <= frac) {
+    digits = "0".repeat(frac + 1 - digits.length) + digits;
+  }
+  const insertPos = digits.length - frac;
+  return digits.slice(0, insertPos) + "." + digits.slice(insertPos);
+}
+
+// Parse a Duration spelling to i64 milliseconds, or null. Mirrors
+// scalar_spelling::parse_duration: a source-unit `DIGIT+ (ms|s|m|h)` or a
+// bare-millis canonical i64.
+function parseDurationSpelling(spelling) {
+  if (typeof spelling !== "string") return null;
+  let multiplier = 0;
+  let s = spelling;
+  if (s.endsWith("ms")) {
+    multiplier = 1;
+    s = s.slice(0, -2);
+  } else if (s.endsWith("s")) {
+    multiplier = 1000;
+    s = s.slice(0, -1);
+  } else if (s.endsWith("m")) {
+    multiplier = 60000;
+    s = s.slice(0, -1);
+  } else if (s.endsWith("h")) {
+    multiplier = 3600000;
+    s = s.slice(0, -1);
+  } else {
+    return parseCanonicalI64(spelling);
+  }
+  const value = parseUnsignedI64AllowLeadingZero(s);
+  if (value === null) return null;
+  if (BigInt(value) > 9223372036854775807n / BigInt(multiplier)) return null;
+  return value * multiplier;
+}
+
+// Rebuild a source-unit Duration spelling from i64 milliseconds, choosing the
+// largest unit (h > m > s > ms) that divides the value exactly. Mirrors
+// format_duration_spelling.
+function formatDurationSpelling(millis) {
+  if (millis % 3600000 === 0) return `${millis / 3600000}h`;
+  if (millis % 60000 === 0) return `${millis / 60000}m`;
+  if (millis % 1000 === 0) return `${millis / 1000}s`;
+  return `${millis}ms`;
+}
+
 // Wire layout-id -> its disjoint backing placement {base,extent}.
 function backingByLayout(lane) {
   const map = new Map();
@@ -733,13 +865,70 @@ function packValue(e, lane, W, L, value, wId, lId, addr, backing, arena) {
       writeF64(e, addr, value);
       return;
     }
-    case "decimal":
-    case "duration":
+    case "decimal": {
+      if (typeof value !== "string") frameFail("decimal slot got a non-string value");
+      if (l.t !== "scalar" || l.repr !== "i64") {
+        frameFail("decimal wire shape maps to a non-i64 scalar layout");
+      }
+      const parsed = parseDecimalSpelling(value);
+      if (parsed === null) frameFail("decimal spelling is not a valid decimal");
+      if (parsed.scale !== Number(w.scale)) {
+        frameFail("decimal spelling scale does not match the wire-schema scale");
+      }
+      // WH-5c.7 spelling round-trip guard: the spelling the reader will
+      // rebuild from the bare i64 mantissa must equal the source spelling
+      // exactly, so non-canonical forms are rejected at entry pack.
+      if (formatDecimalSpelling(parsed.mantissa, parsed.scale) !== value) {
+        frameFail("decimal spelling is not canonical (reader rebuild would diverge)");
+      }
+      writeI64(e, addr, parsed.mantissa);
+      return;
+    }
+    case "duration": {
+      if (typeof value !== "string") frameFail("duration slot got a non-string value");
+      if (l.t !== "scalar" || l.repr !== "i64") {
+        frameFail("duration wire shape maps to a non-i64 scalar layout");
+      }
+      const millis = parseDurationSpelling(value);
+      if (millis === null) frameFail("duration spelling is not a valid duration");
+      if (formatDurationSpelling(millis) !== value) {
+        frameFail("duration spelling is not canonical (reader rebuild would diverge)");
+      }
+      writeI64(e, addr, millis);
+      return;
+    }
     case "timestamp":
     case "uuid":
-    case "map":
       frameFail(`pack shape '${w.t}' is outside the P6-7 rung-E frame subset`);
       return;
+    case "map": {
+      if (l.t !== "container" || l.value === null || l.value === undefined) {
+        frameFail("wire map maps to a non-container or keyless container layout");
+      }
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        frameFail("map slot got a non-object value");
+      }
+      const entries = Object.entries(value);
+      const len = entries.length;
+      const capacity = Number(w.capacity ?? l.capacity);
+      if (len > capacity) frameFail("packed map length exceeds its capacity");
+      const placement = backing.get(lId);
+      if (placement === undefined) frameFail("input map has no backing placement");
+      const stride = Number(l.stride);
+      if (len * stride > placement.extent) {
+        frameFail("packed map overruns its backing placement");
+      }
+      for (let i = 0; i < len; ++i) {
+        const entryBase = placement.base + i * stride;
+        packValue(e, lane, W, L, entries[i][0], w.key, l.element,
+                  entryBase, backing, arena);
+        packValue(e, lane, W, L, entries[i][1], w.value, l.value,
+                  entryBase + Number(l.value_offset), backing, arena);
+      }
+      writeI32(e, addr + 0, placement.base);
+      writeI32(e, addr + 4, len);
+      return;
+    }
     case "string": {
       if (typeof value !== "string") frameFail("string slot got a non-string value");
       const bytes = new TextEncoder().encode(value);
@@ -907,13 +1096,60 @@ function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = 
       }
       return new FloatValue(readF64(e, addr));
     }
-    case "decimal":
-    case "duration":
+    case "decimal": {
+      if (l.t !== "scalar" || l.repr !== "i64") {
+        frameFail("decimal wire shape maps to a non-i64 scalar layout");
+      }
+      const big = readI64(e, addr);
+      if (big > BigInt(Number.MAX_SAFE_INTEGER) ||
+          big < BigInt(Number.MIN_SAFE_INTEGER)) {
+        frameFail("decimal mantissa is not exactly representable as a JS number");
+      }
+      return formatDecimalSpelling(Number(big), Number(w.scale));
+    }
+    case "duration": {
+      if (l.t !== "scalar" || l.repr !== "i64") {
+        frameFail("duration wire shape maps to a non-i64 scalar layout");
+      }
+      const big = readI64(e, addr);
+      if (big > BigInt(Number.MAX_SAFE_INTEGER) ||
+          big < BigInt(Number.MIN_SAFE_INTEGER)) {
+        frameFail("duration millis is not exactly representable as a JS number");
+      }
+      return formatDurationSpelling(Number(big));
+    }
     case "timestamp":
     case "uuid":
-    case "map":
       frameFail(`read shape '${w.t}' is outside the P6-7 rung-E frame subset`);
       return undefined;
+    case "map": {
+      if (l.t !== "container" || l.value === null || l.value === undefined) {
+        frameFail("wire map maps to a non-container or keyless container layout");
+      }
+      const len = readI32(e, addr + 4);
+      const capacity = Number(w.capacity ?? l.capacity);
+      if (len < 0 || len > capacity) frameFail("map length is out of capacity");
+      let base = readI32(e, addr + 0);
+      const placement = backing.get(lId);
+      if (placement !== undefined) {
+        base = placement.base;
+        if (len * Number(l.stride) > placement.extent) {
+          frameFail("map overruns placement");
+        }
+      }
+      const stride = Number(l.stride);
+      const out = {};
+      for (let i = 0; i < len; ++i) {
+        const entryBase = base + i * stride;
+        const key = readValue(e, lane, W, L, w.key, l.element, entryBase,
+                              backing, extraStringRegions);
+        const val = readValue(e, lane, W, L, w.value, l.value,
+                              entryBase + Number(l.value_offset), backing,
+                              extraStringRegions);
+        out[String(key)] = val;
+      }
+      return out;
+    }
     case "string": {
       if (l.t !== "ptrlen") frameFail("wire string maps to a non-PtrLen layout");
       const ptr = readI32(e, addr + 0);
@@ -1308,9 +1544,11 @@ async function runWorkflowP6(compiled) {
   // The P6-dense node_blocks / node_inputs arrays are indexed by
   // p6_block_ordinal (not the runner index).
   const entryNode = lane.nodes.find((n) => n.schedule_pos === 0);
-  // Workflow P6 frames carry no bounded collections, so the backing map is
-  // empty; it is still threaded through readValue for the output walk.
-  const backing = new Map();
+  // The backing map resolves each bounded container's layout id to its
+  // disjoint backing placement (WH-5c.7: Set / Map elements live in the
+  // placement-backed region, not inline). It is threaded through both the
+  // input pack and the output walk.
+  const backing = backingByLayout(frameLane);
   {
     const p6Ord = entryNode.p6_block_ordinal;
     const entryBlock = lane.node_blocks[p6Ord];

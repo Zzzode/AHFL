@@ -693,7 +693,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "app::rich_matrix::RichMatrix",
             0, 1, WasmEligibility::Orchestration,
-            WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes,
+            WasmNodeObservationSkip::None,
         },
     };
 

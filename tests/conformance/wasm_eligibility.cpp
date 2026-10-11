@@ -215,12 +215,13 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
         return Skip::None;
     }();
     // WH-5c.7 (GAP 5): a case whose wire-type matrix carries shapes the Node
-    // oracle host's P6 frame packer/reader does not yet implement (Map /
-    // Decimal / Duration are outside the JS host's rung-E frame subset). The
-    // C++ host supports them (WH-5c.7); the module emits and the native wasm3
-    // lane agrees, but the Node observation is withheld until the JS host
-    // ports the rich wire-type matrix. Same manifest-claim treatment; the
-    // Node runner pins an exact stem set.
+    // oracle host's P6 frame packer/reader does not yet implement (outside the
+    // JS host's rung-E frame subset). The C++ host supports them (WH-5c.7); the
+    // module emits and the native wasm3 lane agrees, but the Node observation
+    // is withheld until the JS host ports the shape. Map / Decimal / Duration
+    // / Float are now ported (WH-5c.7 Node host port + KR6.6 f64 ladder); the
+    // skip reason is retained for future shapes (e.g. Timestamp / UUID).
+    // Same manifest-claim treatment; the Node runner pins an exact stem set.
     const bool declared_rich_wire_types =
         declared.node_observation_skip == Skip::NodeHostAwaitsRichWireTypes;
     if (declared_rich_wire_types) {

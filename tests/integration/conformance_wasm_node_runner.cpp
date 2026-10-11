@@ -246,29 +246,32 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // host_transcode_awaits_node_port and node_host_awaits_multinode_stash_join
 // skip reasons are deleted (the transcode adapter and stash table they
 // reference no longer exist).
-constexpr int kExpectedAgreed = 82;
-constexpr int kExpectedSkipped = 1;
+// WH-5c.7 Node host rich wire-type port: the JS host's P6 frame packer/reader
+// now implements Map / Decimal / Duration (the full WH-5c.7 rich wire-type
+// matrix), so the wh5c7_rich_input_matrix case (1 scenario) moves from
+// skipped to agreed: 82/1 -> 83/0. The
+// node_host_awaits_rich_wire_types skip reason is retained in the enum for
+// future cases that carry shapes the JS host does not yet implement (e.g.
+// Timestamp/UUID), but no committed case uses it today.
+constexpr int kExpectedAgreed = 83;
+constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET of cases allowed to declare
 // engines.wasm.node_observation_skip=
-// 'node_host_awaits_rich_wire_types'. The module emits and the native
-// wasm3 lane agrees with the blessing, but the Node oracle host's P6
-// frame packer/reader does not implement the rich wire-type matrix
-// (Map / Decimal / Duration are outside the JS host's rung-E frame
-// subset). The C++ host supports them (WH-5c.7); the Node observation
-// is withheld until the JS host ports the rich wire-type matrix.
-// Float is supported (KR6.6 f64 ladder + Node host Float port); the
-// three f64 cases moved to agreed. Keep sorted.
-constexpr std::array<std::string_view, 1> kExpectedRichWireTypesStems{
-    "wh5c7_rich_input_matrix",
-};
+// 'node_host_awaits_rich_wire_types'. Historically this pinned the
+// wh5c7_rich_input_matrix case while the JS host's P6 frame packer/reader
+// did not implement the rich wire-type matrix. WH-5c.7 Node host port:
+// Map / Decimal / Duration are now implemented (Float was ported earlier
+// via the KR6.6 f64 ladder), so the set is empty. The pin is retained (as
+// an empty set) so a future case that needs a new rich-wire-type skip
+// (e.g. Timestamp/UUID) must be added deliberately. Keep sorted.
+constexpr std::array<std::string_view, 0> kExpectedRichWireTypesStems{};
 
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
-// Stems that skipped the Node observation because the Node host predates the
-// WH-5c.7 rich wire-type matrix; compared against
-// kExpectedRichWireTypesStems on a full run.
+// Stems that skipped the Node observation because the Node host lacks a rich
+// wire-type shape; compared against kExpectedRichWireTypesStems on a full run.
 std::vector<std::string> g_rich_wire_types_stems;
 
 void check(bool condition, std::string_view name) {
@@ -574,9 +577,11 @@ int run_one(const CaseEntry &entry,
     // sole exception is the rich wire-type lane
     // (NodeHostAwaitsRichWireTypes): the module emits and the native wasm3
     // lane agrees, but the Node host's P6 frame packer/reader does not
-    // implement Map / Decimal / Duration (outside the JS host's rung-E frame
-    // subset), so the observation is withheld. Float is supported (KR6.6 f64
-    // ladder).
+    // implement some rich wire shape the case carries (outside the JS host's
+    // rung-E frame subset), so the observation is withheld. Map / Decimal /
+    // Duration / Float are supported (WH-5c.7 Node host port + KR6.6 f64
+    // ladder); the skip reason is retained for future shapes (e.g. Timestamp /
+    // UUID).
     const bool rich_wire_types_skip =
         declared_skip == WasmNodeObservationSkip::NodeHostAwaitsRichWireTypes;
     if (declared_skip != WasmNodeObservationSkip::None &&
@@ -591,11 +596,10 @@ int run_one(const CaseEntry &entry,
 
     // The WH-5c.7 rich wire-type lane: the module emits and the native wasm3
     // lane agrees with the blessing, but the Node oracle host's P6 frame
-    // packer/reader does not implement Map / Decimal / Duration
-    // (they are outside the JS host's rung-E frame subset). Withhold the
-    // Node observation until the JS host ports the rich wire-type matrix.
-    // Float is supported (KR6.6 f64 ladder); the remaining gap is
-    // Map / Decimal / Duration.
+    // packer/reader does not implement some rich wire shape the case carries
+    // (outside the JS host's rung-E frame subset). Withhold the Node
+    // observation until the JS host ports the shape. Map / Decimal / Duration
+    // / Float are supported; the skip reason is retained for future shapes.
     if (rich_wire_types_skip) {
         ++g_skipped;
         g_rich_wire_types_stems.push_back(stem);
@@ -759,10 +763,13 @@ int mode_verify(const fs::path &repo_root,
                       << " (a case moved between the compared and skipped sets?)\n";
             ++g_failures;
         }
-        // Exact-set pin of the WH-5c.7 rich wire-type
+        // Exact-set pin of the rich wire-type
         // (node_host_awaits_rich_wire_types) stems: keeps the Node-host gap
-        // reasons disjoint -- a case that needs Map/Decimal/Duration cannot
-        // be filed under a different gap (or vice versa).
+        // reasons disjoint -- a case that needs an unimplemented rich wire
+        // shape cannot be filed under a different gap (or vice versa). The
+        // set is empty today (Map / Decimal / Duration / Float are ported);
+        // the pin is retained so a future case that needs a new shape must
+        // be added deliberately.
         std::sort(g_rich_wire_types_stems.begin(),
                   g_rich_wire_types_stems.end());
         g_rich_wire_types_stems.erase(
