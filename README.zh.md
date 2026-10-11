@@ -137,7 +137,7 @@ flowchart LR
     Resolve --> Typecheck[TypeChecker]
     Typecheck --> TypedHIR[Typed HIR]
     TypedHIR --> Validate[Validator]
-    Validate --> IR[Semantic IR]
+    Validate --> IR[AHFL-IR]
     IR --> Backends[Backends and artifact emitters]
     IR --> OptIR[Optimization IR artifacts]
     Backends --> Native[Native runtime artifacts]
@@ -146,7 +146,7 @@ flowchart LR
     TypedHIR --> LSP[LSP features]
 ```
 
-普通 backend 的主合同是 Semantic IR。Opt IR 是显式诊断 artifact，不是 backend emission 或 LSP 常驻状态的默认输入。
+普通 backend 的主合同是 AHFL-IR。Opt IR 是显式诊断 artifact，不是 backend emission 或 LSP 常驻状态的默认输入。
 
 ## 仓库结构
 

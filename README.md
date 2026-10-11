@@ -144,7 +144,7 @@ flowchart LR
     Resolve --> Typecheck[TypeChecker]
     Typecheck --> TypedHIR[Typed HIR]
     TypedHIR --> Validate[Validator]
-    Validate --> IR[Semantic IR]
+    Validate --> IR[AHFL-IR]
     IR --> Backends[Backends and artifact emitters]
     IR --> OptIR[Optimization IR artifacts]
     Backends --> Native[Native runtime artifacts]
@@ -153,7 +153,7 @@ flowchart LR
     TypedHIR --> LSP[LSP features]
 ```
 
-The normal backend contract is Semantic IR. Opt IR is an explicit diagnostic artifact, not the default input for backend emission or LSP state.
+The normal backend contract is AHFL-IR. Opt IR is an explicit diagnostic artifact, not the default input for backend emission or LSP state.
 
 ## Repository Layout
 
