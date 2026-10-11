@@ -105,7 +105,7 @@
 待办：
 
 - [x] 将 `AnalysisService` 升级为 package-aware snapshot/cache：snapshot 记录 document revision、content hash、workspace revision、PackageGraph context 与 open buffer overlay。
-- [x] 以 `TypedProgram` + Resolver symbol/reference data 作为常规 LSP 主状态；Semantic IR 按需 lower，Opt IR 不进入常规 LSP state。
+- [x] 以 `TypedProgram` + Resolver symbol/reference data 作为常规 LSP 主状态；AHFL-IR 按需 lower，Opt IR 不进入常规 LSP state。
 - [x] open/change/close 后刷新全部已打开文档 diagnostics，覆盖跨文件依赖被未保存 overlay 改坏的 IDE 场景。
 - [x] 实现 `textDocument/prepareRename`，并在 initialize capability 中声明 `prepareProvider`，覆盖声明、引用和不可重命名位置。
 - [x] 为 `workspace/symbol` 增加同一 project snapshot 多打开文档下的符号去重回归。
@@ -150,7 +150,7 @@
 - [x] 将 DAP 接入 runtime state、capability breakpoint、step execution。（RFC 0015 全部 8 个 slice 已实现：DebugSession + DAP 事件 + state/capability/line breakpoint + stepping + stack trace/variables + evaluate + output events + VS Code debuggers contribution。）
 - [x] 为 incremental compiler 增加独立 `ahfl-incremental` 入口和进程级 smoke test。
 - [x] 为 incremental compiler 定义 project-aware import graph、持久 cache 和 daemon invalidation contract。（RFC 0016 全部 6 个 slice 已实现：CacheCore + import graph discovery + signature fingerprint + daemon mode + cache lifecycle + LSP persistent cache + IrCache unification。）
-- [x] 为 profiling 增加 `--time-passes`，输出 `-O` Semantic IR pass pipeline 耗时。
+- [x] 为 profiling 增加 `--time-passes`，输出 `-O` AHFL-IR pass pipeline 耗时。
 - [x] 为 profiling 增加 `--smv-size-report`，输出 `emit smv` artifact 的 byte、line、LTLSPEC 数量。
 - [x] 为 telemetry 增加 `--trace-export` 与 `--metrics-export`，输出 CLI command span、duration 和 exit_code 的 JSONL 文件，不污染 stdout artifact。
 - [x] 为 telemetry 增加 `--structured-log`，输出 CLI command completion level、duration 和 exit_code 的 JSONL 文件，不污染 stdout artifact。
@@ -188,7 +188,7 @@
 待办：
 
 - [x] 为 pass pipeline 增加 backend-effect 回归，证明 `-O` 会让普通 `emit ir` / `emit smv` 输出发生可审查改变。
-- [x] 将 `--optimize` 与普通 CLI/backend emission 明确绑定，普通 backend 仍消费 Semantic IR，但会先运行 Semantic IR pass pipeline。
+- [x] 将 `--optimize` 与普通 CLI/backend emission 明确绑定，普通 backend 仍消费 AHFL-IR，但会先运行 AHFL-IR pass pipeline。
 - [x] 将 backend-effect 回归扩展到 dead state、workflow simplification、SMV size / IR size 指标和 runtime plan 输出。（2026-08-24：workflow simplification 与 SMV/IR size delta 已落地——`ok_workflow_simplification.ahfl` fixture + `RunWorkflowSimplificationTest.cmake` 断言 `-O` 真实收缩 transitive edge 与 LTLSPEC；dead-state 与 runtime-plan 已补——`RunDeadStateEliminationTest.cmake` 锁住 validator gate（unreachable state 通过 CLI 前即被 `validation.INVALID_STATE` 拒绝，`-O` 前后一致），`RunRuntimePlanEffectTest.cmake` 断言 execution plan 在 `-O` 下丢弃 transitive dependency edge 且 JSON 收缩；均接入 quality-gates label。）
 - [x] 将当前 CLI 级 trace/metrics 扩展为 pass-level trace event schema、Opt IR function-level timing 与历史对比报告。（2026-08-24：三部分全部落地——`--pass-trace-export <path>` 输出 `ahfl.pass_trace.v2` JSON;per-pass 记录（name/duration_ms/modified/iteration）+ `semantic_ms`;Opt IR function-level timing（`functions` 数组,每个函数的 per-function optimize() 耗时 + modified,`function_ms` 汇总）;历史对比 `--pass-trace-baseline <path>` 输出 `baseline_delta`（baseline_total_ms + delta_ms,缺失/损坏 baseline 优雅置 null）。`pass_trace_gate.py` 驱动 `emit opt-ir -O` 校验 v2 schema 与 function 记录。）
 - [x] 为 WASM backend 定义 runtime model、WASI/capability mapping、browser-side execution boundary。（2026-08-24：RFC 0017 相邻项——RFC 0019 已 implemented：WASM↔host ABI 契约（alloc/dealloc/run/step/current_state + value_json 帧 + 版本号）、effect→WASI 最小权限投影、capability import 按 SymbolId 命名的 `ahfl_cap` ABI、`emit wasm --wasm-profile wasi|browser` + browser 边界（fetch/clock 支持，文件系统/env 在 emit 期拒绝）。完整 codegen 按 Non-Goal 1 留待后续。）

@@ -62,7 +62,7 @@ AHFL 的 IR 塔有三层，每层有自己的检查面投影：
 
 - AHFL IR 格式
 
-readonly 当前不是源码语法，也不是 Semantic IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、Semantic IR 与 JSON IR。
+readonly 当前不是源码语法，也不是 AHFL-IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、AHFL-IR 与 JSON IR。
 
 ## 两种输出形态
 
@@ -99,9 +99,9 @@ Optimization IR：
 ./build/dev/src/tooling/cli/ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 ```
 
-Opt IR 是 `ir::Program` 下方的 CFG/SSA 风格诊断表示。文本 dump 输出 function、local、basic block、statement、terminator、operand、type、source range，以及未降成 pure expression fragment 的 `skipped_temporal` 记录；`AHFL_OPT_IR_V1` JSON 输出同一模型的结构化机器可读 artifact。普通 backend、Semantic JSON IR、SMV、native / execution / assurance 输出仍消费 Semantic IR (`ir::Program`)；`-O` 会先运行 Semantic IR pass pipeline，因此普通 backend 输出可以变化。`emit opt-ir` / `emit opt-ir-json` 在此基础上还会运行 Opt IR passes 并打印优化后的 Opt IR。
+Opt IR 是 `ir::Program` 下方的 CFG/SSA 风格诊断表示。文本 dump 输出 function、local、basic block、statement、terminator、operand、type、source range，以及未降成 pure expression fragment 的 `skipped_temporal` 记录；`AHFL_OPT_IR_V1` JSON 输出同一模型的结构化机器可读 artifact。普通 backend、Semantic JSON IR、SMV、native / execution / assurance 输出仍消费 AHFL-IR (`ir::Program`)；`-O` 会先运行 AHFL-IR pass pipeline，因此普通 backend 输出可以变化。`emit opt-ir` / `emit opt-ir-json` 在此基础上还会运行 Opt IR passes 并打印优化后的 Opt IR。
 
-Opt IR 当前生产路径是 artifact-only：它不会被 `--optimize` 回降到 Semantic IR，也不会让普通 backend 隐式直连 Opt IR。
+Opt IR 当前生产路径是 artifact-only：它不会被 `--optimize` 回降到 AHFL-IR，也不会让普通 backend 隐式直连 Opt IR。
 
 Opt IR JSON 顶层结构：
 
@@ -243,7 +243,7 @@ JSON IR 中，旧字符串字段仍然保留：
 
 ## ExprRef / Source Range / Type / Effect / ID
 
-当前 Semantic IR 的普通 expression 由 `Program::expr_arena` 统一拥有，节点之间通过 `ExprRef` 引用，而不是嵌套 owning pointer tree。JSON IR 仍导出结构化 expression tree，消费方不需要直接理解 arena 内存布局，但应按下面规则处理稳定身份和诊断位置：
+当前 AHFL-IR 的普通 expression 由 `Program::expr_arena` 统一拥有，节点之间通过 `ExprRef` 引用，而不是嵌套 owning pointer tree。JSON IR 仍导出结构化 expression tree，消费方不需要直接理解 arena 内存布局，但应按下面规则处理稳定身份和诊断位置：
 
 1. `Expr::id` 是 lowering 时分配的 program-local stable numeric ID，可用于同一次 IR 输出内的诊断和测试关联。
 2. `ExprRef` 是实现层 handle，不是当前 JSON IR 的跨版本 ABI；外部机器消费仍应读取 JSON 节点结构。
@@ -270,7 +270,7 @@ JSON IR 中的 path expression 会输出 `root_kind`，用于冻结路径根的�
 | `local` | flow 内 let/local binding 路径 |
 | `identifier` | workflow node output 或其他普通 identifier 根 |
 
-Typed HIR serialization、Semantic IR lowering、JSON IR、文本 IR、runtime assignment executor 与 Opt IR lowering 都消费同一组 root kind。下游 consumer 不应再通过 `root_name == "ctx"` 这类字符串约定推断语义；需要判断执行上下文、local binding 或 workflow node output 时，应优先读取 `root_kind`。
+Typed HIR serialization、AHFL-IR lowering、JSON IR、文本 IR、runtime assignment executor 与 Opt IR lowering 都消费同一组 root kind。下游 consumer 不应再通过 `root_name == "ctx"` 这类字符串约定推断语义；需要判断执行上下文、local binding 或 workflow node output 时，应优先读取 `root_kind`。
 
 当前 DSL golden 覆盖 `input/context/local/output/identifier` 的实际源码路径；`state` 作为 IR 结构能力由 IR printer / JSON 单元测试覆盖。
 
@@ -378,7 +378,7 @@ Opt IR 对 temporal 的处理与 `formal_observations` 不同：embedded pure bo
 
 ## 版本与变更规则
 
-Semantic IR 当前格式标识为 `ahfl.ir.v2`。
+AHFL-IR 当前格式标识为 `ahfl.ir.v2`。
 
 该格式标识同时出现在文本 IR 首行和 JSON IR 顶层字段。`include/ahfl/compiler/ir/ir.hpp` 中的 `ahfl::ir::kFormatVersion` 是实现侧事实来源。
 
@@ -386,7 +386,7 @@ Semantic IR 当前格式标识为 `ahfl.ir.v2`。
 
 1. 新增可忽略的 JSON 字段。
 2. 新增 text IR 展示行，但不改变既有字段语义。
-3. 新增 backend-private artifact，只要不改变 Semantic IR contract。
+3. 新增 backend-private artifact，只要不改变 AHFL-IR contract。
 4. 新增 summary / observation 时同时保留原字段含义。
 
 必须视为格式标识 / golden / docs 同步事件的变化包括：
@@ -395,7 +395,7 @@ Semantic IR 当前格式标识为 `ahfl.ir.v2`。
 2. 改变 declaration、expression、statement、temporal formula 的结构含义。
 3. 改变 `TypeRef` / `SymbolRef` 的 identity 语义。
 4. 改变 `formal_observations` 的收集边界。
-5. 让普通 backend 隐式消费 Opt IR，或让 `--optimize` 绕过 Semantic IR contract。
+5. 让普通 backend 隐式消费 Opt IR，或让 `--optimize` 绕过 AHFL-IR contract。
 
 `ahfl.ir.v2` 相比 v1 新增必填 expression `effect` 和 flow summary
 `inferred_effect`，用于把 Sema effect facts 正式贯穿到 assurance/formal。v1 consumer

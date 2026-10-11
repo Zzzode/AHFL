@@ -29,8 +29,8 @@ flowchart TD
     Resolve --> Typecheck[typecheck]
     Typecheck --> TypedHIR[TypedProgram]
     TypedHIR --> Validate[validate]
-    Validate --> SemanticIR[Semantic IR: ir::Program]
-    SemanticIR --> SemanticPasses[optional Semantic IR passes]
+    Validate --> SemanticIR[AHFL-IR: ir::Program]
+    SemanticIR --> SemanticPasses[optional AHFL-IR passes]
     SemanticPasses --> Backend[emit_backend]
     SemanticIR -. "emit opt-ir / opt-ir-json" .-> OptIR[Optimization IR: ir::opt::OptProgram]
     OptIR -. "-O" .-> OptPasses[Opt IR passes]
@@ -43,9 +43,9 @@ flowchart TD
 
 1. frontend / semantics 负责把语言事实和静态语义判定完成。
 2. Typed HIR 负责承载自包含的 typed semantic model。
-3. Semantic IR (`ir::Program`) 负责冻结稳定的后端消费边界。
+3. AHFL-IR (`ir::Program`) 负责冻结稳定的后端消费边界。
 4. Opt IR 负责承载可诊断的 CFG/SSA 风格优化层；当前只作为显式 artifact 输出，不改变普通 backend contract。
-5. Core-IR (`CoreProgram`) 是 Semantic IR 下方的执行层；它当前也只作为显式 artifact 输出（`emit core-ir-json`，`ahfl.core.v1`），由 `lower_ahfl_to_core` + `print_core_ir_json` 驱动。
+5. Core-IR (`CoreProgram`) 是 AHFL-IR 下方的执行层；它当前也只作为显式 artifact 输出（`emit core-ir-json`，`ahfl.core.v1`），由 `lower_ahfl_to_core` + `print_core_ir_json` 驱动。
 6. backend 负责把稳定 IR 渲染成文本或机器可消费输出。
 
 因此：
@@ -53,7 +53,7 @@ flowchart TD
 1. backend 不应直接消费 parse tree。
 2. backend 不应自己重跑 resolver / typecheck。
 3. 普通 backend 当前不消费 Opt IR。
-4. 任何需要多个 backend 共享的语义，都应先进入 Semantic IR。
+4. 任何需要多个 backend 共享的语义，都应先进入 AHFL-IR。
 
 ## IR 公共边界
 
@@ -89,14 +89,14 @@ flowchart TD
 - `ir::opt::print_opt_program(...)`
 - `ir::opt::print_opt_program_json(...)`
 
-这说明 Semantic IR 在当前仓库中承担两层角色：
+这说明 AHFL-IR 在当前仓库中承担两层角色：
 
 1. 稳定中间表示
 2. backend 共享的序列化/导出边界
 
-Core-IR 是 Semantic IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core.v1`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。`ir::Program` JSON projection（`ahfl.ir.v2`）是 AHFL-IR 层的永久一等投影，与 Core-IR 投影并列、互不取代（三层 IR 塔定型后的分层事实，见 `docs/reference/ir-format.zh.md`「分层投影边界」）。
+Core-IR 是 AHFL-IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core.v1`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。`ir::Program` JSON projection（`ahfl.ir.v2`）是 AHFL-IR 层的永久一等投影，与 Core-IR 投影并列、互不取代（三层 IR 塔定型后的分层事实，见 `docs/reference/ir-format.zh.md`「分层投影边界」）。
 
-Opt IR 则是 Semantic IR 下方的诊断/优化层。它通过 CLI `emit opt-ir` / `emit opt-ir-json` 可见，但不在当前 core backend registry 中作为普通 backend 消费合同。当前生产路径决策是 artifact-only：普通 backend 不消费 Opt IR，`--optimize` 不把 Opt IR 回降 Semantic IR，也不让 backend 隐式直连 Opt IR。
+Opt IR 则是 AHFL-IR 下方的诊断/优化层。它通过 CLI `emit opt-ir` / `emit opt-ir-json` 可见，但不在当前 core backend registry 中作为普通 backend 消费合同。当前生产路径决策是 artifact-only：普通 backend 不消费 Opt IR，`--optimize` 不把 Opt IR 回降 AHFL-IR，也不让 backend 隐式直连 Opt IR。
 
 ## 为什么需要稳定 IR
 
@@ -227,7 +227,7 @@ project-aware 模式下，同名 declaration 可能来自不同 source/module �
 
 ## Path Root 语义边界
 
-Path expression 的根语义由 `PathRootKind` 明确表达，而不是由 `root_name` 字符串隐式约定。Typed HIR 与 Semantic IR 当前保持同一组 root kind：
+Path expression 的根语义由 `PathRootKind` 明确表达，而不是由 `root_name` 字符串隐式约定。Typed HIR 与 AHFL-IR 当前保持同一组 root kind：
 
 1. `Input`
 2. `Context`
@@ -241,11 +241,11 @@ Path expression 的根语义由 `PathRootKind` 明确表达，而不是由 `root
 1. 判断执行上下文路径时读取 `Context`，不要重新匹配 `ctx` 字符串。
 2. 判断 flow local binding 时读取 `Local`，不要和 workflow node output 混在同一个 identifier 语义里。
 3. `Identifier` 保留给 workflow node output 或其他普通 identifier 根，不再承担 context/state/local 的兼容桶角色。
-4. 新增 root kind 时必须同步 Typed HIR serialization、Semantic IR JSON、文本 printer、runtime/backend 消费端和 Opt IR lowering。
+4. 新增 root kind 时必须同步 Typed HIR serialization、AHFL-IR JSON、文本 printer、runtime/backend 消费端和 Opt IR lowering。
 
 ## readonly 语言边界
 
-Core 当前不引入 `readonly` 修饰符或 readonly 容器语法。容器 variance 是类型关系层的内部能力：`Optional<T>`、`List<T>`、`Set<T>` 的元素类型可协变，`Map<K, V>` 的 key 保持 invariant、value 可协变；这些规则不要求在 AST、Typed HIR、Semantic IR `TypeRef` 或 JSON IR 中新增 readonly bit。
+Core 当前不引入 `readonly` 修饰符或 readonly 容器语法。容器 variance 是类型关系层的内部能力：`Optional<T>`、`List<T>`、`Set<T>` 的元素类型可协变，`Map<K, V>` 的 key 保持 invariant、value 可协变；这些规则不要求在 AST、Typed HIR、AHFL-IR `TypeRef` 或 JSON IR 中新增 readonly bit。
 
 若未来要把 readonly 变成源码级语言能力，必须作为新的 language/spec/grammar/typecheck/IR 任务推进，不能把它作为 IR 或 type relation 的隐式兼容字段混入当前 backend contract。
 
@@ -267,9 +267,9 @@ statement 和 temporal expression 当前明确保留 owning tree，不引入 `St
 
 后续只有在出现跨 formula 引用、temporal pass 需要稳定 node handle、或 statement rewrite 需要跨 block 移动并保留引用身份时，才重新评估 `StatementRef` / `TemporalRef`。
 
-## Semantic IR Verifier
+## AHFL-IR Verifier
 
-`verify_ir_program(...)` 是 Semantic IR 的结构安全网。CLI 在 validate 之后、backend/package/Opt IR 分发之前统一运行它。
+`verify_ir_program(...)` 是 AHFL-IR 的结构安全网。CLI 在 validate 之后、backend/package/Opt IR 分发之前统一运行它。
 
 当前 verifier 首版覆盖：
 
@@ -495,7 +495,7 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 
 `emit opt-ir` 输出 `ir::opt::OptProgram` 的文本 dump，`emit opt-ir-json` 输出同一模型的 `AHFL_OPT_IR_V1` JSON artifact。它们的用途是：
 
-1. 观察 Semantic IR 到 CFG/SSA 风格 Opt IR 的 lowering 结果。
+1. 观察 AHFL-IR 到 CFG/SSA 风格 Opt IR 的 lowering 结果。
 2. 对比 `-O` 前后的 constant propagation、copy propagation、dead store elimination 效果。
 3. 为 `verify_opt_program`、workflow / contract / temporal lowering 覆盖和 pass 行为提供 golden surface。
 4. 在 artifact 输出前运行 `verify_opt_program`，并在 `-O` 后再次验证 pass 输出没有破坏 CFG/local/type 基础不变量。
@@ -507,10 +507,10 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 1. JSON IR 的替代格式。
 2. BackendRegistry 中的 core backend。
 3. 普通 backend 输出链路的前置阶段。
-4. `--optimize` 后回写 Semantic IR 的机制。
+4. `--optimize` 后回写 AHFL-IR 的机制。
 5. backend 直连 Opt IR 的隐式开关。
 
-当前生产路径结论是 artifact-only。若未来要让普通 backend 复用 Opt IR 结果，必须先单独设计并实现其中一种路径：`OptProgram` 回降 Semantic IR，或特定 backend 显式声明直接消费 Opt IR；不能让 `--optimize` 通过隐式旁路改变 backend contract。
+当前生产路径结论是 artifact-only。若未来要让普通 backend 复用 Opt IR 结果，必须先单独设计并实现其中一种路径：`OptProgram` 回降 AHFL-IR，或特定 backend 显式声明直接消费 Opt IR；不能让 `--optimize` 通过隐式旁路改变 backend contract。
 
 ## 扩展落点指南
 
@@ -587,4 +587,4 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 5. 若某项语义不能稳定进入 IR，就说明它还没有准备好成为 backend 约束。
 6. CLI 必须显式区分 core backend、package pipeline 与 runtime execution，不能靠“dispatcher 试试看”来决定语义路径。
 7. Runtime event/report/projection 不得作为 `ahfl_backend_*` target 进入 backend aggregate。
-8. Opt IR 当前保持 artifact-only；已有 verifier、`AHFL_OPT_IR_V1` JSON artifact 和 workflow / contract / temporal lowering 覆盖。进入普通 backend 输出路径之前，必须明确回降 Semantic IR 或 backend 直连策略。
+8. Opt IR 当前保持 artifact-only；已有 verifier、`AHFL_OPT_IR_V1` JSON artifact 和 workflow / contract / temporal lowering 覆盖。进入普通 backend 输出路径之前，必须明确回降 AHFL-IR 或 backend 直连策略。

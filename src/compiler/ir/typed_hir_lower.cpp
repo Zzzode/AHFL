@@ -29,10 +29,10 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// Typed HIR -> Semantic IR canonical boundary
+// Typed HIR -> AHFL-IR canonical boundary
 //
 // Public overloads accepting ast::Program / SourceGraph are API adapters only.
-// Semantic IR facts are read from TypedProgram: declarations, expressions,
+// AHFL-IR facts are read from TypedProgram: declarations, expressions,
 // statements, temporal expressions, resolver snapshots, module/import payloads,
 // and source provenance all come from the typed store.
 // ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
 
 // ---------------------------------------------------------------------------
 // Typed-tree based lowerer. TypedProgram is the canonical structural source for
-// backend-ready Semantic IR.
+// backend-ready AHFL-IR.
 // ---------------------------------------------------------------------------
 
 class TypedIrLowerer final {
@@ -3004,7 +3004,7 @@ class TypedIrLowerer final {
         };
     }
 
-    // Typed-store statement lowering visitor. Each method builds the Semantic IR
+    // Typed-store statement lowering visitor. Each method builds the AHFL-IR
     // statement variant directly from the TypedStatement payload.
     struct TypedStmtPerKindLowerer {
         const TypedIrLowerer &self;

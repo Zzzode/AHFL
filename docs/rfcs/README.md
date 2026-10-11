@@ -73,7 +73,7 @@ Every RFC lists one or more areas in frontmatter. Each area must have an entry i
 | --- | --- |
 | `language` | Grammar, type system, static semantics, verification subset |
 | `compiler` | Parser, frontend, resolver, type checker, lowering |
-| `ir` | Semantic IR, JSON IR, Typed HIR serialization, backend input contract |
+| `ir` | AHFL-IR, JSON IR, Typed HIR serialization, backend input contract |
 | `stdlib` | `std/`, prelude, builtin hooks, public surface |
 | `runtime` | Evaluator, runtime engine, LLM/capability providers |
 | `tooling` | CLI, LSP, formatter, VS Code extension, diagnostics UX |

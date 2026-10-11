@@ -17,7 +17,7 @@ AHFL LSP hover 的目标是提供 quick info，而不是 compiler inspector。�
 
 核心结论如下：
 
-1. Hover 服务以 `TypedProgram`、resolver symbol/reference、diagnostic 和 source snapshot 为权威输入；Semantic IR / Opt IR 不进入常驻 hover 路径。
+1. Hover 服务以 `TypedProgram`、resolver symbol/reference、diagnostic 和 source snapshot 为权威输入；AHFL-IR / Opt IR 不进入常驻 hover 路径。
 2. Server 先定位最小语义 token，再构造结构化 payload，最后由统一 renderer 输出 Markdown 或 plaintext。
 3. 默认 hover 只显示用户正在写代码时马上需要的信息；canonical name、module、source path、owner id 等调试元数据默认隐藏。
 4. VS Code 的 hover 容器不是 AHFL 扩展可以重绘的自定义 UI；可控面是 LSP 返回内容的信息架构。
@@ -103,7 +103,7 @@ Source: `tests/integration/check_fail_state/lib/agents.ahfl`
 非目标：
 
 1. 不自定义 VS Code hover DOM、CSS、颜色或 tooltip 组件。
-2. 不为 hover 引入 Semantic IR / Opt IR 查询路径。
+2. 不为 hover 引入 AHFL-IR / Opt IR 查询路径。
 3. 不在 hover request 中重新 parse / resolve / typecheck。
 4. 不把 source path、canonical name、module 当成默认主视觉。
 5. 不把 VS Code tooltip 像素截图作为自动门禁；hover DOM/CSS 属于 VS Code 实现细节，稳定门禁使用 extension-host hover provider 结果。
@@ -313,7 +313,7 @@ Hover 必须从 `LspAnalysisSnapshot` 读取现有分析结果：
 | 错误状态 | parse / resolve / typecheck / validate diagnostics | unresolved hover 或错误提示 |
 | source ownership | `LspSourceSnapshot` + `SourceId` | 跨文件 range 和 uri |
 
-Hover 不默认读取 Semantic IR 或 Opt IR。它们可能重排或丢失源码位置，对 IDE 交互不是主模型。
+Hover 不默认读取 AHFL-IR 或 Opt IR。它们可能重排或丢失源码位置，对 IDE 交互不是主模型。
 
 ## 八、目标定位模型
 

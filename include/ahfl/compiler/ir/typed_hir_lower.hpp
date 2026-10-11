@@ -8,7 +8,7 @@ namespace ahfl {
 struct SourceGraph;
 
 // Lower a TypedProgram. ast::Program / SourceGraph overloads are API adapters;
-// all Semantic IR facts are read from the TypedProgram snapshot.
+// all AHFL-IR facts are read from the TypedProgram snapshot.
 [[nodiscard]] ir::Program lower_typed_program(const TypedProgram &program,
                                               const ast::Program &ast_program);
 [[nodiscard]] ir::Program lower_typed_program(const TypedProgram &program,

@@ -29,7 +29,7 @@
    不会隐式加载 `std` package。
 4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
 5. 运行期 replay、audit、scheduler、checkpoint 和 recovery 都由 `WasmWorkflowRuntime`（wasm3 内嵌执行）的 event log 投影，不再暴露平行 artifact catalog。
-6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
+6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 AHFL-IR。
 7. Public API artifact 通过 `emit public-api` / `emit public-api-docs` / `emit public-api-diff` 输出 visibility facts 驱动的 API snapshot、Markdown docs 和 API diff。
 8. `init --single-file` 是从 detached 裸文件迁移到正式 `ahfl.toml` package 的显式脚手架入口，不改变 detached mode 语义。
 9. `package archive` 是 registry publishing 的源码打包入口，生成 normalized source archive payload 和对应 metadata manifest。
@@ -142,8 +142,8 @@ ahfl-dap [--help]
 | `--dump-types` | - | 输出类型环境 |
 | `--explain` | - | 启用结构化解释 |
 | `--check` | - | 仅 `fmt`: 检查格式化状态，不写回文件 |
-| `-O` / `--optimize` | - | 启用优化 passes；普通 backend 路径运行 Semantic IR passes，`emit opt-ir` / `emit opt-ir-json` 输出 Opt IR passes 后的结果 |
-| `--time-passes` | - | 与 `-O` 配合使用，把 Semantic IR pass pipeline 耗时输出到 stderr |
+| `-O` / `--optimize` | - | 启用优化 passes；普通 backend 路径运行 AHFL-IR passes，`emit opt-ir` / `emit opt-ir-json` 输出 Opt IR passes 后的结果 |
+| `--time-passes` | - | 与 `-O` 配合使用，把 AHFL-IR pass pipeline 耗时输出到 stderr |
 | `--smv-size-report` | - | 仅 `emit smv`: 把 SMV artifact 的 byte、line、LTLSPEC 数量输出到 stderr |
 | `--trace-export` | `<trace.jsonl>` | 将 CLI command span 以 JSONL 写入文件，不改变 stdout artifact |
 | `--metrics-export` | `<metrics.jsonl>` | 将 CLI duration / exit_code metrics 以 JSONL 写入文件，不改变 stdout artifact |
@@ -396,7 +396,7 @@ ahflc emit summary \
 
 ## Core-IR 分层 JSON Artifact
 
-`emit core-ir-json` / `emit-core-ir-json` 是执行层 Core-IR 的机器可读入口，输出 `ahfl.core.v1` 分层 JSON projection。它在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 Semantic IR lowering 之后，把 `ir::Program` 降到 `CoreProgram`（`lower_ahfl_to_core`，自动跑 Core verifier），再序列化为单个 bundled envelope：`format_version`、固定 `layer: "core"` 判别符，以及 `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances` 表。
+`emit core-ir-json` / `emit-core-ir-json` 是执行层 Core-IR 的机器可读入口，输出 `ahfl.core.v1` 分层 JSON projection。它在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 AHFL-IR lowering 之后，把 `ir::Program` 降到 `CoreProgram`（`lower_ahfl_to_core`，自动跑 Core verifier），再序列化为单个 bundled envelope：`format_version`、固定 `layer: "core"` 判别符，以及 `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances` 表。
 
 ```bash
 ahflc emit core-ir-json examples/refund/audit.ahfl
@@ -405,7 +405,7 @@ ahflc emit core-ir-json examples/refund/audit.ahfl
 当前边界：
 
 1. 这是**新增**的投影，不改变任何既有 artifact；单层 `emit-ir` / `emit-ir-json` 输出逐字节不变。
-2. 它是 artifact-only，不回写 Semantic IR，也不改变任何普通 backend 的消费类型。
+2. 它是 artifact-only，不回写 AHFL-IR，也不改变任何普通 backend 的消费类型。
 3. JSON envelope 只携带逻辑身份，不携带 target data-layout fact（物理布局是独立的 target-specific artifact）。
 4. 完整 schema / 规范化 / round-trip 契约见设计文档 `docs/design/core-ir-p9-layered-json.zh.md`；既有单层投影的弃用边界见 [ir-format.zh.md](./ir-format.zh.md) 的「分层投影与弃用边界」。
 
@@ -441,7 +441,7 @@ trace 文件由 `ahflc run --format jsonl` 生成（`ahfl.run-event.v1` JSONL）
 
 ## Optimization IR Artifact
 
-`emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR_V1` JSON artifact。二者都会在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 Semantic IR lowering 之后，把 `ir::Program` 降到 `ir::opt::OptProgram`。artifact 包含 OptFunction、local、basic block、statement、terminator、source range，以及无法降为 pure expression fragment 的 temporal atom `skipped_temporal` 记录。
+`emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR_V1` JSON artifact。二者都会在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 AHFL-IR lowering 之后，把 `ir::Program` 降到 `ir::opt::OptProgram`。artifact 包含 OptFunction、local、basic block、statement、terminator、source range，以及无法降为 pure expression fragment 的 temporal atom `skipped_temporal` 记录。
 
 示例：
 
@@ -449,13 +449,13 @@ trace 文件由 `ahflc run --format jsonl` 生成（`ahfl.run-event.v1` JSONL）
 # 输出未运行 Opt IR passes 的 Opt IR
 ahflc emit opt-ir tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 
-# 先运行 Semantic IR passes，再输出 Opt IR passes 后的结果
+# 先运行 AHFL-IR passes，再输出 Opt IR passes 后的结果
 ahflc emit opt-ir -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 
 # 输出未运行 Opt IR passes 的 Opt IR JSON
 ahflc emit opt-ir-json tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 
-# 先运行 Semantic IR passes，再输出 Opt IR passes 后的 Opt IR JSON
+# 先运行 AHFL-IR passes，再输出 Opt IR passes 后的 Opt IR JSON
 ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 ```
 
@@ -463,10 +463,10 @@ ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/e
 
 1. `emit opt-ir` 是 artifact dump，不是 core backend contract。
 2. 普通 `emit-ir`、`emit-ir-json`、SMV、native / execution / assurance 输出仍以 `ir::Program` 为输入。
-3. `-O` 在普通 backend 路径中会先运行 Semantic IR pass pipeline，因此普通 backend 输出可以变化；当前回归测试已覆盖 `emit ir` 和 `emit smv` 的 before/after 差异。
-4. `-O` 不会把 Opt IR 回降到 Semantic IR，也不会改变 backend 消费类型。
+3. `-O` 在普通 backend 路径中会先运行 AHFL-IR pass pipeline，因此普通 backend 输出可以变化；当前回归测试已覆盖 `emit ir` 和 `emit smv` 的 before/after 差异。
+4. `-O` 不会把 Opt IR 回降到 AHFL-IR，也不会改变 backend 消费类型。
 5. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
-6. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 Semantic IR 时，仍应使用 `emit-ir-json`。
+6. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 AHFL-IR 时，仍应使用 `emit-ir-json`。
 
 ## SMT Contract Artifact 与数据谓词验证
 

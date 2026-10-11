@@ -548,7 +548,7 @@ struct TypedStatement {
     std::uint32_t else_block_index{UINT32_MAX};
 
     // Let type annotation payload. let_type is the canonical semantic input for
-    // Typed HIR -> Semantic IR lowering.
+    // Typed HIR -> AHFL-IR lowering.
     LetTypeRefStrategy let_type_ref_strategy{LetTypeRefStrategy::NoAnnotation};
     TypePtr let_type{nullptr};
 

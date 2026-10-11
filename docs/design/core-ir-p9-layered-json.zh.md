@@ -21,7 +21,7 @@
 
 ## 0. Problem, scope, non-goals
 
-The Semantic IR layer (`ir::Program`) has exactly **one** JSON projection: the
+The AHFL-IR layer (`ir::Program`) has exactly **one** JSON projection: the
 single-layer `ir::Program` writer/reader pair (`src/compiler/ir/ir_json.cpp`,
 `print_program_ir_json` / `parse_program_ir_json` declared in
 `include/ahfl/compiler/ir/lowering.hpp:36`/`:45`), whose format identity is
