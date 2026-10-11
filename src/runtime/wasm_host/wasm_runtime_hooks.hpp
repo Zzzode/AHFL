@@ -10,10 +10,9 @@
 //                             channel -- WH-5c.4 251ebdb7)
 //   * state_entered_live_hook -- workflow P6 lane ONLY: import-boundary
 //                             trace-prefix LIVE fire (the debug channel,
-//                             kr68 section 12.9.14). Never WireJson (no trace
-//                             ring), never post-run, never from the agent
-//                             runner (whose state_entered_hook is already
-//                             live per step). A host that wants schedule-
+//                             kr68 section 12.9.14). Never post-run, never
+//                             from the agent runner (whose state_entered_hook
+//                             is already live per step). A host that wants schedule-
 //                             ordered observation installs state_entered_hook;
 //                             a host that wants live (pre-capability) state
 //                             observation installs state_entered_live_hook.

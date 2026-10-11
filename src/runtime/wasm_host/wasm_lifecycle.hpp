@@ -33,9 +33,7 @@ struct WasmNodeStateEntry {
 // Per-node run facts, in schedule order (descriptor.nodes order).
 struct WasmNodeRunFacts {
     std::vector<WasmNodeStateEntry> states;
-    // Node output. P6-frame: decoded from the runner's O_k block. WireJson:
-    // nullopt (individual node outputs are not host-observable on the opaque
-    // lane; the module passes them through its own heap).
+    // Node output, decoded from the runner's O_k block.
     std::optional<Value> output;
     // The node terminal. Completed = NodeCompleted, Failed = NodeFailed,
     // Skipped = NodeSkipped (never executed because a prior node failed),

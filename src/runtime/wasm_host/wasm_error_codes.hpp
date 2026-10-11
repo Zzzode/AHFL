@@ -52,9 +52,8 @@ inline constexpr std::string_view kCompileFailed = "wasm.compile-failed";
 inline constexpr std::string_view kWorkflowNotFound = "wasm.workflow-not-found";
 
 // A successful run produced workflow output bytes that fail to decode
-// (WireJson: value_from_json rejects the bytes; P6-frame: read_value_at
-// rejects the frame). Evidence of a corrupt module; the session fails
-// closed rather than returning Completed with a null output.
+// (read_value_at rejects the frame). Evidence of a corrupt module; the
+// session fails closed rather than returning Completed with a null output.
 inline constexpr std::string_view kOutputDecodeFailed =
     "wasm.output-decode-failed";
 
