@@ -105,7 +105,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0018"
     title: "NuSMV Library-Mode Embedding"
-    status: "accepted"
+    status: "implemented"
     file: "0018-nusmv-library-mode.zh.md"
     area: ["formal", "tooling"]
     stability: "experimental"
@@ -159,7 +159,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0027"
     title: "Query-Based Frontend and IR Single Source of Truth"
-    status: "accepted"
+    status: "implemented"
     file: "0027-query-frontend-and-ir-ssot.zh.md"
     area: ["compiler", "ir", "tooling"]
     stability: "experimental"
