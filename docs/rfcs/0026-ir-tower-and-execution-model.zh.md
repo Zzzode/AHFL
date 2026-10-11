@@ -1134,3 +1134,67 @@ Implementation Plan 对应分片承载。
   - conformance census 不变(dual-track 消除已落地,native + node census 已 agree;本修订不改变任何执行语义)。
 
   **RFC 0026 保持 implementing。**
+
+- 2026-10-11: **D2b live OK/PENDING/ERROR response API 设计决策(专用决策代理;无人类 owner 门;决策记录,非实现)。** 本决策记录 resume host driver(`core_wasm_resume_host.cpp`)如何实现 controller 的四个 after-frontier 决策臂(ReadyForLive / DedupReplay / DedupReplayFailure / RecoverPending),将当前全部 fail-closed(`ReadyForLiveBlocked`)的 live frontier 替换为真正的 live capability 调用 + D2b authority seal/record/replay。seam 契约(`core-ir-kr6-5-e4b-wire-resume-seam.zh.md` §5 step 7)已锁定:OK → Verified-decode + canonical re-encode + length-check ≤ reserved bound → alloc/transfer/persist;PENDING → 不构造 Result frame,follow-on typed suspend/persist decision 形成新 pending coordinate;ERROR/unknown/trap → fail closed。
+
+  **(1) LiveCapabilityInvoker 接口(选型 + 理由)**:ResumeRequest 新增 `LiveCapabilityInvoker`——一个 caller-supplied `std::function`,签名为 `std::expected<LiveCapabilityOutcome, LiveCapabilityFault>(const rc::ReadyForLive&, const engine::ImportObservation&)`。它 **不直接复用** `ContextualCapabilityInvoker`:driver 是 engine-agnostic 的,没有 `CapabilityInvocationContext` 所需的 string names(workflow_name / agent_name / state_name 等),也没有 `name_resolver` 和 `frame_section`;caller(持有 Program/IR + capability registry + frame layout)在 lambda 内闭包 `ContextualCapabilityInvoker` + `name_resolver` + `frame_section`,与现有 `pack_entry_frame` / `pack_bridge_result` / `bridge_arg_hasher` 的 caller-supplied seam 模式一致。invoker 接收 **typed params**(`ReadyForLive.params: vector<Value>`),**不接收 wire-JSON bytes**——live capability 返回 `CapabilityCallResult` 带 `Value`,invoker 负责 serialize → Verified-decode → canonical re-encode → length-check ≤ bridge site `result_payload_capacity`,返回 canonical bytes。driver 只看到 canonical bytes,不依赖 wire codec / frame_section。
+
+  **(2) LiveCapabilityOutcome / LiveCapabilityFault 类型(Principle 4 closed variant)**:
+  - `LiveOk { std::vector<std::uint8_t> canonical_result_json; }`——已 Verified-decode + canonical re-encode + length-check 的 wire-JSON bytes。
+  - `LivePending {}`——capability 返回 PENDING;无 Result frame。
+  - `LiveError { std::string diagnostic; }`——capability 返回 ERROR/Timeout/RetryExhausted/CircuitOpen;diagnostic 仅用于 abort 诊断,不进入 authority。
+  - `LiveCapabilityFault` enum:`CapabilityNameUnknown` / `ResultVerificationFailed` / `ResultTooLarge` / `InvokerFailed`——invoker lambda 自身的 host-decision 故障(非 capability 执行故障)。
+
+  **(3) OK 路径(driver 动作序列)**:
+  1. 从 `ReadyForLive` 决策构建 `DurableEffectIntent`(通过共享 `mint_live_effect_intent` helper,见 (10))。
+  2. `authority->begin_effect(intent)` → `DedupDecision`。**seal 在 live call 之前**:crash during call 留下 Pending row for recovery。
+  3. `EffectNew` → 调 `live_invoker(decision, obs)` → `LiveOk(canonical_bytes)`。
+  4. `authority->record_result(intent.token(), canonical_bytes)` → `ResultHandle`。
+  5. `pack_bridge_result(engine, obs, call_site, canonical_bytes)` → `ImportReply{AHFL_CAP_OK, result_base}`。packer 内部做 Verified-decode + pack(与 ReturnMemo / NeedInjectedSlot 共用同一 seam;double-decode 是已知效率代价,正确性优先)。
+  6. begin_effect 的非 New 结局(controller preview 与 driver begin 之间的 race)由 driver 处理:`ReplaySucceeded` → `read_result(handle)` → pack(同 DedupReplay);`ReplayFailed` → `read_result(handle)` → fail closed(同 DedupReplayFailure);`ReplayPending` → fail closed(同 RecoverPending);`Diverged` → `CoordinateMismatch` fail closed。
+
+  **(4) PENDING 路径**:`begin_effect` → New → invoke → `LivePending` → Pending row 保持 sealed(不调 record_result / record_failure)→ `ImportAbort`(typed `LiveCapabilityPending` reason)。resume fail closed,generation 保持 Available。seam 要求的"follow-on typed suspend/persist decision forms a new pending coordinate carrying this step's computed arg_hash"是 **D2b-8 follow-on**:需要 controller 新决策臂(FormNewPendingCoordinate)+ store `publish_available` 持久化新 pending entry + driver 返回 `ImportReply{AHFL_CAP_PENDING, 0, 0}` 让 module suspend + `finish_run` 扩展支持 second PENDING。engine port 无 suspend 机制,import callback 是同步的,所以第一片用 ImportAbort。
+
+  **(5) ERROR 路径**:`begin_effect` → New → invoke → `LiveError` → `authority->record_failure(intent.token(), diagnostic_bytes)` → `ImportAbort`(typed `LiveCapabilityError` reason)。failure bytes 记录在 authority 中,future resume 的 `preview_begin` 看到 `PreviewReplayFailed` → controller 发 `DedupReplayFailure`。diagnostic_bytes 是 error_message 的 UTF-8 编码(第一片;typed failure record 是 follow-on)。
+
+  **(6) DedupReplay 路径**:`authority->read_result(handle)` → canonical result bytes → `pack_bridge_result(engine, obs, call_site, bytes)` → `ImportReply{AHFL_CAP_OK, result_base}`。**NO live call,NO begin_effect,NO record_result**——authority 已有 SUCCEEDED terminal,driver 只读取 + 打包。invoker call count 必须为 0。
+
+  **(7) DedupReplayFailure 路径**:`authority->read_result(handle)` → failure bytes → `ImportAbort`(typed `LiveCapabilityReplayedFailure` reason,failure bytes 作为 abort 诊断)。**NO live call,NO begin_effect**。replay 一个已记录的 terminal failure,不发第二个 effect。
+
+  **(8) RecoverPending 路径(第一片 fail closed)**:authority 有 PENDING row(crashed prior attempt 留下)。driver **fail closed**:`ImportAbort`(typed `RecoverPendingRequired` reason)。理由:Pending row 代表一个 in-flight effect,可能已完成但未 record;re-drive 有 duplicate effect 风险;wait/poll 机制不存在。**D2b-9 follow-on**:用 `CapabilityInvocationContext::idempotency_key`(RFC 0022 slice 4)re-drive live call,capability provider 去重——若 prior call 已完成则返回 cached result,否则执行。这需要 invoker lambda 支持 idempotency key(从 ReadyForLive 的 arg_hash + call site coordinate 计算)。
+
+  **(9) Slice ladder**:
+  - **D2b-5**:LiveCapabilityInvoker 接口 + `mint_live_effect_intent` 共享 helper + ReadyForLive arm 全部 begin_effect/live 结局(OK / PENDING / ERROR + begin_effect race handling)。DedupReplay / DedupReplayFailure / RecoverPending 保持 blocked。**最小价值片**:resumed workflow 能越过 frontier 调 live capability 并继续。
+  - **D2b-6**:DedupReplay + DedupReplayFailure arm(read_result → pack / fail closed;no live call)。
+  - **D2b-7**:RecoverPending arm(fail closed,typed reason)。
+  - **D2b-8**(follow-on):PENDING suspend/persist——controller FormNewPendingCoordinate 决策臂 + store publish + PENDING reply + finish_run second-PENDING 支持。
+  - **D2b-9**(follow-on):RecoverPending idempotency re-drive。
+
+  **(10) 共享 mint helper(Principle 1 aggressive refactoring)**:从 controller 的 `consult_live_dedup`(anonymous namespace,`core_wasm_resume_controller.cpp:899-953`)提取 `mint_live_effect_intent` 共享函数——计算 `param_digest = sha256(try_value_to_json(param))` + 构建 `IntentCoordinate` + `FrozenAuthorityNamespaceBuilder.bind().mint()`。controller(preview_begin)和 driver(begin_effect)共用同一 canonicalization authority,消除 token 计算分歧风险。helper 放新 header(如 `runtime/engine/durable_effect_live_mint.hpp`),依赖 `durable_effect_intent.hpp` + `core_wasm_schema_module.hpp` + `value_json.hpp` + `sha256.hpp`。
+
+  **(11) ResumeHostReason 新增 arm + host_code 映射**:`LiveCapabilityFault` / `LiveCapabilityPending` / `LiveCapabilityError` / `LiveCapabilityReplayedFailure` / `RecoverPendingRequired`。F2 catalogue 是 LOCKED 的,无 `resume.capability.*` code;映射到现有 code:live-capability 故障 → `resume.module.error`(non-OK import status);`RecoverPendingRequired` → `resume.transition.invalid`(ineligible transition)。F2 catalogue 扩展是独立决策。
+
+  **(12) 被击败的替代方案**:
+  - **(a) ResumeRequest 直接携带 `ContextualCapabilityInvoker` + `name_resolver`**:driver 需构建 `CapabilityInvocationContext`,但 driver 没有 string names(workflow_name / agent_name 等)——这些在 Program/IR 中,不在 driver 的 strong-id 世界。违反 engine-agnostic 原则。
+  - **(b) invoker 返回 `CapabilityCallResult`(含 Value),driver 做 serialize/verify/length-check**:driver 需 include wire codec + frame_section(reserved bound),破坏 engine-agnostic 分层。
+  - **(c) PENDING/ERROR 返回 raw non-OK `ImportReply`(像 non-resume host 那样)**:module 会 suspend,run2 返回 PENDING,controller `finish_run` 判 TransitionInvalid(second PENDING ineligible)。ImportAbort 更精确:直接 unwind + typed reason,不依赖 module 的 PENDING 处理或 controller 的 PENDING 拒绝。
+  - **(d) RecoverPending 直接 re-drive(无 idempotency)**:crash 前 effect 可能已完成,re-drive 产生 duplicate effect。违反 exactly-once 目标。
+  - **(e) ReadyForLive 携带 token/intent(避免 driver 重建)**:controller 已在 `consult_live_dedup` 中 mint intent,但 `ReadyForLive` 是 Fresh 判决(无 row),携带 token 需改 controller 决策结构。共享 helper(方案 10)以更小的改动达到同一 canonicalization 保证。
+
+  **(13) AHFL-specific divergence from mainstream practice**:主流 workflow engine(Temporal / Cadence)的 activity retry 由 framework 管理,worker 通过 heartbeat + task token 实现 at-least-once + dedup。AHFL 的 divergence 有三个 hard-constraint 原因:① **64 KiB fixed linear memory + wasm3**——module 无法在 guest 内做 JSON serialize/deserialize,canonical encode 只在 host 侧发生;② **engine port 无 suspend 机制**——import callback 同步,PENDING 不能像 Temporal 那样 yield + later complete,只能 ImportAbort 或 follow-on controller 决策;③ **decision-only controller + engine-agnostic driver 分层**——controller 只 DECIDE(preview_begin 只读),driver 只 ACT(begin_effect seal + record + pack),seal 在 live call 之前保证 crash recovery 有 Pending row 可查。
+
+  **(14) Costs**:
+  - `core_wasm_resume_host.hpp`:新增 `LiveCapabilityInvoker` / `LiveCapabilityOutcome` / `LiveCapabilityFault` 类型 + `ResumeRequest.live_invoker` 字段 + 5 个 `ResumeHostReason` arm。
+  - `core_wasm_resume_host.cpp`:ReadyForLive arm 实现(begin_effect + invoke + record + pack + race handling)~80 行;DedupReplay / DedupReplayFailure / RecoverPending arm ~30 行。
+  - 新 header `durable_effect_live_mint.hpp` + `mint_live_effect_intent` 实现 ~30 行;controller `consult_live_dedup` 重构为调用共享 helper(-20 行)。
+  - `core_wasm_resume_host_codes.hpp`:5 个新 reason 的 host_code 映射(exhaustive switch,-Wswitch 编译保证)。
+  - Tests:unit(FakeResumeEngine + scripted invoker,覆盖全部 begin_effect/live 结局)+ e2e(wasm3,live capability past frontier resume)。
+
+  **(15) Acceptance / verification criteria**:
+  - **D2b-5**:unit test——ReadyForLive + OK:invoker call count == 1,authority 有 SUCCEEDED terminal,bridge result packed,reply AHFL_CAP_OK;ReadyForLive + PENDING:invoker called once,authority 有 PENDING row,resume fail with `LiveCapabilityPending`;ReadyForLive + ERROR:invoker called once,authority 有 FAILED terminal,resume fail with `LiveCapabilityError`;begin_effect → ReplaySucceeded(race):no live call,read_result → pack → OK;begin_effect → Diverged:fail with `CoordinateMismatch`。e2e(wasm3)——workflow with live capability past frontier resumes successfully,output matches live result。
+  - **D2b-6**:unit test——DedupReplay:read_result → pack → OK,invoker call count == 0;DedupReplayFailure:read_result → fail closed,invoker call count == 0。e2e——workflow with prior SUCCEEDED terminal resumes without invoking capability;workflow with prior FAILED terminal surfaces failure。
+  - **D2b-7**:unit test——RecoverPending:fail closed with `RecoverPendingRequired`,no live call。
+  - dev fresh `-Werror` 零 warning;完整无标签 ctest 全绿;ASan 全套 ALONE 零 ASan/LSan/UBSan 报告。
+  - **Structural gate**:`ResumeRequest` 无 `live_invoker` 时,ReadyForLive 仍 fail closed(`ReadyForLiveBlocked`)——no-dedup baseline 行为不变。
+
+  **RFC 0026 保持 implementing。**
