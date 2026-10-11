@@ -424,7 +424,7 @@ workflow GreetingWorkflow {
 1. **Context 作用域为空**：agent context 字段在 state handler 内部通过 `ctx.xxx = ...`
    赋值，runtime 钩子不暴露 context 字段的实时值。Context 作用域存在但始终返回空。
 
-2. **Agent State 作用域仅显示状态名**：state handler 内部的局部变量在 evaluator 中
+2. **Agent State 作用域仅显示状态名**：state handler 内部的局部变量在 WASM 引擎中
    变更，runtime 不暴露。Agent State 作用域只包含 `state` 字段（当前状态名）。
 
 3. **Capability 断点无 DAP 设置入口**：capability 调用钩子和断点检查逻辑已就位，

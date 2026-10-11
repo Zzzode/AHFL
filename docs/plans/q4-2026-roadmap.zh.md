@@ -24,7 +24,7 @@
 这句话对应 **Objective 1**;Objective 2/3/4 把"第二护城河可信"、"已落库能力产品化"、
 "结构化执行 UX 收口"作为支撑方向。**Objective 5** 则把镜头转回编译器本体,把类型系统 soundness、
 前端健壮性、IR/测试保真度打磨到完备可信——前四者已收官(阶段一),Objective 5(阶段二)
-亦已 12/12 收官,RFC 0013 类型系统演进推进到 `implemented`。**阶段一 + 二共 35/35 KR 达成。**
+亦已 12/12 收官,RFC 0013 类型系统演进推进到 `stabilized`。**阶段一 + 二共 35/35 KR 达成。**
 
 **阶段三(2026-08-28 扩张):从"完备可信"到"业内顶尖"。** 基于架构重构想(RFC 0020 补
 「架构北极星」,RFC 0026 IR 塔+执行模型、RFC 0027 query 前端+IR 单一真相源已 draft),新增
@@ -150,7 +150,7 @@ capstone)已全部落库并测试。
 ---
 
 
-- **RFC 0013 已 `implemented`**:P3-gaps-A(闭包 self/关键字参数 +
+- **RFC 0013 已 `stabilized`**:P3-gaps-A(闭包 self/关键字参数 +
   `CANNOT_INFER_CLOSURE_PARAM`)与 P3-gaps-B(`let _` 通配 + `{}` unit 字面量)已于
   2026-08-22 落地;**P2 通用 fn / P3 容器代数 trait** 经 KR5.1/KR5.5 全部落地(容器 trait impl
   层 `Foldable/Iterable/Functor for List` + `Functor for Map` 已入 std,经 trait-dispatch 测试
@@ -273,7 +273,7 @@ capstone)已全部落库并测试。
 > mandate 内的健壮性修复;P5 容器 trait impl 层(`8c4ec5b2`)、P4 `where length<=N` sugar
 > (`f93f6458`)、P6 `#![no_prelude]`(`139bce8f`)、first-class `MethodCallExpr`/`TraitDecl`/
 > `ImplDecl` IR 节点全部落地。**阶段三(Objective 6–7,19 KR:4 ✅ / 1 🔵 / 14 ⬜)是新的主要开放面:承接
-> 2026-08-28 架构重构想,把 RFC 0020 架构北极星 + RFC 0026(`implementing`)/ 0027(`accepted`)推到完整落地——
+> 2026-08-28 架构重构想,把 RFC 0020 架构北极星 + RFC 0026(`stabilized`)/ 0027(`stabilized`)推到完整落地——
 > 三层 IR 塔、WASM 唯一执行引擎、evaluator 退役、query 前端、8-location sweep 消灭,以及
 > backlog §3 的产品化缺口收口。**
 
