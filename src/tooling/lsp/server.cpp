@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -122,6 +123,31 @@ constexpr std::string_view kAllKeywords[] = {
         .start = to_lsp_position(source, begin),
         .end = to_lsp_position(source, end),
     };
+}
+
+/// Sort a document's TextEdits by (start.line, start.character, new_text) so
+/// the emitted per-document edit array satisfies the LSP contract (sorted by
+/// range, non-overlapping). The new_text tiebreaker keeps the order
+/// deterministic for edits that share a start position.
+void sort_document_edits(std::vector<TextEdit> &edits) {
+    std::sort(edits.begin(), edits.end(), [](const TextEdit &lhs, const TextEdit &rhs) {
+        if (lhs.range.start.line != rhs.range.start.line) {
+            return lhs.range.start.line < rhs.range.start.line;
+        }
+        if (lhs.range.start.character != rhs.range.start.character) {
+            return lhs.range.start.character < rhs.range.start.character;
+        }
+        return lhs.new_text < rhs.new_text;
+    });
+}
+
+/// Sort every document's edit list in a WorkspaceEdit. Called at each
+/// serialization site in this server so the sorted-by-range invariant holds
+/// for every producer (rename, willRenameFiles).
+void sort_workspace_edit_changes(WorkspaceEdit &edit) {
+    for (auto &[uri, edits] : edit.changes) {
+        sort_document_edits(edits);
+    }
 }
 
 [[nodiscard]] std::size_t offset_at(const SourceFile &source, Position pos) {
@@ -663,22 +689,824 @@ resolve_module_rename(AnalysisService &analysis,
     return std::nullopt;
 }
 
-/// Collect TextEdits for a single open document that references the renamed
-/// module. Handles import, use, and module declarations.
-void collect_module_rename_edits(AnalysisService &analysis,
+// ---------------------------------------------------------------------------
+// Qualified-name walking for module-rename edit collection.
+//
+// A module rename must rewrite every qualified reference that resolves through
+// the renamed module, not just import/use/module declarations. The walkers
+// below collect every QualifiedName node in a program (type positions,
+// expression positions, patterns, statements, temporal properties, and
+// declaration payloads) so the rename editor can rewrite the module prefix or
+// the default import alias. Module/Import/Use declarations are skipped here
+// because they are rewritten by dedicated logic in collect_module_rename_edits.
+// ---------------------------------------------------------------------------
+
+void collect_type_qualified_names(const ast::TypeSyntax &type,
+                                  std::vector<const ast::QualifiedName *> &names);
+void collect_expr_qualified_names(const ast::ExprSyntax &expr,
+                                  std::vector<const ast::QualifiedName *> &names);
+void collect_pattern_qualified_names(const ast::PatternSyntax &pattern,
+                                     std::vector<const ast::QualifiedName *> &names);
+void collect_stmt_qualified_names(const ast::StatementSyntax &stmt,
+                                  std::vector<const ast::QualifiedName *> &names);
+void collect_block_qualified_names(const ast::BlockSyntax &block,
+                                   std::vector<const ast::QualifiedName *> &names);
+void collect_temporal_qualified_names(const ast::TemporalExprSyntax &temporal,
+                                      std::vector<const ast::QualifiedName *> &names);
+void collect_decl_qualified_names(const ast::Decl &declaration,
+                                  std::vector<const ast::QualifiedName *> &names);
+
+void collect_type_qualified_names(const ast::TypeSyntax &type,
+                                  std::vector<const ast::QualifiedName *> &names) {
+    std::visit(
+        Overloaded{
+            [&](const ast::NamedType &t) {
+                if (t.name != nullptr) {
+                    names.push_back(t.name.get());
+                }
+                for (const auto &arg : t.type_args) {
+                    if (arg != nullptr) {
+                        collect_type_qualified_names(*arg, names);
+                    }
+                }
+            },
+            [&](const ast::AppType &t) {
+                if (t.name != nullptr) {
+                    names.push_back(t.name.get());
+                }
+                for (const auto &arg : t.arguments) {
+                    if (arg != nullptr) {
+                        collect_type_qualified_names(*arg, names);
+                    }
+                }
+            },
+            [&](const ast::FnType &t) {
+                for (const auto &param : t.params) {
+                    if (param != nullptr) {
+                        collect_type_qualified_names(*param, names);
+                    }
+                }
+                if (t.return_type != nullptr) {
+                    collect_type_qualified_names(*t.return_type, names);
+                }
+                for (const auto &capability : t.effect_capabilities) {
+                    if (capability != nullptr) {
+                        names.push_back(capability.get());
+                    }
+                }
+            },
+            [](const auto &) {
+                // Primitive / leaf type syntax carries no qualified names.
+            },
+        },
+        type.node);
+}
+
+void collect_expr_qualified_names(const ast::ExprSyntax &expr,
+                                  std::vector<const ast::QualifiedName *> &names) {
+    std::visit(
+        Overloaded{
+            [&](const ast::QualifiedValueExpr &e) {
+                if (e.name != nullptr) {
+                    names.push_back(e.name.get());
+                }
+            },
+            [&](const ast::CallExpr &e) {
+                if (e.callee != nullptr) {
+                    names.push_back(e.callee.get());
+                }
+                for (const auto &arg : e.type_args) {
+                    if (arg != nullptr) {
+                        collect_type_qualified_names(*arg, names);
+                    }
+                }
+                for (const auto &arg : e.arguments) {
+                    if (arg != nullptr) {
+                        collect_expr_qualified_names(*arg, names);
+                    }
+                }
+            },
+            [&](const ast::StructLiteralExpr &e) {
+                if (e.type_name != nullptr) {
+                    names.push_back(e.type_name.get());
+                }
+                for (const auto &field : e.fields) {
+                    if (field != nullptr && field->value != nullptr) {
+                        collect_expr_qualified_names(*field->value, names);
+                    }
+                }
+            },
+            [&](const ast::MethodCallExpr &e) {
+                if (e.receiver != nullptr) {
+                    collect_expr_qualified_names(*e.receiver, names);
+                }
+                for (const auto &arg : e.type_args) {
+                    if (arg != nullptr) {
+                        collect_type_qualified_names(*arg, names);
+                    }
+                }
+                for (const auto &arg : e.arguments) {
+                    if (arg != nullptr) {
+                        collect_expr_qualified_names(*arg, names);
+                    }
+                }
+            },
+            [&](const ast::UnaryExpr &e) {
+                if (e.operand != nullptr) {
+                    collect_expr_qualified_names(*e.operand, names);
+                }
+            },
+            [&](const ast::BinaryExpr &e) {
+                if (e.lhs != nullptr) {
+                    collect_expr_qualified_names(*e.lhs, names);
+                }
+                if (e.rhs != nullptr) {
+                    collect_expr_qualified_names(*e.rhs, names);
+                }
+            },
+            [&](const ast::MemberAccessExpr &e) {
+                if (e.base != nullptr) {
+                    collect_expr_qualified_names(*e.base, names);
+                }
+            },
+            [&](const ast::IndexAccessExpr &e) {
+                if (e.base != nullptr) {
+                    collect_expr_qualified_names(*e.base, names);
+                }
+                if (e.index != nullptr) {
+                    collect_expr_qualified_names(*e.index, names);
+                }
+            },
+            [&](const ast::GroupExpr &e) {
+                if (e.inner != nullptr) {
+                    collect_expr_qualified_names(*e.inner, names);
+                }
+            },
+            [&](const ast::MatchExpr &e) {
+                if (e.scrutinee != nullptr) {
+                    collect_expr_qualified_names(*e.scrutinee, names);
+                }
+                for (const auto &arm : e.arms) {
+                    if (arm == nullptr) {
+                        continue;
+                    }
+                    if (arm->pattern != nullptr) {
+                        collect_pattern_qualified_names(*arm->pattern, names);
+                    }
+                    if (arm->guard != nullptr) {
+                        collect_expr_qualified_names(*arm->guard, names);
+                    }
+                    if (arm->body != nullptr) {
+                        collect_expr_qualified_names(*arm->body, names);
+                    }
+                }
+            },
+            [&](const ast::LambdaExpr &e) {
+                for (const auto &param : e.params) {
+                    if (param != nullptr && param->type != nullptr) {
+                        collect_type_qualified_names(*param->type, names);
+                    }
+                }
+                if (e.body != nullptr) {
+                    collect_expr_qualified_names(*e.body, names);
+                }
+            },
+            [&](const ast::UnwrapExprSyntax &e) {
+                if (e.operand != nullptr) {
+                    collect_expr_qualified_names(*e.operand, names);
+                }
+            },
+            [&](const ast::QuantifierExprSyntax &e) {
+                if (e.collection != nullptr) {
+                    collect_expr_qualified_names(*e.collection, names);
+                }
+                if (e.body != nullptr) {
+                    collect_expr_qualified_names(*e.body, names);
+                }
+            },
+            [&](const ast::TryExpr &e) {
+                if (e.operand != nullptr) {
+                    collect_expr_qualified_names(*e.operand, names);
+                }
+            },
+            [](const auto &) {
+                // Literal / path / unit expressions carry no qualified names.
+            },
+        },
+        expr.node);
+}
+
+void collect_pattern_qualified_names(const ast::PatternSyntax &pattern,
+                                     std::vector<const ast::QualifiedName *> &names) {
+    std::visit(
+        Overloaded{
+            [&](const ast::VariantPattern &p) {
+                if (p.path != nullptr) {
+                    names.push_back(p.path.get());
+                }
+                for (const auto &sub : p.subpatterns) {
+                    if (sub != nullptr) {
+                        collect_pattern_qualified_names(*sub, names);
+                    }
+                }
+                for (const auto &field : p.fields) {
+                    if (field != nullptr && field->pattern != nullptr) {
+                        collect_pattern_qualified_names(*field->pattern, names);
+                    }
+                }
+            },
+            [&](const ast::BindingPattern &p) {
+                if (p.nested != nullptr) {
+                    collect_pattern_qualified_names(*p.nested, names);
+                }
+            },
+            [&](const ast::TuplePattern &p) {
+                for (const auto &element : p.elements) {
+                    if (element != nullptr) {
+                        collect_pattern_qualified_names(*element, names);
+                    }
+                }
+            },
+            [&](const ast::OrPattern &p) {
+                for (const auto &branch : p.branches) {
+                    if (branch != nullptr) {
+                        collect_pattern_qualified_names(*branch, names);
+                    }
+                }
+            },
+            [](const auto &) {
+                // Literal / range / wildcard patterns carry no qualified names.
+            },
+        },
+        pattern.node);
+}
+
+void collect_block_qualified_names(const ast::BlockSyntax &block,
+                                   std::vector<const ast::QualifiedName *> &names) {
+    for (const auto &stmt : block.statements) {
+        if (stmt != nullptr) {
+            collect_stmt_qualified_names(*stmt, names);
+        }
+    }
+}
+
+void collect_stmt_qualified_names(const ast::StatementSyntax &stmt,
+                                  std::vector<const ast::QualifiedName *> &names) {
+    switch (stmt.kind) {
+    case ast::StatementSyntaxKind::Let:
+        if (stmt.let_stmt != nullptr) {
+            if (stmt.let_stmt->type != nullptr) {
+                collect_type_qualified_names(*stmt.let_stmt->type, names);
+            }
+            if (stmt.let_stmt->initializer != nullptr) {
+                collect_expr_qualified_names(*stmt.let_stmt->initializer, names);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::Assign:
+        if (stmt.assign_stmt != nullptr && stmt.assign_stmt->value != nullptr) {
+            collect_expr_qualified_names(*stmt.assign_stmt->value, names);
+        }
+        break;
+    case ast::StatementSyntaxKind::If:
+        if (stmt.if_stmt != nullptr) {
+            if (stmt.if_stmt->condition != nullptr) {
+                collect_expr_qualified_names(*stmt.if_stmt->condition, names);
+            }
+            if (stmt.if_stmt->then_block != nullptr) {
+                collect_block_qualified_names(*stmt.if_stmt->then_block, names);
+            }
+            if (stmt.if_stmt->else_block != nullptr) {
+                collect_block_qualified_names(*stmt.if_stmt->else_block, names);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::IfLet:
+        if (stmt.if_let_stmt != nullptr) {
+            if (stmt.if_let_stmt->pattern != nullptr) {
+                collect_pattern_qualified_names(*stmt.if_let_stmt->pattern, names);
+            }
+            if (stmt.if_let_stmt->scrutinee != nullptr) {
+                collect_expr_qualified_names(*stmt.if_let_stmt->scrutinee, names);
+            }
+            if (stmt.if_let_stmt->then_block != nullptr) {
+                collect_block_qualified_names(*stmt.if_let_stmt->then_block, names);
+            }
+            if (stmt.if_let_stmt->else_block != nullptr) {
+                collect_block_qualified_names(*stmt.if_let_stmt->else_block, names);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::Return:
+        if (stmt.return_stmt != nullptr && stmt.return_stmt->value != nullptr) {
+            collect_expr_qualified_names(*stmt.return_stmt->value, names);
+        }
+        break;
+    case ast::StatementSyntaxKind::Assert:
+        if (stmt.assert_stmt != nullptr) {
+            if (stmt.assert_stmt->condition != nullptr) {
+                collect_expr_qualified_names(*stmt.assert_stmt->condition, names);
+            }
+            if (stmt.assert_stmt->message != nullptr) {
+                collect_expr_qualified_names(*stmt.assert_stmt->message, names);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::Unwrap:
+        if (stmt.unwrap_stmt != nullptr && stmt.unwrap_stmt->operand != nullptr) {
+            collect_expr_qualified_names(*stmt.unwrap_stmt->operand, names);
+        }
+        break;
+    case ast::StatementSyntaxKind::Requires:
+        if (stmt.requires_stmt != nullptr) {
+            if (stmt.requires_stmt->condition != nullptr) {
+                collect_expr_qualified_names(*stmt.requires_stmt->condition, names);
+            }
+            if (stmt.requires_stmt->message != nullptr) {
+                collect_expr_qualified_names(*stmt.requires_stmt->message, names);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::Unreachable:
+        if (stmt.unreachable_stmt != nullptr && stmt.unreachable_stmt->message != nullptr) {
+            collect_expr_qualified_names(*stmt.unreachable_stmt->message, names);
+        }
+        break;
+    case ast::StatementSyntaxKind::Expr:
+        if (stmt.expr_stmt != nullptr && stmt.expr_stmt->expr != nullptr) {
+            collect_expr_qualified_names(*stmt.expr_stmt->expr, names);
+        }
+        break;
+    case ast::StatementSyntaxKind::Goto:
+        break;
+    }
+}
+
+void collect_temporal_qualified_names(const ast::TemporalExprSyntax &temporal,
+                                      std::vector<const ast::QualifiedName *> &names) {
+    std::visit(
+        Overloaded{
+            [&](const ast::EmbeddedTemporalExpr &t) {
+                if (t.expr != nullptr) {
+                    collect_expr_qualified_names(*t.expr, names);
+                }
+            },
+            [&](const ast::UnaryTemporalExpr &t) {
+                if (t.operand != nullptr) {
+                    collect_temporal_qualified_names(*t.operand, names);
+                }
+            },
+            [&](const ast::BinaryTemporalExpr &t) {
+                if (t.lhs != nullptr) {
+                    collect_temporal_qualified_names(*t.lhs, names);
+                }
+                if (t.rhs != nullptr) {
+                    collect_temporal_qualified_names(*t.rhs, names);
+                }
+            },
+            [](const auto &) {
+                // called/in_state/running/completed carry string names only.
+            },
+        },
+        temporal.node);
+}
+
+void collect_where_clause_qualified_names(const ast::WhereClauseSyntax &where,
+                                          std::vector<const ast::QualifiedName *> &names) {
+    for (const auto &constraint : where.constraints) {
+        if (constraint == nullptr) {
+            continue;
+        }
+        if (constraint->subject != nullptr) {
+            collect_type_qualified_names(*constraint->subject, names);
+        }
+        for (const auto &arg : constraint->arguments) {
+            if (arg != nullptr) {
+                collect_type_qualified_names(*arg, names);
+            }
+        }
+        for (const auto &bound : constraint->bounds) {
+            if (bound != nullptr) {
+                collect_type_qualified_names(*bound, names);
+            }
+        }
+    }
+}
+
+void collect_type_params_qualified_names(
+    const std::vector<Owned<ast::TypeParamSyntax>> &params,
+    std::vector<const ast::QualifiedName *> &names) {
+    for (const auto &param : params) {
+        if (param == nullptr) {
+            continue;
+        }
+        for (const auto &bound : param->bounds) {
+            if (bound != nullptr) {
+                collect_type_qualified_names(*bound, names);
+            }
+        }
+    }
+}
+
+void collect_params_qualified_names(const std::vector<Owned<ast::ParamDeclSyntax>> &params,
+                                    std::vector<const ast::QualifiedName *> &names) {
+    for (const auto &param : params) {
+        if (param != nullptr && param->type != nullptr) {
+            collect_type_qualified_names(*param->type, names);
+        }
+    }
+}
+
+void collect_effect_clause_qualified_names(
+    const ast::EffectClauseSyntax *effect,
+    std::vector<const ast::QualifiedName *> &names) {
+    if (effect == nullptr) {
+        return;
+    }
+    for (const auto &capability : effect->capabilities) {
+        if (capability != nullptr) {
+            names.push_back(capability.get());
+        }
+    }
+    if (effect->decreases_expr != nullptr) {
+        collect_expr_qualified_names(*effect->decreases_expr, names);
+    }
+}
+
+void collect_decl_qualified_names(const ast::Decl &declaration,
+                                  std::vector<const ast::QualifiedName *> &names) {
+    std::visit(
+        Overloaded{
+            // Module / import / use declarations are rewritten by dedicated
+            // logic in collect_module_rename_edits; skip them here so their
+            // edits are not double-emitted.
+            [](const ast::ModuleDecl &) {},
+            [](const ast::ImportDecl &) {},
+            [](const ast::UseDecl &) {},
+            [&](const ast::ConstDecl &decl) {
+                if (decl.type != nullptr) {
+                    collect_type_qualified_names(*decl.type, names);
+                }
+                if (decl.value != nullptr) {
+                    collect_expr_qualified_names(*decl.value, names);
+                }
+            },
+            [&](const ast::TypeAliasDecl &decl) {
+                collect_type_params_qualified_names(decl.type_params, names);
+                if (decl.aliased_type != nullptr) {
+                    collect_type_qualified_names(*decl.aliased_type, names);
+                }
+            },
+            [&](const ast::StructDecl &decl) {
+                collect_type_params_qualified_names(decl.type_params, names);
+                for (const auto &field : decl.fields) {
+                    if (field == nullptr) {
+                        continue;
+                    }
+                    if (field->type != nullptr) {
+                        collect_type_qualified_names(*field->type, names);
+                    }
+                    if (field->default_value != nullptr) {
+                        collect_expr_qualified_names(*field->default_value, names);
+                    }
+                }
+                if (decl.where_clause != nullptr) {
+                    collect_where_clause_qualified_names(*decl.where_clause, names);
+                }
+            },
+            [&](const ast::EnumDecl &decl) {
+                collect_type_params_qualified_names(decl.type_params, names);
+                for (const auto &variant : decl.variants) {
+                    if (variant == nullptr) {
+                        continue;
+                    }
+                    for (const auto &payload : variant->payload) {
+                        if (payload != nullptr) {
+                            collect_type_qualified_names(*payload, names);
+                        }
+                    }
+                    for (const auto &field : variant->named_fields) {
+                        if (field == nullptr) {
+                            continue;
+                        }
+                        if (field->type != nullptr) {
+                            collect_type_qualified_names(*field->type, names);
+                        }
+                        if (field->default_value != nullptr) {
+                            collect_expr_qualified_names(*field->default_value, names);
+                        }
+                    }
+                }
+                if (decl.where_clause != nullptr) {
+                    collect_where_clause_qualified_names(*decl.where_clause, names);
+                }
+            },
+            [&](const ast::CapabilityDecl &decl) {
+                collect_params_qualified_names(decl.params, names);
+                if (decl.return_type != nullptr) {
+                    collect_type_qualified_names(*decl.return_type, names);
+                }
+                if (decl.effect != nullptr) {
+                    if (decl.effect->domain != nullptr) {
+                        names.push_back(decl.effect->domain.get());
+                    }
+                    if (decl.effect->compensation != nullptr) {
+                        names.push_back(decl.effect->compensation.get());
+                    }
+                    for (const auto &policy : decl.effect->policies) {
+                        if (policy != nullptr) {
+                            names.push_back(policy.get());
+                        }
+                    }
+                }
+                if (decl.where_clause != nullptr) {
+                    collect_where_clause_qualified_names(*decl.where_clause, names);
+                }
+            },
+            [&](const ast::PredicateDecl &decl) {
+                collect_params_qualified_names(decl.params, names);
+                // effect_clause is always null (the grammar does not allow an
+                // effect clause on predicates); walk it anyway for robustness.
+                collect_effect_clause_qualified_names(decl.effect_clause.get(), names);
+            },
+            [&](const ast::AgentDecl &decl) {
+                if (decl.input_type != nullptr) {
+                    collect_type_qualified_names(*decl.input_type, names);
+                }
+                if (decl.context_type != nullptr) {
+                    collect_type_qualified_names(*decl.context_type, names);
+                }
+                if (decl.output_type != nullptr) {
+                    collect_type_qualified_names(*decl.output_type, names);
+                }
+            },
+            [&](const ast::ContractDecl &decl) {
+                if (decl.target != nullptr) {
+                    names.push_back(decl.target.get());
+                }
+                for (const auto &clause : decl.clauses) {
+                    if (clause == nullptr) {
+                        continue;
+                    }
+                    if (clause->expr != nullptr) {
+                        collect_expr_qualified_names(*clause->expr, names);
+                    }
+                    if (clause->temporal_expr != nullptr) {
+                        collect_temporal_qualified_names(*clause->temporal_expr, names);
+                    }
+                    if (clause->decreases != nullptr) {
+                        for (const auto &term : clause->decreases->decreases_exprs) {
+                            if (term != nullptr) {
+                                collect_expr_qualified_names(*term, names);
+                            }
+                        }
+                    }
+                }
+            },
+            [&](const ast::FlowDecl &decl) {
+                if (decl.target != nullptr) {
+                    names.push_back(decl.target.get());
+                }
+                for (const auto &handler : decl.state_handlers) {
+                    if (handler == nullptr) {
+                        continue;
+                    }
+                    if (handler->policy != nullptr) {
+                        for (const auto &item : handler->policy->items) {
+                            if (item == nullptr) {
+                                continue;
+                            }
+                            for (const auto &retry_on : item->retry_on) {
+                                if (retry_on != nullptr) {
+                                    names.push_back(retry_on.get());
+                                }
+                            }
+                        }
+                    }
+                    if (handler->body != nullptr) {
+                        collect_block_qualified_names(*handler->body, names);
+                    }
+                }
+            },
+            [&](const ast::WorkflowDecl &decl) {
+                if (decl.input_type != nullptr) {
+                    collect_type_qualified_names(*decl.input_type, names);
+                }
+                if (decl.output_type != nullptr) {
+                    collect_type_qualified_names(*decl.output_type, names);
+                }
+                for (const auto &node : decl.nodes) {
+                    if (node == nullptr) {
+                        continue;
+                    }
+                    if (node->target != nullptr) {
+                        names.push_back(node->target.get());
+                    }
+                    if (node->input != nullptr) {
+                        collect_expr_qualified_names(*node->input, names);
+                    }
+                }
+                for (const auto &temporal : decl.safety) {
+                    if (temporal != nullptr) {
+                        collect_temporal_qualified_names(*temporal, names);
+                    }
+                }
+                for (const auto &temporal : decl.liveness) {
+                    if (temporal != nullptr) {
+                        collect_temporal_qualified_names(*temporal, names);
+                    }
+                }
+                if (decl.return_value != nullptr) {
+                    collect_expr_qualified_names(*decl.return_value, names);
+                }
+            },
+            [&](const ast::FnDecl &decl) {
+                collect_type_params_qualified_names(decl.type_params, names);
+                collect_params_qualified_names(decl.params, names);
+                if (decl.return_type != nullptr) {
+                    collect_type_qualified_names(*decl.return_type, names);
+                }
+                collect_effect_clause_qualified_names(decl.effect_clause.get(), names);
+                if (decl.where_clause != nullptr) {
+                    collect_where_clause_qualified_names(*decl.where_clause, names);
+                }
+                if (decl.body != nullptr) {
+                    collect_block_qualified_names(*decl.body, names);
+                }
+            },
+            [&](const ast::TraitDecl &decl) {
+                collect_type_params_qualified_names(decl.type_params, names);
+                for (const auto &super : decl.super_traits) {
+                    if (super != nullptr) {
+                        collect_type_qualified_names(*super, names);
+                    }
+                }
+                if (decl.where_clause != nullptr) {
+                    collect_where_clause_qualified_names(*decl.where_clause, names);
+                }
+                for (const auto &item : decl.items) {
+                    if (item == nullptr) {
+                        continue;
+                    }
+                    collect_type_params_qualified_names(item->type_params, names);
+                    collect_params_qualified_names(item->params, names);
+                    if (item->return_type != nullptr) {
+                        collect_type_qualified_names(*item->return_type, names);
+                    }
+                    collect_effect_clause_qualified_names(item->effect_clause.get(), names);
+                    if (item->where_clause != nullptr) {
+                        collect_where_clause_qualified_names(*item->where_clause, names);
+                    }
+                    if (item->assoc_type != nullptr) {
+                        collect_type_params_qualified_names(item->assoc_type->type_params, names);
+                        for (const auto &bound : item->assoc_type->bounds) {
+                            if (bound != nullptr) {
+                                collect_type_qualified_names(*bound, names);
+                            }
+                        }
+                        if (item->assoc_type->default_type != nullptr) {
+                            collect_type_qualified_names(*item->assoc_type->default_type, names);
+                        }
+                    }
+                    if (item->assoc_const != nullptr) {
+                        if (item->assoc_const->type != nullptr) {
+                            collect_type_qualified_names(*item->assoc_const->type, names);
+                        }
+                        if (item->assoc_const->default_value != nullptr) {
+                            collect_expr_qualified_names(*item->assoc_const->default_value, names);
+                        }
+                    }
+                }
+            },
+            [&](const ast::ImplDecl &decl) {
+                collect_type_params_qualified_names(decl.type_params, names);
+                if (decl.trait_ref != nullptr) {
+                    collect_type_qualified_names(*decl.trait_ref, names);
+                }
+                if (decl.target_type != nullptr) {
+                    collect_type_qualified_names(*decl.target_type, names);
+                }
+                if (decl.where_clause != nullptr) {
+                    collect_where_clause_qualified_names(*decl.where_clause, names);
+                }
+                for (const auto &method : decl.methods) {
+                    if (method == nullptr) {
+                        continue;
+                    }
+                    collect_type_params_qualified_names(method->type_params, names);
+                    collect_params_qualified_names(method->params, names);
+                    if (method->return_type != nullptr) {
+                        collect_type_qualified_names(*method->return_type, names);
+                    }
+                    collect_effect_clause_qualified_names(method->effect_clause.get(), names);
+                    if (method->where_clause != nullptr) {
+                        collect_where_clause_qualified_names(*method->where_clause, names);
+                    }
+                    if (method->body != nullptr) {
+                        collect_block_qualified_names(*method->body, names);
+                    }
+                }
+                for (const auto &assoc : decl.assoc_items) {
+                    if (assoc != nullptr && assoc->type != nullptr) {
+                        collect_type_qualified_names(*assoc->type, names);
+                    }
+                }
+                for (const auto &constant : decl.const_items) {
+                    if (constant == nullptr) {
+                        continue;
+                    }
+                    if (constant->type != nullptr) {
+                        collect_type_qualified_names(*constant->type, names);
+                    }
+                    if (constant->value != nullptr) {
+                        collect_expr_qualified_names(*constant->value, names);
+                    }
+                }
+            },
+        },
+        declaration);
+}
+
+void collect_program_qualified_names(const ast::Program &program,
+                                     std::vector<const ast::QualifiedName *> &names) {
+    for (const auto &declaration : program.declarations) {
+        collect_decl_qualified_names(declaration, names);
+    }
+}
+
+/// Compute the byte range of each segment of a QualifiedName by scanning the
+/// source text from the name's start offset. Tolerates whitespace around the
+/// `::` separators. Returns nullopt if the source text does not match the
+/// stored segments (fail-closed: no edit is emitted on a mismatch).
+[[nodiscard]] std::optional<std::vector<SourceRange>>
+qualified_name_segment_ranges(const SourceFile &source, const ast::QualifiedName &name) {
+    std::vector<SourceRange> ranges;
+    if (name.segments.empty()) {
+        return std::nullopt;
+    }
+    std::size_t cursor = name.range.begin_offset;
+    const auto skip_space = [&](std::size_t &at) {
+        while (at < source.content.size() &&
+               (source.content[at] == ' ' || source.content[at] == '\t' ||
+                source.content[at] == '\n' || source.content[at] == '\r')) {
+            ++at;
+        }
+    };
+    for (std::size_t index = 0; index < name.segments.size(); ++index) {
+        skip_space(cursor);
+        const auto &segment = name.segments[index];
+        if (cursor + segment.size() > source.content.size() ||
+            source.content.compare(cursor, segment.size(), segment) != 0) {
+            return std::nullopt;
+        }
+        ranges.push_back(SourceRange{
+            .begin_offset = cursor,
+            .end_offset = cursor + segment.size(),
+        });
+        cursor += segment.size();
+        if (index + 1 < name.segments.size()) {
+            skip_space(cursor);
+            if (cursor + 2 > source.content.size() ||
+                source.content.compare(cursor, 2, "::") != 0) {
+                return std::nullopt;
+            }
+            cursor += 2;
+        }
+    }
+    return ranges;
+}
+
+/// Collect TextEdits for a single document that references the renamed
+/// module. Handles import, use, and module declarations, plus qualified
+/// type/expression references that resolve through the renamed module.
+void collect_module_rename_edits(const ast::Program &program,
+                                 const SourceFile &source_file,
                                  const std::string &uri,
                                  const std::filesystem::path &old_path,
                                  const ModuleRename &rename,
                                  WorkspaceEdit &edit) {
-    const auto *snapshot = analysis.snapshot_for_uri(uri);
-    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
-    if (source == nullptr || source->program == nullptr || source->source == nullptr) {
-        return;
-    }
-
-    const auto &program = *source->program;
-    const auto &source_file = *source->source;
     const auto old_normalized = AnalysisService::normalized_path_key(old_path);
+
+    // Default-alias rewrites: for an unaliased import of the renamed module,
+    // the default alias (last path segment) changes when the module is
+    // renamed. Map old default alias -> new default alias.
+    std::unordered_map<std::string, std::string> default_alias_rewrites;
+    const auto new_path_segments = split_module_path(rename.new_module_path);
+    for (const auto &declaration : program.declarations) {
+        const auto *import = std::get_if<ast::ImportDecl>(&declaration);
+        if (import == nullptr || import->path == nullptr || !import->alias.empty()) {
+            continue;
+        }
+        if (import->path->spelling() != rename.old_module_path ||
+            import->path->segments.empty() || new_path_segments.empty()) {
+            continue;
+        }
+        const auto &old_alias = import->path->segments.back();
+        const auto &new_alias = new_path_segments.back();
+        if (old_alias != new_alias) {
+            default_alias_rewrites[old_alias] = new_alias;
+        }
+    }
 
     for (const auto &declaration : program.declarations) {
         // import declarations: replace the entire module path.
@@ -713,6 +1541,17 @@ void collect_module_rename_edits(AnalysisService &analysis,
                     .range = to_lsp_range(source_file, use->path->range),
                     .new_text = rename.new_module_path + "::" + use->path->segments.back(),
                 });
+            } else if (const auto alias_it =
+                           default_alias_rewrites.find(use->path->segments[0]);
+                       alias_it != default_alias_rewrites.end()) {
+                // Alias-qualified use (`use pkg::Item;`): rewrite the head alias.
+                const auto segment_ranges = qualified_name_segment_ranges(source_file, *use->path);
+                if (segment_ranges.has_value() && !segment_ranges->empty()) {
+                    edit.changes[uri].push_back(TextEdit{
+                        .range = to_lsp_range(source_file, segment_ranges->front()),
+                        .new_text = alias_it->second,
+                    });
+                }
             }
             continue;
         }
@@ -735,6 +1574,54 @@ void collect_module_rename_edits(AnalysisService &analysis,
                 });
             }
             continue;
+        }
+    }
+
+    // Qualified type/expression references that resolve through the renamed
+    // module. Two shapes:
+    //   1. Fully-qualified: the prefix (all but the last segment) equals the
+    //      old module path. Rewrite the prefix to the new module path.
+    //   2. Default-alias: the head segment is the old default alias of an
+    //      unaliased import of the renamed module. Rewrite the head to the
+    //      new default alias.
+    std::vector<const ast::QualifiedName *> qualified_names;
+    collect_program_qualified_names(program, qualified_names);
+    for (const auto *name : qualified_names) {
+        if (name->segments.size() < 2) {
+            continue;
+        }
+        std::string module_prefix;
+        for (std::size_t index = 0; index + 1 < name->segments.size(); ++index) {
+            if (!module_prefix.empty()) {
+                module_prefix += "::";
+            }
+            module_prefix += name->segments[index];
+        }
+        if (module_prefix == rename.old_module_path) {
+            const auto segment_ranges = qualified_name_segment_ranges(source_file, *name);
+            if (!segment_ranges.has_value() || segment_ranges->size() != name->segments.size()) {
+                continue;
+            }
+            const SourceRange prefix_range{
+                .begin_offset = segment_ranges->front().begin_offset,
+                .end_offset = (*segment_ranges)[segment_ranges->size() - 2].end_offset,
+            };
+            edit.changes[uri].push_back(TextEdit{
+                .range = to_lsp_range(source_file, prefix_range),
+                .new_text = rename.new_module_path,
+            });
+            continue;
+        }
+        const auto alias_it = default_alias_rewrites.find(name->segments[0]);
+        if (alias_it != default_alias_rewrites.end()) {
+            const auto segment_ranges = qualified_name_segment_ranges(source_file, *name);
+            if (!segment_ranges.has_value() || segment_ranges->empty()) {
+                continue;
+            }
+            edit.changes[uri].push_back(TextEdit{
+                .range = to_lsp_range(source_file, segment_ranges->front()),
+                .new_text = alias_it->second,
+            });
         }
     }
 }
@@ -5269,6 +6156,8 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
             });
         }
 
+        sort_workspace_edit_changes(edit);
+
         JsonRpcResponse resp;
         resp.id = req.id;
         resp.result = serialize_workspace_edit(edit);
@@ -5315,10 +6204,58 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
         }
     }
 
+    sort_workspace_edit_changes(edit);
+
     JsonRpcResponse resp;
     resp.id = req.id;
     resp.result = serialize_workspace_edit(edit);
     transport_.send_response(resp);
+}
+
+/// A borrowed (program, source) pair for a document that may reference a
+/// renamed module. Collected from the analysis snapshots of every open
+/// document, which for project-aware snapshots include every source in the
+/// project (open and closed), so importers that are not themselves open are
+/// still rewritten. The pointers borrow engine-owned data that outlives the
+/// handler call (no engine mutation happens mid-handler).
+struct RenameDocumentView {
+    std::string uri;
+    const ast::Program *program;
+    const SourceFile *source;
+};
+
+/// Collect every distinct document visible through the open documents'
+/// analysis snapshots. Open documents are overlaid with their current buffer
+/// content by the analysis service, so edits are computed against what the
+/// user sees.
+[[nodiscard]] std::vector<RenameDocumentView>
+collect_rename_document_views(AnalysisService &analysis, const DocumentStore &store) {
+    std::vector<RenameDocumentView> views;
+    std::unordered_set<std::string> seen;
+    for (const auto &uri : store.all_uris()) {
+        if (uri.empty() || seen.contains(uri)) {
+            continue;
+        }
+        const auto *snapshot = analysis.snapshot_for_uri(uri);
+        if (snapshot == nullptr) {
+            continue;
+        }
+        for (const auto &source_snapshot : snapshot->sources) {
+            if (source_snapshot.uri.empty() || source_snapshot.program == nullptr ||
+                source_snapshot.source == nullptr) {
+                continue;
+            }
+            if (!seen.insert(source_snapshot.uri).second) {
+                continue;
+            }
+            views.push_back(RenameDocumentView{
+                .uri = source_snapshot.uri,
+                .program = source_snapshot.program,
+                .source = source_snapshot.source,
+            });
+        }
+    }
+    return views;
 }
 
 void LspServer::handle_will_rename_files(const JsonRpcRequest &req) {
@@ -5327,41 +6264,77 @@ void LspServer::handle_will_rename_files(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto old_uri = read_string_field(*req.params, "oldUri");
-    const auto new_uri = read_string_field(*req.params, "newUri");
-    if (old_uri.empty() || new_uri.empty() || old_uri == new_uri) {
+    const auto *files = req.params->get("files");
+    if (files == nullptr || !files->is_array()) {
         send_null(transport_, req.id);
         return;
     }
 
-    const auto old_path = AnalysisService::path_from_uri(old_uri);
-    const auto new_path = AnalysisService::path_from_uri(new_uri);
-    if (!old_path.has_value() || !new_path.has_value()) {
-        send_null(transport_, req.id);
-        return;
+    // Deterministic last-wins for duplicate oldUri entries: when the same
+    // oldUri appears more than once, only the final entry takes effect, so a
+    // request cannot produce overlapping edits for one document from two
+    // competing renames.
+    std::unordered_map<std::string, std::size_t> last_index_by_old_uri;
+    for (std::size_t index = 0; index < files->array_items.size(); ++index) {
+        const auto &entry = files->array_items[index];
+        if (entry == nullptr || !entry->is_object()) {
+            continue;
+        }
+        const auto old_uri = read_string_field(*entry, "oldUri");
+        if (!old_uri.empty()) {
+            last_index_by_old_uri[old_uri] = index;
+        }
     }
 
-    // Only handle .ahfl source files.
-    if (old_path->extension() != ".ahfl" || new_path->extension() != ".ahfl") {
-        send_null(transport_, req.id);
-        return;
-    }
-
-    const auto rename = resolve_module_rename(analysis_, store_, *old_path, *new_path);
-    if (!rename.has_value()) {
-        send_null(transport_, req.id);
-        return;
-    }
+    const auto views = collect_rename_document_views(analysis_, store_);
 
     WorkspaceEdit edit;
-    for (const auto &uri : store_.all_uris()) {
-        collect_module_rename_edits(analysis_, uri, *old_path, *rename, edit);
+    for (std::size_t index = 0; index < files->array_items.size(); ++index) {
+        const auto &entry = files->array_items[index];
+        if (entry == nullptr || !entry->is_object()) {
+            continue;
+        }
+
+        const auto old_uri = read_string_field(*entry, "oldUri");
+        const auto new_uri = read_string_field(*entry, "newUri");
+        if (old_uri.empty() || new_uri.empty() || old_uri == new_uri) {
+            continue;
+        }
+
+        // Skip every occurrence of a duplicated oldUri except the last.
+        const auto last_it = last_index_by_old_uri.find(old_uri);
+        if (last_it == last_index_by_old_uri.end() || last_it->second != index) {
+            continue;
+        }
+
+        const auto old_path = AnalysisService::path_from_uri(old_uri);
+        const auto new_path = AnalysisService::path_from_uri(new_uri);
+        if (!old_path.has_value() || !new_path.has_value()) {
+            continue;
+        }
+
+        // Only handle .ahfl source files.
+        if (old_path->extension() != ".ahfl" || new_path->extension() != ".ahfl") {
+            continue;
+        }
+
+        const auto rename = resolve_module_rename(analysis_, store_, *old_path, *new_path);
+        if (!rename.has_value()) {
+            continue;
+        }
+
+        for (const auto &view : views) {
+            collect_module_rename_edits(*view.program, *view.source, view.uri, *old_path,
+                                        *rename, edit);
+        }
     }
 
     if (edit.changes.empty()) {
         send_null(transport_, req.id);
         return;
     }
+
+    sort_workspace_edit_changes(edit);
 
     JsonRpcResponse resp;
     resp.id = req.id;

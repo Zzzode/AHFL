@@ -7,6 +7,8 @@
 #include "compiler/syntax/frontend/project.hpp"
 #include "tooling/cache/cache_core.hpp"
 
+#include "base/json/json_value.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -297,6 +299,120 @@ std::size_t count_substring(std::string_view text, std::string_view needle) {
         ++count;
         cursor += needle.size();
     }
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceEdit JSON inspection helpers.
+//
+// The willRenameFiles tests assert on the per-URI TextEdit arrays inside the
+// serialized WorkspaceEdit, not on loose substrings of the response body: a
+// substring check can be satisfied by the renamed file's own module-decl edit
+// and would not catch a missing importer edit. These helpers parse the
+// response and expose the per-document edit arrays.
+// ---------------------------------------------------------------------------
+
+/// Owned parsed view of a willRenameFiles response. `root` keeps the parsed
+/// JSON tree alive; `changes` borrows the `result.changes` object (or is
+/// nullptr when the result is null / not a WorkspaceEdit).
+struct WorkspaceEditView {
+    std::unique_ptr<ahfl::json::JsonValue> root;
+    const ahfl::json::JsonValue *changes{nullptr};
+};
+
+[[nodiscard]] WorkspaceEditView parse_workspace_edit(const std::string &response_body) {
+    WorkspaceEditView view;
+    auto parsed = ahfl::json::parse_json(response_body);
+    if (!parsed.has_value() || *parsed == nullptr) {
+        return view;
+    }
+    view.root = std::move(*parsed);
+    const auto *result = view.root->get("result");
+    if (result == nullptr || !result->is_object()) {
+        return view;
+    }
+    view.changes = result->get("changes");
+    return view;
+}
+
+/// Return the TextEdit array for a given document URI, or nullptr when the
+/// WorkspaceEdit has no edits for that document.
+[[nodiscard]] const ahfl::json::JsonValue *
+edit_array_for_uri(const ahfl::json::JsonValue *changes, std::string_view uri) {
+    if (changes == nullptr || !changes->is_object()) {
+        return nullptr;
+    }
+    const auto *array = changes->get(uri);
+    if (array == nullptr || !array->is_array()) {
+        return nullptr;
+    }
+    return array;
+}
+
+/// Collect the newText values of a TextEdit array in emission order.
+[[nodiscard]] std::vector<std::string> edit_new_texts(const ahfl::json::JsonValue *array) {
+    std::vector<std::string> texts;
+    if (array == nullptr) {
+        return texts;
+    }
+    for (const auto &edit : array->array_items) {
+        if (edit == nullptr) {
+            continue;
+        }
+        const auto *new_text = edit->get("newText");
+        if (new_text == nullptr) {
+            continue;
+        }
+        if (const auto text = new_text->as_string(); text.has_value()) {
+            texts.emplace_back(*text);
+        }
+    }
+    return texts;
+}
+
+/// True when a TextEdit array contains an edit with the given newText.
+[[nodiscard]] bool edit_array_has(const ahfl::json::JsonValue *array, std::string_view expected) {
+    const auto texts = edit_new_texts(array);
+    return std::any_of(texts.begin(), texts.end(), [&](const std::string &text) {
+        return text == expected;
+    });
+}
+
+/// True when the TextEdit array is sorted by (start.line, start.character),
+/// as required by the LSP WorkspaceEdit contract.
+[[nodiscard]] bool edit_array_is_sorted(const ahfl::json::JsonValue *array) {
+    if (array == nullptr || !array->is_array()) {
+        return false;
+    }
+    std::pair<int64_t, int64_t> previous{-1, -1};
+    for (const auto &edit : array->array_items) {
+        if (edit == nullptr) {
+            return false;
+        }
+        const auto *range = edit->get("range");
+        if (range == nullptr) {
+            return false;
+        }
+        const auto *start = range->get("start");
+        if (start == nullptr) {
+            return false;
+        }
+        const auto line = start->get("line");
+        const auto character = start->get("character");
+        if (line == nullptr || character == nullptr) {
+            return false;
+        }
+        const auto line_value = line->as_int();
+        const auto character_value = character->as_int();
+        if (!line_value.has_value() || !character_value.has_value()) {
+            return false;
+        }
+        const std::pair<int64_t, int64_t> current{*line_value, *character_value};
+        if (current < previous) {
+            return false;
+        }
+        previous = current;
+    }
+    return true;
 }
 
 /// Extract the resultId string from a textDocument/diagnostic response body.
@@ -10298,7 +10414,7 @@ void test_will_rename_files_updates_module_decl() {
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
             escaped + R"("}}})",
-        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto response = response_body_for_id(output, 2);
@@ -10317,12 +10433,481 @@ void test_will_rename_files_null_without_module_decl() {
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
             escaped + R"("}}})",
-        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto response = response_body_for_id(output, 2);
     check(response.find("\"result\":null") != std::string::npos,
           "willRenameFiles.null_without_module_decl");
+}
+
+void test_will_rename_files_updates_imports_in_importers() {
+    // Renaming a module must update import declarations in every open
+    // document that references it.
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: pkg::Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    check(edit.changes != nullptr, "willRenameFiles.imports_changes_present");
+    // The renamed file's own module declaration is updated.
+    const auto *pkg_edits = edit_array_for_uri(edit.changes, "file:///playground/pkg.ahfl");
+    check(pkg_edits != nullptr, "willRenameFiles.imports_module_decl_uri_present");
+    check(edit_array_has(pkg_edits, "playground::pkg2"),
+          "willRenameFiles.imports_module_decl_updated");
+    // The importer's import path is updated.
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.imports_importer_uri_present");
+    check(edit_array_has(main_edits, "playground::pkg2"),
+          "willRenameFiles.imports_import_path_updated");
+    // The qualified type reference `pkg::Item` is rewritten through the new
+    // default import alias (pkg -> pkg2).
+    check(edit_array_has(main_edits, "pkg2"),
+          "willRenameFiles.imports_qualified_reference_rewritten");
+    // The per-document edit array must be sorted by range (LSP contract).
+    check(edit_array_is_sorted(main_edits), "willRenameFiles.imports_edits_sorted");
+    // The old module path must not survive as an import newText.
+    check(!edit_array_has(main_edits, "playground::pkg"),
+          "willRenameFiles.imports_no_stale_import_newText");
+}
+
+void test_will_rename_files_updates_use_declarations() {
+    // Renaming a module must update `use` declarations that reference it,
+    // preserving the symbol name after the module prefix.
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg;\n"
+        "use playground::pkg::Item;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("\"newText\":\"playground::pkg2::Item\"") != std::string::npos,
+          "willRenameFiles.use_decl_updated_with_symbol");
+}
+
+void test_will_rename_files_multiple_renames_in_one_request() {
+    // A single willRenameFiles request may carry several file renames; all
+    // must be applied to the merged WorkspaceEdit.
+    const std::string pkg_a_source =
+        "module playground::a;\n"
+        "\n"
+        "pub struct A {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string pkg_b_source =
+        "module playground::b;\n"
+        "\n"
+        "pub struct B {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::a;\n"
+        "import playground::b;\n"
+        "\n"
+        "struct Holder {\n"
+        "    first: a::A;\n"
+        "    second: b::B;\n"
+        "}\n";
+    const auto a_escaped = escape_json_string(pkg_a_source);
+    const auto b_escaped = escape_json_string(pkg_b_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/a.ahfl","languageId":"ahfl","version":1,"text":")" +
+            a_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/b.ahfl","languageId":"ahfl","version":1,"text":")" +
+            b_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/a.ahfl","newUri":"file:///playground/a2.ahfl"},{"oldUri":"file:///playground/b.ahfl","newUri":"file:///playground/b2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    check(edit.changes != nullptr, "willRenameFiles.multiple_changes_present");
+    check(edit_array_has(edit_array_for_uri(edit.changes, "file:///playground/a.ahfl"),
+                         "playground::a2"),
+          "willRenameFiles.multiple_first_module_updated");
+    check(edit_array_has(edit_array_for_uri(edit.changes, "file:///playground/b.ahfl"),
+                         "playground::b2"),
+          "willRenameFiles.multiple_second_module_updated");
+    // The importer must carry edits for both renamed modules.
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.multiple_importer_uri_present");
+    check(edit_array_has(main_edits, "playground::a2"),
+          "willRenameFiles.multiple_first_import_updated");
+    check(edit_array_has(main_edits, "playground::b2"),
+          "willRenameFiles.multiple_second_import_updated");
+    // The qualified type references `a::A` / `b::B` are rewritten through the
+    // new default import aliases (a -> a2, b -> b2).
+    check(edit_array_has(main_edits, "a2"),
+          "willRenameFiles.multiple_first_qualified_reference_rewritten");
+    check(edit_array_has(main_edits, "b2"),
+          "willRenameFiles.multiple_second_qualified_reference_rewritten");
+    // The merged per-document edit array must be sorted by range even though
+    // the two renames emit edits in interleaved source order.
+    check(edit_array_is_sorted(main_edits), "willRenameFiles.multiple_edits_sorted");
+}
+
+void test_will_rename_files_renames_across_directories() {
+    // Moving a module into a subdirectory extends its module path; importers
+    // must receive the fully-qualified new path.
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: pkg::Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/sub/pkg2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    check(edit.changes != nullptr, "willRenameFiles.cross_directory_changes_present");
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.cross_directory_importer_uri_present");
+    check(edit_array_has(main_edits, "playground::sub::pkg2"),
+          "willRenameFiles.cross_directory_module_path_extended");
+    // The qualified type reference `pkg::Item` is rewritten through the new
+    // default import alias (pkg -> pkg2) even though the module moved dirs.
+    check(edit_array_has(main_edits, "pkg2"),
+          "willRenameFiles.cross_directory_qualified_reference_rewritten");
+    check(edit_array_is_sorted(main_edits),
+          "willRenameFiles.cross_directory_edits_sorted");
+}
+
+void test_will_rename_files_null_for_non_ahfl_extension() {
+    // Non-.ahfl files are outside the handler's scope.
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/notes.txt","newUri":"file:///playground/notes2.txt"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("\"result\":null") != std::string::npos,
+          "willRenameFiles.null_non_ahfl_extension");
+}
+
+void test_will_rename_files_null_for_same_uri() {
+    // A no-op rename (oldUri == newUri) must not produce edits.
+    const std::string source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const auto escaped = escape_json_string(source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("\"result\":null") != std::string::npos,
+          "willRenameFiles.null_same_uri");
+}
+
+void test_will_rename_files_null_for_missing_or_empty_files() {
+    // Requests without a usable `files` array must return null.
+    const auto missing_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    check(response_body_for_id(missing_output, 2).find("\"result\":null") !=
+              std::string::npos,
+          "willRenameFiles.null_missing_files_array");
+
+    const auto empty_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    check(response_body_for_id(empty_output, 2).find("\"result\":null") !=
+              std::string::npos,
+          "willRenameFiles.null_empty_files_array");
+}
+
+void test_will_rename_files_edits_sorted_by_range() {
+    // When the `files` entry order is reversed relative to source order, the
+    // per-document TextEdit array must still be sorted by (start.line,
+    // start.character) as required by the LSP WorkspaceEdit contract.
+    const std::string pkg_a_source =
+        "module playground::a;\n"
+        "\n"
+        "pub struct A {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string pkg_b_source =
+        "module playground::b;\n"
+        "\n"
+        "pub struct B {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::b;\n"
+        "import playground::a;\n"
+        "\n"
+        "struct Holder {\n"
+        "    first: b::B;\n"
+        "    second: a::A;\n"
+        "}\n";
+    const auto a_escaped = escape_json_string(pkg_a_source);
+    const auto b_escaped = escape_json_string(pkg_b_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/a.ahfl","languageId":"ahfl","version":1,"text":")" +
+            a_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/b.ahfl","languageId":"ahfl","version":1,"text":")" +
+            b_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/a.ahfl","newUri":"file:///playground/a2.ahfl"},{"oldUri":"file:///playground/b.ahfl","newUri":"file:///playground/b2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.sorted_importer_uri_present");
+    check(edit_array_is_sorted(main_edits), "willRenameFiles.sorted_edits_sorted_by_range");
+    // Without sorting, the emission order would be [a-import(line 2), a-head
+    // (line 6), b-import(line 1), b-head(line 5)]; after sorting it must be
+    // [b-import, a-import, b-head, a-head].
+    const auto texts = edit_new_texts(main_edits);
+    const std::vector<std::string> expected{
+        "playground::b2", "playground::a2", "b2", "a2"};
+    check(texts == expected, "willRenameFiles.sorted_newText_sequence");
+}
+
+void test_will_rename_files_rewrites_fully_qualified_references() {
+    // A fully-qualified type reference (`playground::pkg::Item`) whose prefix
+    // equals the old module path must have that prefix rewritten.
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: playground::pkg::Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.fully_qualified_importer_uri_present");
+    // The import path and the fully-qualified type prefix are both rewritten.
+    const auto texts = edit_new_texts(main_edits);
+    check(texts.size() == 2, "willRenameFiles.fully_qualified_edit_count");
+    check(std::all_of(texts.begin(), texts.end(),
+                      [](const std::string &text) { return text == "playground::pkg2"; }),
+          "willRenameFiles.fully_qualified_prefix_rewritten");
+    check(edit_array_is_sorted(main_edits), "willRenameFiles.fully_qualified_edits_sorted");
+}
+
+void test_will_rename_files_deduplicates_old_uri() {
+    // Duplicate oldUri entries (files:[a->a2, a->a3]) must apply last-wins
+    // semantics so a document cannot receive overlapping edits from two
+    // competing renames of the same file.
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: pkg::Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"},{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg3.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.dedupe_importer_uri_present");
+    // Last-wins: only the pkg -> pkg3 rename takes effect.
+    check(edit_array_has(main_edits, "playground::pkg3"),
+          "willRenameFiles.dedupe_last_wins_import");
+    check(edit_array_has(main_edits, "pkg3"),
+          "willRenameFiles.dedupe_last_wins_qualified_reference");
+    check(!edit_array_has(main_edits, "playground::pkg2"),
+          "willRenameFiles.dedupe_no_losing_import");
+    check(!edit_array_has(main_edits, "pkg2"),
+          "willRenameFiles.dedupe_no_losing_qualified_reference");
+    const auto *pkg_edits = edit_array_for_uri(edit.changes, "file:///playground/pkg.ahfl");
+    check(pkg_edits != nullptr, "willRenameFiles.dedupe_renamed_uri_present");
+    check(edit_array_has(pkg_edits, "playground::pkg3"),
+          "willRenameFiles.dedupe_renamed_module_decl");
+    check(!edit_array_has(pkg_edits, "playground::pkg2"),
+          "willRenameFiles.dedupe_renamed_no_losing_module_decl");
+}
+
+void test_will_rename_files_aliased_import_keeps_alias() {
+    // An aliased import (`import playground::pkg as p;`) keeps its alias when
+    // the module is renamed: the import path is rewritten, but references
+    // through the alias (`p::Item`) need no edit because the alias is
+    // unchanged.
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg as p;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: p::Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.aliased_importer_uri_present");
+    // Only the import path is rewritten; the alias-qualified reference p::Item
+    // is untouched (no standalone "pkg2" head edit).
+    const auto texts = edit_new_texts(main_edits);
+    check(texts.size() == 1, "willRenameFiles.aliased_single_import_edit_only");
+    check(edit_array_has(main_edits, "playground::pkg2"),
+          "willRenameFiles.aliased_import_path_rewritten");
+    check(!edit_array_has(main_edits, "pkg2"),
+          "willRenameFiles.aliased_reference_not_rewritten");
+}
+
+void test_will_rename_files_rewrites_alias_qualified_use() {
+    // An alias-qualified `use` declaration (`use pkg::Item;`) must have its
+    // head alias rewritten when the module is renamed (pkg -> pkg2).
+    const std::string pkg_source =
+        "module playground::pkg;\n"
+        "\n"
+        "pub struct Item {\n"
+        "    value: String;\n"
+        "}\n";
+    const std::string main_source =
+        "module playground::main;\n"
+        "import playground::pkg;\n"
+        "use pkg::Item;\n"
+        "\n"
+        "struct Holder {\n"
+        "    item: Item;\n"
+        "}\n";
+    const auto pkg_escaped = escape_json_string(pkg_source);
+    const auto main_escaped = escape_json_string(main_source);
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/pkg.ahfl","languageId":"ahfl","version":1,"text":")" +
+            pkg_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///playground/main.ahfl","languageId":"ahfl","version":1,"text":")" +
+            main_escaped + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/willRenameFiles","params":{"files":[{"oldUri":"file:///playground/pkg.ahfl","newUri":"file:///playground/pkg2.ahfl"}]}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    const auto edit = parse_workspace_edit(response);
+    const auto *main_edits = edit_array_for_uri(edit.changes, "file:///playground/main.ahfl");
+    check(main_edits != nullptr, "willRenameFiles.alias_use_importer_uri_present");
+    check(edit_array_has(main_edits, "playground::pkg2"),
+          "willRenameFiles.alias_use_import_path_rewritten");
+    check(edit_array_has(main_edits, "pkg2"),
+          "willRenameFiles.alias_use_head_rewritten");
+    check(edit_array_is_sorted(main_edits), "willRenameFiles.alias_use_edits_sorted");
 }
 
 void test_document_symbol_hierarchy() {
@@ -12836,6 +13421,18 @@ int main() {
     test_will_rename_files_capability();
     test_will_rename_files_updates_module_decl();
     test_will_rename_files_null_without_module_decl();
+    test_will_rename_files_updates_imports_in_importers();
+    test_will_rename_files_updates_use_declarations();
+    test_will_rename_files_multiple_renames_in_one_request();
+    test_will_rename_files_renames_across_directories();
+    test_will_rename_files_null_for_non_ahfl_extension();
+    test_will_rename_files_null_for_same_uri();
+    test_will_rename_files_null_for_missing_or_empty_files();
+    test_will_rename_files_edits_sorted_by_range();
+    test_will_rename_files_rewrites_fully_qualified_references();
+    test_will_rename_files_deduplicates_old_uri();
+    test_will_rename_files_aliased_import_keeps_alias();
+    test_will_rename_files_rewrites_alias_qualified_use();
     test_document_symbol_hierarchy();
     test_diagnostics_reflect_document_version();
     test_text_document_diagnostic_pull_report();
