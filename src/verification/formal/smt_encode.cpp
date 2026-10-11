@@ -112,12 +112,17 @@ struct Encoder {
     // Encodes an SMT-LIB 2 path symbol from a contract path (input.field,
     // ctx.field, output.field, node.field). The symbol name is derived from
     // the path spelling deterministically; the leading root plus dotted
-    // members become a single flat SMT symbol (dots -> "__").
-    [[nodiscard]] static std::string path_symbol(const ir::Path &path) {
+    // members become a single flat SMT symbol (dots -> "__"). When step >= 0,
+    // a "__<step>" suffix is appended for k-induction unrolling (KR7.2).
+    [[nodiscard]] static std::string path_symbol(const ir::Path &path, int step = -1) {
         std::string symbol = path.root_name;
         for (const auto &member : path.members) {
             symbol += "__";
             symbol += member;
+        }
+        if (step >= 0) {
+            symbol += "__";
+            symbol += std::to_string(step);
         }
         return symbol;
     }
@@ -276,7 +281,7 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                         return binding->symbol;
                     }
                 }
-                auto symbol = path_symbol(e.path);
+                auto symbol = path_symbol(e.path, options.step);
                 // A bare non-scalar root (e.g. a struct base for member
                 // access) is just a namespace prefix, never a standalone SMT
                 // term — skip declaration. The leaf type is checked by
@@ -361,7 +366,7 @@ std::optional<std::string> Encoder::encode_quantifier(const ir::QuantifierExpr &
     // tied to the source collection (`coll@i`), never to iteration order.
     std::string collection_base;
     if (const auto *collection_path = std::get_if<ir::PathExpr>(&q.collection.ptr->node)) {
-        collection_base = path_symbol(collection_path->path);
+        collection_base = path_symbol(collection_path->path, options.step);
     } else {
         // Non-path collection operand (e.g. a nested member access). Encode it
         // to obtain a deterministic symbol base; if that leaves the subset the

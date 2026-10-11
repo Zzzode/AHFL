@@ -300,8 +300,60 @@ void test_real_k_induction_bounded_safe() {
         return;
     }
     ir::Program p;
-    // A provable goal, but under k-induction the loop-free data fragment has no
-    // inductive step to strengthen, so the conclusion is BoundedSafe, not Safe.
+    // A provable invariant, but under k-induction with havoc transitions the
+    // inductive step is Sat (the invariant is not a tautology), so the
+    // conclusion is BoundedSafe, not Safe.
+    add_contract(p, "Agent",
+                 {{ir::ContractClauseKind::Requires,
+                   bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))},
+                  {ir::ContractClauseKind::Invariant,
+                   bin(p, ir::ExprBinaryOp::GreaterEqual, int_path(p, "input", {"x"}),
+                       int_lit(p, "1"))}});
+    SmtBmcOptions options;
+    options.use_k_induction = true;
+    auto r = run_smt_bmc(p, options);
+    check(r.status == SmtBmcStatus::BoundedSafe,
+          "k-induction with havoc transitions falls back to BoundedSafe for non-tautological "
+          "invariants");
+    bool all_bounded = !r.goals.empty();
+    for (const auto &g : r.goals) {
+        if (g.proven && !g.bounded_only) {
+            all_bounded = false;
+        }
+    }
+    check(all_bounded, "proven invariant goals are flagged bounded_only under k-induction");
+}
+
+void test_real_k_induction_tautology_safe() {
+    if (!z3_available()) {
+        return;
+    }
+    ir::Program p;
+    // A tautological invariant (x == x) holds in all states, so the inductive
+    // step is Unsat even with havoc transitions → Safe, not BoundedSafe.
+    add_contract(p, "Agent",
+                 {{ir::ContractClauseKind::Invariant,
+                   bin(p, ir::ExprBinaryOp::Equal, int_path(p, "input", {"x"}),
+                       int_path(p, "input", {"x"}))}});
+    SmtBmcOptions options;
+    options.use_k_induction = true;
+    auto r = run_smt_bmc(p, options);
+    check(r.status == SmtBmcStatus::Safe,
+          "k-induction with havoc transitions proves tautological invariants as Safe");
+    for (const auto &g : r.goals) {
+        if (g.proven) {
+            check(!g.bounded_only, "tautological invariant is not flagged bounded_only");
+        }
+    }
+}
+
+void test_real_k_induction_ensures_not_bounded() {
+    if (!z3_available()) {
+        return;
+    }
+    ir::Program p;
+    // Ensures goals are one-shot properties complete for the loop-free
+    // fragment, so they are NOT flagged bounded_only under k-induction.
     add_contract(p, "Agent",
                  {{ir::ContractClauseKind::Requires,
                    bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))},
@@ -311,15 +363,13 @@ void test_real_k_induction_bounded_safe() {
     SmtBmcOptions options;
     options.use_k_induction = true;
     auto r = run_smt_bmc(p, options);
-    check(r.status == SmtBmcStatus::BoundedSafe,
-          "k-induction on the loop-free fragment falls back to BoundedSafe");
-    bool all_bounded = !r.goals.empty();
+    check(r.status == SmtBmcStatus::Safe,
+          "ensures goals are not downgraded to BoundedSafe under k-induction");
     for (const auto &g : r.goals) {
-        if (g.proven && !g.bounded_only) {
-            all_bounded = false;
+        if (g.proven) {
+            check(!g.bounded_only, "ensures goal is not flagged bounded_only");
         }
     }
-    check(all_bounded, "proven goals are flagged bounded_only under k-induction");
 }
 
 void test_k_induction_status_name() {
@@ -339,6 +389,8 @@ int main() {
     test_real_forall_proven();
     test_real_forall_refuted();
     test_real_k_induction_bounded_safe();
+    test_real_k_induction_tautology_safe();
+    test_real_k_induction_ensures_not_bounded();
     test_k_induction_status_name();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";

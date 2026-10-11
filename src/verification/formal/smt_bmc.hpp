@@ -19,8 +19,9 @@
 //
 // "Bounded" here refers to the Int(lo,hi) range assumptions and the solver
 // timeout; the data-predicate fragment is loop-free, so a single query per
-// goal is complete for it (unbounded k is a no-op for pure data predicates and
-// is handled by slice 6 for the temporal fragment).
+// goal is complete for it. KR7.2 adds an optional real two-query k-induction
+// (base case + inductive step with havoc transitions) for invariant goals;
+// the temporal fragment is handled by slice 6.
 
 #include <cstddef>
 #include <optional>
@@ -55,7 +56,9 @@ struct SmtBmcGoal {
     SmtSolverStatus verdict{SmtSolverStatus::SolverError};
     bool proven{false}; // verdict == Unsat
     // K-induction only: true when the goal held as a base case but its
-    // inductive step could not be strengthened, so the proof is bound-limited.
+    // inductive step was Sat (the invariant is not a tautology under havoc
+    // transitions), so the proof is bound-limited. Tautological invariants
+    // whose inductive step is Unsat are not flagged.
     bool bounded_only{false};
     // Populated only when the goal was refuted (verdict == Sat): the concrete
     // symbol assignments (contract path -> value) that violate the goal, as a
@@ -83,11 +86,14 @@ struct SmtBmcResult {
 struct SmtBmcOptions {
     SmtEncodeOptions encode; // e.g. emit_overflow_checks
     SmtSolverOptions solver; // solver kind / path / timeout
-    // When true, attempt k-induction on each proven goal: a base case (the goal
-    // itself) plus an inductive step. For the loop-free data-predicate fragment
-    // there is no data-transition relation to induct over, so the step cannot be
-    // strengthened and the goal is reported BoundedSafe rather than Safe (RFC
-    // 0017 Q6). Off by default: a plain BMC pass reports unconditional Safe.
+    // KR7.2: when true, run a real two-query k-induction for invariant goals.
+    // The base case is the standard refutation query. The inductive step
+    // re-instantiates the predicate at step 0 (hypothesis) and step 1
+    // (negation) with havoc transitions (transition relation = true). Unsat
+    // means the invariant is a tautology (holds in all states) → Safe. Sat
+    // means the invariant is not a tautology → BoundedSafe. Ensures/forbid/
+    // divisor goals are one-shot properties complete for the loop-free
+    // fragment and are not affected. Off by default.
     bool use_k_induction{false};
 };
 

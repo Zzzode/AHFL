@@ -30,6 +30,7 @@ struct ContractQueries {
         std::size_t clause_index;
         std::string description;
         std::string goal_term; // the predicate that must hold
+        ir::ExprRef expr;      // KR7.2: the source expression, for step-indexed re-encoding
         std::optional<SourceRange> source_range;
     };
     std::vector<Goal> goals;
@@ -83,6 +84,59 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
     return doc.str();
 }
 
+// KR7.2: Build the inductive-step query for an invariant goal. The predicate is
+// instantiated at step 0 (induction hypothesis: I holds) and step 1 (negation:
+// I fails). With havoc transitions (transition relation = true), there is no
+// constraint between step 0 and step 1, so the step is Unsat only when I is a
+// tautology. A Sat result honestly downgrades the goal to BoundedSafe.
+[[nodiscard]] std::string build_inductive_step_query(const ContractQueries::Goal &goal,
+                                                     const SmtEncodeOptions &base_options) {
+    // Re-encode at step 0 (hypothesis) and step 1 (negation).
+    SmtEncodeOptions step0_options = base_options;
+    step0_options.step = 0;
+    SmtEncodeOptions step1_options = base_options;
+    step1_options.step = 1;
+
+    const auto encoded_step0 = encode_predicate(goal.expr, step0_options);
+    const auto encoded_step1 = encode_predicate(goal.expr, step1_options);
+
+    // If either re-encoding fails (should not happen — the base encoding
+    // succeeded), fall back to a trivially Sat query so the goal is honestly
+    // downgraded to BoundedSafe rather than silently dropped.
+    if (!encoded_step0.ok() || !encoded_step1.ok()) {
+        return "(set-logic QF_NIA)\n(declare-const havoc_proxy Bool)\n(assert (not havoc_proxy))\n(check-sat)\n";
+    }
+
+    std::ostringstream doc;
+    doc << "(set-logic QF_NIA)\n";
+
+    // Declare symbols at step 0.
+    for (const auto &symbol : encoded_step0.symbols) {
+        doc << "(declare-const " << symbol.name << " " << smt_sort_keyword(symbol.sort) << ")\n";
+        if (symbol.int_bounds.has_value()) {
+            doc << "(assert (and (>= " << symbol.name << " " << symbol.int_bounds->first
+                << ") (<= " << symbol.name << " " << symbol.int_bounds->second << ")))\n";
+        }
+    }
+    // Declare symbols at step 1.
+    for (const auto &symbol : encoded_step1.symbols) {
+        doc << "(declare-const " << symbol.name << " " << smt_sort_keyword(symbol.sort) << ")\n";
+        if (symbol.int_bounds.has_value()) {
+            doc << "(assert (and (>= " << symbol.name << " " << symbol.int_bounds->first
+                << ") (<= " << symbol.name << " " << symbol.int_bounds->second << ")))\n";
+        }
+    }
+
+    // Induction hypothesis: I holds at step 0.
+    doc << "(assert " << *encoded_step0.term << ")\n";
+    // Negation of the goal: I fails at step 1.
+    doc << "(assert (not " << *encoded_step1.term << "))\n";
+    // Havoc transition: no constraint between step 0 and step 1.
+
+    doc << "(check-sat)\n";
+    return doc.str();
+}
+
 [[nodiscard]] ContractQueries collect_contract(const ir::ContractDecl &contract,
                                                const SmtEncodeOptions &encode_options) {
     ContractQueries queries;
@@ -110,16 +164,16 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
             break;
         case ir::ContractClauseKind::Invariant:
             queries.invariants.push_back({i, *encoded.term});
-            queries.goals.push_back({clause.kind, i, kind_name, *encoded.term, clause.source_range});
+            queries.goals.push_back({clause.kind, i, kind_name, *encoded.term, *expr, clause.source_range});
             break;
         case ir::ContractClauseKind::Ensures:
-            queries.goals.push_back({clause.kind, i, kind_name, *encoded.term, clause.source_range});
+            queries.goals.push_back({clause.kind, i, kind_name, *encoded.term, *expr, clause.source_range});
             break;
         case ir::ContractClauseKind::Forbid:
             // The forbidden predicate must be unreachable, so the goal is its
             // negation.
             queries.goals.push_back(
-                {clause.kind, i, kind_name, "(not " + *encoded.term + ")", clause.source_range});
+                {clause.kind, i, kind_name, "(not " + *encoded.term + ")", *expr, clause.source_range});
             break;
         case ir::ContractClauseKind::Decreases:
             break; // unreachable (skipped above)
@@ -129,7 +183,7 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
         // attributed to the clause that produced them.
         for (const auto &obligation : encoded.obligations) {
             queries.goals.push_back({clause.kind, i, kind_name + " divisor != 0",
-                                     obligation.predicate, clause.source_range});
+                                     obligation.predicate, *expr, clause.source_range});
         }
     }
 
@@ -188,15 +242,24 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
 
             if (record.proven) {
                 ++result.proven_count;
-                // K-induction: the base case (above) holds. The unbounded proof
-                // needs an inductive step over a data-transition relation, but
-                // the data-predicate fragment is loop-free (no such relation to
-                // induct over), so the step cannot be strengthened. Per RFC 0017
-                // Q6 we keep the bound-limited conclusion and flag it rather than
-                // over-claim an unbounded proof.
-                if (options.use_k_induction) {
-                    record.bounded_only = true;
-                    any_bounded_only = true;
+                // KR7.2: real two-query k-induction for invariant goals. The
+                // base case (above) holds. The inductive step re-instantiates
+                // the predicate at step 0 (hypothesis) and step 1 (negation)
+                // with havoc transitions (transition relation = true). Unsat
+                // means the invariant is a tautology (holds in all states, so
+                // the step is vacuously valid) → Safe. Sat means the invariant
+                // is not a tautology → BoundedSafe (the base case is sound but
+                // the step cannot be discharged without a real transition
+                // relation). Ensures/forbid/divisor goals are one-shot
+                // properties complete for the loop-free fragment, so they need
+                // no inductive step and are not flagged.
+                if (options.use_k_induction && goal.kind == ir::ContractClauseKind::Invariant) {
+                    const auto step_query = build_inductive_step_query(goal, options.encode);
+                    const auto step_verdict = run_smt_solver(step_query, options.solver);
+                    if (step_verdict.status != SmtSolverStatus::Unsat) {
+                        record.bounded_only = true;
+                        any_bounded_only = true;
+                    }
                 }
             } else if (verdict.status == SmtSolverStatus::Sat) {
                 any_unsafe = true;

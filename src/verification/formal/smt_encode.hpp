@@ -89,6 +89,11 @@ struct SmtEncodeOptions {
     // guard obligation (INT64 range). Default off: contract verification
     // targets logical correctness; overflow is an opt-in dimension.
     bool emit_overflow_checks{false};
+    // KR7.2: when >= 0, every free symbol is suffixed with "__<step>" so the
+    // same predicate can be instantiated at multiple unroll steps (base case
+    // at step 0, inductive step at step k). -1 (default) = flat names,
+    // byte-identical to the pre-step encoding.
+    int step{-1};
 };
 
 // Encode a single contract data-predicate expression to an SMT-LIB 2 term.
