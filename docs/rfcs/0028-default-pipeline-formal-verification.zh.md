@@ -1,11 +1,11 @@
 ---
 rfc: "0028"
 title: "Formal Verification in the Default Compilation Pipeline"
-status: "implemented"
+status: "stabilized"
 area: ["compiler", "tooling", "formal"]
 stability: "developer-facing"
 created: "2026-10-07"
-updated: "2026-10-08"
+updated: "2026-10-11"
 authors: ["zzzode"]
 shepherd: "zzzode"
 owners:
@@ -487,3 +487,5 @@ No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`
   headers, no static libs, no docs, no bindings). The external-solver
   constraint is now FULLY REMOVED for both engines. Constraint section updated
   to reflect the full removal.
+
+- 2026-10-11: **RFC 0028 推进至 `stabilized`（无人类 owner 门）。** `stabilized` 验收标准（§Rollout and Stabilization 第 4 条）为："`docs/reference/` CLI reference reflects `--verify`; both solvers (NuSMV, Z3) are bundled so the missing-solver failure path is unreachable in a default install." 两项均已满足：① **CLI reference**——`docs/reference/cli-commands.zh.md` line 134 完整记录 `--verify=<off|on>` 标志（默认 `on`、fail-closed、零规格时静默跳过、NuSMV 和 Z3 内置）；② **solvers bundled**——NuSMV 2.6.0 vendor 于 `third_party/nusmv/`（commit 8df39dfe）、Z3 4.8.12 vendor 于 `third_party/z3/`（commit 952d814b），两者随 AHFL CMake 从源码构建并 `cmake --install` 装到 `bin/`，runtime solver discovery 优先查可执行文件同目录，默认安装必定自带可用 solver，missing-solver 失败路径在默认安装中不可达。

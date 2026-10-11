@@ -45,7 +45,7 @@ rfcs:
     stability: "developer-facing"
   - rfc: "0008"
     title: "Single-File Primitive and Std Resolution"
-    status: "implemented"
+    status: "stabilized"
     file: "0008-single-file-std-primitive-semantics.zh.md"
     area: ["language", "compiler", "stdlib", "tooling"]
     stability: "developer-facing"
@@ -135,7 +135,7 @@ rfcs:
     stability: "stable-artifact"
   - rfc: "0023"
     title: "Capability-Identity Effect Inference"
-    status: "implemented"
+    status: "stabilized"
     file: "0023-capability-identity-effect-inference.zh.md"
     area: ["language", "compiler"]
     stability: "experimental"
@@ -165,7 +165,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0028"
     title: "Formal Verification in the Default Compilation Pipeline"
-    status: "implemented"
+    status: "stabilized"
     file: "0028-default-pipeline-formal-verification.zh.md"
     area: ["compiler", "tooling", "formal"]
     stability: "developer-facing"

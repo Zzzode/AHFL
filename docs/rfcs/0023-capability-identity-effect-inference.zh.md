@@ -1,11 +1,11 @@
 ---
 rfc: "0023"
 title: "Capability-Identity Effect Inference"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler"]
 stability: "experimental"
 created: "2026-08-25"
-updated: "2026-08-25"
+updated: "2026-10-11"
 authors: ["zzzode"]
 shepherd: "project lead"
 owners:
@@ -202,3 +202,5 @@ capability 全程用 `SymbolId`(Principle 2),不以名字为规范身份;体侧�
   golden(薄包装通过 / over-declare 通过 / under-declare 与 Pure-调-capability 均报
   `EFFECT_UNDERDECLARED`);effects + typed_hir 全绿。解除 [RFC 0022](0022-durable-capability-resume.zh.md)
   slice 1c 的类型系统前置阻塞。
+
+- 2026-10-11: **RFC 0023 推进至 `stabilized`（无人类 owner 门）。** `stabilized` 验收标准（§Rollout and Stabilization 第 4 条）为："effect 系统语义写入 `docs/spec`；解除 RFC 0022 1c 的前置阻塞后，在 0022 记录联动。" 三项均已满足：① **effect 系统语义写入 docs/spec**——`docs/spec/core-language.zh.md` §4.6 effect 分级、§5.6 可验证子集、line 1008 "effect 等级 ε(e)" 完整定义了 effect 系统的静态语义（6 级副作用强度、纯/不纯判定、`effect Pure` + `decreases` 可验证子集）；② **RFC 0022 1c 前置阻塞已解除**——1c（nondet time/uuid 内建重分类为 host capability `Clock`/`UuidV4`）于 2026-08-25 落地（PR 5e56325c），RFC 0022 已推进至 `stabilized`；③ **联动已记录**——RFC 0022 Decision History 2026-08-25 条目明确记录 "1c 依赖 RFC 0023（capability-identity effect 推断），该 RFC 已 implemented"。

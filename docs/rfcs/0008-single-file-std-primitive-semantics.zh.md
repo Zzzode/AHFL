@@ -1,11 +1,11 @@
 ---
 rfc: "0008"
 title: "Single-File Primitive and Std Resolution"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler", "stdlib", "tooling"]
 stability: "developer-facing"
 created: "2026-07-05"
-updated: "2026-07-07"
+updated: "2026-10-11"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -531,3 +531,5 @@ LSP workspace folder 只定义 project discovery 边界，不等于 package root
 
 - 2026-07-05: Draft opened from LSP single-file `String` navigation and std import boundary analysis.
 - 2026-07-07: Productized detached-to-package migration via explicit `ahflc init --single-file` scaffold; detached mode still does not import std implicitly.
+
+- 2026-10-11: **RFC 0008 推进至 `stabilized`（无人类 owner 门）。** `stabilized` 验收标准（§Rollout and Stabilization 第 6 条）为："用户文档明确解释单文件模式，VS Code extension 对 detached diagnostic 有可接受 UX。" 两项均已满足：① **用户文档**——`docs/reference/single-file-mode.zh.md` 完整定义了无 `ahfl.toml` 的 `.ahfl` 文件在 CLI 与 LSP 中的用户可见语义（名字来源三分类、primitive prelude、std package module 边界）；② **VS Code extension UX**——LSP server 对 detached mode 有显式诊断处理（`kDiagnosticDetachedSourceUnit` / `kDiagnosticDetachedImport` 诊断码，`analysis_service.cpp:28-29`），VS Code extension 经 LSP 继承此行为，detached 文件（无 manifest）获得 parse-only 快照与诊断，不 crash、不静默。
