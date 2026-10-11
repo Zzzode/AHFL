@@ -1637,11 +1637,11 @@ if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_apply_project_warnings(ahfl_wasm_host_capability_import_tests)
 
     # RFC 0026 KR6.8 WH-4: the state-trace ring decoder tests. Emits REAL
-    # P6-frame and WireJson workflow modules in-process through the wasm
-    # backend, drives them on the real wasm3 engine through run2, and decodes
-    # the guest-written trace ring + node-event buffer. Links the wasm host
-    # target (decoder + packer + engine), the wasm backend (emit_core_wasm),
-    # the engine (node-event decoder), and the value SSOT (input construction).
+    # P6-frame workflow modules in-process through the wasm backend, drives
+    # them on the real wasm3 engine through run2, and decodes the guest-written
+    # trace ring + node-event buffer. Links the wasm host target (decoder +
+    # packer + engine), the wasm backend (emit_core_wasm), the engine
+    # (node-event decoder), and the value SSOT (input construction).
     add_executable(ahfl_wasm_host_state_trace_tests
         unit/runtime/wasm_host/state_trace_decoder.cpp
     )
@@ -1679,8 +1679,8 @@ if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_apply_project_warnings(ahfl_wasm_host_observation_emitter_tests)
 
     # RFC 0026 KR6.8 WH-4: the agent step-walk session tests. Drives REAL
-    # wasm3 agent modules (WireJson + P6-frame) through the step-walk and
-    # pins the walked state sequence, hook liveness, and transition_count.
+    # wasm3 agent modules (P6-frame) through the step-walk and pins the
+    # walked state sequence, hook liveness, and transition_count.
     add_executable(ahfl_wasm_host_agent_session_tests
         unit/runtime/wasm_host/agent_session.cpp
     )
@@ -1701,7 +1701,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_apply_project_warnings(ahfl_wasm_host_agent_session_tests)
 
     # RFC 0026 KR6.8 WH-4: the workflow session tests. Drives REAL wasm3
-    # workflow modules (P6-frame trace-ring + WireJson capability) end-to-end
+    # workflow modules (P6-frame trace-ring + bridge capability) end-to-end
     # and pins the observation data, hook-firing discipline, and result output.
     add_executable(ahfl_wasm_host_workflow_session_tests
         unit/runtime/wasm_host/workflow_session.cpp

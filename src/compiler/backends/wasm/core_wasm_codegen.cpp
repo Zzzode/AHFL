@@ -708,8 +708,8 @@ struct AgentPlan {
     bool workflow_packaging_lane{false};
     // WH-5c.4 (GAP 2): construct-shape capability terminals. Each entry records
     // a final state whose handler builds the capability argument in-module (P6
-    // computed-final construct) and whose capability the scheduler invokes
-    // after a P4D_TO_JSON self-transcode of the constructed output frame.
+    // computed-final construct) and whose capability the runner invokes via
+    // the bridge (the construct frame is the bridge argument).
     struct ConstructCapabilityTerminal {
         CoreStateId state{};
         CoreCapabilityId capability{};
@@ -1666,11 +1666,11 @@ validate_construct_capability_final(const CoreProgram &program,
         return ConstructFinalProbe{ConstructFinalProbe::Outcome::Invalid, {}};
     }
     // The construct result is materialized into the output frame O_k by the P6
-    // computed-final and then transcoded to wire-JSON. A zero-sized type has no
-    // P4-D bytes to materialize and no frame address to transcode, so the
-    // construct-final lane cannot serve it. Reject here (a capability-frame
-    // diagnostic) rather than letting the P6 scalar scaffold reject it later
-    // with the generic orchestration code.
+    // computed-final and then passed to the bridge as the capability argument.
+    // A zero-sized type has no P4-D bytes to materialize and no frame address
+    // to pass, so the construct-final lane cannot serve it. Reject here (a
+    // capability-frame diagnostic) rather than letting the P6 scalar scaffold
+    // reject it later with the generic orchestration code.
     const auto construct_layout_id = layouts.value_layouts[construct_vt.value];
     if (layouts.layouts[construct_layout_id.value].is_zero_sized) {
         add_diag(result,
@@ -11726,8 +11726,8 @@ struct PlannedFn {
                     construct_terminal_range = statements.back().source_range;
                     // WH-5c.4 (GAP 2): the capability argument is an in-module
                     // construct. Plan the construct lets as a P6 computed-final
-                    // that materializes the construct into O_k; the scheduler
-                    // then transcodes O_k to wire-JSON and calls the capability.
+                    // that materializes the construct into O_k; the runner then
+                    // passes O_k to the bridge as the capability argument.
                     if (!policy.allow_computed_goto) {
                         add_diag(result,
                                  policy.unsupported_code,
@@ -12548,11 +12548,11 @@ struct PlannedFn {
     // incriminate an import here); a capability the runner bridges is found
     // through the per-runner site predicate.
     //
-    // WH-5c.4 (GAP 2): a construct-capability terminal's opaque capability is
-    // called by the SCHEDULER (after the computed-final handler materializes
-    // the construct into O_k and the scheduler transcodes it to wire-JSON),
-    // never by the handler itself. It is therefore not an in-handler opaque
-    // reach and is excluded from this gate.
+    // WH-5c.4 (GAP 2): a construct-capability terminal's capability is called
+    // by the RUNNER via the bridge (after the computed-final handler
+    // materializes the construct into O_k and the bridge passes it as the
+    // argument), never by the handler itself. It is therefore not an
+    // in-handler bridge reach and is excluded from this gate.
     if (has_planned_computed_final) {
         std::vector<CoreCapabilityId> construct_terminal_caps;
         construct_terminal_caps.reserve(plan.construct_capability_terminals.size());
@@ -14475,7 +14475,8 @@ build_workflow_plan(const CoreProgram &program,
 
     // WH-5c.4 (GAP 2): a construct-capability terminal is a P6 node whose
     // agent builds the capability argument in-module and whose capability the
-    // scheduler invokes after a P4D_TO_JSON self-transcode. Its O_k holds the
+    // runner invokes via the bridge (the construct frame is the argument).
+    // Its O_k holds the construct result.
     // V2-D fix-forward: the scheduler materializer copies every P6 node's I_k
     // and the workflow output frame from INLINE sources (the host-packed
     // workflow Input and every upstream node's inline O_k block) using
@@ -14886,11 +14887,10 @@ build_workflow_plan(const CoreProgram &program,
             return false;
         }
     }
-    // WH-5c.4 (GAP 2): a construct-capability terminal's self-transcode site
-    // names the capability PARAM type as its layout.  That type is neither a
-    // node input nor a node output, so it is not interned by the boundary
-    // emission above.  Emit it here so the transcode site can reference its
-    // dense id in the frame table.
+    // WH-5c.4 (GAP 2): a construct-capability terminal's capability PARAM type
+    // is the construct layout. That type is neither a node input nor a node
+    // output, so it is not interned by the boundary emission above. Emit it
+    // here so the frame section can reference its dense id.
     std::unordered_map<std::uint32_t, ir::core::CoreLayoutId>
         construct_dense_by_source;
     {
@@ -15201,12 +15201,12 @@ build_workflow_plan(const CoreProgram &program,
         out.output_base = block.output_base;
         section.node_blocks.push_back(std::move(out));
     }
-    // WH-5b.3: populate the transcode extension. Each site's source layout id
-    // is interned by the node boundary emission above (a transcode site names
-    // a node input or output layout) or by the construct-capability emission
-    // (WH-5c.4 GAP 2: a self-transcode site names the capability param type),
-    // so map it to its dense id rather than re-emitting (a container-bearing
-    // aggregate would duplicate).
+    // WH-5b.3: populate the construct-capability layout extension. Each site's
+    // source layout id is interned by the node boundary emission above (a site
+    // names a node input or output layout) or by the construct-capability
+    // emission (WH-5c.4 GAP 2: a construct terminal names the capability param
+    // type), so map it to its dense id rather than re-emitting (a
+    // container-bearing aggregate would duplicate).
     {
         std::unordered_map<std::uint32_t, ir::core::CoreLayoutId> dense_by_source;
         for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
@@ -16213,9 +16213,8 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
         const auto &bridge_sites = bridge_sites_by_node[node.p6_block_ordinal];
         if (bridge_sites.empty() && !node.capabilities.empty()) {
             // WH-5c.4 (GAP 2): construct-capability terminal. The P6
-            // runner materializes the construct into O_k; the scheduler
-            // transcodes O_k to wire-JSON and calls the capability at the
-            // scheduler boundary (never via bridge). Emit cap_call_count=1
+            // runner materializes the construct into O_k and passes it to
+            // the bridge as the capability argument. Emit cap_call_count=1
             // and the capability; no in-handler bridge sites.
             out.byte(1); // cap_call_count = 1
             for (const auto &[cap, sym] : node.capabilities) {
@@ -16359,8 +16358,8 @@ workflow_import_function_index(std::span<const CoreCapabilityId> imports,
 //     the goto path it takes;
 //   * a ComputedReturnAction invokes the relocated materializing handler and
 //     returns (OK, O_k, O_k-size);
-//   * an Identity / opaque Capability action cannot occur on the P6 node lane
-//     (the workflow packager routes opaque terminals to the opaque runner), so
+//   * an Identity action cannot occur on the P6 node lane (the workflow
+//     packager routes identity terminals to the identity-copy arm), so
 //     reaching one traps. A bounded fuel ladder makes a non-terminating
 //     action graph trap instead of looping forever.
     // V2-D emission half 2: append one (runner, state) 8-byte record to the fixed
@@ -17180,9 +17179,9 @@ class WorkflowFrameMaterializer {
     std::uint32_t addr_base_{0};
     std::uint32_t construct_cursor_{0};
     // WH-5b.3: when nonzero, every path root reads from this static shadow
-    // base (the JSON_TO_P4D transcode landing region) instead of the entry
-    // pointer or an upstream O_k block. Set per-emit by the scheduler for a
-    // crossed P6 node; zero for every ordinary materialize.
+    // base instead of the entry pointer or an upstream O_k block. Set
+    // per-emit by the scheduler for a crossed P6 node; zero for every
+    // ordinary materialize.
     std::uint32_t shadow_root_base_{0};
     std::span<const WorkflowFrameLet> lets_;
     // Construct-scratch window offset keyed by the SSA CoreValueId a region
@@ -17293,7 +17292,7 @@ class WorkflowFrameMaterializer {
     // in the bump heap (not a fixed O_k block), so a frame region that roots
     // such an output is not materializable on this rung.
     [[nodiscard]] bool emit_root_base(const WorkflowFrameSource &source) {
-        // WH-5b.3: a crossed P6 node materializes from the JSON_TO_P4D shadow
+        // WH-5b.3: a crossed P6 node materializes from a static shadow
         // region, not from the entry pointer or an upstream O_k block. The
         // shadow is a static compile-time constant, so it is emitted as an
         // i32.const (never a local).
@@ -17579,8 +17578,8 @@ class WorkflowFrameMaterializer {
         body_->u32(0);
     }
 
-    // WH-5c.4 (GAP 2): bulk-copy an INLINE P4-D frame (the JSON_TO_P4D
-    // workflow-output shadow) to the destination, one i32 word at a time.
+    // WH-5c.4 (GAP 2): bulk-copy an INLINE P4-D frame to the destination,
+    // one i32 word at a time.
     // copy_aggregate speaks the module POINTER-TREE form (child aggregates
     // are behind addresses); the shadow packs children inline, so a
     // field-by-field copy would dereference inline bytes as addresses. A
@@ -17599,8 +17598,7 @@ class WorkflowFrameMaterializer {
         // bytes, which over-reads the source and over-writes the destination
         // by up to 3 bytes when `size` is not a multiple of 4. This is safe
         // because BOTH endpoints are independently align8-reserved by the
-        // planner: the source is the JSON_TO_P4D shadow ingress region
-        // (transcode_shadow_base, extent >= align8(layout size)) and the
+        // planner: the source is a node O_k or entry frame region and the
         // destination is the wf_output region (workflow_output_base, sized to
         // the same align8'd layout). The padding tail is reserved-but-unused
         // memory inside both regions, so the stray bytes never touch a
@@ -17687,9 +17685,9 @@ class WorkflowFrameMaterializer {
             // POINTER-TREE (a node O_k bulk-copied from a normalized I_k).
             // copy_aggregate speaks pointer-tree form and would dereference
             // inline bytes as addresses, so inline sources bulk-copy instead.
-            // The shadow root (JSON_TO_P4D transcode landing, now always 0)
-            // was the original inline carve-out; the same reasoning applies
-            // to every inline O_k.
+            // The shadow root (a static override base, now always 0) was the
+            // original inline carve-out; the same reasoning applies to every
+            // inline O_k.
             bool source_is_pointer_tree = false;
             if (shadow_root_base_ == 0 &&
                 let->source.kind == WorkflowFrameSourceKind::NodeOutput &&

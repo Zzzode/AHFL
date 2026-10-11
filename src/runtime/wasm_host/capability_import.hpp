@@ -105,8 +105,8 @@ to_string(ArgDecodeSubReason reason) noexcept;
 struct CapabilityImportState {
     std::optional<CapabilityImportError> last_error;
     /// WH-5c.1: when a capability executes and returns a non-Success,
-    /// non-Pending status the guest traps by design (the bridge/opaque lanes
-    /// have a graceful PENDING arm only). The callback records the human-
+    /// non-Pending status the guest traps by design (the bridge lane
+    /// has a graceful PENDING arm only). The callback records the human-
     /// readable capability failure here so the session can surface it in the
     /// trap diagnostic instead of a bare "run2 trapped". Never carries raw
     /// guest addresses/bytes.

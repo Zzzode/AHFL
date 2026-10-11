@@ -423,7 +423,7 @@ build_wire_schema(const irc::CoreWireSchemaTable &schema) {
         node->set("roots", std::move(roots));
     }
     // WH-5b.3: the capability wire schemas the host resolves a
-    // CapabilityParam transcode binding against (source_symbol -> the
+    // CapabilityParam bridge binding against (source_symbol -> the
     // capability's param/result wire node ids). Empty on a module with no
     // construct-capability terminals.
     if (!schema.capabilities.empty()) {

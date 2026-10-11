@@ -13,10 +13,8 @@
 // state_entered_hook fires LIVE per step() transition on the effects-free
 // instance -- host-driven, exact, so the DAP's pause/step semantics map 1:1.
 //
-// For P6-frame agents the input is packed into the fixed P4-D regions before
-// the walk (the computed handlers branch on packed input). For WireJson agents
-// no packing is needed: step() drives the state machine without the input,
-// which run2 consumes separately.
+// For every agent the input is packed into the fixed P4-D regions before
+// the walk (the computed handlers branch on packed input).
 
 #include "runtime/wasm_host/wasm3_engine.hpp"
 #include "runtime/value/value.hpp"
@@ -41,8 +39,8 @@ struct AgentWalkDescriptor {
     std::string agent_name;
     std::vector<std::string> states; // id -> state name
     std::uint32_t initial_state{0};
-    bool is_p6_frame{false};
-    // P6-frame packing authorities (populated iff is_p6_frame).
+    // P6-frame packing authorities (always populated after the dual-track
+    // elimination).
     const ahfl::ir::core::CoreFrameLayoutSection *frame_section{nullptr};
     const ahfl::ir::core::CoreWireSchemaTable *wire_schema{nullptr};
 };
@@ -60,10 +58,10 @@ struct AgentWalkResult {
     // via alloc(0) so the canonical run can advance its own fresh heap_next
     // past the same construct-scratch high-water before allocating the input
     // frame. Without this, a fresh canonical instance starts heap_next at
-    // construct_heap_base, the host allocates the WireJson input there, and
+    // construct_heap_base, the host allocates the input frame there, and
     // the first computed handler's `heap_next = construct_heap_base` reset
-    // (FB-1 fix-forward) overwrites the input JSON with construct scratch,
-    // corrupting the identity-final output the run2 tuple points back at.
+    // (FB-1 fix-forward) overwrites the input frame with construct scratch,
+    // corrupting the identity-final output the runv tuple points back at.
     // Zero when the module has no construct heap (heap_next stays at the
     // identity base) or the probe failed (the canonical run then skips the
     // advance, which is safe for construct-heap-free modules).
@@ -73,10 +71,10 @@ struct AgentWalkResult {
 // Drive the step-walk on a fresh effects-free wasm3 instance.
 //
 // `module_bytes` is the compiled wasm module. `descriptor` carries the state
-// name table and (for P6-frame) the packing authorities. `input` is the agent
-// input (packed for P6-frame, ignored for WireJson). `import_callback_factory`
-// builds the import callback that serves capability imports on the
-// effects-free instance: it is invoked with the session's engine reference
+// name table and the packing authorities. `input` is the agent input (packed
+// into the P6 frame). `import_callback_factory` builds the import callback
+// that serves capability imports on the effects-free instance: it is invoked
+// with the session's engine reference
 // AFTER the engine is created (the WH-3 capability_import executor needs an
 // engine& to construct), and its results drive the state walk but its events
 // are discarded (the canonical instance fires the real capability hooks).

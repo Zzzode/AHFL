@@ -273,8 +273,8 @@ make_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
 /// `node_inputs`/`node_outputs` table), so a table without node roots (an agent
 /// module or a capability-only table) cannot produce a node binding and no raw
 /// NodeId can be supplied by the caller. This is the binding the host
-/// transcode handler consumes for `decode_json` / `validate_value` at a crossed
-/// lane edge.
+/// bridge handler consumes for `decode_json` / `validate_value` at a
+/// capability call site.
 [[nodiscard]] std::optional<VerifiedWireSchemaBinding>
 make_node_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
                                             const CoreWireNodeRootSelector &selector,

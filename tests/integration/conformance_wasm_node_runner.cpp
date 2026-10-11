@@ -64,6 +64,14 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // skip set is manifest-declared per case AND counted here, so neither a
 // codegen flag flip nor a manifest-only drift can silently move a case between
 // the compared and skipped sets while ctest stays green.
+//
+// HISTORICAL NOTE: Entries dated before the dual-track elimination
+// (2026-10-07, commit 9e528d85) reference deleted infrastructure — the
+// ahfl_xcode transcode adapter, P4D_TO_JSON/JSON_TO_P4D transcode sites,
+// the WireJson lane, and the per-node stash table. These entries describe
+// what was true at the time; the final entry reflects the post-elimination
+// single-lane P6 architecture where the bridge (i32)->(i32,i32) is the sole
+// capability calling convention.
 // RFC 0026 P6-7 rung E: the two raw P4-D frame cases (p6_aggregate /
 // p6_collection) now pack input, invoke runv, and encode the output frame with
 // real differential agreement, so the census moved 14/7 -> 16/5. The fix-forward

@@ -87,9 +87,8 @@ class WasmResumeRecorder {
     // Append a memo entry from the current import. Called by the wrapper
     // after a successful reply.
     //
-    // ExactSidecar (opaque lane): the caller supplies the exact wire JSON
-    // bytes read from guest memory (never re-serialized). The entry carries
-    // authoritative_json = those bytes.
+    // ExactSidecar: the caller supplies the exact wire JSON bytes (used for
+    // reloaded entries). The entry carries authoritative_json = those bytes.
     //
     // NativeOnly (bridge lane, WH-5b.2): the bridge result is a P4-D binary
     // frame, not JSON. The entry carries the native Value (cloned from the

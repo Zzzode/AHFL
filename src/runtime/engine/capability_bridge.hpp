@@ -59,7 +59,7 @@ enum class CapabilityCallStatus {
 };
 
 /// Stable lowercase name for a CapabilityCallStatus, for diagnostics shared by
-/// the wasm bridge/opaque import lanes.
+/// the wasm bridge import lane.
 [[nodiscard]] std::string_view
 capability_call_status_name(CapabilityCallStatus status) noexcept;
 

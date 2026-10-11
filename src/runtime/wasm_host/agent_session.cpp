@@ -23,7 +23,7 @@ namespace irc = ::ahfl::ir::core;
 [[nodiscard]] std::optional<std::string>
 pack_p6_input_for_walk(Wasm3ResumeEngine &engine,
                        const AgentWalkDescriptor &descriptor, const Value &input) {
-    if (!descriptor.is_p6_frame || descriptor.frame_section == nullptr ||
+    if (descriptor.frame_section == nullptr ||
         descriptor.wire_schema == nullptr) {
         return "P6-frame descriptor missing frame_section or wire_schema";
     }
@@ -75,13 +75,9 @@ run_agent_step_walk(std::span<const std::uint8_t> module_bytes,
     }
 
     // 2. Pack the P6-frame input (computed handlers branch on packed input).
-    //    WireJson agents need no packing: step() drives the state machine
-    //    without the input, which run2 consumes separately.
-    if (descriptor.is_p6_frame) {
-        if (auto err = pack_p6_input_for_walk(engine, descriptor, input);
-            err.has_value()) {
-            return std::unexpected(std::move(*err));
-        }
+    if (auto err = pack_p6_input_for_walk(engine, descriptor, input);
+        err.has_value()) {
+        return std::unexpected(std::move(*err));
     }
 
     // 3. Verify the initial state matches the descriptor.

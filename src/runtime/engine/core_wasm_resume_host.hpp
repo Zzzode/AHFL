@@ -48,7 +48,7 @@
 // zero live capability invocations), Suspended-frontier inject/publish/ack
 // (NeedInjectedSlot), module trap -> ModuleTrap, and host abort surfacing
 // state.abort_failure (CoordinateMismatch). The same TU also exercises the
-// capability-import executor on wasm3 (opaque + bridge lanes, live OK/ERROR/
+// capability-import executor on wasm3 (bridge lane, live OK/ERROR/
 // PENDING, Suspended->Injected->Consumed replay, ImportAbort). The D2b
 // live-result API (ReadyForLive / dedup / recover) remains the blocked
 // follow-on: this driver never invokes a live capability and the live

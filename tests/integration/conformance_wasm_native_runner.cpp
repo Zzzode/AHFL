@@ -62,6 +62,14 @@ using ahfl::conformance::run_native_scenario;
 // eligible case must compile and agree. The skip set is pinned to 0: the
 // facade never depends on an external embedding, so there is no legitimate
 // skip path (a compile failure is a hard failure, not a skip).
+//
+// HISTORICAL NOTE: Entries dated before the dual-track elimination
+// (2026-10-07, commit 9e528d85) reference deleted infrastructure — the
+// ahfl_xcode transcode adapter, P4D_TO_JSON/JSON_TO_P4D transcode sites,
+// the WireJson lane, and the per-node stash table. These entries describe
+// what was true at the time; the final entry reflects the post-elimination
+// single-lane P6 architecture where the bridge (i32)->(i32,i32) is the sole
+// capability calling convention.
 // WH-5c.2 (GAP 1, Approach B): the fan-out case
 // (wh5c_instance_reuse_fanout) reuses ONE packaged agent instance across
 // TWO P6 workflow nodes. The per-instance D5 lifecycle gate rejected this

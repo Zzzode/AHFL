@@ -291,7 +291,6 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     walk_desc.agent_name = descriptor.agent_name;
     walk_desc.states = descriptor.states;
     walk_desc.initial_state = descriptor.initial_state;
-    walk_desc.is_p6_frame = true;
     walk_desc.frame_section = &descriptor.frame_section;
     walk_desc.wire_schema = &descriptor.wire_schema;
 

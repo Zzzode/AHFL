@@ -173,17 +173,15 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
     // a restatement of the manifest.
     const std::vector<CaseVerdict> runnable = {
         {"e1_identity_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        // Capability-final-only agent: runv has no capability-final arm, so the
-        // agent stays on the WireJson lane.
+        // Capability-final-only agent: runv has a capability-final arm that
+        // calls the bridge.
         {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // Capability-final-only workflow: every node is a capability call, so
-        // the workflow stays on the WireJson lane.
+        // the workflow is a P6-frame capability DAG.
         {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        // WH-5c.5 GAP 4: three-node identity+capability+identity workflow; the
-        // per-node output stash table makes every node output host-observable.
-        // The workflow stays on WireJson: its identity agents forward the
-        // borrowed wire frame without a P6 frame plan.
+        // WH-5c.5 GAP 4: three-node identity+capability+identity workflow;
+        // every node output is host-observable through the P6 frame.
         {"wh5c5_gap4_stash_parity.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // KR6.7: landed KR6.6 (P6) computation slices emit cleanly on the agent
@@ -287,8 +285,8 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // The bounded-String durable-resume replay workflow is the opaque
-        // WireJson two-node capability DAG (same lane as e3_capability_workflow).
+        // The bounded-String durable-resume replay workflow is the P6-frame
+        // two-node capability DAG (same lane as e3_capability_workflow).
         {"e3_capability_workflow_resume.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",

@@ -131,7 +131,6 @@ void test_p6frame_identity_agent(const std::filesystem::path &repo_root) {
     walk_desc.agent_name = desc.agent_name;
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
-    walk_desc.is_p6_frame = true;
     walk_desc.frame_section = &desc.frame_section;
     walk_desc.wire_schema = &desc.wire_schema;
 
@@ -192,7 +191,6 @@ void test_p6frame_agent(const std::filesystem::path &repo_root) {
     walk_desc.agent_name = desc.agent_name;
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
-    walk_desc.is_p6_frame = true;
     walk_desc.frame_section = &desc.frame_section;
     walk_desc.wire_schema = &desc.wire_schema;
 
@@ -249,7 +247,6 @@ void test_hook_liveness(const std::filesystem::path &repo_root) {
     walk_desc.agent_name = desc.agent_name;
     walk_desc.states = desc.states;
     walk_desc.initial_state = desc.initial_state;
-    walk_desc.is_p6_frame = true;
     walk_desc.frame_section = &desc.frame_section;
     walk_desc.wire_schema = &desc.wire_schema;
 
