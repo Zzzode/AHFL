@@ -95,6 +95,8 @@ NuSMV/nuXmv checker 选择顺序：
 3. backend-specific 环境变量，例如 `AHFL_NUXMV_PATH` 或 `AHFL_NUSMV_PATH`。
 4. `PATH` 中的 `NuSMV`、`nuXmv`、`nuxmv` 或 `nusmv`。
 
+> **Process seam 是唯一模式。** Library-mode（dlopen 嵌入同一进程）经 [RFC 0018](../rfcs/0018-nusmv-library-mode.zh.md) 评估后决策为 no-go：进程边界的成本（启动开销、文本往返）不足以驱动 dlopen 可选后端的维护成本。NuSMV 2.6.0 与 Z3 4.8.12 已 vendor 进 `third_party/` 并随 AHFL 构建/安装（RFC 0028），默认安装必定自带可用 solver，"缺 solver"失败模式在默认安装中不复存在。
+
 命令必须把生成的 SMV 文件作为 checker 的第一个参数。
 如果传入 `--formal-model-out <model.smv>`，命令必须把同一个 SMV 模型写入该路径，并使用该路径调用 checker，便于 CI 归档和本地复现。
 

@@ -105,7 +105,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0018"
     title: "NuSMV Library-Mode Embedding"
-    status: "implemented"
+    status: "stabilized"
     file: "0018-nusmv-library-mode.zh.md"
     area: ["formal", "tooling"]
     stability: "experimental"

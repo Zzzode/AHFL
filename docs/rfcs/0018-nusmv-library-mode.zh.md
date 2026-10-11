@@ -1,7 +1,7 @@
 ---
 rfc: "0018"
 title: "NuSMV Library-Mode Embedding"
-status: "implemented"
+status: "stabilized"
 area: ["formal", "tooling"]
 stability: "experimental"
 created: "2026-08-24"
@@ -292,3 +292,5 @@ library-mode）**——process seam 保留为默认，且其对端随 RFC 0028 �
   进程"的相容性未被本次 bundling 覆盖，留待 library-mode 重新立项时判定。
 
 - 2026-10-11: **RFC 0018 推进至 `implemented`（无人类 owner 门）。** 本 RFC 的 rollout 路径（§Rollout and Stabilization 第 2 条）明确规定："若 no-go：直接进 `accepted`（决策=不实现），文档记录后 `implemented`（决策落文档即完成）。" 2026-10-08 条目已记录 no-go 决策（library-mode 降级为研究方向，process seam 保持默认，bundled NuSMV 消除外部依赖短板）。决策落文档的完成条件已满足，本 RFC 推进至 `implemented`。`stabilized`（docs/reference 与 spec 反映最终决策）作为独立文档跟进项，不阻塞本状态推进。
+
+- 2026-10-11: **RFC 0018 推进至 `stabilized`（无人类 owner 门）。** `stabilized` 验收标准（§Rollout and Stabilization 第 4 条）为："`docs/reference/` 与 spec 反映最终决策。" 两项均已满足：① **spec**——`docs/spec/assurance.zh.md` Formal Verification Gate 章节新增 process seam 唯一模式声明，引用 RFC 0018 no-go 决策与 bundled solver 事实；② **docs/reference**——`docs/reference/user-guide-assurance.zh.md` backend 表格新增 library-mode no-go 标注（"process seam；library-mode 经 RFC 0018 决策为 no-go"），checker 查找顺序已记录 bundled solver 优先级。

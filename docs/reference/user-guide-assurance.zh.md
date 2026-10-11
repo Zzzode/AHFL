@@ -105,7 +105,7 @@ formal verification 对 workflow 的**有限控制模型**做外部验证：
 
 | backend | 当前 `verify` 行为 |
 |---|---|
-| `nuxmv`、`nusmv` | 调用外部 SMV checker |
+| `nuxmv`、`nusmv` | 调用外部 SMV checker（process seam；library-mode 经 RFC 0018 决策为 no-go） |
 | `spin`、`tlaplus` | 可在 capability matrix 中出现，但 `verify` 返回 `verification_unsupported` |
 
 checker 查找顺序：`--model-checker` → `AHFL_SMV_CHECKER` → backend-specific 环境变量
