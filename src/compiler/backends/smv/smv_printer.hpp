@@ -123,6 +123,9 @@ class SmvPrinter final {
 
     // --- Specs (smv_specs.cpp) ---
     void collect_specs();
+    [[nodiscard]] bool workflow_safety_clause_outside_smv_subset(
+        const ir::TemporalExpr &expr,
+        const std::unordered_map<std::string, SmvWorkflowNodeInfo> &node_map) const;
     void collect_workflow_control_specs(
         const ir::WorkflowDecl &workflow,
         const std::unordered_map<std::string, SmvWorkflowNodeInfo> &node_map);

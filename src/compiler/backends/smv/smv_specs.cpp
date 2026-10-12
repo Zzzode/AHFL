@@ -1,9 +1,71 @@
 #include "compiler/backends/smv/smv_printer.hpp"
 
+#include <set>
+
 namespace ahfl {
 
 using namespace smv;
 using namespace smv_detail;
+
+namespace {
+
+/// Walk a workflow temporal clause and collect (a) every workflow node it
+/// references, and (b) the subset referenced via `completed(node, FinalState)`
+/// whose agent declares more than one final state.
+void collect_workflow_clause_nodes(
+    const ir::TemporalExpr &expr,
+    const std::unordered_map<std::string, SmvWorkflowNodeInfo> &node_map,
+    std::set<std::string> &all_nodes,
+    std::set<std::string> &multifinal_specific_nodes) {
+    std::visit(
+        Overloaded{
+            [&](const ir::CompletedTemporalExpr &value) {
+                all_nodes.insert(value.node);
+                if (!value.state_name.has_value()) {
+                    return;
+                }
+                const auto target = node_map.find(value.node);
+                if (target != node_map.end() &&
+                    target->second.agent.get().final_states.size() > 1) {
+                    multifinal_specific_nodes.insert(value.node);
+                }
+            },
+            [&](const ir::RunningTemporalExpr &value) { all_nodes.insert(value.node); },
+            [&](const ir::TemporalUnaryExpr &value) {
+                collect_workflow_clause_nodes(
+                    *value.operand, node_map, all_nodes, multifinal_specific_nodes);
+            },
+            [&](const ir::TemporalBinaryExpr &value) {
+                collect_workflow_clause_nodes(
+                    *value.lhs, node_map, all_nodes, multifinal_specific_nodes);
+                collect_workflow_clause_nodes(
+                    *value.rhs, node_map, all_nodes, multifinal_specific_nodes);
+            },
+            [](const auto &) {},
+        },
+        expr.node);
+}
+
+} // namespace
+
+bool SmvPrinter::workflow_safety_clause_outside_smv_subset(
+    const ir::TemporalExpr &expr,
+    const std::unordered_map<std::string, SmvWorkflowNodeInfo> &node_map) const {
+    std::set<std::string> all_nodes;
+    std::set<std::string> multifinal_specific_nodes;
+    collect_workflow_clause_nodes(expr, node_map, all_nodes, multifinal_specific_nodes);
+
+    // The SMV model encodes each multi-final-state agent's terminal selection
+    // as a nondeterministic choice (the data guard on the outgoing transition
+    // is abstracted). A safety clause that correlates one node's specific final
+    // state with a *different* node's state therefore admits spurious
+    // counterexamples: the model lets the two nodes choose their final states
+    // independently. Skip such clauses with a warning instead of emitting a
+    // failing spec (sound: no spurious counterexample; the property stays in
+    // the source and becomes provable once the model encodes transition
+    // guards).
+    return !multifinal_specific_nodes.empty() && all_nodes.size() > 1;
+}
 
 void SmvPrinter::collect_specs() {
     for (const auto &contract : contracts_) {
@@ -60,6 +122,17 @@ void SmvPrinter::collect_specs() {
         collect_workflow_control_specs(workflow.get(), node_map);
 
         for (std::size_t index = 0; index < workflow.get().safety.size(); ++index) {
+            if (workflow_safety_clause_outside_smv_subset(*workflow.get().safety[index],
+                                                          node_map)) {
+                specs_.push_back("-- workflow " + workflow.get().name + " safety[" +
+                                 std::to_string(index) +
+                                 "] outside_smv_subset: correlates a specific final "
+                                 "state of a multi-final-state node with another "
+                                 "node; the SMV model selects final states "
+                                 "nondeterministically and cannot prove cross-node "
+                                 "final-state correlations");
+                continue;
+            }
             std::size_t atom_index = 0;
             std::vector<std::string> observation_assumptions;
             const auto formula = wrap_formula_with_observation_assumptions(
