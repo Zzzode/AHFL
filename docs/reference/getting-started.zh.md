@@ -415,10 +415,22 @@ fan-out / fan-in、refinement 类型、完整 effect 阶梯和生产级 capabili
 
 ```bash
 cd ../loan-origination
-"$AHFLC" check --verify=off
+"$AHFLC" check
 "$AHFLC" emit summary
 "$AHFLC" emit execution-plan
 ```
+
+`check` 默认开启形式化验证（`--verify=on`），这个示例完整通过：
+
+```text
+ok: formal verification passed with 79 proven specification(s)
+formal_backend: nuxmv
+state_space_estimate: 540
+ok: checked 7 source(s), 57 symbol(s), 180 reference(s), 23 named type(s)
+```
+
+（输出里的 `formal.NOT_IN_VERIFIED_SUBSET` 警告是 SMT 路径对无 sort 映射的
+operand 类型做抽象化处理，属正常现象；这些条款不参与 BMC/SMT 证明。）
 
 这个示例展示：
 
@@ -435,11 +447,22 @@ cd ../loan-origination
   or completed(underwrite, Approved))`——只有 underwriting 到达 Approved 终态
   才会放款。这是银行审计员会问的那条性质，用语言写下来、机器可检查。
 
-> **已知限制**：这个示例的部分形式化条款（money invariant 等）依赖跨节点
-> 数据流，当前 SMV 后端对这类数据相关性质会给出不可证的结果。结构检查
-> （`--verify=off`）和所有 `emit` 命令正常。用 `check`（默认 `--verify=on`）
-> 会看到形式化阶段报告这些条款失败——这是后端待修复的限制，不是示例语义
-> 错误。前几个示例的形式化验证都完整通过。
+> **关于 money invariant 的验证子集**：上面那条 "money invariant"
+> （workflow `safety[4]`）关联了两个节点的特定终态——`fulfill` 的
+> `Disbursed` 与 `underwrite` 的 `Approved`。SMV 后端把多终态 agent 的
+> 终态选择建模为非确定选择，无法证明跨节点终态关联，因此这条条款被排除
+> 在 SMV 可证子集之外：在生成的 SMV 模型中以 `outside_smv_subset` 注释
+> 标出，既不静默丢弃也不误报失败，其余 79 条规格全部得证。
+>
+> ```text
+> -- workflow loan_origination::main::LoanOriginationWorkflow safety[4]
+> -- outside_smv_subset: correlates a specific final state of a multi-final-state
+> -- node with another node; the SMV model selects final states nondeterministically
+> -- and cannot prove cross-node final-state correlations
+> ```
+>
+> 这是验证器的建模边界，不是示例语义错误；条款仍写在源码里、机器可读，
+> 只是当前后端不对它下结论。
 
 ## 下一步
 
