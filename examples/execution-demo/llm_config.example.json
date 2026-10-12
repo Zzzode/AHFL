@@ -1,7 +1,7 @@
 {
   "endpoint": "https://api.z.ai/api/paas/v4",
   "model": "glm-4.5-flash",
-  "api_key_secret": "env:AHFL_GLM_API_KEY",
+  "api_key_secret": "env:AHFL_LLM_API_KEY",
   "auth_scheme": "bearer",
   "max_tokens": 1024,
   "max_prompt_tokens": 3072,

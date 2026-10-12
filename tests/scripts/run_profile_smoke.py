@@ -124,7 +124,7 @@ def main() -> int:
         config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
         env = os.environ.copy()
-        env["AHFL_GLM_API_KEY"] = "local-test-secret"
+        env["AHFL_LLM_API_KEY"] = "local-test-secret"
 
         # The demo manifest deliberately does not pin llm_config so a bare
         # `ahflc run` falls through to the user-global ~/.ahfl/llm_config.json.

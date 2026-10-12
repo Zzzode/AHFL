@@ -49,14 +49,14 @@ provider key directly in the `api_key` field. The committed
 `llm_config.example.json` is only a template: it uses the env-handle form
 
 ```json
-"api_key_secret": "env:AHFL_GLM_API_KEY"
+"api_key_secret": "env:AHFL_LLM_API_KEY"
 ```
 
 To use the template unchanged, export the named variable instead of editing
 the file:
 
 ```bash
-export AHFL_GLM_API_KEY='...'
+export AHFL_LLM_API_KEY='...'
 ../../build/dev/src/tooling/cli/ahflc run --llm-config llm_config.example.json
 ```
 

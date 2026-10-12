@@ -52,8 +52,8 @@ def main() -> int:
 
     if "llm_config.example.json" not in readme:
         failures.append("execution demo README must document llm_config.example.json")
-    if "AHFL_GLM_API_KEY" not in readme:
-        failures.append("execution demo README must document AHFL_GLM_API_KEY")
+    if "AHFL_LLM_API_KEY" not in readme:
+        failures.append("execution demo README must document AHFL_LLM_API_KEY")
     if re.search(
         r"copy\b.*(?:token|api[_ -]?key|credential).*\binto\b.*(?:json|config|file)",
         readme,
