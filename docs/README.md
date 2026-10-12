@@ -99,6 +99,8 @@ Avoid:
 - [contributor-guide.zh.md](./reference/contributor-guide.zh.md)
 - [error-codes.zh.md](./reference/error-codes.zh.md)
 - [fuzz-corpus-location.zh.md](./reference/fuzz-corpus-location.zh.md)
+- [getting-started.zh.md](./reference/getting-started.zh.md)
+- [host-abi.zh.md](./reference/host-abi.zh.md)
 - [ir-format.zh.md](./reference/ir-format.zh.md)
 - [lsp-vscode-extension.zh.md](./reference/lsp-vscode-extension.zh.md)
 - [migration-policy.zh.md](./reference/migration-policy.zh.md)
@@ -119,6 +121,10 @@ Avoid:
 The Chinese user-guide series is one progressive path, rather than five
 independent command references:
 
+0. [getting-started.zh.md](./reference/getting-started.zh.md) — hands-on tutorial:
+   build the compiler and walk the bundled examples from a single file to
+   multi-agent orchestration, formal verification, real LLM runs, and durable
+   cross-process resume.
 1. [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md) — product boundary,
    readiness vocabulary, and the shortest path through the toolchain.
 2. [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md) — model data,

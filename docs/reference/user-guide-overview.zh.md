@@ -13,6 +13,7 @@ checkout 的工具链与 reference workflow。
 
 | 你的目标 | 从哪里开始 | 接下来阅读 |
 |---|---|---|
+| 第一次接触 AHFL，想动手跑通工具链 | [入门教程](./getting-started.zh.md) | 本页 |
 | 写一个新的 Agent workflow | [建模指南](./user-guide-authoring.zh.md) | [CLI 工作流](./user-guide-cli.zh.md) |
 | 将现有 `.ahfl` 文件升级为工程 | [CLI 工作流](./user-guide-cli.zh.md) | [Package Usage](./project-usage.zh.md) |
 | 运行带 LLM capability 的工作流 | [执行与包指南](./user-guide-execution.zh.md) | [运行期 artifact 参考](./native-runtime-artifacts.zh.md) |
