@@ -33,7 +33,7 @@ contract for UnderwritingAgent {
         and dti_within_limit(input.application));
     ensures: (output.verdict == types::Decision::Rejected) =>
     (not credit_score_adequate(input.credit) or not fraud_screen_clean(input.fraud));
-    forbid: always (in_state(Approved) and not fraud_screen_clean(input.fraud));
+    forbid: always not (in_state(Approved) and not fraud_screen_clean(input.fraud));
 }
 
 flow for UnderwritingAgent {

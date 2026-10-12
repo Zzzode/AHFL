@@ -36,6 +36,7 @@ capability SendNotification(application_id: String(1, 64), channel: types::Notif
     -> types::NotificationAck {
     effect: external_side_effect;
     domain: notification;
+    policy: [loan_origination::audit_event];
     receipt: optional;
     retry: unsafe;
     timeout: 10s;
@@ -71,7 +72,7 @@ contract for DisbursementAgent {
     (input.decision.verdict != types::Decision::Approved);
     invariant: in_state(Disbursed) => called(DisburseFunds);
     invariant: in_state(Skipped) => not called(DisburseFunds);
-    forbid: always (called(DisburseFunds)
+    forbid: always not (called(DisburseFunds)
         and not (input.decision.verdict == types::Decision::Approved));
 }
 
