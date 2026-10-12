@@ -27,8 +27,8 @@ during `cmake --install`.
 ## Build patches
 
 The upstream build system targets CMake 2.8 and Python 2. The following patches
-adapt it to modern toolchains (CMake ≥ 3.5, Python 3, modern glibc). All patches
-are build-system-only; no NuSMV runtime logic is modified.
+adapt it to modern toolchains (CMake ≥ 3.5, Python 3, modern glibc). Patches
+cover build and toolchain compatibility; no solver algorithm is modified.
 
 ### NuSMV/CMakeLists.txt
 
@@ -49,6 +49,11 @@ are build-system-only; no NuSMV runtime logic is modified.
   `ltl2smv` which is not built in batch mode).
 - Removed `install(FILES "${_a}" DESTINATION "include/${_rd}")` from the
   `nusmv_add_pkg_headers` macro (internal headers are not AHFL's public API).
+
+### NuSMV/code/nusmv/shell/trace/traceCmd.c
+
+- Included `nusmv/core/cinit/cinit.h`, which declares the existing
+  `NuSMVCore_get_tool_name` call. Modern C compilers reject the missing declaration.
 
 ### cudd-2.4.1.1/CMakeLists.txt
 
@@ -71,6 +76,11 @@ are build-system-only; no NuSMV runtime logic is modified.
   configure (the nested build inherits the parent's policy version otherwise).
 - Replaced the patch command with an idempotent `apply_minisat_patch.cmake`
   script that treats "already applied" (exit 1 without `.rej` files) as success.
+- Track patch completion with `patched_<version>`, and declare the copied
+  `Solver_C.h` as an output of the nested library build. The header is created
+  by that build, not by patching; using it as the patch output caused retries
+  after unrelated build failures to reapply the patch and produce rejects.
+  The nested build uses the detected CPU count explicitly.
 - Removed `install(FILES "${minisat_lib_name}" DESTINATION lib)` (static lib is
   build-time only).
 
@@ -80,6 +90,8 @@ are build-system-only; no NuSMV runtime logic is modified.
   use `CMAKE_STATIC_LIBRARY_SUFFIX` + `$<TARGET_FILE:minisat-lib-static>`.
 - Fixed `extern "C"void` → `extern "C" void` (C++11 requires whitespace between
   string literal and identifier).
+- Added whitespace before `PRIi64` / `PRIu64` format macros in MiniSat options
+  and solver statistics, as required by modern C++ lexical rules.
 - Updated hunk header line count after the LOCATION removal.
 
 ### NuSMV/cmake/combine_grammar.py

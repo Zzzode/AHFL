@@ -44,6 +44,7 @@
 #include "nusmv/core/compile/compile.h"
 
 #include "nusmv/core/utils/StreamMgr.h"
+#include "nusmv/core/cinit/cinit.h"
 #include "nusmv/core/trace/pkg_trace.h"
 
 #include "nusmv/core/prop/propPkg.h"

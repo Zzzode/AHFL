@@ -3,3 +3,8 @@ source https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.4.tar.g
 sha256 722a1d9af69f5ec5a5b728de93cdf90aad4355deac2842862ea924ec0e5c4a97
 vendored 2026-10-11
 full upstream source (no subset)
+framework source https://github.com/Mbed-TLS/mbedtls-framework.git
+framework commit 2a3e2c5ea053c14b745dbdf41f609b1edc6a72fa
+framework tree f92e801b75b5d42b7ccb0f195c7b30e657d84a63
+framework vendored 2026-10-12
+framework full upstream source (no subset, no patches)

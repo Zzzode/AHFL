@@ -88,8 +88,9 @@ endif()
 ")
 
 add_custom_command(
-  OUTPUT "${PROJECT_BINARY_DIR}/${minisat_dir}/${minisat_ifcname}"
+  OUTPUT "${PROJECT_BINARY_DIR}/${patched_tag}"
   COMMAND ${CMAKE_COMMAND} -DPATCH=${PATCH} -P "${PROJECT_BINARY_DIR}/CMakeFiles/apply_minisat_patch.cmake"
+  COMMAND ${CMAKE_COMMAND} -E touch "${PROJECT_BINARY_DIR}/${patched_tag}"
   WORKING_DIRECTORY "${PROJECT_BINARY_DIR}"
   DEPENDS "${PROJECT_BINARY_DIR}/${minisat_patch}"
   )
@@ -103,6 +104,8 @@ else()
 endif()
 
 if(minisat_use_cmake)
+    include(ProcessorCount)
+    ProcessorCount(AHFL_MINISAT_BUILD_CORES)
     if(CMAKE_BUILD_TYPE)
         set(_cur_cmake_build "${CMAKE_BUILD_TYPE}")
     else()
@@ -114,7 +117,7 @@ if(minisat_use_cmake)
         set(_toolchain)
     endif()
     add_custom_command(
-      OUTPUT "${minisat_lib_name}"
+      OUTPUT "${minisat_lib_name}" "${PROJECT_BINARY_DIR}/${minisat_dir}/${minisat_ifcname}"
       COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}"
               ${_toolchain}
               "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
@@ -123,18 +126,18 @@ if(minisat_use_cmake)
               "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
               -DCMAKE_BUILD_TYPE=${_cur_cmake_build} -DUSE_ZLIB=OFF
               -DCMAKE_POLICY_VERSION_MINIMUM=3.5 .
-      COMMAND "${CMAKE_COMMAND}" --build . --target lib
+      COMMAND "${CMAKE_COMMAND}" --build . --target lib -j${AHFL_MINISAT_BUILD_CORES}
       WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/${minisat_dir}"
-      DEPENDS "${PROJECT_BINARY_DIR}/${minisat_dir}/${minisat_ifcname}"
+      DEPENDS "${PROJECT_BINARY_DIR}/${patched_tag}"
       COMMENT "Building MiniSat with cmake"
       VERBATIM
       )
 else()
     add_custom_command(
-      OUTPUT "${minisat_lib_name}"
+      OUTPUT "${minisat_lib_name}" "${PROJECT_BINARY_DIR}/${minisat_dir}/${minisat_ifcname}"
       COMMAND ${MAKE} lib
       WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/${minisat_dir}"
-      DEPENDS "${PROJECT_BINARY_DIR}/${minisat_dir}/${minisat_ifcname}"
+      DEPENDS "${PROJECT_BINARY_DIR}/${patched_tag}"
       COMMENT "Building MiniSat with GNU make"
       )
 endif()

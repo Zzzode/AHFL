@@ -39,6 +39,7 @@ public:
     virtual void apply_from_right(indexed_vector<T> & w) = 0;
     virtual ~tail_matrix() {}
     virtual bool is_dense() const = 0;
+#ifdef Z3DEBUG
     struct ref_row {
         const tail_matrix & m_A;
         unsigned m_row;
@@ -46,5 +47,6 @@ public:
         T operator[](unsigned j) const { return m_A.get_elem(m_row, j);}
     };
     ref_row operator[](unsigned i) const { return ref_row(*this, i);}
+#endif
 };
 }

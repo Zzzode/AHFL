@@ -1,7 +1,8 @@
 # mbedTLS 3.6.4 — vendored TLS library (Apache-2.0).
 #
-# See VERSION for the exact upstream tarball and SHA-256, VENDORING.md for
-# the patch manifest (none), LICENSE for the upstream licence text.
+# See VERSION for the exact upstream tarball, SHA-256, and framework revision,
+# VENDORING.md for the patch manifest (none), and
+# LICENSE for the upstream licence text.
 #
 # Wrapper forces a static, library-only, warning-isolated build.
 # The upstream CMakeLists.txt is used as-is via add_subdirectory(upstream).

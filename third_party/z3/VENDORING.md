@@ -28,8 +28,21 @@ without an install step.
 
 The upstream build system targets CMake 3.4 and assumes a top-level build. The
 following patches adapt it to modern toolchains (CMake >= 3.5 / CMake 4.x)
-and to being built as a subdirectory of AHFL. All patches are
-build-system-only; no Z3 runtime logic is modified.
+and to being built as a subdirectory of AHFL. The build-system changes below
+are accompanied by source-level corrections required by modern Clang.
+
+### upstream/src/math/lp/column_info.h
+
+- Corrected `column_info::operator==` to compare `c.m_lower_bound`, replacing
+  the nonexistent member `c.m_low_bound`. Modern Clang diagnoses this invalid
+  template definition while compiling the bundled solver. The change restores
+  the intended lower-bound equality comparison; no solver algorithm is changed.
+
+### upstream/scripts/mk_util.py
+
+- Replaced the removed `distutils.sysconfig` API with standard-library
+  `sysconfig` for package paths and Python version discovery. This allows API
+  generation under Python 3.12 and later without an extra Python dependency.
 
 ### upstream/CMakeLists.txt
 
@@ -109,5 +122,14 @@ step reference the `shell` target; the installed/copied artifact is `z3`.
 ## License
 
 Z3 is distributed under the MIT License. The vendored source is unmodified
-upstream except for the build-system patches listed above. AHFL's Apache-2.0
+upstream except for the patches listed above. AHFL's Apache-2.0
 license is compatible with MIT for this use.
+
+### upstream/src/math/lp/tail_matrix.h, static_matrix.h and static_matrix_def.h
+
+- Restrict the debug matrix row projection to `Z3DEBUG`, matching the base
+  matrix interface it uses. Release builds do not provide that interface.
+- Correct the static matrix reference assignment to use `get_elem`, the actual
+  element accessor. This closes modern Clang release template diagnostics.
+- Correct the column-copy constructor to use `get_val`, the existing column
+  cell accessor, instead of the removed `get_value_of_column_cell` name.
