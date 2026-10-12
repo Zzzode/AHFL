@@ -45,9 +45,13 @@ void test_parse_unknown() {
 }
 
 void test_parse_verdict_after_error_lines() {
-    // Z3 prints (error ...) lines to stdout before the verdict.
+    // A solver may emit a verdict after rejecting part of the input.
     auto r = parse_solver_output("(error \"line 1: unsupported\")\nunsat\n", 0, false);
-    check(r.status == SmtSolverStatus::Unsat, "verdict found after error lines");
+    check(r.status == SmtSolverStatus::SolverError, "an error before unsat cannot prove a goal");
+    check(parse_solver_output("unsat\n(error \"bad input\")\n", 0, false).status ==
+              SmtSolverStatus::SolverError, "an error after unsat cannot prove a goal");
+    check(parse_solver_output("unsat\n", 1, false).status == SmtSolverStatus::SolverError,
+          "nonzero exit cannot prove a goal even with unsat");
 }
 
 void test_parse_timeout() {
@@ -142,6 +146,13 @@ void test_real_solver_roundtrip() {
         "(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(assert (< x 0))\n(check-sat)\n",
         options);
     check(unsat.status == SmtSolverStatus::Unsat, "real Z3 proves contradictory constraints unsat");
+
+    SmtSolverOptions unsat_with_model;
+    unsat_with_model.request_model = true;
+    const auto still_unsat = run_smt_solver(
+        "(set-logic QF_LIA)\n(assert false)\n(check-sat)\n", unsat_with_model);
+    check(still_unsat.status == SmtSolverStatus::Unsat && still_unsat.model.empty(),
+          "request_model does not issue an invalid get-model for an unsatisfiable query");
 
     auto sat = run_smt_solver(
         "(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n", options);

@@ -75,8 +75,7 @@ for (const imp of declared) {
 }
 instance = await WebAssembly.instantiate(mod, importObj);
 const c = instance.exports;
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 if (c.current_state() !== 0)
   throw new Error(`initial state ${c.current_state()} != 0`);
 

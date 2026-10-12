@@ -55,7 +55,7 @@ add_test(NAME ahflc.check.verify.loan_origination
             --sysroot "${PROJECT_SOURCE_DIR}"
 )
 set_tests_properties(ahflc.check.verify.loan_origination PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
 )
 
 add_test(NAME ahflc.dump_types.loan_origination
@@ -238,6 +238,10 @@ add_test(NAME ahflc.package_registry_resolve.package_smoke
             "${CMAKE_CURRENT_BINARY_DIR}/package-registry-resolve-smoke"
 )
 
+# RFC 0028 control-scope migration: pin the complete emitted property count,
+# including each Agent's initial/legal-successor/final-absorbing obligations.
+# Byte/line limits retain their existing growth headroom; property counts have
+# no headroom so either a dropped obligation or an added one requires review.
 add_test(NAME ahflc.quality.smv_size_budget.flow_workflow
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -245,7 +249,7 @@ add_test(NAME ahflc.quality.smv_size_budget.flow_workflow
             "-DMAX_BYTES=22000"
             "-DMAX_LINES=170"
             "-DMAX_LTLSPEC=18"
-            "-DMIN_LTLSPEC=10"
+            "-DMIN_LTLSPEC=18"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
@@ -255,8 +259,8 @@ add_test(NAME ahflc.quality.smv_size_budget.pass_productization
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_pass_productization.ahfl"
             "-DMAX_BYTES=20000"
             "-DMAX_LINES=150"
-            "-DMAX_LTLSPEC=18"
-            "-DMIN_LTLSPEC=10"
+            "-DMAX_LTLSPEC=17"
+            "-DMIN_LTLSPEC=17"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
@@ -266,8 +270,8 @@ add_test(NAME ahflc.quality.smv_size_budget.workflow_simplification
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_workflow_simplification.ahfl"
             "-DMAX_BYTES=48000"
             "-DMAX_LINES=280"
-            "-DMAX_LTLSPEC=40"
-            "-DMIN_LTLSPEC=25"
+            "-DMAX_LTLSPEC=39"
+            "-DMIN_LTLSPEC=39"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
@@ -277,31 +281,31 @@ add_test(NAME ahflc.quality.smv_size_budget.refund_audit
             "-DINPUT_FILE=${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
             "-DMAX_BYTES=32000"
             "-DMAX_LINES=230"
-            "-DMAX_LTLSPEC=32"
-            "-DMIN_LTLSPEC=20"
+            "-DMAX_LTLSPEC=33"
+            "-DMIN_LTLSPEC=33"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
 # RFC 0024/0025 bounded-collection contract state-space sample (KR2.7): a
 # representative formal fixture with bounded data predicates that previously
-# had no SMV size budget. Actuals at add time: ~10520 bytes / 78 lines / 8
-# LTLSPEC; budgets carry ~10-15% headroom with a MIN_LTLSPEC floor so both
-# growth and accidental spec-dropping regress.
+# had no SMV size budget. RFC 0028 separates data contracts from this control
+# model; the 11 required control/temporal properties are pinned exactly while
+# byte and line limits retain their existing headroom.
 add_test(NAME ahflc.quality.smv_size_budget.bounded_data
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
             "-DMAX_BYTES=12000"
             "-DMAX_LINES=90"
-            "-DMAX_LTLSPEC=10"
-            "-DMIN_LTLSPEC=6"
+            "-DMAX_LTLSPEC=11"
+            "-DMIN_LTLSPEC=11"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
 # KR2.7 / KR7.3: SMV-size trend gate. Beyond the static per-fixture budgets
 # above, this compares emit-smv sizes against a committed baseline
 # (config/smv-size-baseline.json) and blocks on regression beyond a relative
-# tolerance, emitting a trend report (ahfl.smv-size-trend.v2). Turns the budget
+# tolerance, emitting a trend report (ahfl.smv-size-trend). Turns the budget
 # from a ceiling into a release-blocking drift guard. The baseline is the single
 # source of truth for the fixture set: it must track all five representative
 # fixtures (the two formal-semantics ones plus the three productization ones
@@ -445,6 +449,14 @@ add_test(NAME ahflc.run.llm_provider_runtime.smoke
             $<TARGET_FILE:ahflc>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-provider-runtime-smoke"
 )
+
+add_test(NAME ahflc.run.llm_context_session.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/llm_context_session_cli_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-context-session-smoke"
+)
+set_tests_properties(ahflc.run.llm_context_session.smoke PROPERTIES TIMEOUT 120)
 
 # KR4.5 / RFC 0012 stabilized: real (non-stub) local LLM run evidence. Unlike the
 # mock-server smoke above, this drives a genuine llama.cpp llama-server doing
@@ -721,7 +733,7 @@ add_test(NAME ahflc.check.verify.fake_pass
             "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
 )
 set_tests_properties(ahflc.check.verify.fake_pass PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
 )
 
 # KR7.2: the --bmc-depth path drives the checker with a `-source` batch script
@@ -735,7 +747,7 @@ add_test(NAME ahflc.check.verify.fake_bmc_pass
             "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
 )
 set_tests_properties(ahflc.check.verify.fake_bmc_pass PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: formal verification passed with 12 bounded specification\\(s\\)"
+    PASS_REGULAR_EXPRESSION "ok: control-model verification passed with [0-9]+ bounded specification\\(s\\)"
 )
 
 # KR7.2: real NuSMV/nuXmv bounded model checking under --bmc-depth. Always
@@ -749,21 +761,77 @@ add_test(NAME ahflc.check.verify.real_smv_bmc
             "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
 )
 set_tests_properties(ahflc.check.verify.real_smv_bmc PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
     SKIP_RETURN_CODE 77
 )
 
-# RFC 0017 slice 1: a String-content contract predicate leaves the SMT
-# verifiable subset and must warn formal.NOT_IN_VERIFIED_SUBSET, while the
-# sibling arithmetic predicate stays unflagged. Uses the fake pass checker so
-# verification itself succeeds regardless of a real solver being present.
-add_test(NAME ahflc.check.verify.not_in_verified_subset_warning
+# Unrequested String-content data contracts remain outside the default control
+# proof. They are disclosed without launching SMT or emitting subset warnings.
+add_test(NAME ahflc.check.verify.data_contract_default_scope
     COMMAND $<TARGET_FILE:ahflc> check
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             "${AHFL_TESTS_DIR}/golden/formal/warn_not_in_verified_subset.ahfl"
 )
-set_tests_properties(ahflc.check.verify.not_in_verified_subset_warning PROPERTIES
-    PASS_REGULAR_EXPRESSION "warning\\[formal.NOT_IN_VERIFIED_SUBSET\\]: contract requires clause for 'formal::not_in_subset_semantics::SubsetAgent'"
+set_tests_properties(ahflc.check.verify.data_contract_default_scope PROPERTIES
+    PASS_REGULAR_EXPRESSION "data_contract_status: not_requested"
+    FAIL_REGULAR_EXPRESSION "NOT_IN_VERIFIED_SUBSET|smt_bmc_status:"
+)
+
+add_test(NAME ahflc.check.verify.data_contract_unsupported
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify-data-contracts;${AHFL_TESTS_DIR}/golden/formal/warn_not_in_verified_subset.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/warn_not_in_verified_subset.ahfl"
+            "-DEXPECTED_REGEX=data_contract_status: unsupported"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.verify.refund_control_default
+    COMMAND $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_EXAMPLES_DIR}/ahfl.toml"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.verify.refund_control_default PROPERTIES
+    PASS_REGULAR_EXPRESSION "data_contract_status: not_requested"
+    FAIL_REGULAR_EXPRESSION "NOT_IN_VERIFIED_SUBSET|smt_bmc_status:|control_status: incomplete"
+)
+
+add_test(NAME ahflc.check.verify.refund_data_unsupported
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify-data-contracts;--manifest;${AHFL_EXAMPLES_DIR}/ahfl.toml;--sysroot;${PROJECT_SOURCE_DIR}"
+            "-DINPUT_FILE=${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
+            "-DEXPECTED_REGEX=data_contract_status: unsupported"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.verify.refund_rules
+    COMMAND $<TARGET_FILE:ahflc> check --verify-data-contracts
+            --manifest "${AHFL_EXAMPLES_DIR}/refund-rules/ahfl.toml"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.verify.refund_rules PROPERTIES
+    PASS_REGULAR_EXPRESSION "data_contract_status: proved"
+    FAIL_REGULAR_EXPRESSION "data_contract_status: unsupported|data_contract_status: refuted"
+)
+
+add_test(NAME ahflc.check.verify.data_contract_inconsistent_assumptions
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify-data-contracts;${AHFL_TESTS_DIR}/golden/formal/fail_smt_inconsistent_assumptions.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_smt_inconsistent_assumptions.ahfl"
+            "-DEXPECTED_REGEX=data_contract_status: inconsistent_assumptions"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.verify.data_contract_not_requested
+    COMMAND $<TARGET_FILE:ahflc> check
+            --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
+            "${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
+)
+set_tests_properties(ahflc.check.verify.data_contract_not_requested PROPERTIES
+    PASS_REGULAR_EXPRESSION "data_contract_status: not_requested"
+    FAIL_REGULAR_EXPRESSION "smt_bmc_status:|smt_bmc_refuted:|NOT_IN_VERIFIED_SUBSET"
 )
 
 add_test(NAME ahflc.check.verify.state_space_report
@@ -792,9 +860,8 @@ add_test(NAME ahflc.check.verify.bundled_solver
 # RFC 0028: Z3 is bundled next to ahflc, so the SMT-BMC solver is discovered
 # via the executable's own directory even with no solver env vars and a
 # solver-free PATH. The fixture carries encodable, provable data-predicate
-# goals; a missing Z3 would fail-closed with "solver (Z3) not found" before
-# any verdict, so a smt_bmc_status: safe/bounded_safe verdict proves the
-# bundled binary was found and ran.
+# goals selected explicitly; a proved/bounded data-contract status establishes
+# that the bundled binary was found and ran.
 add_test(NAME ahflc.check.verify.bundled_smt_solver
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -838,7 +905,7 @@ add_test(NAME ahflc.check.verify.fake_fail
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=check;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
-            "-DEXPECTED_REGEX=formal verification failed"
+            "-DEXPECTED_REGEX=control-model verification failed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
@@ -860,7 +927,7 @@ if(AHFL_SMV_CHECKER)
                 "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
     )
     set_tests_properties(ahflc.check.verify.real_smv PROPERTIES
-        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+        PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
     )
 
     add_test(NAME ahflc.check.verify.real_smv_observation_assumptions
@@ -871,7 +938,7 @@ if(AHFL_SMV_CHECKER)
                 "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     )
     set_tests_properties(ahflc.check.verify.real_smv_observation_assumptions PROPERTIES
-        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+        PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
     )
 
     add_test(NAME ahflc.check.verify.real_smv_effect_events
@@ -882,7 +949,7 @@ if(AHFL_SMV_CHECKER)
                 "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
     )
     set_tests_properties(ahflc.check.verify.real_smv_effect_events PROPERTIES
-        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+        PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
     )
 
     add_test(NAME ahflc.check.verify.real_smv_bounded_data_semantics
@@ -893,7 +960,7 @@ if(AHFL_SMV_CHECKER)
                 "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
     )
     set_tests_properties(ahflc.check.verify.real_smv_bounded_data_semantics PROPERTIES
-        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+        PASS_REGULAR_EXPRESSION "ok: control-model verification passed"
     )
 
     add_test(NAME ahflc.check.verify.real_smv_counterexample
@@ -910,23 +977,22 @@ if(AHFL_SMV_CHECKER)
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
                 "-DAHFLC_ARGS=check;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
-                "-DEXPECTED_REGEX=formal verification failed"
+                "-DEXPECTED_REGEX=control-model verification failed"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
 endif()
 
-# RFC 0017 slice 8: the SMT-BMC data path refutes a contract and fails
-# check even though the (fake) SMV temporal path passes.
-# Requires a real Z3 solver.
+# Explicit data verification refutes a contract independently of a passing
+# control-model checker. The default installation supplies the bundled Z3.
+add_test(NAME ahflc.check.verify.smt_bmc_refutation
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify-data-contracts;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh;${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
+            "-DEXPECTED_REGEX=data_contract_status: refuted"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
 if(AHFL_Z3_SOLVER)
-    add_test(NAME ahflc.check.verify.smt_bmc_refutation
-        COMMAND ${CMAKE_COMMAND}
-                "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=check;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh;${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
-                "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
-                "-DEXPECTED_REGEX=smt_bmc_refuted"
-                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
-    )
     set_tests_properties(ahflc.check.verify.smt_bmc_refutation PROPERTIES
         ENVIRONMENT "AHFL_Z3_PATH=${AHFL_Z3_SOLVER}"
     )
@@ -936,15 +1002,14 @@ endif()
 # RFC 0028: formal verification in the default compilation pipeline
 # ===========================================================================
 
-# Silent on a program with no contracts/workflows (zero-spec fast path:
-# no checker launch, but the report still prints 0 specs).
+# A program without control properties reports no_targets without a checker launch.
 add_test(NAME ahflc.check.verify.no_properties
     COMMAND $<TARGET_FILE:ahflc> check
             "${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
 )
 set_tests_properties(ahflc.check.verify.no_properties PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked"
-    FAIL_REGULAR_EXPRESSION "exit_code|counterexample|is false"
+    PASS_REGULAR_EXPRESSION "control_status: no_targets"
+    FAIL_REGULAR_EXPRESSION "checker_status: available|verification passed|exit_code|counterexample|is false"
 )
 
 # --verify=off restores pre-RFC behavior (no formal stage at all).
@@ -954,7 +1019,25 @@ add_test(NAME ahflc.check.verify_off
 )
 set_tests_properties(ahflc.check.verify_off PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
-    FAIL_REGULAR_EXPRESSION "formal verification|SMV verification|SMT-BMC|note:.*verification"
+    FAIL_REGULAR_EXPRESSION "control-model verification|control_status:|data_contract_status:|SMV verification|SMT-BMC|note:.*verification"
+)
+
+add_test(NAME ahflc.check.verify.data_contract_verify_off
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=check;--verify=off;--verify-data-contracts;${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
+            "-DEXPECTED_REGEX=error: --verify-data-contracts requires --verify=on"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.verify.data_contract_no_targets
+    COMMAND $<TARGET_FILE:ahflc> check --verify-data-contracts
+            "${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+)
+set_tests_properties(ahflc.check.verify.data_contract_no_targets PROPERTIES
+    PASS_REGULAR_EXPRESSION "data_contract_status: no_targets"
+    FAIL_REGULAR_EXPRESSION "smt_bmc_status: safe|verification passed|checker_status: available"
 )
 
 # --verify=bogus is a usage error.
@@ -983,7 +1066,7 @@ add_test(NAME ahflc.check.verify.refutation
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=check;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
-            "-DEXPECTED_REGEX=formal verification failed"
+            "-DEXPECTED_REGEX=control-model verification failed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
@@ -1004,7 +1087,7 @@ ahfl_add_package_output_test(
 )
 
 # RFC 0026 P9 / KR6.9-B4: the layered Core-IR JSON projection
-# (`ahfl.core.v1`), anchored on the same package fixtures as the single-layer
+# (`ahfl.core`), anchored on the same package fixtures as the single-layer
 # `emit ir-json` goldens so the two projections are diffed side by side during
 # the deprecation window (design §8 "round-trip golden 双守护").
 ahfl_add_package_output_test(
@@ -1681,7 +1764,7 @@ ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_not_option
     "${AHFL_STDLIB_UNITS_MANIFEST}"
     option-neg-not-option
-    "got Int"
+    "is_some"
 )
 ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_arity

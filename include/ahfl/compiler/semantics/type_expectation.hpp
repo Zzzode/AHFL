@@ -66,7 +66,7 @@ collect_function_declarations(std::string_view fn_name, const SymbolTable &symbo
 // Uses the structured Diagnostic.related / ConstDiagnosticRelated note
 // vector rather than a single-string compromise, because the IDE-facing
 // rendering and JSON serialization already understand an arbitrary number
-// of related notes — zero forward-compatibility risk.
+// of related notes.
 void append_multi_declaration_notes(std::vector<Diagnostic::Related> &out,
                                     std::vector<std::reference_wrapper<const Symbol>> declarations,
                                     std::string_view type_descriptor,

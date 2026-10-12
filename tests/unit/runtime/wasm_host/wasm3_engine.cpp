@@ -52,7 +52,7 @@ void check(bool condition, const std::string &name) {
 
 // 1. The identity module (no imports) through the production admission path:
 //    fresh_instance -> alloc_then_write (L0) -> read_whole_memory (the whole
-//    64 KiB page) -> invoke_run2 -> raw tuple assertion.
+//    64 KiB page) -> invoke_run_workflow -> raw tuple assertion.
 void test_identity_end_to_end() {
     const auto bytes = wht::identity_module();
     ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
@@ -80,14 +80,14 @@ void test_identity_end_to_end() {
     check(std::memcmp(after_alloc->data() + ptr->value, entry.data(), entry.size()) == 0,
           "identity.entry bytes written at guest pointer");
 
-    auto outcome = engine.invoke_run2(*ptr, static_cast<std::uint32_t>(entry.size()));
-    check(outcome.has_value(), "identity.invoke_run2");
+    auto outcome = engine.invoke_run_workflow(*ptr, static_cast<std::uint32_t>(entry.size()));
+    check(outcome.has_value(), "identity.invoke_run_workflow");
     if (outcome) {
-        const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
+        const auto *tuple = std::get_if<eng::WorkflowRunResultTuple>(&*outcome);
         check(tuple != nullptr, "identity.outcome is a tuple");
         if (tuple != nullptr) {
             // The engine passes the raw u32 status through verbatim (0 =
-            // AHFL_CAP_OK from the identity run2); it must NOT classify.
+            // AHFL_CAP_OK from the identity run_workflow); it must NOT classify.
             check(tuple->raw_status == 0, "identity.raw_status == 0 (verbatim)");
             check(tuple->output_ptr == *ptr, "identity.output_ptr == entry ptr");
             check(tuple->output_len == entry.size(), "identity.output_len == entry len");
@@ -123,12 +123,12 @@ void test_import_free_workflow_shared_fixture() {
     check(ptr_a->value == wht::kHeapBase && ptr_b->value == wht::kHeapBase,
           "shared-fixture.independent sessions each return heap base");
 
-    auto out_a = engine_a.invoke_run2(*ptr_a, static_cast<std::uint32_t>(entry.size()));
-    auto out_b = engine_b.invoke_run2(*ptr_b, static_cast<std::uint32_t>(entry.size()));
-    check(out_a.has_value() && out_b.has_value(), "shared-fixture.both invoke_run2");
+    auto out_a = engine_a.invoke_run_workflow(*ptr_a, static_cast<std::uint32_t>(entry.size()));
+    auto out_b = engine_b.invoke_run_workflow(*ptr_b, static_cast<std::uint32_t>(entry.size()));
+    check(out_a.has_value() && out_b.has_value(), "shared-fixture.both invoke_run_workflow");
     if (out_a && out_b) {
-        const auto *ta = std::get_if<eng::Run2ResultTuple>(&*out_a);
-        const auto *tb = std::get_if<eng::Run2ResultTuple>(&*out_b);
+        const auto *ta = std::get_if<eng::WorkflowRunResultTuple>(&*out_a);
+        const auto *tb = std::get_if<eng::WorkflowRunResultTuple>(&*out_b);
         check(ta != nullptr && tb != nullptr && ta->raw_status == tb->raw_status &&
                   ta->output_ptr == tb->output_ptr && ta->output_len == tb->output_len,
               "shared-fixture.deterministic identical tuples");
@@ -161,12 +161,12 @@ void test_bridge_lane() {
         check(inst.has_value(), "bridge.ok.fresh_instance (2-result lane admitted)");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
         check(ptr.has_value(), "bridge.ok.alloc entry");
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value(), "bridge.ok.invoke_run2");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value(), "bridge.ok.invoke_run_workflow");
         // The single i32 arg is the entry pointer (control-block pointer).
         check(observed_scalar == ptr->value, "bridge.ok.scalar_arg == entry ptr");
         if (out) {
-            const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
+            const auto *tuple = std::get_if<eng::WorkflowRunResultTuple>(&*out);
             check(tuple != nullptr, "bridge.ok.outcome is a tuple");
             if (tuple != nullptr) {
                 check(tuple->raw_status == 0, "bridge.ok.raw_status == 0");
@@ -200,12 +200,12 @@ void test_bridge_lane() {
             });
         check(inst.has_value(), "bridge.nonok.fresh_instance");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
-              "bridge.nonok raw_status=" + std::to_string(status) + " -> Run2Trapped");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::WorkflowRunTrapped>(*out),
+              "bridge.nonok raw_status=" + std::to_string(status) + " -> WorkflowRunTrapped");
     }
 
-    // ImportAbort on the bridge lane -> Run2HostAborted (unchanged).
+    // ImportAbort on the bridge lane -> WorkflowRunHostAborted (unchanged).
     {
         auto bytes = wht::bridge_classifier_module(symbol);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
@@ -216,14 +216,14 @@ void test_bridge_lane() {
             });
         check(inst.has_value(), "bridge.abort.fresh_instance");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2HostAborted>(*out),
-              "bridge.abort -> Run2HostAborted");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::WorkflowRunHostAborted>(*out),
+              "bridge.abort -> WorkflowRunHostAborted");
     }
 }
 
 
-//    Run2Trapped (not Run2HostAborted, not a tuple).
+//    WorkflowRunTrapped (not WorkflowRunHostAborted, not a tuple).
 void test_trap_mapping() {
     {
         const auto bytes = wht::trap_module();
@@ -235,9 +235,9 @@ void test_trap_mapping() {
         check(inst.has_value(), "trap.unreachable.fresh_instance");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
         check(ptr.has_value(), "trap.unreachable.alloc");
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
-              "trap.unreachable -> Run2Trapped");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::WorkflowRunTrapped>(*out),
+              "trap.unreachable -> WorkflowRunTrapped");
     }
     {
         const auto bytes = wht::oob_load_module();
@@ -249,14 +249,14 @@ void test_trap_mapping() {
         check(inst.has_value(), "trap.oob-load.fresh_instance");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
         check(ptr.has_value(), "trap.oob-load.alloc");
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
-              "trap.oob-load -> Run2Trapped");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::WorkflowRunTrapped>(*out),
+              "trap.oob-load -> WorkflowRunTrapped");
     }
 }
 
 // 6. Host-abort mapping: an ImportAbort callback and a throwing callback both
-//    unwind run2 as Run2HostAborted (distinct from a wasm trap).
+//    unwind run_workflow as WorkflowRunHostAborted (distinct from a wasm trap).
 void test_host_abort_mapping() {
     {
         const auto bytes = wht::capability_module(1);
@@ -268,9 +268,9 @@ void test_host_abort_mapping() {
             });
         check(inst.has_value(), "abort.import-abort.fresh_instance");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2HostAborted>(*out),
-              "abort.ImportAbort -> Run2HostAborted");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::WorkflowRunHostAborted>(*out),
+              "abort.ImportAbort -> WorkflowRunHostAborted");
     }
     {
         const auto bytes = wht::capability_module(1);
@@ -282,34 +282,34 @@ void test_host_abort_mapping() {
             });
         check(inst.has_value(), "abort.exception.fresh_instance");
         auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
-        auto out = engine.invoke_run2(*ptr, 8);
-        check(out.has_value() && std::holds_alternative<eng::Run2HostAborted>(*out),
-              "abort.exception -> Run2HostAborted (fail closed across C boundary)");
+        auto out = engine.invoke_run_workflow(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::WorkflowRunHostAborted>(*out),
+              "abort.exception -> WorkflowRunHostAborted (fail closed across C boundary)");
     }
 }
 
-// 6b. runv host-abort mapping: a module whose runv calls an ahfl_cap import.
-//     When the callback aborts, invoke_runv must return Run2HostAborted
-//     (distinct from Run2Trapped, mirroring the run2 three-arm outcome).
-void test_runv_host_abort_mapping() {
-    const auto bytes = wht::runv_import_module();
+// 6b. run_frame host-abort mapping: a module whose run_frame calls an ahfl_cap import.
+//     When the callback aborts, invoke_run_frame must return WorkflowRunHostAborted
+//     (distinct from WorkflowRunTrapped, mirroring the run_workflow three-arm outcome).
+void test_run_frame_host_abort_mapping() {
+    const auto bytes = wht::run_frame_import_module();
     ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
     auto inst = engine.fresh_instance(
         std::span<const std::uint8_t>(bytes),
         [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
             return eng::ImportAbort{};
         });
-    check(inst.has_value(), "runv-abort.fresh_instance");
-    auto out = engine.invoke_runv();
+    check(inst.has_value(), "run_frame-abort.fresh_instance");
+    auto out = engine.invoke_run_frame();
     check(out.has_value() &&
-              std::holds_alternative<eng::Run2HostAborted>(*out),
-          "runv-abort.ImportAbort -> Run2HostAborted (distinct from Run2Trapped)");
+              std::holds_alternative<eng::WorkflowRunHostAborted>(*out),
+          "run_frame-abort.ImportAbort -> WorkflowRunHostAborted (distinct from WorkflowRunTrapped)");
 }
 
 // 7. Fresh-instance discipline: a second fresh_instance is InvalidSequence;
 //    every op before fresh_instance is InvalidSequence; a null/OOB entry is
 //    InvalidSequence (and consumes the session, matching the Fake's
-//    run_started-before-entry-check discipline); a second invoke_run2 is
+//    run_started-before-entry-check discipline); a second invoke_run_workflow is
 //    InvalidSequence.
 void test_fresh_instance_discipline() {
     const auto bytes = wht::identity_module();
@@ -322,7 +322,7 @@ void test_fresh_instance_discipline() {
     auto alloc = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
     check(!alloc.has_value() && alloc.error() == eng::EngineError::InvalidSequence,
           "discipline.alloc before fresh_instance -> InvalidSequence");
-    auto invoke = engine.invoke_run2(eng::GuestPointer{1032}, 8);
+    auto invoke = engine.invoke_run_workflow(eng::GuestPointer{1032}, 8);
     check(!invoke.has_value() && invoke.error() == eng::EngineError::InvalidSequence,
           "discipline.invoke before fresh_instance -> InvalidSequence");
 
@@ -344,13 +344,13 @@ void test_fresh_instance_discipline() {
 
     // Null entry (consumes the session: run_started is set before the entry
     // check, matching the Fake).
-    auto null_invoke = engine.invoke_run2(eng::GuestPointer{0}, 8);
+    auto null_invoke = engine.invoke_run_workflow(eng::GuestPointer{0}, 8);
     check(!null_invoke.has_value() &&
               null_invoke.error() == eng::EngineError::InvalidSequence,
           "discipline.null entry -> InvalidSequence");
     // A subsequent valid invoke is also InvalidSequence: the session was
     // consumed by the null entry attempt.
-    auto consumed = engine.invoke_run2(*ptr, 8);
+    auto consumed = engine.invoke_run_workflow(*ptr, 8);
     check(!consumed.has_value() && consumed.error() == eng::EngineError::InvalidSequence,
           "discipline.null entry consumes the session");
 
@@ -363,7 +363,7 @@ void test_fresh_instance_discipline() {
     check(inst_b.has_value(), "discipline.engine2 fresh_instance");
     auto ptr_b = engine2.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
     check(ptr_b.has_value(), "discipline.engine2 alloc");
-    auto oob_invoke = engine2.invoke_run2(eng::GuestPointer{65530}, 16);
+    auto oob_invoke = engine2.invoke_run_workflow(eng::GuestPointer{65530}, 16);
     check(!oob_invoke.has_value() &&
               oob_invoke.error() == eng::EngineError::InvalidSequence,
           "discipline.OOB entry -> InvalidSequence");
@@ -377,11 +377,11 @@ void test_fresh_instance_discipline() {
     check(inst_c.has_value(), "discipline.engine3 fresh_instance");
     auto ptr_c = engine3.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
     check(ptr_c.has_value(), "discipline.engine3 alloc");
-    auto good = engine3.invoke_run2(*ptr_c, 8);
-    check(good.has_value(), "discipline.first invoke_run2");
-    auto second = engine3.invoke_run2(*ptr_c, 8);
+    auto good = engine3.invoke_run_workflow(*ptr_c, 8);
+    check(good.has_value(), "discipline.first invoke_run_workflow");
+    auto second = engine3.invoke_run_workflow(*ptr_c, 8);
     check(!second.has_value() && second.error() == eng::EngineError::InvalidSequence,
-          "discipline.second invoke_run2 -> InvalidSequence");
+          "discipline.second invoke_run_workflow -> InvalidSequence");
 }
 
 // 8. Capacity exhaustion: the bump allocator never reclaims; a frame that does
@@ -465,9 +465,9 @@ void test_capacity_exact_boundary() {
 
 // 8c. memory.grow mid-invoke fails closed: a module with a well-formed Memory
 //     section (min=1, no max) passes the structural gate but grows the linear
-//     memory during run2 (wasm3 v0.9.0 reallocates). The fixed single page is
-//     a session invariant, so invoke_run2 returns MemoryCapacityExceeded (not
-//     a tuple, not Run2Trapped) and read_whole_memory afterwards fails
+//     memory during run_workflow (wasm3 v0.9.0 reallocates). The fixed single page is
+//     a session invariant, so invoke_run_workflow returns MemoryCapacityExceeded (not
+//     a tuple, not WorkflowRunTrapped) and read_whole_memory afterwards fails
 //     closed (InstanceUnavailable).
 void test_memory_grow_fails_closed() {
     const auto bytes = wht::memory_grow_module();
@@ -479,7 +479,7 @@ void test_memory_grow_fails_closed() {
     check(inst.has_value(), "grow.fresh_instance (well-formed Memory section)");
     auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
     check(ptr.has_value(), "grow.alloc before grow");
-    auto out = engine.invoke_run2(*ptr, 8);
+    auto out = engine.invoke_run_workflow(*ptr, 8);
     check(!out.has_value() && out.error() == eng::EngineError::MemoryCapacityExceeded,
           "grow.memory.grow mid-invoke -> MemoryCapacityExceeded (fixed-page invariant)");
     // The page is no longer the fixed 64 KiB: read_whole_memory fails closed.
@@ -488,7 +488,7 @@ void test_memory_grow_fails_closed() {
           "grow.read_whole_memory after grow fails closed (InstanceUnavailable)");
 }
 
-// 8d. Non-zero raw status pass-through: run2 returns 0xDEADBEEF with the entry
+// 8d. Non-zero raw status pass-through: run_workflow returns 0xDEADBEEF with the entry
 //     ptr/len; the engine must deliver the raw u32 status verbatim with NO
 //     classification (zero is not special-cased).
 void test_nonzero_raw_status_passthrough() {
@@ -502,10 +502,10 @@ void test_nonzero_raw_status_passthrough() {
     const auto entry = entry_bytes();
     auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry));
     check(ptr.has_value(), "nonzero-status.alloc");
-    auto out = engine.invoke_run2(*ptr, static_cast<std::uint32_t>(entry.size()));
-    check(out.has_value(), "nonzero-status.invoke_run2");
+    auto out = engine.invoke_run_workflow(*ptr, static_cast<std::uint32_t>(entry.size()));
+    check(out.has_value(), "nonzero-status.invoke_run_workflow");
     if (out) {
-        const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
+        const auto *tuple = std::get_if<eng::WorkflowRunResultTuple>(&*out);
         check(tuple != nullptr, "nonzero-status.outcome is a tuple");
         if (tuple != nullptr) {
             check(tuple->raw_status == 0xDEADBEEFu,
@@ -593,7 +593,7 @@ void test_bad_memory_rejected() {
         // A module with a declared max (memory section flags 1). Build it by
         // hand from the identity fixture's sections is overkill; instead use
         // the fact that identity_module(1) with a max is the same shape. We
-        // assemble a minimal module with a max memory and no run2/alloc so
+        // assemble a minimal module with a max memory and no run_workflow/alloc so
         // the memory gate fires first.
         std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
         wht::put_section(m, 5, wht::memory_section(1, /*has_max=*/true, 2));
@@ -607,24 +607,24 @@ void test_bad_memory_rejected() {
     }
 }
 
-// 11. A missing alloc export is rejected at fresh_instance. A missing run2
+// 11. A missing alloc export is rejected at fresh_instance. A missing run_workflow
 //     export is accepted: agent modules drive the state machine through
-//     step/current_state/runv instead of the workflow scheduler entry.
+//     step/current_state/run_frame instead of the workflow scheduler entry.
 void test_missing_exports_rejected() {
     {
-        // No run2: accepted (agent module).
-        const auto bytes = wht::identity_module(1, /*emit_run2=*/false);
+        // No run_workflow: accepted (agent module).
+        const auto bytes = wht::identity_module(1, /*emit_run_workflow=*/false);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
         auto inst = engine.fresh_instance(std::span<const std::uint8_t>(bytes),
                                           [](const eng::ImportObservation &) {
                                               return eng::ImportAbort{};
                                           });
         check(inst.has_value(),
-              "missing-export.no run2 -> accepted (agent module)");
+              "missing-export.no run_workflow -> accepted (agent module)");
     }
     {
         // No alloc: rejected (every module needs the bump allocator).
-        const auto bytes = wht::identity_module(1, /*emit_run2=*/true, /*emit_alloc=*/false);
+        const auto bytes = wht::identity_module(1, /*emit_run_workflow=*/true, /*emit_alloc=*/false);
         ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
         auto inst = engine.fresh_instance(std::span<const std::uint8_t>(bytes),
                                           [](const eng::ImportObservation &) {
@@ -644,7 +644,7 @@ int main() {
     test_bridge_lane();
     test_trap_mapping();
     test_host_abort_mapping();
-    test_runv_host_abort_mapping();
+    test_run_frame_host_abort_mapping();
     test_fresh_instance_discipline();
     test_capacity_exhaustion();
     test_capacity_exact_boundary();

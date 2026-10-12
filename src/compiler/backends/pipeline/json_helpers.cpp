@@ -8,7 +8,7 @@ namespace ahfl {
 void PipelineJsonHelpers::print_package_identity(const handoff::PackageIdentity &identity,
                                                  int indent_level) {
     print_object(indent_level, [&](const auto &field) {
-        field("format_version", [&]() { write_string(identity.format_version); });
+        field("format", [&]() { write_string(identity.format); });
         field("name", [&]() { write_string(identity.name); });
         field("version", [&]() { write_string(identity.version); });
     });

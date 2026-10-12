@@ -32,7 +32,7 @@ struct RegistryDependencyMetadata {
 };
 
 struct RegistryIndexEntry {
-    std::string format_version{"ahfl.registry.index.v1"};
+    std::string format{"ahfl.registry.index"};
     std::string registry_id;
     std::string package;
     std::string version;
@@ -75,7 +75,7 @@ struct RegistryPublishPackageRequest {
 };
 
 struct RegistryPackageIndex {
-    std::string format_version{"ahfl.registry.package_index.v1"};
+    std::string format{"ahfl.registry.package_index"};
     std::string package;
     std::vector<RegistryIndexEntry> versions;
 };
@@ -167,7 +167,7 @@ class RegistryCache {
 
 class Registry {
   public:
-    explicit Registry(std::string base_url = "https://registry.ahfl.io/v1");
+    explicit Registry(std::string base_url = "https://registry.ahfl.io");
     Registry(std::string base_url,
              std::shared_ptr<RegistryTransport> transport,
              std::shared_ptr<RegistryCache> cache);

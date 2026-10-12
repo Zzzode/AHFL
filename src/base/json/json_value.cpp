@@ -683,8 +683,7 @@ void serialize_impl(const JsonValue &v, std::ostringstream &out) {
     case Kind::Float: {
         // FloatSyntax and IntegerFallback both serialize through the existing
         // shortest-round-trip float formatter (A does NOT change these bytes; a
-        // FloatSyntax integral value stays a bare integer, so v1/v2 snapshot bytes
-        // are unchanged). Any other provenance on a Float node is invalid.
+        // FloatSyntax integral value stays a bare integer). Any other provenance on a Float node is invalid.
         if (v.number_provenance != NumberProvenance::FloatSyntax &&
             v.number_provenance != NumberProvenance::IntegerFallback) {
             out.setstate(std::ios_base::failbit);

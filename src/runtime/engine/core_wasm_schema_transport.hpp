@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ahfl/compiler/ir/core_ir.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -13,7 +13,7 @@
 //
 // A generic embedder receives module bytes, not a `CoreProgram`. The C2 writer
 // carries the deterministic logical wire schema for the module's reachable
-// capability imports in exactly one `ahfl.wire-schema.v1` custom section fixed at
+// capability imports in exactly one `ahfl.wire-schema` custom section fixed at
 // module EOF. This single-shot inspector turns those raw bytes into one
 // `VerifiedWireSchemaBinding` for the codec (the B2-A2
 // `core_wasm_schema_module` context is a separate, shared-authority path that mints

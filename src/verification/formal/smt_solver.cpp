@@ -106,8 +106,19 @@ SmtSolverResult parse_solver_output(std::string_view output, int exit_code, bool
         return result;
     }
 
-    // Scan line by line for the check-sat verdict. The first recognized token
-    // wins; a solver may print (error ...) lines around it.
+    if (exit_code != 0) {
+        result.status = SmtSolverStatus::SolverError;
+        result.error_message = "SMT solver exited with code " + std::to_string(exit_code);
+        return result;
+    }
+    if (output.find("(error") != std::string_view::npos) {
+        result.status = SmtSolverStatus::SolverError;
+        result.error_message = "SMT solver reported an SMT-LIB error";
+        return result;
+    }
+
+    // A verdict is trustworthy only after the entire process output and exit
+    // status have been checked for errors.
     std::istringstream stream{std::string(output)};
     std::string line;
     while (std::getline(stream, line)) {
@@ -126,12 +137,9 @@ SmtSolverResult parse_solver_output(std::string_view output, int exit_code, bool
         }
     }
 
-    // No verdict. A non-zero exit is a solver error; a clean exit with no
-    // verdict is still an error (never a silent pass).
+    // A clean exit without a verdict is still an error, never a silent pass.
     result.status = SmtSolverStatus::SolverError;
-    result.error_message = exit_code == 0
-                               ? "SMT solver produced no sat/unsat/unknown verdict"
-                               : "SMT solver exited with code " + std::to_string(exit_code);
+    result.error_message = "SMT solver produced no sat/unsat/unknown verdict";
     return result;
 }
 
@@ -235,23 +243,30 @@ SmtSolverResult run_smt_solver(const std::string &smtlib_document,
         return result;
     }
 
-    // Append (get-model) so a Sat verdict comes with a materializable model.
-    std::string document = smtlib_document;
-    if (options.request_model) {
-        document += "(get-model)\n";
-    }
-
+    // Obtain the verdict first. Unconditional get-model produces a protocol
+    // error for Unsat/Unknown and must never be ignored to salvage a proof.
     ProcessConfig config;
     config.executable = availability.binary_path;
     // `-in` makes Z3 read an SMT-LIB 2 script from stdin.
     config.arguments = {"-in"};
-    config.stdin_input = document;
+    config.stdin_input = smtlib_document;
     config.timeout = options.timeout;
 
     const auto process = launch_process(config);
     auto result = parse_solver_output(process.stdout_output, process.exit_code, process.timed_out);
     if (options.request_model && result.status == SmtSolverStatus::Sat) {
-        result.model = parse_solver_model(process.stdout_output);
+        // Replay only a satisfiable query to obtain a model. A failed replay
+        // remains an error/unknown result; no solver error is accepted as proof.
+        config.stdin_input = smtlib_document + "(get-model)\n";
+        const auto model_process = launch_process(config);
+        result = parse_solver_output(model_process.stdout_output, model_process.exit_code,
+                                     model_process.timed_out);
+        if (result.status == SmtSolverStatus::Sat) {
+            result.model = parse_solver_model(model_process.stdout_output);
+        } else if (result.status == SmtSolverStatus::Unsat) {
+            result.status = SmtSolverStatus::SolverError;
+            result.error_message = "SMT solver changed verdict while requesting a counterexample model";
+        }
     }
     return result;
 }

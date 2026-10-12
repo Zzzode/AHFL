@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.ir.v2",
+  "format": "ahfl.ir",
   "formal_observations": [
     {
       "symbol": "workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0",

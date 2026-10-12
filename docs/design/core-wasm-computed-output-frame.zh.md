@@ -1,13 +1,13 @@
 # Core-Wasm Computed Output-Frame ABI (P6-7) -- Design
 
-> Status: **LANDED** (RFC 0026 P6-7 / KR6.7). V1 rungs A-E landed
-> 2026-09-25..28; the v2 amendment (`core-wasm-frame-bridge-v2.zh.md`)
-> extended and superseded parts of this document, landing V2-A..V2-E on
+> Status: **LANDED** (RFC 0026 P6-7 / KR6.7). computed-frame baseline rungs A-E landed
+> 2026-09-25..28; the frame-bridge extension amendment (`core-wasm-frame-bridge.zh.md`)
+> extended and superseded parts of this document, landing computed-final..frame-case on
 > 2026-09-28 (HEAD `2cd6dbf6`). This document IS the independent
-> review of the value-returning `run2`-class convention that KR6.5 E1
+> review of the value-returning `run_workflow`-class convention that KR6.5 E1
 > explicitly deferred and refused to pre-approve
 > (`docs/rfcs/0026-ir-tower-and-execution-model.zh.md` E1 entry: "值返回的
-> `run2` 类方案留独立评审、不 pre-approve").
+> `run_workflow` 类方案留独立评审、不 pre-approve").
 >
 > Scope: the computed output-frame ABI that lets a P6 computed **final**
 > handler return a real value over the Core-Wasm boundary, plus the inverse
@@ -21,19 +21,19 @@
 
 ### 0.1 What works today
 
-The KR6.5 run2 boundary carries **opaque canonical value_json bytes**:
+The KR6.5 run_workflow boundary carries **opaque canonical value_json bytes**:
 
-* `run2(in_ptr:i32, in_len:i32) -> (status:i32, out_ptr:i32, out_len:i32)`
-  (`core_wasm_codegen.cpp:7824`, `make_run2_body`).
+* `run_workflow(in_ptr:i32, in_len:i32) -> (status:i32, out_ptr:i32, out_len:i32)`
+  (`core_wasm_codegen.cpp:7824`, `make_run_workflow_body`).
 * An identity final is exactly two ANF statements -- canonical input let +
   return of the same SSA, `input_type == output_type`
-  (`validate_identity_final`, `core_wasm_codegen.cpp:729-769`); run2 returns
+  (`validate_identity_final`, `core_wasm_codegen.cpp:729-769`); run_workflow returns
   the borrowed input `(ptr,len)` untouched. This alias is the single narrow
   E1 exception, never a general precedent.
 * A capability final forwards the imported frame's `(ptr,len)`
   (`append_capability_return`, `core_wasm_codegen.cpp:7765-7822`).
 * The Node conformance host allocates the scenario's canonical `input_wire`
-  bytes, calls run2, and decodes the returned span as the output observation
+  bytes, calls run_workflow, and decodes the returned span as the output observation
   (`tests/conformance/node_embedded_host.mjs:71`, `:207-210`, `:292-310`).
 
 The P6 (KR6.6) slices added real computation: non-final computed handlers,
@@ -85,11 +85,11 @@ directions (`wasm_eligibility.cpp:206-250`).
 * **The wire schema is the logical wire authority.** 15-node
   `CoreWireSchemaShape` variant, names/order/capacities/scale/bounds live here
   (`core_wire_schema.hpp:26-152`); it reaches the module in exactly one custom
-  section `"ahfl.wire-schema.v1"` with `AHFLWS...` payload, present iff the
+  section `"ahfl.wire-schema"` with `AHFLWS...` payload, present iff the
   agent has reachable capability imports (`core_wasm_codegen.cpp:149-150`,
   `:8077-8091`, `:9171-9200`). A generic host may consume it only through the
   un-forgeable `VerifiedWireSchemaBinding`
-  (`core_wire_migration.hpp:99-117`, `:180-210`).
+  (`core_wire_projection.hpp:99-117`, `:180-210`).
 * **Decode exists, encode does not.**
   `wire_codec::decode_json(JsonValue, VerifiedWireSchemaBinding) -> Value`
   walks schema shapes with a fail-closed family ("wire-codec: ...", schema-only
@@ -111,17 +111,17 @@ directions (`wasm_eligibility.cpp:206-250`).
   decimal spelling is `spell_builtin_decimal(mantissa, scale)` = `s<scale>:
   <mantissa>`; duration bare millis is `std::to_string(i64)`. Parsing is for
   validation only -- inbound spellings are preserved verbatim today.
-* **The resume host already trusts run2 tuples against a whole-page read and
+* **The resume host already trusts run_workflow tuples against a whole-page read and
   writes memo bytes by instance-lifetime bump allocation**
   (`core_wasm_resume_host.cpp:114-125`, `:378-416`); the engine port
-  contract is `alloc_then_write` / `invoke_run2` / `read_whole_memory`
+  contract is `alloc_then_write` / `invoke_run_workflow` / `read_whole_memory`
   (`core_wasm_resume_engine.hpp:121-150`). The F3 gate pins the one-page
   declaration before instantiation (`core_wasm_resume_host.cpp:91-102`).
 * **Wire-size bounding already exists.** `max_canonical_json_size(binding)`
   gives a conservative, never-underestimating u64 bound over a productive-edge
   schema graph (`core_wire_canonical_size.hpp`).
 * **Capability results arrive as wire JSON**, while raw P6 input lives in
-  fixed regions; the two representations never mix in a v1 computed module
+  fixed regions; the two representations never mix in a computed-frame baseline computed module
   (decision in §3.4).
 * **No Data section exists** in any emitted module; bytes below address 1024
   are unused. Low globals live outside linear memory.
@@ -143,13 +143,13 @@ directions (`wasm_eligibility.cpp:206-250`).
 
 | # | Decision |
 | --- | --- |
-| D1 | **The host, not the module, owns the output frame.** After `runv` returns, host-side code walks the output value's P4-D bytes (verified `CoreLayoutTable` + verified boundary wire binding), builds an `evaluator::Value`, and renders canonical bytes with `value_to_json`. The module never serializes. |
+| D1 | **The host, not the module, owns the output frame.** After `run_frame` returns, host-side code walks the output value's P4-D bytes (verified `CoreLayoutTable` + verified boundary wire binding), builds an `evaluator::Value`, and renders canonical bytes with `value_to_json`. The module never serializes. |
 | D2 | Canonical encode = P4-D bytes + `CoreLayoutTable` + verified wire binding -> `evaluator::Value` -> `value_to_json`, with the same fail-closed family as `decode_json`. A deterministic `CoreLayoutTable` custom section is added so the host never re-derives layout. |
-| D3 | Add a new additive export **`runv() -> (status:i32, value_ptr:i32)`**, present ONLY in a module that has a raw-frame input or a computed final. A computed value lives at the fixed output frame base; an identity final names the input frame base. `run2` is untouched; every module whose descriptor frame contract is not the new p6_frame (identity, capability, workflow, and closure-using FB modules) stays byte-identical. |
+| D3 | Add a new additive export **`run_frame() -> (status:i32, value_ptr:i32)`**, present ONLY in a module that has a raw-frame input or a computed final. A computed value lives at the fixed output frame base; an identity final names the input frame base. `run_workflow` is untouched; every module whose descriptor frame contract is not the new p6_frame (identity, capability, workflow, and closure-using FB modules) stays byte-identical. |
 | D4 | Input is the exact inverse: canonical JSON -> `decode_json` -> `Value` -> P4-D regions (`pack_input_frame`). Variable-length input payloads (String bytes) get one bounded frame-payload arena; bounded collections keep the backing region. Workflow node packaging consumes this packer unchanged on the next slice. |
 | D5 | One fixed new reserved region: `kP6AggregateOutputBase = 12288` (8-aligned), capacity `16384 - 12288 = 4096`, carved out of the current scratch window (scratch shrinks 9216 -> 5120). Input-reached containers get disjoint per-container backing placements (sum, not max); one frame-payload arena is co-located above the packed backing high-water and below the relocated construct heap; every extent is compile-time gated with the existing RESOURCE family. |
 | D6 | Frame boundaries carry inline shapes: scalars (4/8), PtrLen (8 inline bytes = two i32 words naming the payload arena/backing), Bytes16 (16), aggregate/enum/container addresses (one i32). Across **fn** boundaries every multi-word value passes by i32 address (Ptr to its frame/arena slot), including PtrLen -- lifting the FB-design's "multi-word fn args await P6-7" reservation. |
-| D7 | The two `raw_p6_frame_awaits_p67` cases leave the Node skip in rung E; the Node-vs-evaluator differential agrees only AFTER the wasm producer stops classifying them `RawP6FrameAwaitsP67` (the runv/pack/encode rungs A-E land). Rung E required evaluator-engine/manifest groundwork -- the capability-bridged dispatcher resolving bare builtin hooks (`list_raw_get`/`list_raw_length`/`map_raw_get`) via the builtin table, `engines.evaluator` flag flips, and evaluator-runner blessings -- which landed in the fix-forward revision of this gate (§9). The census pins move 14/7 -> 16/5 in the exact commit that flips the descriptor contract. `raw_p6_frame` is renamed `p6_frame` and gains both real directions. |
+| D7 | The two `raw_p6_frame_awaits_p67` cases leave the Node skip in rung E; the Node-vs-evaluator differential agrees only AFTER the wasm producer stops classifying them `RawP6FrameAwaitsP67` (the run_frame/pack/encode rungs A-E land). Rung E required evaluator-engine/manifest groundwork -- the capability-bridged dispatcher resolving bare builtin hooks (`list_raw_get`/`list_raw_length`/`map_raw_get`) via the builtin table, `engines.evaluator` flag flips, and evaluator-runner blessings -- which landed in the fix-forward revision of this gate (§9). The census pins move 14/7 -> 16/5 in the exact commit that flips the descriptor contract. `raw_p6_frame` is renamed `p6_frame` and gains both real directions. |
 
 ## 2. D1 -- Frame ownership and lifetime
 
@@ -161,7 +161,7 @@ memory. There are two candidates for producing canonical value_json:
 * **(A) In-module serialization.** The wasm module grows a JSON writer:
   string escaping, struct/enum framing, a float shortest-round-trip
   implementation, decimal/duration spelling, set ordering. It bumps an output
-  buffer and run2 returns its `(ptr,len)`.
+  buffer and run_workflow returns its `(ptr,len)`.
 * **(B) Host-side encode from P4-D bytes after the run.** The module only
   materializes its result into a fixed output frame (§4); the host reads the
   verified whole page, walks the bytes with P4-D + the wire binding, and
@@ -205,7 +205,7 @@ Reasons:
 ### 2.2 Lifetime
 
 * The output frame is a **fixed reserved region** (§5), written by the final
-  handler during `runv` and read by the host immediately after the call
+  handler during `run_frame` and read by the host immediately after the call
   returns, before the fresh instance is torn down -- the same lifetime rule
   the resume host uses for the output copy
   (`core_wasm_resume_host.cpp:405-416`).
@@ -227,7 +227,7 @@ New runtime unit, beside `core_wire_codec`, in namespace
 ```
 WireEncodeResult encode_value_json(
     std::span<const uint8_t> page,           // the WHOLE fixed 64 KiB page
-    uint32_t root_addr,                      // runv's value_ptr
+    uint32_t root_addr,                      // run_frame's value_ptr
     const VerifiedCoreLayoutBinding& layout, // verified P4-D table + root id
     const VerifiedWireSchemaBinding& wire);  // verified wire table + root node
 // -> canonical value_json bytes (== evaluator::value_to_json of the decoded Value)
@@ -336,8 +336,8 @@ Reusing decode's discipline (`core_wire_codec.cpp:141-557`):
   layout requires padding (write side zeroes padding; a non-zero word on read
   indicates tampering), and a layout/wire structural disagreement all fail
   with no partial bytes;
-* the root pointer runv returns is authorized against the region the ADMITTED
-  DESCRIPTOR declares for this module's final kind -- runv returns only
+* the root pointer run_frame returns is authorized against the region the ADMITTED
+  DESCRIPTOR declares for this module's final kind -- run_frame returns only
   `(status, value_ptr)` with no identity/computed discriminator, so the
   descriptor is the sole source of the authorized root set: a descriptor-
   declared identity final authorizes exactly `kP6AggregateInputBase` (1024),
@@ -351,7 +351,7 @@ Reusing decode's discipline (`core_wire_codec.cpp:141-557`):
 
 A computed run has no PENDING/ERROR result: any non-OK is either this
 fail-closed rejection on the host side or a genuine Wasm trap classified as
-today's `Run2Trapped`.
+today's `WorkflowRunTrapped`.
 
 ### 3.5 Why the host needs a layout section
 
@@ -361,7 +361,7 @@ only imply i32-vs-i64. Re-deriving offsets on the host would duplicate the
 deterministic P4-D algorithm -- a second SSOT, forbidden by the project's
 principles. Instead:
 
-* A new deterministic custom section **`"ahfl.core-layout.v1"`** carries the
+* A new deterministic custom section **`"ahfl.core-layout"`** carries the
   finalized `CoreLayoutTable` payload (a new binary codec, mirroring
   `encode/decode_core_wire_schema_table` with canonical re-encode equality and
   a local verifier), plus the boundary root mapping
@@ -392,10 +392,10 @@ principles. Instead:
 
 ## 4. D3 -- The run-value return convention
 
-### 4.1 New export: `runv`
+### 4.1 New export: `run_frame`
 
 ```
-runv() -> (status:i32, value_ptr:i32)
+run_frame() -> (status:i32, value_ptr:i32)
 ```
 
 * Present **only** in a P6-frame module -- one whose descriptor frame
@@ -412,7 +412,7 @@ runv() -> (status:i32, value_ptr:i32)
 * `status` reuses the `AHFL_CAP_*` u32 namespace; a completed computed run
   returns `AHFL_CAP_OK`. There is no PENDING arm (the subset has no effect);
   the fallthrough after the final-state switch is `unreachable`, exactly like
-  run2 (`core_wasm_codegen.cpp:7858`).
+  run_workflow (`core_wasm_codegen.cpp:7858`).
 * `value_ptr` names the root value's fixed frame home: the output frame base
   (`kP6AggregateOutputBase`) for a computed result, or the input frame base
   (`kP6AggregateInputBase`) for an identity final (no copy). Which of the two
@@ -426,11 +426,11 @@ runv() -> (status:i32, value_ptr:i32)
   type.
 * Inputs are not parameters: the packed input already lives at the fixed
   input region (§6), and no current or planned caller needs to name an
-  alternate input. Keeping runv parameter-free prevents a dead-argument ABI.
+  alternate input. Keeping run_frame parameter-free prevents a dead-argument ABI.
 
-### 4.2 runv body
+### 4.2 run_frame body
 
-Same deterministic state walk run2 performs (`append_run_to_final`,
+Same deterministic state walk run_workflow performs (`append_run_to_final`,
 `core_wasm_codegen.cpp:7689-7721`), then a final-state switch:
 
 * **Identity final in a P6-frame module** (e.g. the pinned p6_aggregate
@@ -438,9 +438,9 @@ Same deterministic state walk run2 performs (`append_run_to_final`,
   kP6AggregateInputBase)` -- the input frame IS the output value; no copy.
 * **Computed final** (new `ComputedReturn` planner action, §10): the final
   handler has already materialized its result into the output frame as its
-  last effect; runv returns `(OK, kP6AggregateOutputBase)`.
+  last effect; run_frame returns `(OK, kP6AggregateOutputBase)`.
 * Trap otherwise. A capability final in a P6-frame agent is rejected at
-  planning in v1 (§4.4), so no capability tuple arm exists in runv.
+  planning in computed-frame baseline (§4.4), so no capability tuple arm exists in run_frame.
 
 The host reads `value_ptr` only when `status == OK`, under the same
 whole-page and in-region checks as the resume host.
@@ -451,9 +451,9 @@ The additive gate is structural and tested, not argued:
 
 * a module with no raw-input projection and no computed final emits byte-for-
   byte the same artifact (existing golden/binary probes extended with an
-  explicit "runv absent" assertion);
+  explicit "run_frame absent" assertion);
 * the existing P6 raw-frame modules are the FIRST modules whose export set
-  changes (they gain runv and the layout section); every census/golden count
+  changes (they gain run_frame and the layout section); every census/golden count
   moves in the same commit as the emitter change.
 
 ### 4.4 Computed-final materialization
@@ -482,8 +482,8 @@ emits the result into the output frame:
 A final region containing a capability effect, closure value return, or any
 out-of-subset node keeps today's fail-closed rejection with no partial
 artifact. Mixing a raw-input computed agent with a capability FINAL state is
-rejected in v1: the capability tuple is wire JSON and the runv contract is
-P4-D. An agent that forwards a capability stays on the run2 lane; the mixed
+rejected in computed-frame baseline: the capability tuple is wire JSON and the run_frame contract is
+P4-D. An agent that forwards a capability stays on the run_workflow lane; the mixed
 agent is listed in §11.
 
 ## 5. D4 -- Input packing (inverse encode) and the workflow seam
@@ -527,7 +527,7 @@ packer writes nothing there.
 
 ### 5.3 Workflow packaging (next-slice consumer)
 
-Workflow run2 today forwards opaque frames: a node input is either the
+Workflow run_workflow today forwards opaque frames: a node input is either the
 workflow entry frame or an upstream node's returned `(ptr,len)`
 (`append_workflow_source`, `core_wasm_codegen.cpp:8359-8376`; schedule at
 `:8440-8452`). Projected or constructed node inputs -- "node B receives
@@ -655,16 +655,16 @@ field `x` of node A's output" -- need no in-module JSON:
 
 ## 8. Trust and admission summary
 
-* Two verified sections per P6-frame module: `ahfl.wire-schema.v1` (extended
-  boundary roots) and `ahfl.core-layout.v1` (new), each with deterministic
+* Two verified sections per P6-frame module: `ahfl.wire-schema` (extended
+  boundary roots) and `ahfl.core-layout` (new), each with deterministic
   encode, decode-with-re-encode-equality, and local verification; admission
   additionally verifies their structural consistency and root identity
   against the descriptor, the pairwise-DISJOINTNESS of every declared backing
   placement (§6.2), and the final-kind discriminator against the emitted
-  runv/descriptor contract.
+  run_frame/descriptor contract.
 * The descriptor (`CoreWasmExecutionDescriptor`) gains, for a `p6_frame`
   module: the **final-kind discriminator** (identity vs computed -- the sole
-  authority for runv's authorized `value_ptr` base, §3.4), input/output
+  authority for run_frame's authorized `value_ptr` base, §3.4), input/output
   layout root ids and sizes, per input-reached container backing placements,
   the payload-arena span, and the output frame base. The descriptor remains
   derived solely from the plan that emitted the bytes
@@ -672,8 +672,8 @@ field `x` of node A's output" -- need no in-module JSON:
 * Host walks are read-only over the post-run page and write-only into a fresh
   page before the run; the artifact never gains a host callback for
   serialization.
-* Capability wire frames remain opaque JSON on the run2 lane; the P4-D lane
-  and the wire lane do not mix in v1.
+* Capability wire frames remain opaque JSON on the run_workflow lane; the P4-D lane
+  and the wire lane do not mix in computed-frame baseline.
 
 ## 9. Conformance and census implications
 
@@ -682,15 +682,15 @@ field `x` of node A's output" -- need no in-module JSON:
   merely dropping `node_observation_skip`: the differential agree happens only
   in the rung-E commit where the wasm producer stops classifying them
   `RawP6FrameAwaitsP67` (packer writes their input regions -- struct fields;
-  the bounded list's header plus backing elements; runv returns the input
+  the bounded list's header plus backing elements; run_frame returns the input
   frame base because both fixtures' finals are the literal identity `return
   input;`; the encoder walks that frame -- struct + collection
   header/backing -- to render the manifest's blessed canonical `output_json`).
-  These two rungs prove D4 + the runv identity arm + D1-D2; the
+  These two rungs prove D4 + the run_frame identity arm + D1-D2; the
   computed-return arm is exercised by a new fixture added in rung B (a
   computed final that materializes into the output frame).
 * The rung-E differential also depends on EVALUATOR-ENGINE and manifest/test
-  prerequisites that are independent of the packer/runv work and were missing
+  prerequisites that are independent of the packer/run_frame work and were missing
   at the original design time (verified empirically on `develop`); all three
   landed in the fix-forward commit that revised this gate:
   1. **Bare-builtin-hook dispatch.** The conformance evaluator path
@@ -751,7 +751,7 @@ field `x` of node A's output" -- need no in-module JSON:
   packed observation, or a stale manifest declaration, still fails.
 * The descriptor JSON spelling `raw_p6_frame` is replaced by `p6_frame`
   (`wasm_engine.cpp:40-48`) in that commit; the Node host gains the
-  pack/runv/encode path keyed off it, and refuses a descriptor version it
+  pack/run_frame/encode path keyed off it, and refuses a descriptor version it
   does not understand.
 * The five remaining skips (blocked on KR6.6 computation: `if_let_e2e` x2,
   `enum_variant_e2e`, `e2e_multi_agent` x2) and the one node-only
@@ -767,20 +767,20 @@ and no rung changes identity-module bytes.
 1. **P6-7-A sections and bindings.** Deterministic `CoreLayoutTable` binary
    codec + local verifier (mirror the wire-schema codec pair); extend the wire
    projection with agent input/output boundary roots and a sibling frame-root
-   binding selector; emit/consume `ahfl.core-layout.v1`; layout/wire
+   binding selector; emit/consume `ahfl.core-layout`; layout/wire
    consistency admission; DESCRIPTOR CARRIES THE FINAL-KIND DISCRIMINATOR and
    pairwise-DISJOINT per-container backing placements (§6.2 sum rule; the
    local verifier rejects overlapping placements); descriptor fields for
    roots, placements, arena.
    Host-side unit tests: codec round trip, tamper/re-encode rejection,
-   disagreement rejection, overlapping-placement rejection. No runv yet.
+   disagreement rejection, overlapping-placement rejection. No run_frame yet.
    Identity/capability/workflow modules are byte-identical (they carry
    neither new section); today's two raw-frame modules are the only artifacts
    whose bytes change in this rung (they gain the two sections), and every
    golden/binary probe that pins them moves in the same commit.
 2. **P6-7-B computed-final emission.** `ComputedReturn` planning action;
    final-region materialization (scalar spill, bounded aggregate copy, header
-   copy, zero padding); additive `runv` export and functype; output frame
+   copy, zero padding); additive `run_frame` export and functype; output frame
    constants + capacity gate INCLUDING the output-side
    `fits_frame_region(..., kP6AggregateOutputCapacity, "output", ...)`
    rejection for a computed final (§6.1); reject capability/raw-mixed finals
@@ -798,7 +798,7 @@ and no rung changes identity-module bytes.
 4. **P6-7-D multi-word fn ABI.** By-address PtrLen/Bytes16 fn arguments and
    destination-address returns (§7); layout/verifier updates; recursion/heap
    budget unchanged (addresses add no bytes).
-5. **P6-7-E Node lane and census.** Node host pack/runv/encode path and
+5. **P6-7-E Node lane and census.** Node host pack/run_frame/encode path and
    descriptor bump; unblock the two pinned cases at the WASM-PRODUCER level
    (the descriptor contract flip is what removes the producer's
    `RawP6FrameAwaitsP67` classification); move 14/7 -> 16/5 and drop both
@@ -821,9 +821,9 @@ and no rung changes identity-module bytes.
   the opcode ladder does not).
 * in-module String/Decimal/Duration construction and `map_raw_get` / the
   remaining `CoreUnsupportedExpr` arms in `core_lower.cpp`; computed string
-  outputs are therefore input-reachable only in v1.
+  outputs are therefore input-reachable only in computed-frame baseline.
 * mixing raw-P4-D computation with a capability final in one agent (capability
-  results are wire JSON); such agents stay on run2 or are rejected until a
+  results are wire JSON); such agents stay on run_workflow or are rejected until a
   explicit frame-bridge design.
 * workflow projected-node scheduling mechanics (seam fixed in §5.3, work in
   P6-7-F).

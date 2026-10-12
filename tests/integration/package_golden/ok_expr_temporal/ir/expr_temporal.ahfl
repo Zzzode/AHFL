@@ -57,10 +57,10 @@ contract for self::ExprAgent {
 flow for self::ExprAgent {
     state Init {
         let reply = self::Decide(input);
-        assert (Response {
+        assert((Response {
             note: self::DEFAULT_NOTE,
             result: Status::Pending,
-        }).note == self::DEFAULT_NOTE;
+        }).note == self::DEFAULT_NOTE);
 
         if (input.values[0] + 1) > 2 and ready(reply.note) {
             ctx.note = reply.note;

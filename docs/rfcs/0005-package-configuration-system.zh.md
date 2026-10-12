@@ -57,7 +57,7 @@ decision_due: "2026-07-16"
 1. 不在本 RFC 中设计远程 registry 协议、发布认证、签名或供应链安全。
 2. 不在本 RFC 中稳定 dependency feature flags。
 3. 不在本 RFC 中改变 AHFL 源码的 `import std::option as option;` 表面语法。
-4. 不在本 RFC 中设计 registry source 的 wire protocol；v1 dependency source model 只包含 `sysroot`、`path` 和 `workspace`。
+4. 不在本 RFC 中设计 registry source 的 wire protocol；dependency source model 包含 `sysroot`、`path`、`workspace` 和 `registry`，后者遵循 RFC 0010。
 5. 不为旧 JSON descriptor 提供长期兼容层。
 
 ## Design
@@ -96,8 +96,6 @@ flowchart TD
 普通 package 的最小 `ahfl.toml`：
 
 ```toml
-manifest_version = 1
-
 [package]
 name = "refund-audit"
 version = "0.1.0"
@@ -124,7 +122,6 @@ exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow"
 std = { source = "sysroot" }
 ```
 
-`manifest_version` 是 manifest schema 版本，不等于语言 edition、package version、IR format version 或 handoff artifact format version。
 
 `package.kind` 的初始取值为：
 
@@ -142,7 +139,7 @@ std = { source = "sysroot" }
 | `handoff` | 以某个 workflow / agent / capability surface 生成 native handoff package |
 | `test` | 测试入口，允许 test harness 聚合 fixture |
 
-### Manifest schema v1
+### Current manifest schema
 
 `ahfl.toml` 使用 TOML 1.0 语法。Manifest parser 必须保留 key、value、table header 和 array item 的 source range，以便所有 manifest diagnostics 指向具体字段。
 
@@ -150,22 +147,21 @@ std = { source = "sysroot" }
 
 1. 未知字段和未知 table 一律报错，不做 forward-compatible ignore。
 2. 重复 table、重复 key、错误类型和空字符串字段一律报错。
-3. `manifest_version` 必须是整数 `1`，不得写成字符串。
+3. Manifest 只使用当前字段集合，不含格式选择器；workspace 不声明 resolver 代际表。
 4. 相对路径以当前 manifest 所在目录为基准解析，规范化后不得逃出 package root；唯一例外是 dependency `source = "path"` 的 `path` 字段，因为它显式指向另一个 package root。
 5. package name 使用 kebab-case：`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`。
 6. module prefix 使用 AHFL module identifier：`^[A-Za-z_][A-Za-z0-9_]*$`，不得包含 `::`。
 7. target name 使用 kebab-case 或 snake_case，但在同一个 package 内规范化后不得重复。
-8. `version` 在 v1 必须是 exact semantic version：`MAJOR.MINOR.PATCH`。Version range 属于后续 registry RFC。
-9. `edition` 在 v1 只允许 `"2026"`。
+8. `[package].version` 必须是 exact semantic version：`MAJOR.MINOR.PATCH`。Registry dependency 的 version requirement 遵循 RFC 0010 的 exact/caret/tilde 规则。
+9. `edition` 只允许 `"2026"`。
 
 `ahfl.toml` 字段 contract：
 
 | 字段 | 必填 | 类型 | 约束 |
 | --- | --- | --- | --- |
-| `manifest_version` | 是 | integer | 只允许 `1` |
 | `[package].name` | 是 | string | kebab-case；依赖 key 默认必须与它一致 |
 | `[package].version` | 是 | string | exact SemVer |
-| `[package].edition` | 是 | string | v1 只允许 `"2026"` |
+| `[package].edition` | 是 | string | 当前只允许 `"2026"` |
 | `[package].kind` | 是 | string | `library` / `application` / `standard-library` |
 | `[module].prefix` | 是 | string | package 对外 module prefix |
 | `[module].root` | 是 | string | package 内源码根目录 |
@@ -182,7 +178,6 @@ Schema diagnostics 使用固定分层前缀：
 | --- | --- |
 | `E::manifest_syntax` | `manifest must be valid TOML` |
 | `E::manifest_unknown_field` | `unsupported manifest field 'package.license'` |
-| `E::manifest_type` | `manifest field 'manifest_version' must be an integer` |
 | `E::manifest_required` | `manifest is missing required field 'package.name'` |
 | `E::manifest_invalid_value` | `package.name must be kebab-case` |
 | `E::manifest_path_escape` | `manifest field 'module.root' must not escape package root` |
@@ -220,8 +215,6 @@ Conformance 测试矩阵：
 `std/ahfl.toml` 必须存在，并且由 compiler 作为 sysroot package 加载：
 
 ```toml
-manifest_version = 1
-
 [package]
 name = "std"
 version = "0.1.0"
@@ -277,15 +270,13 @@ allow = [
 
 `compiler_intrinsics.allow` 是标准库调用 `@builtin` 的显式权限清单。非 `standard-library` package 使用 `@builtin` 必须报错。
 
-v1 prelude 策略在本 RFC 中冻结为 `explicit`：编译器不会默认注入 `std::prelude`。用户必须显式 import，或者由后续 stdlib/language RFC 修改该策略。`prelude.injection` 在 v1 只允许 `explicit`，保留该字段是为了让 sysroot package 明确声明当前语言体验，而不是依赖编译器默认值。
+当前 prelude 策略在本 RFC 中冻结为 `explicit`：编译器不会默认注入 `std::prelude`。用户必须显式 import，或者由后续 stdlib/language RFC 修改该策略。`prelude.injection` 只允许 `explicit`，保留该字段是为了让 sysroot package 明确声明当前语言体验，而不是依赖编译器默认值。
 
 ### Workspace manifest
 
 多 package workspace 使用 `ahfl.workspace.toml`：
 
 ```toml
-manifest_version = 1
-
 [workspace]
 name = "commerce-workflows"
 members = [
@@ -293,23 +284,18 @@ members = [
   "packages/risk-review",
 ]
 
-[resolver]
-version = 1
-
 [dependencies]
 std = { source = "sysroot" }
 ```
 
 Workspace 不直接生成 SourceGraph。它只选择 package、统一 resolver 策略，并在需要时生成锁文件。
 
-`ahfl.workspace.toml` 也使用 TOML 1.0 语法，并遵循与 package manifest 相同的未知字段、重复字段、source range 和路径规范化规则。Workspace manifest v1 字段 contract：
+`ahfl.workspace.toml` 也使用 TOML 1.0 语法，并遵循与 package manifest 相同的未知字段、重复字段、source range 和路径规范化规则。Workspace manifest 字段 contract：
 
 | 字段 | 必填 | 类型 | 约束 |
 | --- | --- | --- | --- |
-| `manifest_version` | 是 | integer | 只允许 `1` |
 | `[workspace].name` | 是 | string | kebab-case |
 | `[workspace].members` | 是 | array string | 非空；每项指向一个包含 `ahfl.toml` 的 package root |
-| `[resolver].version` | 是 | integer | 只允许 `1` |
 | `[dependencies]` | 否 | table | 只允许 workspace-wide default dependency specs |
 
 Workspace member 规则：
@@ -322,30 +308,30 @@ Workspace member 规则：
 6. workspace dependency default 不会自动添加依赖；package 仍必须显式列出 dependency key，除非该 dependency 是 `std = { source = "sysroot" }`。
 7. workspace manifest 不允许声明 targets、module roots、exports 或 handoff metadata。
 
-### Dependency source model v1
+### Dependency source model
 
-v1 只允许三种 dependency source：
+当前允许四种 dependency source：
 
 | Source | 语法 | 解析规则 |
 | --- | --- | --- |
 | `sysroot` | `std = { source = "sysroot" }` | 只允许 dependency key 为 `std`；解析到当前 sysroot 的 `std/ahfl.toml` |
 | `path` | `audit-core = { source = "path", path = "../audit-core", version = "0.1.0" }` | `path` 相对当前 manifest；目标目录必须包含 `ahfl.toml`；若写 `version`，必须 exact match |
 | `workspace` | `audit-core = { source = "workspace" }` | 只在 workspace context 中合法；dependency key 必须匹配某个 workspace member 的 `[package].name` |
+| `registry` | `risk-model = { source = "registry", registry = "default", version = "^2.1.0" }` | exact/caret/tilde version requirement；显式 registry resolution 获取并校验源码 |
 
-`registry` source、version range、feature flags 和 package alias 均不属于 v1。Dependency key 必须匹配目标 package name，避免早期引入别名导致 module prefix、artifact identity 和 diagnostics 分裂。
+`registry` source 和 exact/caret/tilde version requirement 按 RFC 0010 的当前规则解析；feature flags 和 package alias 不受支持。Dependency key 必须匹配目标 package name，避免早期引入别名导致 module prefix、artifact identity 和 diagnostics 分裂。
 
 Workspace members 不会自动成为依赖。一个 package 只能 import 自己、`std` 以及显式列在 `[dependencies]` 中的 package。
 
 Package dependency graph 必须是有向无环图。任何 package cycle 都是 `E::package_graph` 错误。`std` 不能依赖用户 package；用户 package 不能声明第二个 `std` 或覆盖 `PackageId(0)`。
 
-### Lockfile contract v1
+### Lockfile contract
 
-`ahfl.lock` v1 使用 JSON。Manifest 使用 TOML 是为了人类编辑；lockfile 使用 JSON 是为了机器校验、稳定 diff 和后续 schema validation。最小格式如下：
+`ahfl.lock` 使用 JSON。Manifest 使用 TOML 是为了人类编辑；lockfile 使用 JSON 是为了机器校验、稳定 diff 和后续 schema validation。最小格式如下：
 
 ```json
 {
-  "format_version": "ahfl.lock.v1",
-  "resolver_version": 1,
+  "format": "ahfl.lock",
   "root_package": "refund-audit",
   "packages": [
     {
@@ -392,7 +378,7 @@ Checksum 规范：
 7. 对 `sysroot std`，checksum 覆盖 `std/ahfl.toml` canonical 表示以及 `std/` module root 下所有 `.ahfl` 源码文件内容。这样 release lockfile 能检测标准库源码与声明不一致。
 8. Canonical TOML 表示由 manifest parser 的 typed model 重新打印：table 和 key 使用 schema order，array 元素保持源顺序，字符串按 TOML basic string escaping 输出。
 
-`ahfl.lock` v1 锁定 package graph identity、dependency source specs、PackageId 分配和 sysroot std 内容。它不承诺冻结 root / path / workspace package 的 `.ahfl` 源码内容；这些源码仍由当前 checkout 提供并由普通 build/test/release artifact 机制验证。若后续需要完整源码可复现性，应由 registry / source archive RFC 定义 source snapshot、artifact attestation 或 content-addressed package source，而不是把本地开发 checkout 的全部源码塞进 v1 lockfile。
+`ahfl.lock` 锁定 package graph identity、dependency source specs、PackageId 分配和 sysroot std 内容。它不承诺冻结 root / path / workspace package 的 `.ahfl` 源码内容；这些源码仍由当前 checkout 提供并由普通 build/test/release artifact 机制验证。若后续需要完整源码可复现性，应由 registry / source archive RFC 定义 source snapshot、artifact attestation 或 content-addressed package source，而不是把本地开发 checkout 的全部源码塞进 lockfile。
 
 ### PackageGraph
 
@@ -466,7 +452,7 @@ Export 条目解析规则：
 2. `foo/bar` 导出 `<module.root>/foo/bar.ahfl`，或目录模块 `<module.root>/foo/bar/mod.ahfl`。
 3. 导出目录模块不隐式导出其子模块。若要公开 `foo/bar`，必须单独写入 `[exports].modules`。
 4. 导出父模块不让依赖方 import 未导出的子模块。
-5. v1 不支持 re-export、glob export 或 alias export；这些语义必须由后续 RFC 定义。
+5. 当前不支持 re-export、glob export 或 alias export；这些语义必须由后续 RFC 定义。
 6. `[exports].modules` 中不存在、路径逃逸、重复或同时命中 single-file 和 directory-module 的条目，都是 PackageGraph 阶段错误。
 7. LSP、formatter 和 diagnostics 必须使用同一 export table；不得在工具层重新推断 public/private。
 
@@ -551,7 +537,7 @@ after:
 
 BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON descriptors 迁移到 TOML package manifests。影响范围包括 CLI 参数、测试 fixture、VS Code/LSP workspace discovery、docs/reference 示例、stdlib packaging 和 release artifact packaging。
 
-本 RFC 还显式 supersede 现有 corelib P6 “prelude 默认导入/默认注入”叙事。`std/ahfl.toml` v1 固定 `prelude.injection = "explicit"`，因此接受本 RFC 后：
+本 RFC 还显式 supersede 现有 corelib P6 “prelude 默认导入/默认注入”叙事。`std/ahfl.toml` 固定 `prelude.injection = "explicit"`，因此接受本 RFC 后：
 
 1. [RFC 0013](./0013-corelib-type-system-evolution.zh.md) 中关于 P6 默认 prelude 注入的状态记录必须改为历史实现记录，而不是新包体系的语言默认。
 2. CLI / LSP / test helper 中为用户便利设置的 `inject_prelude = true` 必须迁移到显式 import、test fixture helper 或后续单独 RFC；不能在 PackageGraph 入口继续作为默认语言语义。
@@ -598,7 +584,7 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 | 5. Sysroot std | 完成 | `std/ahfl.toml`、source-sysroot CLI tests、stdlib unit tests 与 LSP sysroot tests 使用 PackageGraph sysroot；`prelude.injection = "explicit"` 是公开契约 |
 | 6. CLI migration | 完成 | `check`、`fmt`、`dump package-graph`、`dump lockfile`、`emit native-json`、`package-review`、`execution-plan` 和 provider artifact tests 均以 `--manifest` / `--workspace --package --target` 为公开入口 |
 | 7. Tooling migration | 完成 | LSP analysis service、formatter package mode 与 test helper 都从 PackageGraph 构造 `ProjectInput`；工具层不再公开 search-root 或旧 std discovery 入口 |
-| 8. Fixture and docs migration | 完成 | `docs/reference/project-usage.zh.md`、`cli-commands.zh.md`、`user-guide-cli.zh.md` 和 `user-guide-execution.zh.md` 均以 `ahfl.toml` / `ahfl.workspace.toml` 为公开工程模型；旧 JSON descriptor 只作为 negative fixture 存在 |
+| 8. Fixture and docs migration | 完成 | `docs/tutorials/packages.zh.md`、`cli-commands.zh.md`、`cli.zh.md` 和 `execution.zh.md` 均以 `ahfl.toml` / `ahfl.workspace.toml` 为公开工程模型；旧 JSON descriptor 只作为 negative fixture 存在 |
 | 9. Release evidence archive | 完成 | `scripts/generate-release-evidence-archive.py` 固定 non-std package 的 PackageGraph、lockfile 和 repo sysroot check evidence；`ctest --preset test-dev -L release-evidence-archive --output-on-failure` 复跑该发布证据 |
 
 全量验收命令：
@@ -644,9 +630,9 @@ ctest --preset test-dev --output-on-failure
 3. `accepted`：允许开始破坏式迁移；不得再新增旧 descriptor 功能。
 4. `implementing`：以 PackageGraph builder、sysroot std、CLI migration、fixture migration 分 slice 推进。
 5. `implemented`：所有旧公开入口删除，docs/reference 示例全部迁移，ctest 全绿。
-6. `stabilized`：spec/reference/release evidence 均反映新包体系，且后续 registry / feature / publishing RFC 不改变 v1 manifest identity contract。
+6. `stabilized`：spec/reference/release evidence 均反映新包体系，且当前 manifest 字段和实现保持同步。
 
-当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 non-std package graph、v1 lockfile、普通用户 package 使用 repo sysroot、source-sysroot corelib 开发、VSIX bundled sysroot contract 和 RFC 0007 multi-root profile contract；[RFC 0010](./0010-registry-publishing-semver.zh.md) 已明确 registry、publishing、version range、source archive 与 publish-time public API compatibility gate 不回填到 RFC 0005 v1 manifest identity。
+当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 non-std package graph、lockfile、普通用户 package 使用 repo sysroot、source-sysroot corelib 开发、VSIX bundled sysroot contract 和 RFC 0007 multi-root profile contract；[RFC 0010](./0010-registry-publishing-semver.zh.md) 使用同一当前 manifest 描述 registry dependencies，publishing、source archive 与 SemVer gate 按其各自职责校验。
 
 ## Alternatives
 
@@ -658,9 +644,9 @@ ctest --preset test-dev --output-on-failure
 
 ## Open Questions
 
-1. Registry source 的最小字段集合已转入 [RFC 0010](./0010-registry-publishing-semver.zh.md)，不属于 v1 manifest。
+1. Registry source 的最小字段集合已转入 [RFC 0010](./0010-registry-publishing-semver.zh.md)，使用唯一当前 manifest。
 2. Dependency feature flags 等 trait/std/package graph 稳定后另行 RFC 化。
-3. Package publishing metadata 由 [RFC 0010](./0010-registry-publishing-semver.zh.md) 定义为 manifest v2 或 registry metadata，不回填到 v1 contract。
+3. Package publishing metadata 和 registry 依赖由 [RFC 0010](./0010-registry-publishing-semver.zh.md) 定义，使用当前 manifest 和 registry metadata。
 
 ## Decision History
 
@@ -668,5 +654,7 @@ ctest --preset test-dev --output-on-failure
 - 2026-07-02: Moved to review after owner fields, tracking records, and TOML parser conformance strategy were completed.
 - 2026-07-02: Added GitHub issue #13 as the real tracking / discussion record, clarified lockfile checksum boundaries, and replaced the linear implementation list with reviewable PR slices.
 - 2026-07-07: Marked implemented after completion audit found TOML parser, manifest schema, PackageGraph, lockfile, sysroot std, CLI, LSP/formatter/test helper migration, docs/reference migration, and legacy descriptor negative tests all landed in the current checkout.
-- 2026-07-07: Moved registry source and package publishing metadata follow-up into RFC 0010 so manifest v1 identity remains stable.
-- 2026-07-07: Marked stabilized after the release evidence archive covered package graph, lockfile, user package sysroot, source-sysroot, VSIX bundled sysroot, and multi-root toolchain profile evidence, with RFC 0010 preserving the v1 manifest identity boundary.
+- 2026-07-07: Moved registry source and package publishing metadata follow-up into RFC 0010 so manifest identity remains stable.
+- 2026-07-07: Marked stabilized after the release evidence archive covered package graph, lockfile, user package sysroot, source-sysroot, VSIX bundled sysroot, and multi-root toolchain profile evidence, with RFC 0010 preserving the 当前 manifest identity boundary.
+
+- 2026-10-12: Manifest 和 workspace 不再携带格式或 resolver 代际字段；只接受当前字段集合，registry 依赖直接使用同一 schema。

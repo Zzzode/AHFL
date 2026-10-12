@@ -103,7 +103,7 @@ int main(int argc, char **argv) {
         server.start();
 
         std::cerr << "ahfl-registry listening on http://" << options.server.host << ":"
-                  << server.port() << "/v1 (storage: " << options.storage << ")\n";
+                  << server.port() << " (storage: " << options.storage << ")\n";
 
         std::thread runner([&server] { server.serve(); });
         while (g_shutdown_requested == 0) {

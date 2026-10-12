@@ -23,7 +23,7 @@ agent BadAssertAgent {
 
 flow for BadAssertAgent {
     state Init {
-        assert input;
+        assert(input);
         goto Done;
     }
 

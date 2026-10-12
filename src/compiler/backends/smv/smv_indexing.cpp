@@ -8,6 +8,7 @@ using namespace smv_detail;
 void SmvPrinter::index_declarations(const ir::Program &program) {
     program_ = &program;
     index_.rebuild(program);
+    contract_clause_index_.rebuild(program);
     contracts_.clear();
     workflows_.clear();
     state_variables_.clear();
@@ -18,6 +19,7 @@ void SmvPrinter::index_declarations(const ir::Program &program) {
     defines_.clear();
     assignments_.clear();
     specs_.clear();
+    model_ = {};
 
     // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per Decl alternative, generated
     // from the X-list decl_nodes.def. Only contract and workflow declarations
@@ -97,6 +99,14 @@ void SmvPrinter::index_observations(const ir::Program &program) {
                     }
                 },
                 [&](const ir::EmbeddedBoolObservation &value) {
+                    if (value.scope.kind == ir::FormalObservationScopeKind::ContractClause) {
+                        const auto location = contract_clause_index_.find_clause(
+                            value.scope.owner, value.scope.clause_index);
+                        if (location && std::holds_alternative<ir::ExprRef>(
+                                location->contract->clauses[location->local_index].value)) {
+                            return;
+                        }
+                    }
                     if (!embedded_observation_requires_variable(value.scope)) {
                         return;
                     }
@@ -125,13 +135,6 @@ MaybeCRef<ir::AgentDecl> SmvPrinter::find_agent(std::string_view canonical_name)
     }
 
     return std::nullopt;
-}
-
-bool SmvPrinter::agent_has_contract(const ir::AgentDecl &agent) const {
-    const auto agent_name = ir::symbol_canonical_name(agent.symbol_ref, agent.name);
-    return std::ranges::any_of(contracts_, [&](const auto &contract) {
-        return ir::symbol_canonical_name(contract.get().target_ref) == agent_name;
-    });
 }
 
 std::unordered_map<std::string, SmvWorkflowNodeInfo>
@@ -193,14 +196,9 @@ std::string SmvPrinter::with_source(std::string description,
 
 std::string SmvPrinter::contract_clause_source_suffix(std::string_view owner,
                                                       std::size_t clause_index) const {
-    for (const auto &contract : contracts_) {
-        if (ir::symbol_canonical_name(contract.get().target_ref) != owner ||
-            clause_index >= contract.get().clauses.size()) {
-            continue;
-        }
-
-        const auto &clause = contract.get().clauses[clause_index];
-        return source_suffix(contract.get().provenance.source_path, clause.source_range);
+    if (const auto location = contract_clause_index_.find_clause(owner, clause_index)) {
+        const auto &clause = location->contract->clauses[location->local_index];
+        return source_suffix(location->contract->provenance.source_path, clause.source_range);
     }
 
     return {};
@@ -295,18 +293,12 @@ const ir::Expr *SmvPrinter::find_embedded_expr_by_atom(const ir::TemporalExpr &e
 const ir::Expr *
 SmvPrinter::find_embedded_observation_expr(const ir::FormalObservationScope &scope) const {
     if (scope.kind == ir::FormalObservationScopeKind::ContractClause) {
-        for (const auto &contract : contracts_) {
-            if (ir::symbol_canonical_name(contract.get().target_ref) != scope.owner ||
-                scope.clause_index >= contract.get().clauses.size()) {
-                continue;
-            }
-
-            const auto &clause = contract.get().clauses[scope.clause_index];
+        if (const auto location = contract_clause_index_.find_clause(scope.owner, scope.clause_index)) {
+            const auto &clause = location->contract->clauses[location->local_index];
             if (const auto *expr = std::get_if<ir::ExprRef>(&clause.value);
                 expr != nullptr && scope.atom_index == 0) {
                 return expr->get();
             }
-
             if (const auto *temporal = std::get_if<ir::TemporalExprPtr>(&clause.value);
                 temporal != nullptr) {
                 std::size_t current_atom = 0;
@@ -394,7 +386,7 @@ std::vector<std::string> SmvPrinter::collect_called_guards(std::string_view agen
 
     const auto agent = find_agent(agent_name);
     const auto flow = find_flow(agent_name);
-    if (!agent.has_value() || !flow.has_value() || !agent_has_contract(agent->get())) {
+    if (!agent.has_value() || !flow.has_value()) {
         return guards;
     }
 

@@ -171,7 +171,7 @@ void programs_component_equal(const ir::core::CoreProgram &full,
     auto component = [&](bool component_equal, const std::string &name) {
         check(component_equal, label + ": " + name + " unchanged by verification erasure");
     };
-    component(full.format_version == stripped.format_version, "format_version");
+    component(full.format == stripped.format, "format");
     component(full.types == stripped.types, "types");
     component(full.value_types == stripped.value_types, "value_types");
     component(full.capabilities == stripped.capabilities, "capabilities");
@@ -640,7 +640,7 @@ void run_idempotency(const std::string &label, const std::string &source) {
     auto component = [&](bool component_equal, const std::string &name) {
         check(component_equal, label + ": idempotent " + name);
     };
-    component(first.program.format_version == second.program.format_version, "format_version");
+    component(first.program.format == second.program.format, "format");
     component(first.program.types == second.program.types, "types");
     component(first.program.value_types == second.program.value_types, "value_types");
     component(first.program.capabilities == second.program.capabilities, "capabilities");

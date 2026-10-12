@@ -62,8 +62,8 @@ KR6.6/P6 的表达式、match、coercion、aggregate、bounded collection 已在
    Custom 段(`:5288-5297`);段 id 4(Table)与 9(Element)无常量、无发射。
    opcode 有 `call`(`kOpCall = 0x10`,`:164`)但无 `call_indirect`
    (0x11)。函数索引空间 = 可选 capability import 占低位 + 7 个固定 ABI
-   函数(alloc/dealloc/current_state/is_final/step/run/run2,
-   `kDefinedAlloc = 0` .. `kDefinedRun2 = 6`,`:237-243`)+ P6-2 起的
+   函数(alloc/dealloc/current_state/is_final/step/run/run_workflow,
+   `kDefinedAlloc = 0` .. `kDefinedWorkflowRun = 6`,`:237-243`)+ P6-2 起的
    computed handler(`kDefinedHandlerBase = 7`,`:247`;`FunctionTable` 结构与
    投影规则 `:354-377`,`WorkflowFunctionTable` 为 `:379-398`)。
 
@@ -570,7 +570,7 @@ let/assign/if/ifLet/goto/return/assert/unwrap/requires/unreachable/expr
 ### 6.1 函数索引空间扩展(在现有 PROJECT 规则上追加,不改写既有字节)
 
 现状:import 占低位 → 固定 7 ABI 函数(import_count+0..6,
-`kDefinedAlloc..kDefinedRun2`,`core_wasm_codegen.cpp:237-243`)→ P6-2
+`kDefinedAlloc..kDefinedWorkflowRun`,`core_wasm_codegen.cpp:237-243`)→ P6-2
 computed handler(import_count+7..,`kDefinedHandlerBase = 7` 在 `:247`,
 `FunctionTable` `:354-377`)。**保持 E1-E3/P6 既有模块字节不变**的前提下
 追加:
@@ -578,7 +578,7 @@ computed handler(import_count+7..,`kDefinedHandlerBase = 7` 在 `:247`,
 ```text
 [0, import_count)                    capability imports(ahfl_cap)
 [import_count+0 .. +6]               固定 ABI(alloc/dealloc/current_state/
-                                     is_final/step/run/run2)
+                                     is_final/step/run/run_workflow)
 [import_count+7 .. +7+H)             P6-2 computed handlers(H=handler_count)
 [import_count+7+H .. +7+H+F)         FB-1:outlined fn bodies(F=被 reachability
                                      触达的 CoreFnDecl 数,确定性排序)
@@ -587,7 +587,7 @@ computed handler(import_count+7..,`kDefinedHandlerBase = 7` 在 `:247`,
 
 - `FunctionTable` 增加 `fn_count` 与 `fn(ordinal)` 投影(与
   `handler(index)` 同形,后者在 `:371-373`);workflow 模块的
-  `WorkflowFunctionTable`(`:379-398`)在其 runner/run2 投影之后做相同追加。
+  `WorkflowFunctionTable`(`:379-398`)在其 runner/run_workflow 投影之后做相同追加。
 - fn 函数的 codegen 复用 P6 的 scalar/aggregate/coerce/match emitter
   (`emit_expr` 起于 `core_wasm_codegen.cpp:3049`;fn 体是第三类 body owner,
   与 agent plan 共享 emitter,不写第二套表达式编译器)。
@@ -666,9 +666,9 @@ computed handler(import_count+7..,`kDefinedHandlerBase = 7` 在 `:247`,
 
 ### 6.4 与现有 frame 门控的衔接
 
-直调纯 fn 不跨越 run2 边界(同一 wasm 调用栈内完成),因此不引入
+直调纯 fn 不跨越 run_workflow 边界(同一 wasm 调用栈内完成),因此不引入
 wire-JSON 封送;fn 内部若产生 aggregate,地址在模块私有线性内存内,沿用
-P6 raw-frame 证据规则。只有 §5.3 FB-4 的效果 fn 调用触及 run2/帧,故与
+P6 raw-frame 证据规则。只有 §5.3 FB-4 的效果 fn 调用触及 run_workflow/帧,故与
 P6-7 绑定。
 
 ## 7. 与 evaluator 退役(KR6.8)及 WASM conformance 的关系

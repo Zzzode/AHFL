@@ -6,7 +6,7 @@
 // Seam (RFC 0026 lines 751-752): a Wasm module cannot attest whether a given
 // `ahfl_cap` callback was memo-replayed, injected, or live -- the import sees
 // only `(status, ptr, len)`. The callback's `source_state` is recorded by the
-// PRODUCTION HOST at each import, and at the run2 boundary it is JOINED with
+// PRODUCTION HOST at each import, and at the run_workflow boundary it is JOINED with
 // the module event log by manifest coordinate into an authenticated host
 // envelope; NO-REINVOKE is proven by THAT envelope together with the
 // ledger/manifest gate, never by the module event record alone.

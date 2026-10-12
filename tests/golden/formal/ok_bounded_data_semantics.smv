@@ -1,6 +1,6 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
+-- Control verification only; expression-valued data contracts use the opt-in SMT path.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__formal_bounded_data_semantics_BoundedAgent__state => agent formal::bounded_data_semantics::BoundedAgent state @ formal/bounded_data_semantics.ahfl:167-368
 -- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state => workflow formal::bounded_data_semantics::BoundedWorkflow node run state @ formal/bounded_data_semantics.ahfl:718-748
@@ -12,7 +12,6 @@
 -- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failed => workflow formal::bounded_data_semantics::BoundedWorkflow node run failed @ formal/bounded_data_semantics.ahfl:718-748
 -- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovering => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovering @ formal/bounded_data_semantics.ahfl:718-748
 -- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovered => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovered @ formal/bounded_data_semantics.ahfl:718-748
--- AHFL_MAP G (((agent__formal_bounded_data_semantics_BoundedAgent__state = Done)) -> (((1 + 1) = 2))) => contract formal::bounded_data_semantics::BoundedAgent ensures[1] @ formal/bounded_data_semantics.ahfl:422-442
 -- AHFL_MAP G ((TRUE & (2 > 1))) => contract formal::bounded_data_semantics::BoundedAgent invariant[2] @ formal/bounded_data_semantics.ahfl:447-484
 -- AHFL_MAP (G (!workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested) -> (G ((! (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running) | ((1 + 1) = 2))))) => workflow formal::bounded_data_semantics::BoundedWorkflow safety[0] @ formal/bounded_data_semantics.ahfl:762-803
 -- AHFL_MAP (G (!workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested) -> (F ((workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed & (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done))))) => workflow formal::bounded_data_semantics::BoundedWorkflow liveness[0] @ formal/bounded_data_semantics.ahfl:819-850
@@ -59,9 +58,10 @@ ASSIGN
     workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RUNNING & workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested : AHFL_NODE_FAILED;
     TRUE : workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase;
   esac;
--- contract formal::bounded_data_semantics::BoundedAgent requires[0] bounded_precondition_assumption: TRUE
--- contract formal::bounded_data_semantics::BoundedAgent ensures[1]
-LTLSPEC G (((agent__formal_bounded_data_semantics_BoundedAgent__state = Done)) -> (((1 + 1) = 2)))
+LTLSPEC agent__formal_bounded_data_semantics_BoundedAgent__state = Init
+LTLSPEC G ((agent__formal_bounded_data_semantics_BoundedAgent__state = Init) -> X (((agent__formal_bounded_data_semantics_BoundedAgent__state = Init) | (agent__formal_bounded_data_semantics_BoundedAgent__state = Done))))
+LTLSPEC G ((agent__formal_bounded_data_semantics_BoundedAgent__state = Done) -> X ((agent__formal_bounded_data_semantics_BoundedAgent__state = Done)))
+LTLSPEC G ((agent__formal_bounded_data_semantics_BoundedAgent__state = Done) -> X (agent__formal_bounded_data_semantics_BoundedAgent__state = Done))
 -- contract formal::bounded_data_semantics::BoundedAgent invariant[2]
 LTLSPEC G ((TRUE & (2 > 1)))
 -- workflow formal::bounded_data_semantics::BoundedWorkflow node run lifecycle[completed_final]

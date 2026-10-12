@@ -60,10 +60,7 @@ using TypePtr = const Type *;
 // ============================================================================
 //
 // Every type kind has a per-alternative struct so the payload of a Type is a
-// std::variant<...>. New code SHOULD operate on the payload through Type::visit
-// (Task #4) or Type::get_if<...>; existing code may continue to use the legacy
-// kind/name/first/second mirror fields, which the factories keep in sync with
-// the variant.
+// std::variant<...>. Access the payload through Type::visit or Type::get_if.
 
 // RFC 0013 P2-S1 (R0): `scope_id` identifies the generic declaration whose
 // type-param scope a TypeVar belongs to. `index` alone is per-declaration,
@@ -222,12 +219,6 @@ struct Type {
         return std::holds_alternative<Alt>(payload);
     }
 
-    // After interning, cloning is a no-op identity. The signature is kept so
-    // existing call sites that wrote `type->clone()` keep compiling without
-    // dereferencing changes; semantically these now share the canonical node.
-    [[nodiscard]] TypePtr clone() const noexcept {
-        return this;
-    }
 
     [[nodiscard]] std::string describe() const {
         return visit(types::Overloads{

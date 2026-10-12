@@ -498,6 +498,24 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
         if (clone.node_id != 0) {
             clone.node_id = program.next_instance_node_id++;
         }
+        clone.type = substitute_type(clone.type, body_subst, subst_scope_id, types);
+        if (clone.try_info.has_value()) {
+            auto &info = *clone.try_info;
+            info.operand_enum_type =
+                substitute_type(info.operand_enum_type, body_subst, subst_scope_id, types);
+            info.return_enum_type =
+                substitute_type(info.return_enum_type, body_subst, subst_scope_id, types);
+            if (info.failure_adjustment.has_value()) {
+                auto &plan = *info.failure_adjustment;
+                plan.source = substitute_type(plan.source, body_subst, subst_scope_id, types);
+                plan.target = substitute_type(plan.target, body_subst, subst_scope_id, types);
+                for (auto &node : plan.nodes) {
+                    node.source = substitute_type(node.source, body_subst, subst_scope_id, types);
+                    node.target = substitute_type(node.target, body_subst, subst_scope_id, types);
+                }
+            }
+        }
+
         // Children remap happens below.
         program.expressions.push_back(std::move(clone));
         work.cost += kMonoBudgetPerExpr;
@@ -825,14 +843,5 @@ const char *to_string(AssertionKind kind) noexcept {
     return "";
 }
 
-AssertionKind parse_assertion_kind(std::string_view s) noexcept {
-    if (s.empty()) return AssertionKind::None;
-    if (s == "assert")      return AssertionKind::Assert;
-    if (s == "unwrap")      return AssertionKind::Unwrap;
-    if (s == "requires")    return AssertionKind::Requires;
-    if (s == "unreachable") return AssertionKind::Unreachable;
-    // Unknown future spellings map to None rather than crashing.
-    return AssertionKind::None;
-}
 
 } // namespace ahfl

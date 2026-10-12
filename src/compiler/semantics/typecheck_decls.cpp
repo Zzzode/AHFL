@@ -113,7 +113,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             const auto &decl = std::get<ast::ModuleDecl>(declaration);
             hir_->append_declaration(TypedDecl{
                 .kind = declaration_kind,
-                .symbol = {},
+                .symbol = std::nullopt,
                 .range = declaration_range,
                 .source_id = state_->current_source_id,
                 .associated_agent_symbol = std::nullopt,
@@ -130,7 +130,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             const auto &decl = std::get<ast::ImportDecl>(declaration);
             hir_->append_declaration(TypedDecl{
                 .kind = declaration_kind,
-                .symbol = {},
+                .symbol = std::nullopt,
                 .range = declaration_range,
                 .source_id = state_->current_source_id,
                 .associated_agent_symbol = std::nullopt,
@@ -301,7 +301,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
         }
         case ast::NodeKind::TraitDecl: {
             // C-2 (Wave-24): traits live in the Traits namespace. Check
-            // Traits first, then fall back to Types (legacy path).
+            // Traits first, then fall back to Types (type namespace).
             const auto &decl = std::get<ast::TraitDecl>(declaration);
             auto symbol = find_local(SymbolNamespace::Traits, decl.name);
             if (!symbol.has_value()) {
@@ -324,8 +324,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
         case ast::NodeKind::ImplDecl: {
             // P3 (RFC §3.2.2 / type-system §1.4): impl blocks have no name;
             // index them under their source-order index. The TypedDecl record
-            // uses an empty SymbolId so downstream consumers can recognise the
-            // impl by kind alone.
+            // has no SymbolId; its identity is the flat declaration index.
             const auto &decl = std::get<ast::ImplDecl>(declaration);
             const auto impl_index = index_->impl_decls.size();
             index_->impl_decls.emplace(impl_index,
@@ -335,7 +334,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                                        });
             hir_->append_declaration(TypedDecl{
                 .kind = declaration_kind,
-                .symbol = {},
+                .symbol = std::nullopt,
                 .range = declaration_range,
                 .source_id = state_->current_source_id,
                 .associated_agent_symbol = std::nullopt,
@@ -524,14 +523,14 @@ EnvironmentBuildResult DeclarationSema::run() {
         // be consumed without borrowing environment map storage.
         switch (decl.kind) {
         case ast::NodeKind::ConstDecl:
-            if (const auto type = driver_->environment().get_const_type(decl.symbol);
+            if (const auto type = driver_->environment().get_const_type(decl.symbol.value());
                 type.has_value()) {
-                update.type = type->get().clone();
+                update.type = &type->get();
             }
-            if (const auto ast_decl_iter = driver_->const_decls_.find(decl.symbol.value);
+            if (const auto ast_decl_iter = driver_->const_decls_.find(decl.symbol.value().value);
                 ast_decl_iter != driver_->const_decls_.end()) {
                 const auto &ast_decl = ast_decl_iter->second.get();
-                const auto symbol = driver_->symbol_of(decl.symbol);
+                const auto symbol = driver_->symbol_of(decl.symbol.value());
                 update.payload = ConstDeclInfo{
                     .canonical_name = symbol.has_value() ? symbol->get().canonical_name
                                                          : std::string(ast_decl.name),
@@ -544,9 +543,10 @@ EnvironmentBuildResult DeclarationSema::run() {
             }
             break;
         case ast::NodeKind::TypeAliasDecl:
-            if (const auto ast_decl = driver_->alias_decl_of(decl.symbol); ast_decl.has_value()) {
+            if (const auto ast_decl = driver_->alias_decl_of(decl.symbol.value());
+                ast_decl.has_value()) {
                 const auto &alias = ast_decl->get();
-                const auto symbol = driver_->symbol_of(decl.symbol);
+                const auto symbol = driver_->symbol_of(decl.symbol.value());
 
                 // Collect type param names and push scope so the aliased type
                 // can resolve type variables.
@@ -569,7 +569,7 @@ EnvironmentBuildResult DeclarationSema::run() {
                 driver_->current_type_param_scope_id_ = prev_alias_scope_id;
 
                 update.payload = TypeAliasDeclInfo{
-                    .symbol = decl.symbol,
+                    .symbol = decl.symbol.value(),
                     .canonical_name =
                         symbol.has_value() ? symbol->get().canonical_name : std::string(alias.name),
                     .local_name = alias.name,
@@ -582,32 +582,38 @@ EnvironmentBuildResult DeclarationSema::run() {
             }
             break;
         case ast::NodeKind::StructDecl:
-            if (auto info = driver_->environment().get_struct(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_struct(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
         case ast::NodeKind::EnumDecl:
-            if (auto info = driver_->environment().get_enum(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_enum(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
         case ast::NodeKind::CapabilityDecl:
-            if (auto info = driver_->environment().get_capability(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_capability(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
         case ast::NodeKind::PredicateDecl:
-            if (auto info = driver_->environment().get_predicate(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_predicate(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
         case ast::NodeKind::AgentDecl:
-            if (auto info = driver_->environment().get_agent(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_agent(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
         case ast::NodeKind::WorkflowDecl:
-            if (auto info = driver_->environment().get_workflow(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_workflow(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
@@ -615,7 +621,7 @@ EnvironmentBuildResult DeclarationSema::run() {
             // P2 (RFC §3.2.2): copy FnTypeInfo out of TypeEnvironment so the
             // typed program carries the resolved fn signature for downstream
             // passes (LSP hover, lowering, future monomorphization).
-            if (auto info = driver_->environment().get_fn(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_fn(decl.symbol.value()); info.has_value()) {
                 update.payload = info->get();
             }
             break;
@@ -623,7 +629,8 @@ EnvironmentBuildResult DeclarationSema::run() {
             // P3 (RFC §3.2.2 / type-system §1.3): copy TraitTypeInfo out of
             // TypeEnvironment so downstream passes (LSP hover, dump) read it
             // from the typed program without borrowing the env map storage.
-            if (auto info = driver_->environment().get_trait(decl.symbol); info.has_value()) {
+            if (auto info = driver_->environment().get_trait(decl.symbol.value());
+                info.has_value()) {
                 update.payload = info->get();
             }
             break;
@@ -1269,7 +1276,7 @@ void DeclarationSema::build_fn_types() {
                 // capability symbols; Pure/Nondet pass through directly.
                 info.effect.judgement = build_effect_judgement(clause);
 
-                // P4a (RFC §3.4 / §4.5 V2): effect Pure functions must declare
+                // P4a (RFC §3.4 / §4.5): effect Pure functions must declare
                 // a `decreases` termination measure (unless the function has no
                 // body — i.e. it's a declaration only, like an extern or trait
                 // method signature — in which case the measure is supplied by
@@ -1355,7 +1362,7 @@ EffectJudgement DeclarationSema::build_effect_judgement(const ast::EffectClauseS
     return EffectJudgement::make_pure();
 }
 
-// P4a (RFC corelib-effect-system.zh.md §2.6.4 / §4.5 V2): check that a
+// P4a (RFC corelib-effect-system.zh.md §2.6.4 / §4.5): check that a
 // function's inferred body effect is covered by its declared effect. The
 // declared effect must be an upper bound of the body effect (body ⊑ declared).
 // If the body effect is stronger (i.e. not covered by the declared effect),
@@ -1531,7 +1538,7 @@ void DeclarationSema::build_trait_types() {
                 if (super_ref.has_value()) {
                     super_id = super_ref->get().target;
                 } else {
-                    // Fallback 1: TypeName reference (legacy path / cross-module)
+                    // Fallback 1: TypeName reference (cross-module type namespace)
                     const auto type_ref =
                         find_reference_here(ReferenceKind::TypeName, super_type->range);
                     if (type_ref.has_value()) {
@@ -1540,7 +1547,7 @@ void DeclarationSema::build_trait_types() {
                 }
                 if (!super_id.has_value()) {
                     // Fallback 2: direct namespace lookup — try Traits first,
-                    // then Types (legacy).
+                    // then Types (type namespace).
                     const auto super_spelling = super_type->as<ast::NamedType>().name->spelling();
                     auto fb = find_local_here(SymbolNamespace::Traits, super_spelling);
                     if (!fb.has_value()) {
@@ -1835,7 +1842,7 @@ void DeclarationSema::build_impl_types() {
                     if (trait_bound_ref.has_value()) {
                         trait_id = trait_bound_ref->get().target;
                     } else {
-                        // Fallback 1: TypeName reference (legacy / cross-module)
+                        // Fallback 1: TypeName reference (cross-module type namespace)
                         const auto type_ref =
                             find_reference_here(ReferenceKind::TypeName, decl.trait_ref->range);
                         if (type_ref.has_value()) {
@@ -1844,7 +1851,7 @@ void DeclarationSema::build_impl_types() {
                     }
                     if (!trait_id.has_value()) {
                         // Fallback 2: direct namespace lookup — Traits first,
-                        // then Types (legacy).
+                        // then Types (type namespace).
                         const auto trait_spelling =
                             decl.trait_ref->as<ast::NamedType>().name->spelling();
                         auto fb = find_local_here(SymbolNamespace::Traits, trait_spelling);
@@ -2223,7 +2230,7 @@ void DeclarationSema::build_contract_types_in_program(const ast::Program &progra
         }
 
         ContractTypeInfo info{
-            .symbol = target->get().target,
+            .source_id = driver_->current_source_id_,
             .target_name = decl.target->spelling(),
             .target_symbol = target->get().target,
             .target_range = decl.target->range,
@@ -2246,7 +2253,6 @@ void DeclarationSema::build_contract_types_in_program(const ast::Program &progra
                 .expr_range = expr_range,
                 .source_range = clause->range,
                 .has_decreases = static_cast<bool>(clause->decreases),
-                .decreases_exprs = {},
                 // P4.S7b: standalone ContractClauseKind::Decreases carries
                 // the wildcard flag on `clause->is_wildcard`; the attached
                 // `clause->decreases` syntax is only used for per-clause
@@ -2263,19 +2269,17 @@ void DeclarationSema::build_contract_types_in_program(const ast::Program &progra
                 .decreases_range = clause->decreases ? clause->decreases->range : SourceRange{},
             };
             if (clause->decreases) {
-                clause_info.decreases_exprs.reserve(clause->decreases->decreases_exprs.size());
                 clause_info.decreases_expr_ranges.reserve(
                     clause->decreases->decreases_exprs.size());
                 for (const auto &decr_expr : clause->decreases->decreases_exprs) {
                     const SourceRange range = decr_expr ? decr_expr->range : SourceRange{};
-                    clause_info.decreases_exprs.push_back(DecreasesExprInfo{.expr_range = range});
                     clause_info.decreases_expr_ranges.push_back(range);
                 }
             }
             info.clauses.push_back(std::move(clause_info));
         }
 
-        environment().contracts_.emplace(target->get().target.value, std::move(info));
+        environment().contracts_.push_back(std::move(info));
     }
 }
 

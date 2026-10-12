@@ -17,7 +17,7 @@
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "base/support/json.hpp"
 
@@ -68,7 +68,6 @@ void check(bool ok, std::string_view name) {
 [[nodiscard]] std::optional<VerifiedWireSchemaBinding>
 make_result_binding(std::vector<CoreWireSchemaNode> nodes, std::uint32_t root_index) {
     CoreWireSchemaTable table;
-    table.format_version = 1;
     table.nodes = std::move(nodes);
     CoreWireCapabilitySchema cap;
     cap.capability = CoreCapabilityId{0};
@@ -404,7 +403,6 @@ void test_root_locality() {
     // node 0: Bool (this Result root). node 1: Decimal (unbounded), reachable only
     // from a second capability's result.
     CoreWireSchemaTable table;
-    table.format_version = 1;
     table.nodes.push_back(bool_node());    // 0
     table.nodes.push_back(decimal_node()); // 1
     CoreWireCapabilitySchema cap0;

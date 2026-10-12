@@ -538,7 +538,7 @@ enum class FormalObservationScopeKind {
 struct FormalObservationScope {
     FormalObservationScopeKind kind{FormalObservationScopeKind::ContractClause};
     std::string owner;           // Owning Agent or Workflow
-    std::size_t clause_index{0}; // Clause index
+    std::size_t clause_index{0}; // Contract: Agent-wide ordinal; workflow: local clause index
     std::size_t atom_index{0};   // Atom index
 };
 

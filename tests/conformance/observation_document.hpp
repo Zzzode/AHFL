@@ -6,7 +6,7 @@
 // Serializes one engine run into the canonical observation DOM that the
 // differential comparator (observation_compare.hpp) consumes:
 //
-//   {"schema":"ahfl.evaluator-observation.v1","case":...,"scenario":...,
+//   {"format":"ahfl.evaluator-observation","case":...,"scenario":...,
 //    "status":"completed"|"suspended"|"failed",
 //    "state_sequence":[{"agent":...,"state":...},...],
 //    "capability_sequence":["module::Cap",...],

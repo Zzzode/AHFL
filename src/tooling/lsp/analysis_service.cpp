@@ -3,6 +3,7 @@
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 #include "base/support/sha256.hpp"
+#include "base/json/json_value.hpp"
 #include "compiler/package_graph/package_graph.hpp"
 #include "compiler/project_discovery/discovery.hpp"
 
@@ -11,6 +12,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <system_error>
 #include <type_traits>
@@ -22,8 +24,8 @@ namespace ahfl::lsp {
 
 namespace {
 
-constexpr std::string_view kWorkspaceIndexSchemaVersion = "lsp-workspace-index-v1";
-constexpr std::string_view kWorkspaceIndexIdentitySchemaVersion = "lsp-workspace-index-identity-v1";
+constexpr std::string_view kWorkspaceIndexFormat = "lsp-workspace-index";
+constexpr std::string_view kWorkspaceIndexIdentityFormat = "lsp-workspace-index-identity";
 constexpr std::size_t kExtraSourceUnitIdBase = std::size_t{1} << 48U;
 constexpr std::string_view kDiagnosticDetachedSourceUnit = "N::detached_source_unit";
 constexpr std::string_view kDiagnosticDetachedImport = "E::detached_import";
@@ -798,14 +800,14 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
 
 [[nodiscard]] std::string sysroot_primitive_index_cache_key(const LspToolchainCacheKey &key) {
     return key.std_manifest + "#" + key.std_identity + "#" +
-           std::string{kSysrootPrimitiveHomeSchemaVersion};
+           std::string{kSysrootPrimitiveHomeFormat};
 }
 
 [[nodiscard]] std::string sysroot_index_cache_key_prefix(const LspToolchainCacheKey &key) {
     return key.analysis_mode + "#" + key.workspace_folder_uri + "#" + key.root_manifest + "#" +
            key.workspace_manifest + "#" + key.package_graph_identity + "#" + key.std_manifest +
-           "#" + key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
-           key.index_identity_schema_version + "#";
+           "#" + key.std_identity + "#" + key.scope + "#" + key.index_format + "#" +
+           key.index_identity_format + "#";
 }
 
 [[nodiscard]] std::string
@@ -822,8 +824,8 @@ sysroot_index_cache_key(const LspToolchainCacheKey &key,
 workspace_root_index_cache_key_prefix(const std::filesystem::path &workspace_root,
                                       const package_graph::PackageGraph &graph) {
     return AnalysisService::uri_from_path(workspace_root) + "#" + package_graph_identity(graph) +
-           "#" + std::string{kWorkspaceIndexSchemaVersion} + "#" +
-           std::string{kWorkspaceIndexIdentitySchemaVersion} + "#";
+           "#" + std::string{kWorkspaceIndexFormat} + "#" +
+           std::string{kWorkspaceIndexIdentityFormat} + "#";
 }
 
 [[nodiscard]] std::string
@@ -1721,8 +1723,8 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         .metadata =
             NavigationIndexMetadata{
                 .revision = store_.workspace_revision(),
-                .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
-                .index_identity_schema_version = std::string{kWorkspaceIndexIdentitySchemaVersion},
+                .index_format = std::string{kWorkspaceIndexFormat},
+                .index_identity_format = std::string{kWorkspaceIndexIdentityFormat},
             },
         .previous_index = previous_index,
     };
@@ -1787,9 +1789,9 @@ std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices()
             .metadata =
                 NavigationIndexMetadata{
                     .revision = store_.workspace_revision(),
-                    .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
-                    .index_identity_schema_version =
-                        std::string{kWorkspaceIndexIdentitySchemaVersion},
+                    .index_format = std::string{kWorkspaceIndexFormat},
+                    .index_identity_format =
+                        std::string{kWorkspaceIndexIdentityFormat},
                 },
             .previous_index = previous_index,
         };
@@ -1909,8 +1911,8 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
         .std_manifest = normalized_path_key(selection->profile.std_manifest),
         .std_identity = selection->profile.std_identity,
         .scope = std::string{toolchain_scope_name(selection->profile.scope)},
-        .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
-        .index_identity_schema_version = std::string{kWorkspaceIndexIdentitySchemaVersion},
+        .index_format = std::string{kWorkspaceIndexFormat},
+        .index_identity_format = std::string{kWorkspaceIndexIdentityFormat},
     };
 }
 
@@ -1989,9 +1991,9 @@ AnalysisService::build_snapshot(const std::string &uri,
                 .metadata =
                     NavigationIndexMetadata{
                         .revision = snapshot->workspace_revision,
-                        .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
-                        .index_identity_schema_version =
-                            std::string{kWorkspaceIndexIdentitySchemaVersion},
+                        .index_format = std::string{kWorkspaceIndexFormat},
+                        .index_identity_format =
+                            std::string{kWorkspaceIndexIdentityFormat},
                     },
                 .previous_index = previous_index,
             };
@@ -2186,10 +2188,74 @@ AnalysisService::persistent_cache_key_for_uri(
     cache::CacheKey key;
     key.project_root_hash = cache::project_root_hash(project_root);
     key.source_path = error ? document_path->generic_string() : relative.generic_string();
-    // Use the shared FNV-1a content hash (matches the standalone compiler and
-    // IrCache) so cache identity is consistent across tooling.
-    key.content_hash = cache::fnv1a64(document->text);
-    key.toolchain_fingerprint = cache::default_toolchain_fingerprint();
+    // Persistent identity is the SHA-256 of the exact source bytes.
+    key.content_digest = support::sha256_hex(document->text);
+    key.producer_digest = cache::default_producer_digest();
+    if (key.producer_digest.empty()) {
+        return std::nullopt;
+    }
+    auto configuration = json::JsonValue::make_object();
+    configuration->set("analysis_mode", json::JsonValue::make_string(toolchain_key->analysis_mode));
+    configuration->set("scope", json::JsonValue::make_string(toolchain_key->scope));
+    configuration->set("std_identity", json::JsonValue::make_string(toolchain_key->std_identity));
+    configuration->set("package_graph", json::JsonValue::make_string(toolchain_key->package_graph_identity));
+    key.configuration_digest = support::sha256_hex(json::serialize_json(*configuration));
+
+    const auto context = project_discovery::discover_project_context(
+        project_discovery::ProjectDiscoveryInput{
+            .document_path = *document_path,
+            .explicit_manifest_path = std::filesystem::path(toolchain_key->root_manifest),
+            .explicit_workspace_manifest_path = toolchain_key->workspace_manifest.empty()
+                ? std::nullopt : std::optional<std::filesystem::path>{toolchain_key->workspace_manifest},
+            .toolchains = toolchain_profiles_});
+    if (!context.context.has_value()) {
+        return std::nullopt;
+    }
+    std::vector<std::filesystem::path> paths;
+    for (const auto &package : context.context->graph.packages) {
+        paths.push_back(package.manifest_path);
+        std::error_code scan_error;
+        std::filesystem::recursive_directory_iterator files(package.module_root, scan_error);
+        const std::filesystem::recursive_directory_iterator end;
+        while (!scan_error && files != end) {
+            if (files->is_regular_file(scan_error) && files->path().extension() == ".ahfl") {
+                paths.push_back(files->path());
+            }
+            if (scan_error) {
+                return std::nullopt;
+            }
+            files.increment(scan_error);
+        }
+        if (scan_error) {
+            return std::nullopt;
+        }
+    }
+    if (!toolchain_key->workspace_manifest.empty()) {
+        paths.emplace_back(toolchain_key->workspace_manifest);
+    }
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    auto dependencies = json::JsonValue::make_array();
+    for (const auto &path : paths) {
+        std::string content;
+        if (const auto *overlay = store_.get(uri_from_path(path)); overlay != nullptr) {
+            content = overlay->text;
+        } else {
+            std::ifstream stream(path, std::ios::binary);
+            if (!stream) {
+                return std::nullopt;
+            }
+            content.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+            if (stream.bad()) {
+                return std::nullopt;
+            }
+        }
+        auto item = json::JsonValue::make_object();
+        item->set("path", json::JsonValue::make_string(normalized_path_key(path)));
+        item->set("digest", json::JsonValue::make_string(support::sha256_hex(content)));
+        dependencies->push(std::move(item));
+    }
+    key.dependency_digest = support::sha256_hex(json::serialize_json(*dependencies));
     return key;
 }
 
@@ -2201,7 +2267,8 @@ AnalysisService::persistent_cache_for_project(const std::filesystem::path &proje
         return existing->second.get();
     }
     const auto cache_dir =
-        default_persistent_cache_root() / cache::project_root_hash(project_root);
+        default_persistent_cache_root() / cache::default_producer_digest() /
+        cache::project_root_hash(project_root);
     auto cache = std::make_unique<cache::PersistentCache>(cache_dir);
     auto *ptr = cache.get();
     persistent_caches_.emplace(root_key, std::move(cache));
@@ -2224,10 +2291,10 @@ AnalysisService::build_snapshot_from_persistent(
     // metadata must match what was stored; any mismatch is a miss (graceful
     // fallback to full analysis).
     const TypedProgramCacheMetadata metadata{
-        .schema_version = std::string{kTypedProgramCacheSchemaVersion},
-        .source_graph_revision = toolchain_key.package_graph_identity,
-        .source_content_hash = std::to_string(entry.key.content_hash),
-        .resolver_snapshot_version = std::string{},
+        .format = std::string{kTypedProgramCacheFormat},
+        .source_graph_digest = toolchain_key.package_graph_identity,
+        .source_content_digest = entry.key.content_digest,
+        .resolver_snapshot_digest = entry.key.dependency_digest,
     };
     auto loaded = load_typed_program_cache_json(entry.serialized_typed_hir, metadata);
     if (loaded.status != TypedProgramCacheLoadStatus::Hit || !loaded.program.has_value()) {
@@ -2292,18 +2359,16 @@ void AnalysisService::persist_typed_program(
     }
     const auto &toolchain_key = snapshot.toolchain_cache_key;
     const TypedProgramCacheMetadata metadata{
-        .schema_version = std::string{kTypedProgramCacheSchemaVersion},
-        .source_graph_revision =
+        .format = std::string{kTypedProgramCacheFormat},
+        .source_graph_digest =
             toolchain_key.has_value() ? toolchain_key->package_graph_identity : std::string{},
-        .source_content_hash = std::to_string(key.content_hash),
-        .resolver_snapshot_version = std::string{},
+        .source_content_digest = key.content_digest,
+        .resolver_snapshot_digest = key.dependency_digest,
     };
     cache::PersistentCacheEntry entry;
     entry.key = key;
-    entry.source_graph_revision = metadata.source_graph_revision;
-    // resolver_snapshot_version: canonical ResolveResult hashing is a
-    // follow-up; the envelope field is reserved and stored empty (consistent
-    // with the standalone incremental compiler).
+    entry.source_graph_digest = metadata.source_graph_digest;
+    entry.resolver_snapshot_digest = key.dependency_digest;
     entry.signature_fingerprint = 0;
     entry.serialized_typed_hir = serialize_typed_program_cache_json(*typed_program, metadata);
     entry.cached_at = std::chrono::system_clock::now();

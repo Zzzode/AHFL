@@ -31,10 +31,10 @@ map_engine_error(eng::EngineError e) noexcept {
     return P6FrameError{std::in_place_type<eng::EngineError>, e};
 }
 
-// Map a runv execution failure into the driver's error variant.
+// Map a run_frame execution failure into the driver's error variant.
 [[nodiscard]] P6FrameError
-map_runv_error(RunvError e) noexcept {
-    return P6FrameError{std::in_place_type<RunvError>, e};
+map_run_frame_error(FrameRunError e) noexcept {
+    return P6FrameError{std::in_place_type<FrameRunError>, e};
 }
 
 } // namespace
@@ -48,7 +48,7 @@ execute_p6_frame(Wasm3ResumeEngine &engine,
                  const Value &input, P6FinalKind final_kind,
                  eng::ImportCallback import_callback) {
     // 1. Instantiate. The engine cross-checks the fixed single-page memory and
-    //    the export surface (run2 + alloc) before returning.
+    //    the export surface (run_workflow + alloc) before returning.
     auto inst = engine.fresh_instance(module_bytes, std::move(import_callback));
     if (!inst.has_value()) {
         return std::unexpected(map_engine_error(inst.error()));
@@ -67,37 +67,37 @@ execute_p6_frame(Wasm3ResumeEngine &engine,
         return std::unexpected(map_pack_error(packed.error()));
     }
 
-    // 3. Invoke runv. The module walks the state machine and returns
+    // 3. Invoke run_frame. The module walks the state machine and returns
     //    (status, value_ptr).
-    auto runv = engine.invoke_runv();
-    if (!runv.has_value()) {
-        return std::unexpected(map_engine_error(runv.error()));
+    auto run_frame = engine.invoke_run_frame();
+    if (!run_frame.has_value()) {
+        return std::unexpected(map_engine_error(run_frame.error()));
     }
 
-    // 4. Classify the runv outcome. A trap (wasm trap) or host abort fails
+    // 4. Classify the run_frame outcome. A trap (wasm trap) or host abort fails
     //    closed; a non-OK status fails closed. These are execution failures,
-    //    not frame read failures, so they carry their own RunvError category.
-    if (std::holds_alternative<eng::Run2Trapped>(*runv)) {
-        return std::unexpected(map_runv_error(RunvError{RunvError::Kind::Trapped}));
+    //    not frame read failures, so they carry their own FrameRunError category.
+    if (std::holds_alternative<eng::WorkflowRunTrapped>(*run_frame)) {
+        return std::unexpected(map_run_frame_error(FrameRunError{FrameRunError::Kind::Trapped}));
     }
-    if (std::holds_alternative<eng::Run2HostAborted>(*runv)) {
-        return std::unexpected(map_runv_error(RunvError{RunvError::Kind::HostAborted}));
+    if (std::holds_alternative<eng::WorkflowRunHostAborted>(*run_frame)) {
+        return std::unexpected(map_run_frame_error(FrameRunError{FrameRunError::Kind::HostAborted}));
     }
-    const auto &result = std::get<RunvResult>(*runv);
+    const auto &result = std::get<FrameRunResult>(*run_frame);
     if (result.raw_status != 0u) {
         return std::unexpected(
-            map_runv_error(RunvError{RunvError::Kind::NonOkStatus, result.raw_status}));
+            map_run_frame_error(FrameRunError{FrameRunError::Kind::NonOkStatus, result.raw_status}));
     }
 
     // 5. Re-acquire the page as const (the span discipline: the mutable span
-    //    is valid until the next mutating call, and invoke_runv mutated). The
+    //    is valid until the next mutating call, and invoke_run_frame mutated). The
     //    memory is the same allocation; this is a fresh view.
     auto const_page = engine.read_whole_memory();
     if (!const_page.has_value()) {
         return std::unexpected(map_engine_error(const_page.error()));
     }
 
-    // 6. Authorize the runv root + walk the output frame + render canonical
+    // 6. Authorize the run_frame root + walk the output frame + render canonical
     //    value JSON.
     auto output =
         encode_p6_output(*const_page, section, output_binding,

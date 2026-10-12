@@ -6,10 +6,10 @@
 //
 // The execution layer (`CoreProgram`, `include/ahfl/compiler/ir/core_ir.hpp`)
 // gains a machine-readable JSON projection with format identity
-// `CoreProgram::format_version` (default `"ahfl.core.v1"`). It projects a
+// `CoreProgram::format` (default `"ahfl.core"`). It projects a
 // different tower layer than the AHFL-IR `ir::Program` projection
 // (`print_program_ir_json` / `parse_program_ir_json`, `ir_json.cpp`,
-// `"ahfl.ir.v2"`); the two projections are co-equal per-layer inspection
+// `"ahfl.ir"`); the two projections are co-equal per-layer inspection
 // surfaces, not replacements.
 //
 // The complete contract — envelope, per-table schema, arena canonicalization /
@@ -19,7 +19,7 @@
 // normative; this header names its decisions so a reader does not have to
 // reconstruct them:
 //
-//   * ONE bundled envelope per program (§1) — `format_version`, a fixed
+//   * ONE bundled envelope per program (§1) — `format`, a fixed
 //     `layer: "core"` discriminator, then the program-global tables (`types`,
 //     `value_types`, `capabilities`, `agents`, `flows`, `workflows`,
 //     `instances`) in that fixed order.

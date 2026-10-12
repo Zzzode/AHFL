@@ -26,7 +26,7 @@
 #
 # Output
 # ------
-# A machine-readable JSON score report (schema ahfl.mutation.fallback.v2,
+# A machine-readable JSON score report (schema ahfl.mutation.fallback,
 # documented in README.md). Written to the path given by --report. Exit status
 # is 0 as long as the run completed and every fixed mutant was evaluated; the
 # score *floor* and the per-mutant outcome *pinning* are enforced by the CTest
@@ -86,7 +86,7 @@ emit_unavailable() {
     local reason="$1"
     cat > "${REPORT_PATH}" <<JSON
 {
-  "schema": "ahfl.mutation.fallback.v2",
+  "format": "ahfl.mutation.fallback",
   "runner": "fallback",
   "status": "tool_unavailable",
   "reason": $(json_string "${reason}"),
@@ -300,7 +300,7 @@ SCORE="$(awk -v k="${KILLED}" -v e="${EVALUATED}" 'BEGIN{ if (e==0) print "null"
 
 cat > "${REPORT_PATH}" <<JSON
 {
-  "schema": "ahfl.mutation.fallback.v2",
+  "format": "ahfl.mutation.fallback",
   "runner": "fallback",
   "status": "ok",
   "compiler": $(json_string "${CXX_BIN}"),

@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/fb3_string_capture.ahfl",
   "kind": "agent",
   "entry": "wasm::fb3_string_capture::StringCaptureAgent",

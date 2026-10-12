@@ -1,6 +1,6 @@
 // RFC 0026 KR6.8 WH-4: KAT for the observation emitter.
 //
-// Pins the emitted ahfl.node-observation.v1 document byte-for-byte against
+// Pins the emitted ahfl.node-observation document byte-for-byte against
 // the JS oracle's emitObservation (tests/conformance/node_embedded_host.mjs:
 // 531-549). The field set, sorted key order, string escaping, and raw-value
 // embedding must all match exactly so the conformance comparator sees the
@@ -56,12 +56,12 @@ void test_agent_minimal() {
     data.transition_count = 1;
     data.workflow_completed_count = std::nullopt;
 
-    // Sorted keys: capability_arguments, capability_sequence, case, scenario,
-    // schema, state_sequence, status, transition_count.
+    // Sorted keys: capability_arguments, capability_sequence, case, format,
+    // scenario, state_sequence, status, transition_count.
     static constexpr std::string_view kExpected =
         R"({"capability_arguments":[],"capability_sequence":[],)"
         R"("case":"tests/golden/runtime/simple_agent.ahfl",)"
-        R"("scenario":"default","schema":"ahfl.node-observation.v1",)"
+        R"("format":"ahfl.node-observation","scenario":"default",)"
         R"("state_sequence":[{"agent":"SimpleAgent","state":"Init"},)"
         R"({"agent":"SimpleAgent","state":"Done"}],)"
         R"("status":"completed","transition_count":1})";
@@ -101,7 +101,7 @@ void test_workflow_full() {
     data.workflow_completed_count = 2;
 
     // Sorted keys: capability_arguments, capability_sequence, case,
-    // output_json, scenario, schema, state_sequence, status,
+    // format, output_json, scenario, state_sequence, status,
     // transition_count, workflow_completed_count.
     static constexpr std::string_view kExpected =
         R"({"capability_arguments":[{"value":"My server is crashing"},)"
@@ -109,11 +109,12 @@ void test_workflow_full() {
         R"("capability_sequence":["runtime::e2e_multi_agent::ClassifyMessage",)"
         R"("runtime::e2e_multi_agent::HandleTechnical"],)"
         R"("case":"tests/golden/runtime/e2e_multi_agent.ahfl",)"
+        R"("format":"ahfl.node-observation",)"
         R"("output_json":{"_type":"runtime::e2e_multi_agent::SummaryResult",)"
         R"("category":{"_enum":"runtime::e2e_multi_agent::Category",)"
         R"("_variant":"Technical"},"resolved":true,)"
         R"("summary":"Case resolved successfully"},)"
-        R"("scenario":"priority_high","schema":"ahfl.node-observation.v1",)"
+        R"("scenario":"priority_high",)"
         R"("state_sequence":[{"agent":"ClassifyAgent","state":"Init"},)"
         R"({"agent":"ClassifyAgent","state":"Classifying"},)"
         R"({"agent":"HandleAgent","state":"Init"},)"
@@ -141,7 +142,7 @@ void test_string_escaping() {
     static constexpr std::string_view kExpected =
         R"({"capability_arguments":[],"capability_sequence":[],)"
         R"("case":"test\"quote\\backslash\nnewline",)"
-        R"("scenario":"tab\there","schema":"ahfl.node-observation.v1",)"
+        R"("format":"ahfl.node-observation","scenario":"tab\there",)"
         R"("state_sequence":[{"agent":"A\"B","state":"S\\T"}],)"
         R"("status":"failed","transition_count":0})";
 
@@ -164,8 +165,8 @@ void test_empty() {
 
     static constexpr std::string_view kExpected =
         R"({"capability_arguments":[],"capability_sequence":[],)"
-        R"("case":"empty","scenario":"default",)"
-        R"("schema":"ahfl.node-observation.v1","state_sequence":[],)"
+        R"("case":"empty","format":"ahfl.node-observation",)"
+        R"("scenario":"default","state_sequence":[],)"
         R"("status":"failed","transition_count":0})";
 
     check_eq(emit_observation(data), kExpected, "empty");
@@ -188,7 +189,7 @@ void test_suspended() {
     static constexpr std::string_view kExpected =
         R"({"capability_arguments":[{"value":42}],)"
         R"("capability_sequence":["cap"],"case":"suspend_case",)"
-        R"("scenario":"pending","schema":"ahfl.node-observation.v1",)"
+        R"("format":"ahfl.node-observation","scenario":"pending",)"
         R"("state_sequence":[{"agent":"Worker","state":"Working"}],)"
         R"("status":"suspended","transition_count":0,)"
         R"("workflow_completed_count":0})";

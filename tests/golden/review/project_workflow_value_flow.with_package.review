@@ -1,6 +1,6 @@
-ahfl.package_review.v1
+ahfl.package_review
 package_reader {
-  format ahfl.native-package.v1
+  format ahfl.native-package
   identity workflow-value-flow@0.2.0
   entry workflow app::main::ValueFlowWorkflow
   exports {

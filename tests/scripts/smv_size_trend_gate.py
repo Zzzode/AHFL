@@ -5,7 +5,7 @@ thresholds.
 Unlike RunSmvSizeBudgetTest.cmake (fixed MAX/MIN per fixture), this gate records
 a *baseline* of emit-smv sizes and fails when any fixture's size regresses beyond
 a relative tolerance — turning the budget from a static ceiling into a trend
-guard. It also writes a machine-readable trend report (`ahfl.smv-size-trend.v2`)
+guard. It also writes a machine-readable trend report (`ahfl.smv-size-trend`)
 with per-fixture baseline/current/delta. The report is a local, per-run
 diagnostic written to the build tree: it is not uploaded as a CI artifact, so a
 release process cannot chart history from it.
@@ -72,10 +72,10 @@ REQUIRED_FIXTURES = (
 # Committed baseline schema. Adding the optional per-fixture `pass_order` field
 # was additive (a consumer that ignores it parses the document unchanged), so the
 # version string is unchanged (still v1) and is reserved for a real shape break.
-BASELINE_SCHEMA = "ahfl.smv-size-baseline.v1"
+BASELINE_SCHEMA = "ahfl.smv-size-baseline"
 # Trend report schema. Unlike the baseline this genuinely gained per-fixture
 # baseline_pass_order/current_pass_order fields, so it is v2.
-TREND_SCHEMA = "ahfl.smv-size-trend.v2"
+TREND_SCHEMA = "ahfl.smv-size-trend"
 
 
 def measure(ahflc: Path, source: Path) -> dict[str, int]:
@@ -139,7 +139,7 @@ def main() -> int:
     args = parser.parse_args()
 
     baseline_doc = json.loads(args.baseline.read_text(encoding="utf-8"))
-    if baseline_doc.get("schema") != BASELINE_SCHEMA:
+    if baseline_doc.get("format") != BASELINE_SCHEMA:
         print(f"baseline schema must be {BASELINE_SCHEMA}", file=sys.stderr)
         return 2
     # baseline lives at <repo>/config/smv-size-baseline.json → repo root is its
@@ -233,7 +233,7 @@ def main() -> int:
                 )
 
     report = {
-        "schema": TREND_SCHEMA,
+        "format": TREND_SCHEMA,
         "tolerance": GROWTH_TOLERANCE,
         "status": "updated" if args.update else ("failed" if failures else "passed"),
         "fixtures": entries,

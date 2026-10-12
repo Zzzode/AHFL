@@ -3,6 +3,7 @@
 
 #include "base/json/json_value.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
@@ -297,8 +298,8 @@ void test_report_serialize_basic() {
     check(!json_str.empty(), "report_ser.basic.non_empty");
     check(json_str.find("report-abc") != std::string::npos,
           "report_ser.basic.contains_result_id");
-    check(json_str.find(ahfl::kDiagnosticReportSchemaVersion) != std::string::npos,
-          "report_ser.basic.contains_schema_version");
+    check(json_str.find(ahfl::kDiagnosticReportFormat) != std::string::npos,
+          "report_ser.basic.contains_format");
 }
 
 void test_report_roundtrip_empty() {
@@ -357,11 +358,8 @@ void test_report_roundtrip_multiple() {
 }
 
 void test_report_deserialize_schema_mismatch() {
-    auto obj = ahfl::json::JsonValue::make_object();
-    obj->set("schema_version", ahfl::json::JsonValue::make_string("INVALID_SCHEMA_V999"));
-    obj->set("result_id", ahfl::json::JsonValue::make_string("x"));
-    obj->set("kind", ahfl::json::JsonValue::make_string("full"));
-    obj->set("diagnostics", ahfl::json::JsonValue::make_array());
+    auto obj = ahfl::serialize_diagnostic_report_value(ahfl::DiagnosticReport{});
+    obj->set("format", ahfl::json::JsonValue::make_string("INVALID_FORMAT"));
 
     auto parsed = ahfl::deserialize_diagnostic_report_value(*obj);
     check(!parsed.has_value(), "report_deser.schema_mismatch");
@@ -422,6 +420,63 @@ void test_report_has_summary() {
           "report_summary.total_count");
 }
 
+void test_current_structure_rejection() {
+    using Json = ahfl::json::JsonValue;
+    ahfl::Diagnostic diagnostic;
+    diagnostic.message = "current structure";
+    diagnostic.range = ahfl::SourceRange{1, 2};
+    diagnostic.position = ahfl::SourcePosition{1, 1, 2};
+    diagnostic.related.push_back({.message = "related", .range = std::nullopt});
+
+    for (const auto key :
+         {"severity", "message", "code", "source_name", "range", "position", "related", "data"}) {
+        auto value = ahfl::serialize_diagnostic_json(diagnostic);
+        std::erase_if(value->object_fields,
+                      [key](const auto &field) { return field.first == key; });
+        check(!ahfl::deserialize_diagnostic_json(*value).has_value(),
+              std::string("diag_current.missing.") + key);
+    }
+    for (const auto key : {"code", "source_name"}) {
+        auto value = ahfl::serialize_diagnostic_json(diagnostic);
+        value->set(key, Json::make_int(3));
+        check(!ahfl::deserialize_diagnostic_json(*value).has_value(),
+              std::string("diag_current.wrong_nullable_type.") + key);
+    }
+    auto null_data = ahfl::serialize_diagnostic_json(diagnostic);
+    null_data->set("data", Json::make_null());
+    check(!ahfl::deserialize_diagnostic_json(*null_data).has_value(), "diag_current.null_data");
+
+    for (const auto key : {"range", "position", "related"}) {
+        auto value = ahfl::serialize_diagnostic_json(diagnostic);
+        auto *nested = value->get_mut(key);
+        if (nested->is_array()) {
+            nested = nested->array_items.front().get();
+        }
+        nested->set("unknown", Json::make_null());
+        check(!ahfl::deserialize_diagnostic_json(*value).has_value(),
+              std::string("diag_current.unknown_nested.") + key);
+    }
+    ahfl::DiagnosticReport report;
+    report.diagnostics.push_back(diagnostic);
+    for (const auto key : {"format", "result_id", "kind", "summary", "diagnostics"}) {
+        auto value = ahfl::serialize_diagnostic_report_value(report);
+        std::erase_if(value->object_fields,
+                      [key](const auto &field) { return field.first == key; });
+        check(!ahfl::deserialize_diagnostic_report_value(*value).has_value(),
+              std::string("report_current.missing.") + key);
+    }
+    for (const auto key : {"error_count", "warning_count", "note_count", "total_count"}) {
+        auto value = ahfl::serialize_diagnostic_report_value(report);
+        value->get_mut("summary")->set(key, Json::make_int(10));
+        check(!ahfl::deserialize_diagnostic_report_value(*value).has_value(),
+              std::string("report_current.summary_mismatch.") + key);
+    }
+    auto unknown = ahfl::serialize_diagnostic_report_value(report);
+    unknown->set("unknown", Json::make_null());
+    check(!ahfl::deserialize_diagnostic_report_value(*unknown).has_value(),
+          "report_current.unknown_field");
+}
+
 } // namespace
 
 int main() {
@@ -446,6 +501,7 @@ int main() {
     test_report_deserialize_invalid_json();
     test_report_value_roundtrip();
     test_report_has_summary();
+    test_current_structure_rejection();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

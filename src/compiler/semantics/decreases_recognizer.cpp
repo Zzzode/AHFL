@@ -61,9 +61,7 @@ namespace {
     return true;
 }
 
-/// Tests whether the expression is `self.<field>` (a member access rooted at
-/// "self"). Accepts both the legacy "self as Identifier Path + MemberAccess"
-/// shape and the multi-member Path shape (root="self", members=[field]).
+/// Tests the canonical source path `self.<field>`.
 [[nodiscard]] bool matches_self_field(ast::ExprSyntax const &expr,
                                       PatternSelfField &out,
                                       std::size_t index) {
@@ -87,32 +85,6 @@ namespace {
         return true;
     }
 
-    // Shape B: MemberAccessExpr where base is the self PathExpr (no members).
-    if (expr.is<ast::MemberAccessExpr>()) {
-        auto const &ma = expr.as<ast::MemberAccessExpr>();
-        if (!ma.base) {
-            return false;
-        }
-        if (!ma.base->is<ast::PathExpr>()) {
-            return false;
-        }
-        auto const &base_path = ma.base->as<ast::PathExpr>().path;
-        if (!base_path) {
-            return false;
-        }
-        if (base_path->root_name != "self") {
-            return false;
-        }
-        if (!base_path->members.empty()) {
-            return false;
-        }
-        out = PatternSelfField{
-            .range = expr.range,
-            .subterm_index = index,
-            .field_name = ma.member,
-        };
-        return true;
-    }
     return false;
 }
 

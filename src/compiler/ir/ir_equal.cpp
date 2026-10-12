@@ -61,7 +61,7 @@ namespace {
             [&](const WildcardPattern &) { return true; },
             [&](const BindingPattern &a) {
                 const auto &b = std::get<BindingPattern>(rhs.node);
-                return a.name == b.name && a.is_mut == b.is_mut &&
+                return a.name == b.name &&
                        match_patterns_equal_ptr(a.nested, b.nested);
             },
             [&](const VariantPattern &a) {

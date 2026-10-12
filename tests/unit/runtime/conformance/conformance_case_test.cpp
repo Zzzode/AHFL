@@ -14,7 +14,7 @@
 //       expect.output_json / expect.capability_arguments, capability
 //       argument/sequence length mismatch, absent engines block, unknown
 //       field, plus
-//       format_version / kind / run_status / eligibility enum / pending+result
+//       format / kind / run_status / eligibility enum / pending+result
 //       / duplicate capability / unconfigured invoked capability / workflow
 //       state-sequence / source-path escapes / duplicate or anonymous
 //       scenario / empty scenario list / path-unsafe scenario name;
@@ -206,36 +206,36 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2c_multi_arg_bridge.case.json",
-            "tests/golden/wasm/v2c_multi_arg_bridge.ahfl",
+            "multi_arg_bridge.case.json",
+            "tests/golden/wasm/multi_arg_bridge.ahfl",
             CaseKind::Agent,
-            "wasm::v2c_multi_arg_bridge::RoutingAgent",
+            "wasm::multi_arg_bridge::RoutingAgent",
             1, 1, WasmEligibility::Orchestration,
         },
-        // RFC 0026 P6-7 frame-bridge v2 V2-C fix-forward regressions: a chain
+        // RFC 0026 P6-7 frame bridge capability-bridge fix-forward regressions: a chain
         // of two computed bridge handlers sharing one import ordinal, a
         // producing match followed by an ordered bridge statement, and a
         // single tag-only-enum bridge argument pinning the SSOT
         // {"value":..} envelope through the per-call argument differential.
         {
-            "v2c_bridge_chain.case.json",
-            "tests/golden/wasm/v2c_bridge_chain.ahfl",
+            "bridge_chain.case.json",
+            "tests/golden/wasm/bridge_chain.ahfl",
             CaseKind::Agent,
-            "wasm::v2c_bridge_chain::RoutingAgent",
+            "wasm::bridge_chain::RoutingAgent",
             1, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2c_route_then_bridge.case.json",
-            "tests/golden/wasm/v2c_route_then_bridge.ahfl",
+            "route_then_bridge.case.json",
+            "tests/golden/wasm/route_then_bridge.ahfl",
             CaseKind::Agent,
-            "wasm::v2c_route_then_bridge::RoutingAgent",
+            "wasm::route_then_bridge::RoutingAgent",
             1, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2c_single_enum_bridge.case.json",
-            "tests/golden/wasm/v2c_single_enum_bridge.ahfl",
+            "single_enum_bridge.case.json",
+            "tests/golden/wasm/single_enum_bridge.ahfl",
             CaseKind::Agent,
-            "wasm::v2c_single_enum_bridge::RoutingAgent",
+            "wasm::single_enum_bridge::RoutingAgent",
             1, 1, WasmEligibility::Orchestration,
         },
         {
@@ -404,82 +404,82 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "std::option::UnwrapAgent",
             0, 1, WasmEligibility::Orchestration,
         },
-        // KR6.7 corpus widening (FB-5): V2-A computed-final agents migrated
+        // KR6.7 corpus widening (FB-5): computed-final computed-final agents migrated
         // from bespoke Node probes. Their finals construct the output frame
         // (scalar word, nested aggregate expansion, tag-only / payload-bearing
         // enum), so the cases run under both engines as p6-frame modules.
         {
-            "v2a_computed_scalar.case.json",
-            "tests/golden/wasm/v2a_computed_scalar.ahfl",
+            "computed_scalar.case.json",
+            "tests/golden/wasm/computed_scalar.ahfl",
             CaseKind::Agent,
             "wasm::v2a::computed_scalar::ComputedScalarAgent",
             0, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2a_computed_aggregate.case.json",
-            "tests/golden/wasm/v2a_computed_aggregate.ahfl",
+            "computed_aggregate.case.json",
+            "tests/golden/wasm/computed_aggregate.ahfl",
             CaseKind::Agent,
             "wasm::v2a::computed_aggregate::ComputedAggregateAgent",
             0, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2a_computed_enum.case.json",
-            "tests/golden/wasm/v2a_computed_enum.ahfl",
+            "computed_enum.case.json",
+            "tests/golden/wasm/computed_enum.ahfl",
             CaseKind::Agent,
             "wasm::v2a::computed_enum::ComputedEnumAgent",
             0, 2, WasmEligibility::Orchestration,
         },
         {
-            "v2a_computed_if_let_return.case.json",
-            "tests/golden/wasm/v2a_computed_if_let_return.ahfl",
+            "computed_if_let_return.case.json",
+            "tests/golden/wasm/computed_if_let_return.ahfl",
             CaseKind::Agent,
             "wasm::v2a::computed_if_let_return::IfLetReturnAgent",
             0, 3, WasmEligibility::Orchestration,
         },
         {
-            "v2a_computed_payload_enum.case.json",
-            "tests/golden/wasm/v2a_computed_payload_enum.ahfl",
+            "computed_payload_enum.case.json",
+            "tests/golden/wasm/computed_payload_enum.ahfl",
             CaseKind::Agent,
             "wasm::v2a::computed_payload_enum::ComputedPayloadEnumAgent",
             0, 2, WasmEligibility::Orchestration,
         },
-        // KR6.7 corpus widening (FB-5): V2-B String/computed-final and
+        // KR6.7 corpus widening (FB-5): string-frame String/computed-final and
         // bounded-arena agents migrated from bespoke Node probes. The String
-        // tuple-variant fixture v2b_enum_string is deliberately absent: the
+        // tuple-variant fixture enum_string is deliberately absent: the
         // wasm run is correct but the case was never blessed (the retired
         // evaluator misrouted Hit("hit") enum construction; WH-9 removed that
         // engine, so the fixture can be re-added when a blessing is captured).
         {
-            "v2b_string_passthrough.case.json",
-            "tests/golden/wasm/v2b_string_passthrough.ahfl",
+            "string_passthrough.case.json",
+            "tests/golden/wasm/string_passthrough.ahfl",
             CaseKind::Agent,
             "wasm::v2b::string_passthrough::StringFinalAgent",
             0, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2b_computed_string.case.json",
-            "tests/golden/wasm/v2b_computed_string.ahfl",
+            "computed_string.case.json",
+            "tests/golden/wasm/computed_string.ahfl",
             CaseKind::Agent,
             "wasm::v2b::computed_string::ComputedStringAgent",
             0, 2, WasmEligibility::Orchestration,
         },
         {
-            "v2b_bounded_string.case.json",
-            "tests/golden/wasm/v2b_bounded_string.ahfl",
+            "bounded_string.case.json",
+            "tests/golden/wasm/bounded_string.ahfl",
             CaseKind::Agent,
             "wasm::v2b::bounded_string::BoundedStringAgent",
             0, 2, WasmEligibility::Orchestration,
         },
         {
-            "v2b_list_string_arena.case.json",
-            "tests/golden/wasm/v2b_list_string_arena.ahfl",
+            "list_string_arena.case.json",
+            "tests/golden/wasm/list_string_arena.ahfl",
             CaseKind::Agent,
             "std::collections::ListStringArenaAgent",
             0, 1, WasmEligibility::Orchestration,
         },
         {
-            "v2b_list_nested_string_arena.case.json",
-            "tests/golden/wasm/v2b_list_nested_string_arena.ahfl",
+            "list_nested_string_arena.case.json",
+            "tests/golden/wasm/list_nested_string_arena.ahfl",
             CaseKind::Agent,
             "std::collections::ListNestedStringArenaAgent",
             0, 1, WasmEligibility::Orchestration,
@@ -494,7 +494,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             1, 1, WasmEligibility::Orchestration,
         },
         // P4-D input-frame handlers: rung E packs their input frame, calls
-        // runv, and encodes the output, so the Node lane now DIFFERENTIALLY
+        // run_frame, and encodes the output, so the Node lane now DIFFERENTIALLY
         // COMPARES them (blessed observations exist); no node_observation_skip.
         {
             "p6_aggregate.case.json",
@@ -843,7 +843,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
 // ---------------------------------------------------------------------------
 
 constexpr std::string_view kValidCase = R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -919,7 +919,7 @@ void test_malformed_manifests() {
 
     expect_rejected("bad capability status enum",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e2_capability::CapabilityAgent",
@@ -934,7 +934,7 @@ void test_malformed_manifests() {
 
     expect_rejected("output json not canonical (whitespace)",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -959,7 +959,7 @@ void test_malformed_manifests() {
 
     expect_rejected("output json field order shuffled",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -984,7 +984,7 @@ void test_malformed_manifests() {
 
     expect_rejected("engines block absent",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -996,7 +996,7 @@ void test_malformed_manifests() {
 
     expect_rejected("unknown top-level field",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1012,7 +1012,7 @@ void test_malformed_manifests() {
 
     expect_rejected("unsupported format version",
                     R"({
-  "format_version": "ahfl.conformance-case.v9",
+  "format": "ahfl.conformance-case.invalid",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1028,11 +1028,11 @@ void test_malformed_manifests() {
   "engines": {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
-                    "unsupported conformance case format_version");
+                    "unsupported conformance case format");
 
     expect_rejected("bad kind enum",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "daemon",
   "entry": "x",
@@ -1049,7 +1049,7 @@ void test_malformed_manifests() {
 
     expect_rejected("bad run status enum",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1066,7 +1066,7 @@ void test_malformed_manifests() {
 
     expect_rejected("bad wasm eligibility enum",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1083,7 +1083,7 @@ void test_malformed_manifests() {
 
     expect_rejected("missing wasm reason",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1099,7 +1099,7 @@ void test_malformed_manifests() {
 
     expect_rejected("bad node_observation_skip enum",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1116,7 +1116,7 @@ void test_malformed_manifests() {
                     "engines.wasm.node_observation_skip' must be 'none'");
 
     // RFC 0026 P6-7 rung E removed the raw_p6_frame_awaits_p67 skip (a p6-frame
-    // module now packs/runs runv/encodes with differential agreement), so the
+    // module now packs/runs run_frame/encodes with differential agreement), so the
     // spelling is rejected as an unknown node_observation_skip value by the
     // generic "must be 'none'" gate above.
     // RFC 0026 dual-track elimination removed the host_transcode_awaits_node_port
@@ -1127,7 +1127,7 @@ void test_malformed_manifests() {
 
     expect_rejected("blocked kr66 skip on an orchestration lane",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1145,7 +1145,7 @@ void test_malformed_manifests() {
 
     expect_rejected("rich wire-types skip on a computation lane",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1166,7 +1166,7 @@ void test_malformed_manifests() {
 
     expect_rejected("pending capability carries result",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1184,7 +1184,7 @@ void test_malformed_manifests() {
 
     expect_rejected("ok capability missing result frame",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1201,7 +1201,7 @@ void test_malformed_manifests() {
 
     expect_rejected("duplicate capability entry",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1222,7 +1222,7 @@ void test_malformed_manifests() {
 
     expect_rejected("invoked capability not configured",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1239,7 +1239,7 @@ void test_malformed_manifests() {
 
     expect_rejected("workflow must not carry a state sequence",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e3_identity_workflow.ahfl",
   "kind": "workflow",
   "entry": "x",
@@ -1257,7 +1257,7 @@ void test_malformed_manifests() {
 
     expect_rejected("source path escapes repository",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "../secret.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1274,7 +1274,7 @@ void test_malformed_manifests() {
 
     expect_rejected("absolute source path rejected",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "/etc/passwd.ahfl",
   "kind": "agent",
   "entry": "x",
@@ -1291,7 +1291,7 @@ void test_malformed_manifests() {
 
     expect_rejected("missing state sequence field",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1311,7 +1311,7 @@ void test_malformed_manifests() {
 
     expect_rejected("scenarios block absent",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1324,7 +1324,7 @@ void test_malformed_manifests() {
 
     expect_rejected("empty scenarios array",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1338,7 +1338,7 @@ void test_malformed_manifests() {
 
     expect_rejected("duplicate scenario name",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1358,7 +1358,7 @@ void test_malformed_manifests() {
 
     expect_rejected("anonymous scenario",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1375,7 +1375,7 @@ void test_malformed_manifests() {
 
     expect_rejected("scenario missing input",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1396,7 +1396,7 @@ void test_malformed_manifests() {
     // field into the bless/verify/observation-path sink.
     expect_rejected("path-traversing scenario name",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1413,7 +1413,7 @@ void test_malformed_manifests() {
 
     expect_rejected("scenario name with a path separator",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1430,7 +1430,7 @@ void test_malformed_manifests() {
 
     expect_rejected("unknown scenario field",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1455,7 +1455,7 @@ void test_canonicality_gate() {
     check(!accepted.has_errors(), "compact ordered manifest accepted");
 
     const std::string noncanonical_input = R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1488,7 +1488,7 @@ void test_canonicality_gate() {
 void test_float_canonicality_gate() {
     const auto case_with_input = [](std::string_view input_fragment) {
         return std::string{R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1535,7 +1535,7 @@ void test_float_canonicality_gate() {
 void test_enum_empty_payload_gate() {
     const auto case_with_input = [](std::string_view input_fragment) {
         return std::string{R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1578,7 +1578,7 @@ void test_enum_empty_payload_gate() {
 
 void test_dangling_source_rejected(const std::filesystem::path &scratch_dir) {
     const std::string manifest = R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "no_such_source.ahfl",
   "kind": "agent",
   "entry": "ghost::Agent",
@@ -1621,7 +1621,7 @@ void test_dangling_source_rejected(const std::filesystem::path &scratch_dir) {
 void test_capabilities_required() {
     expect_rejected("capabilities block absent",
                     R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -1654,7 +1654,7 @@ void test_capability_arguments_field() {
     const auto case_with = [](std::string_view expect_fragment,
                               std::string_view capabilities_fragment) {
         return std::string{R"({
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e2_capability::CapabilityAgent",

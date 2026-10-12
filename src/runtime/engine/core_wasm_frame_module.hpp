@@ -2,9 +2,9 @@
 
 // RFC 0026 P6-7 rung A: host-side admission of the two P6-frame custom sections
 // carried by a value-frame Core-Wasm module:
-//   * `ahfl.core-layout.v1` -- the deterministic P4-D layout table, boundary
+//   * `ahfl.core-layout` -- the deterministic P4-D layout table, boundary
 //     root ids, DISJOINT backing placements, and the payload-arena span;
-//   * `ahfl.wire-schema.v1`  -- the logical wire schema whose reachability roots
+//   * `ahfl.wire-schema`  -- the logical wire schema whose reachability roots
 //     include the agent input/output boundary nominals.
 //
 // The host never re-derives a physical fact. This unit:
@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 
 namespace ahfl::runtime::core_wasm_frame_module {
@@ -58,7 +58,9 @@ struct AdmitFrameResult {
     std::vector<ahfl::ir::core::CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return sections.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return sections.has_value() && !has_errors();
+    }
 };
 
 /// Admit the P6-frame section pair from emitted module bytes. Fails closed on

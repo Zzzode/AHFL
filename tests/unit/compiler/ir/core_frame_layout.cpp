@@ -10,7 +10,7 @@
 #include <span>
 #include <vector>
 
-// RFC 0026 P6-7 rung A: deterministic `ahfl.core-layout.v1` codec + local
+// RFC 0026 P6-7 rung A: deterministic `ahfl.core-layout` codec + local
 // verifier + layout/wire consistency admission. These tests build known-good
 // P4-D layout tables / frame-layout sections and prove:
 //   * encode/decode round-trip equality and canonical re-encode acceptance;
@@ -33,6 +33,7 @@ using namespace ahfl::ir::core;
 // the payload arena begins exactly at the backing base (sum of zero extents).
 [[nodiscard]] CoreFrameLayoutSection scalar_section() {
     CoreFrameLayoutSection section;
+    section.rodata_base = kP6RodataBase;
     section.table.target = TargetDataLayout{};
     section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64));
     section.table.value_layouts.push_back(CoreLayoutId{0});
@@ -48,14 +49,14 @@ using namespace ahfl::ir::core;
 // [16384, 16416); the arena begins at 16416.
 [[nodiscard]] CoreFrameLayoutSection container_section() {
     CoreFrameLayoutSection section;
+    section.rodata_base = kP6RodataBase;
     section.table.target = TargetDataLayout{};
     section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64)); // 0 element
     CoreLayout container;
     container.size = 8;
     container.align = 4;
     container.is_zero_sized = false;
-    container.shape =
-        CoreLayoutContainer{CoreLayoutId{0}, std::nullopt, 4, 8, 0, 32};
+    container.shape = CoreLayoutContainer{CoreLayoutId{0}, std::nullopt, 4, 8, 0, 32};
     section.table.layouts.push_back(container); // 1 container
     section.table.value_layouts.push_back(CoreLayoutId{1});
     section.input_layout = CoreLayoutId{1};
@@ -93,7 +94,7 @@ TEST_CASE("frame-layout codec round-trips a container-root section with placemen
 TEST_CASE("frame-layout decoder rejects a truncated payload") {
     auto encoded = encode_core_frame_layout_section(scalar_section());
     REQUIRE(encoded.ok());
-    for (std::size_t cut = 0; cut + 1 < encoded.bytes->size(); ++cut) {
+    for (std::size_t cut = 0; cut < encoded.bytes->size(); ++cut) {
         auto truncated = std::span<const std::uint8_t>(encoded.bytes->data(), cut);
         auto decoded = decode_core_frame_layout_section(truncated);
         CHECK_FALSE(decoded.ok());
@@ -107,7 +108,7 @@ TEST_CASE("frame-layout decoder rejects a tampered byte") {
     // Flip the first magic byte: the header gate must reject it.
     (*encoded.bytes)[0] ^= 0xff;
     CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
-    // Overlong-LEB the trailing arena-capacity zero: it decodes to the same
+    // Overlong-LEB the trailing construct-heap zero: it decodes to the same
     // value but is non-canonical, so the re-encode equality gate rejects it.
     auto overlong = encode_core_frame_layout_section(section);
     REQUIRE(overlong.ok());
@@ -120,6 +121,24 @@ TEST_CASE("frame-layout decoder rejects trailing bytes") {
     auto encoded = encode_core_frame_layout_section(scalar_section());
     encoded.bytes->push_back(0x00);
     CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout decoder requires explicit current tail fields") {
+    const auto encoded = encode_core_frame_layout_section(scalar_section());
+    REQUIRE(encoded.ok());
+    REQUIRE(encoded.bytes->size() > 2);
+    CHECK(encoded.bytes->at(6) == 0); // Target immediately follows the magic.
+    CHECK(encoded.bytes->at(encoded.bytes->size() - 2) == 0); // No workflow nodes.
+    CHECK(encoded.bytes->back() == 0);                        // Construct heap disabled.
+    auto missing_heap = *encoded.bytes;
+    missing_heap.pop_back();
+    CHECK_FALSE(decode_core_frame_layout_section(missing_heap).ok());
+    auto missing_tail = missing_heap;
+    missing_tail.pop_back();
+    CHECK_FALSE(decode_core_frame_layout_section(missing_tail).ok());
+    auto invalid_presence = *encoded.bytes;
+    invalid_presence[invalid_presence.size() - 2] = 2;
+    CHECK_FALSE(decode_core_frame_layout_section(invalid_presence).ok());
 }
 
 TEST_CASE("frame-layout verifier rejects overlapping backing placements") {
@@ -163,8 +182,8 @@ TEST_CASE("frame layout/wire consistency rejects a scalar-width disagreement") {
     const auto section = scalar_section(); // i64 layout
     CoreWireSchemaTable wire;
     // Narrow bounds imply i32, so the i64 layout disagrees.
-    wire.nodes.push_back(CoreWireSchemaNode{
-        CoreWireSchemaInt{std::pair<std::int64_t, std::int64_t>{0, 10}}});
+    wire.nodes.push_back(
+        CoreWireSchemaNode{CoreWireSchemaInt{std::pair<std::int64_t, std::int64_t>{0, 10}}});
     const auto diags = verify_frame_layout_wire_consistency(
         section.table, section.input_layout, wire, CoreWireSchemaNodeId{0});
     CHECK_FALSE(diags.empty());
@@ -172,6 +191,7 @@ TEST_CASE("frame layout/wire consistency rejects a scalar-width disagreement") {
 
 TEST_CASE("frame layout/wire consistency rejects struct arity disagreement") {
     CoreFrameLayoutSection section;
+    section.rodata_base = kP6RodataBase;
     section.table.target = TargetDataLayout{};
     // One-field struct at node 0.
     CoreLayout one_field;
@@ -179,7 +199,7 @@ TEST_CASE("frame layout/wire consistency rejects struct arity disagreement") {
     one_field.align = 8;
     one_field.shape =
         CoreLayoutStruct{std::vector<std::uint64_t>{0}, std::vector<CoreLayoutId>{CoreLayoutId{1}}};
-    section.table.layouts.push_back(one_field); // 0 struct
+    section.table.layouts.push_back(one_field);                          // 0 struct
     section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64)); // 1 i64
     section.table.value_layouts.push_back(CoreLayoutId{0});
     section.input_layout = section.output_layout = CoreLayoutId{0};
@@ -198,13 +218,12 @@ TEST_CASE("frame layout/wire consistency rejects struct arity disagreement") {
     CHECK_FALSE(diags.empty());
 }
 
-// RFC 0026 P6-7 frame-bridge v2 D5/D6 (rung V2-D): a workflow frame-layout
-// section is a format-version-2 payload whose trailing presence-gated block
+// RFC 0026 P6-7 workflow frame bridge: a workflow frame-layout
+// section has a required presence tag; its node block
 // carries the per-packaged-instance node-frame blocks (I/C/scratch/O), the
 // host-packed entry payload arena span and the workflow output slot.
 [[nodiscard]] CoreFrameLayoutSection workflow_node_section() {
     CoreFrameLayoutSection section;
-    section.format_version = 2;
     section.rodata_base = kP6RodataBase;
     section.table.target = TargetDataLayout{};
     section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64)); // 0
@@ -234,7 +253,7 @@ TEST_CASE("frame layout/wire consistency rejects struct arity disagreement") {
     return section;
 }
 
-TEST_CASE("frame-layout codec round-trips a V2-D workflow node-block section") {
+TEST_CASE("frame-layout codec round-trips a workflow node-block section") {
     const auto section = workflow_node_section();
     auto encoded = encode_core_frame_layout_section(section);
     REQUIRE(encoded.ok());
@@ -242,7 +261,7 @@ TEST_CASE("frame-layout codec round-trips a V2-D workflow node-block section") {
     REQUIRE(decoded.ok());
     REQUIRE(decoded.section.has_value());
     CHECK(*decoded.section == section);
-    CHECK(decoded.section->format_version == 2);
+
     CHECK(decoded.section->node_blocks.size() == 1);
 }
 
@@ -255,8 +274,8 @@ TEST_CASE("frame-layout verifier rejects overlapping workflow node blocks") {
     CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
 }
 
-// V2-D fix-forward: a workflow section carrying a capability bridge must get
-// the SAME dense call-site record validation the agent-lane (V2-C) section
+// Workflow bridge validation: a workflow section carrying a capability bridge must get
+// the SAME dense call-site record validation the agent-lane  section
 // gets, plus node-block sizes re-derived from the named layout roots. This
 // fixture packs one node block (I/C/scratch/O) + one one-arity bridge site +
 // the entry arena + the workflow output slot into pairwise-disjoint spans.
@@ -267,7 +286,6 @@ TEST_CASE("frame-layout verifier rejects overlapping workflow node blocks") {
 //   output slot: @10304/8
 [[nodiscard]] CoreFrameLayoutSection workflow_bridge_section() {
     CoreFrameLayoutSection section;
-    section.format_version = 2;
     section.rodata_base = kP6RodataBase;
     section.table.target = TargetDataLayout{};
     section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64)); // 0
@@ -306,6 +324,7 @@ TEST_CASE("frame-layout verifier rejects overlapping workflow node blocks") {
     site.call_site_id = 0;
     site.source_symbol = 1;
     site.arity = 1;
+    site.spill_base = section.bridge_spill_base;
     site.block_offset = 0;
     site.param_layouts = {CoreLayoutId{0}};
     site.result_layout = CoreLayoutId{0};
@@ -321,7 +340,7 @@ TEST_CASE("frame-layout verifier rejects overlapping workflow node blocks") {
     return section;
 }
 
-TEST_CASE("frame-layout codec round-trips a V2-D workflow bridge section") {
+TEST_CASE("frame-layout codec round-trips a workflow bridge section") {
     const auto section = workflow_bridge_section();
     auto encoded = encode_core_frame_layout_section(section);
     REQUIRE(encoded.ok());
@@ -332,7 +351,7 @@ TEST_CASE("frame-layout codec round-trips a V2-D workflow bridge section") {
     CHECK(decoded.section->bridge_call_sites.size() == 1);
 }
 
-TEST_CASE("frame-layout verifier accepts a V2-D node block with a zero-sized "
+TEST_CASE("frame-layout verifier accepts a node block with a zero-sized "
           "Unit context") {
     // A packaged agent declares context: Unit, whose finalized layout is
     // zero-sized: the C sub-block is absent (context_size == 0) and the
@@ -341,18 +360,18 @@ TEST_CASE("frame-layout verifier accepts a V2-D node block with a zero-sized "
     auto &block = section.node_blocks[0];
     block.context_layout = CoreLayoutId{1}; // zero-sized Unit
     block.context_size = 0;
-    block.context_base = 0; // absent block carries no span base
+    block.context_base = 0;                                   // absent block carries no span base
     block.scratch_base = block.input_base + block.input_size; // 8200
     block.output_base = block.scratch_base + block.scratch_size; // 8216
     // Shift the bridge page / result / arena / output down with the block.
     const std::uint32_t page = block.output_base + block.output_size; // 8224
     section.bridge_control_base = page;
     section.bridge_spill_base = page + section.bridge_block_stride;
+    section.bridge_call_sites[0].spill_base = section.bridge_spill_base;
     section.bridge_call_sites[0].result_base = section.bridge_spill_base;
-    section.entry_payload_base = section.bridge_call_sites[0].result_base +
-                                 section.bridge_call_sites[0].result_extent;
-    section.workflow_output_base = section.entry_payload_base +
-                                   section.entry_payload_capacity;
+    section.entry_payload_base =
+        section.bridge_call_sites[0].result_base + section.bridge_call_sites[0].result_extent;
+    section.workflow_output_base = section.entry_payload_base + section.entry_payload_capacity;
     auto encoded = encode_core_frame_layout_section(section);
     REQUIRE(encoded.ok());
     CHECK(decode_core_frame_layout_section(*encoded.bytes).ok());

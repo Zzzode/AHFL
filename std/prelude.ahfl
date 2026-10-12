@@ -1,24 +1,7 @@
 module std::prelude;
 
-// ===========================================================================
-// P6a-01: prelude §9.1 full export.
-//
-// std::prelude is opt-in — users must explicitly `import std::prelude`
-// (or set inject_prelude=true in ProjectInput for tooling/tests).
-// No symbols are auto-injected into user module scopes by default.
-//
-// Because AHFL P3 does not support same-module function overloading (a bare
-// name like `map` can only map to ONE SymbolId in the Functions namespace),
-// conflicting names are resolved as follows:
-//   * Names unique to a single module  → thin UFCS wrapper defined below.
-//   * Names used by more than one std sub-module → the List<T> variant wins
-//     the bare name (it is the dominant usage surface); the remaining
-//     variants continue to work via their inherent-impl dot-call form
-//     (e.g. `opt.and_then(f)`) or their fully-qualified module path.
-//   * Names that collide between Option<T> and Result<T,E> with roughly
-//     equal frequency are NOT exported as bare positional wrappers; callers
-//     use the method-call surface or explicit module paths.
-// ===========================================================================
+// Explicit prelude imports expose common types, constructors and free functions.
+// Receiver operations use their defining type's inherent methods.
 
 // ---- sub-module imports ---------------------------------------------------
 import std::cmp;
@@ -100,179 +83,13 @@ pub fn some<T>(value: T) -> Option<T> effect Pure decreases 0 {
     return option::some<T>(value);
 }
 
-// ===========================================================================
-// §9.1.2  FUNCTIONS — option
-//
-// Positional (UFCS) surface for the subset of Option operations whose
-// module-level wrapper names do not collide with other std sub-modules.
-// Names `map`, `filter`, `and_then`, `or_else`, `unwrap_or`,
-// `unwrap_or_else`, `unwrap` collide with Result<T,E> or List<T>; callers
-// use the inherent-impl method-call form (e.g. `opt.map(f)`) instead.
-// ===========================================================================
-
-pub fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
-    return option::is_some<T>(self);
-}
-
-pub fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
-    return option::is_none<T>(self);
-}
-
-pub fn get_or_insert<T>(self: Option<T>, value: T) -> T effect Pure decreases 0 {
-    return option::get_or_insert<T>(self, value);
-}
-
-// ===========================================================================
-// §9.1.2  FUNCTIONS — result
-//
-// Same scope rule as Option above. `map`, `and_then`, `or_else`,
-// `unwrap_or`, `unwrap_or_else`, `unwrap` collide and are deferred to the
-// inherent-impl surface.
-// ===========================================================================
-
-pub fn is_ok<T, E>(self: Result<T, E>) -> Bool effect Pure decreases 0 {
-    return result::is_ok<T, E>(self);
-}
-
-pub fn is_err<T, E>(self: Result<T, E>) -> Bool effect Pure decreases 0 {
-    return result::is_err<T, E>(self);
-}
-
-pub fn map_err<T, E, F>(self: Result<T, E>, f: Fn(E) -> F)
-    -> Result<T, F> effect Pure decreases 0
-{
-    return result::map_err<T, E, F>(self, f);
-}
-
-pub fn ok<T, E>(self: Result<T, E>) -> Option<T> effect Pure decreases 0 {
-    return result::ok<T, E>(self);
-}
-
-pub fn err<T, E>(self: Result<T, E>) -> Option<E> effect Pure decreases 0 {
-    return result::err<T, E>(self);
-}
-
-// ===========================================================================
-// §9.1.2  FUNCTIONS — collections (non-conflicting bare names)
-//
-// Names whose module-level wrappers in `std::collections` already use the
-// unprefixed spelling (e.g. `empty`, `first`) are forwarded directly. Names
-// that live under a `list_*` prefixed spelling (to disambiguate Set/Map
-// variants inside the collections module itself) are lifted to their
-// unprefixed §9.1.2 names in this file; each is a one-line forwarder.
-//
-// `map`, `filter`, `length`, `is_empty`, `reverse` collide across List<T>
-// and other types; the List<T> variant is selected as the primary surface.
-// `contains`, `concat`, `get` collide with non-List types where no single
-// variant dominates; see deferred items at the bottom of this file.
-// ===========================================================================
-
-// --- constructors (List wins bare name) ------------------------------------
+// Collection constructors remain free functions.
 pub fn empty<T>() -> List<T> effect Pure decreases 0 {
     return collections::empty<T>();
 }
 
 pub fn singleton<T>(x: T) -> List<T> effect Pure decreases 0 {
     return collections::singleton<T>(x);
-}
-
-// --- predicates / access ---------------------------------------------------
-pub fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
-    return collections::length<T>(self);
-}
-
-pub fn is_empty<T>(self: List<T>) -> Bool effect Pure decreases 0 {
-    return collections::is_empty<T>(self);
-}
-
-pub fn first<T>(self: List<T>) -> Option<T> effect Pure decreases 0 {
-    return collections::first<T>(self);
-}
-
-pub fn last<T>(self: List<T>) -> Option<T> effect Pure decreases 0 {
-    return collections::last<T>(self);
-}
-
-// --- structural operations (unique names) ----------------------------------
-pub fn append<T>(self: List<T>, other: List<T>) -> List<T> effect Pure
-    decreases collections::list_raw_length<T>(self) + collections::list_raw_length<T>(other)
-{
-    return collections::append<T>(self, other);
-}
-
-pub fn tail<T>(self: List<T>) -> Option<List<T>> effect Pure decreases 0 {
-    return collections::list_tail<T>(self);
-}
-
-pub fn concat<T>(self: List<T>, others: List<List<T>>) -> List<T> effect Pure
-    decreases collections::list_raw_length<List<T>>(others)
-{
-    return collections::list_concat<T>(self, others);
-}
-
-pub fn slice<T>(self: List<T>, from: Int, to: Int) -> Option<List<T>> effect Pure decreases 0 {
-    return collections::list_slice<T>(self, from, to);
-}
-
-pub fn insert<T>(self: List<T>, i: Int, x: T) -> Option<List<T>> effect Pure decreases 0 {
-    return collections::list_insert<T>(self, i, x);
-}
-
-pub fn remove<T>(self: List<T>, x: T) -> List<T> effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::list_remove<T>(self, x);
-}
-
-pub fn remove_at<T>(self: List<T>, i: Int) -> Option<List<T>> effect Pure decreases 0 {
-    return collections::list_remove_at<T>(self, i);
-}
-
-// --- higher-order -----------------------------------------------------------
-pub fn fold<T, A>(self: List<T>, init: A, f: Fn(A, T) -> A) -> A effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::fold<T, A>(self, init, f);
-}
-
-pub fn fold_right<T, A>(self: List<T>, init: A, f: Fn(T, A) -> A) -> A effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::list_fold_right<T, A>(self, init, f);
-}
-
-pub fn flat_map<T, U>(self: List<T>, f: Fn(T) -> List<U>) -> List<U> effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::list_flat_map<T, U>(self, f);
-}
-
-pub fn reverse<T>(self: List<T>) -> List<T> effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::list_reverse<T>(self);
-}
-
-// --- higher-order (List wins bare name for map / filter) -------------------
-pub fn map<T, U>(self: List<T>, f: Fn(T) -> U) -> List<U> effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::map<T, U>(self, f);
-}
-
-pub fn filter<T>(self: List<T>, p: Fn(T) -> Bool) -> List<T> effect Pure
-    decreases collections::list_raw_length<T>(self)
-{
-    return collections::filter<T>(self, p);
-}
-
-// --- Map<K,V> unique bare names --------------------------------------------
-pub fn contains_key<K, V>(self: Map<K, V>, key: K) -> Bool effect Pure decreases 0 {
-    return collections::contains_key<K, V>(self, key);
-}
-
-pub fn get_or<K, V>(self: Map<K, V>, key: K, default: V) -> V effect Pure decreases 0 {
-    return collections::map_get_or<K, V>(self, key, default);
 }
 
 pub fn set_empty<T>() -> Set<T> effect Pure decreases 0 {
@@ -304,40 +121,16 @@ pub fn map_from_entries<K, V>(
     return collections::map_from_entries<K, V>(k0, v0, k1, v1, k2, v2, k3, v3);
 }
 
-// ===========================================================================
-// §9.1.2  FUNCTIONS — string
-//
-// `length`, `is_empty`, `contains`, `concat` collide with List<T> or Set<T>
-// at the Functions-namespace level; they remain accessible via the
-// inherent-impl method-call surface (`s.length()`, `s.contains(prefix)`).
-// ===========================================================================
-
-pub fn starts_with(self: String, prefix: String) -> Bool effect Pure decreases 0 {
-    return string::starts_with(self, prefix);
-}
-
-pub fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
-    return string::ends_with(self, suffix);
-}
-
 pub fn join(parts: List<String>, sep: String) -> String effect Pure
     decreases collections::list_raw_length<String>(parts)
 {
     return string::join(parts, sep);
 }
 
-/// Deprecated alias retained for one release cycle (P5 -> P6). New code
-/// should prefer `s.length()` via the inherent impl on String.
-pub fn raw_length(self: String) -> Int effect Pure decreases 0 {
-    return string::raw_length(self);
-}
-
 // ===========================================================================
 // §9.1.2  FUNCTIONS — cmp
 //
-// `reverse` collides with List<T>::reverse; the List variant wins the bare
-// positional name. Callers inspecting Ordering values use `ord.reverse()`
-// via the inherent impl.
+// Comparisons and numeric bounds remain available as free functions.
 // ===========================================================================
 
 pub fn is_less(self: Ordering) -> Bool effect Pure decreases 0 {
@@ -396,42 +189,4 @@ pub fn format(template: String, args: List<fmt::DisplayValue>)
 //
 // Formal trait re-export (via type alias or dedicated syntax) is deferred
 // to PHASE B when the trait grammar gains explicit `pub use Trait` support.
-// ===========================================================================
-
-// ===========================================================================
-// DEFERRAL NOTES — §9.1.2 names not exported as bare positional wrappers
-//
-// Resolver limitation (P3): the `module_local_names` table maps each bare
-// name to a single SymbolId within a module. Same-module overloading is
-// therefore unavailable, so any name that appears in more than one std
-// sub-module must pick one winner or be deferred.
-//
-// (A) Equal-frequency collisions between Option<T> and Result<T,E>
-//     These are equally idiomatic on both types, so no single winner is
-//     obvious. Use the inherent-impl method-call form instead — which is
-//     the primary surface in the API spec anyway:
-//       `opt.map(f)`, `result.and_then(f)`, etc.
-//       map, and_then, or_else, unwrap_or, unwrap_or_else, unwrap (×2 arity)
-//
-// (B) Container cross-type collisions
-//     No single variant dominates sufficiently to claim the bare name:
-//       `contains`   (Set<T> + String; List<T> uses collections::list_contains)
-//       `concat`     (List<List<T>> flatten + String×String)
-//       `get`        (List<T> index + Map<K,V> key lookup)
-//     All remain reachable via the method-call form (`xs.get(i)`, etc.).
-//
-// (C) Not yet implemented in the underlying std sub-modules (PHASE B)
-//     option / result:  try (requires P4 contract + panic primitive)
-//     List<T>:          head, for_each, sort, keys/values/entries,
-//                       to_set, to_list
-//     Set<T>:           union, intersection, difference, is_subset,
-//                       is_disjoint, map, filter, fold (List variants win)
-//     Map<K,V>:         map_values, filter, fold (same reason as Set)
-//     String:           upper, lower, trim, replace, split, split_lines,
-//                       parse, format (format exported, see above)
-//
-// (D) Other
-//     none<T>()   — bare identifier `none` is a P3 grammar reserved word
-//     String alias — self-referential type-alias cycle; redundant
-//     Ordering::reverse positional wrapper — List<T>::reverse wins
 // ===========================================================================

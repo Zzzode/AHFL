@@ -5,7 +5,7 @@
 > (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
 > demotion + the wire-schema Wasm transport chain: C1 payload decoder
 > `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
-> `b75fc8ec`; the legacy `response_schema_validator` is deleted; plus the B2-S
+> `b75fc8ec`; `response_schema_validator` is deleted; plus the B2-S
 > base-support SHA-256/HMAC primitive below).
 > B2 (the full durable-resume ABI/control-record, protected payload store,
 > atomic/crash, ownership/last-use, and node-order evidence work) remains
@@ -34,7 +34,7 @@
 > without per-mint re-verification/copy. Its new public-in-header factories
 > (`make_verified_wire_schema_table`, `make_wire_binding_from_verified_table`)
 > are now directly consumed by the A2 module-context below (the existing
-> `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
+> `project_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
 > production paths continue to use the same shared backing internally); there is
 > still no production host caller. B2 and KR6.5 stay false.
 > The A1 record codec (`8a987ca1`) and the A2 runtime module-context
@@ -77,7 +77,7 @@
 > one canonical wire-schema projection, and define the durable record's control
 > and sensitive-payload boundaries. The design is implemented through B1 plus the
 > B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices (base-support HMAC, the shared
-> verified-table authority, the `ahfl.wasm-resume.v1` record codec, the runtime
+> verified-table authority, the `ahfl.wasm-resume` record codec, the runtime
 > module-context + exec-manifest decoder, the B2-B integrity-only LOCAL
 > payload store FOUNDATION, the B2-C capability-workflow emitter `4224a52f`
 > for the exec-manifest + node-event buffer + capability-status scheduling, and
@@ -100,40 +100,27 @@
 > pinned Wasmtime environment. That approval has not been given, so this slice
 > touches no CI or dependency wiring for E4-A.
 
-## 0. Research result: the current checks cannot authorize Wasm resume
+## 0. Trust boundary: typed wire binding is required
 
-E2 deliberately forwards `AHFL_WIRE_VALUE_JSON` as opaque bytes. That is the
-correct P5 boundary: wire JSON is not a P4-D object layout, and the module does
-not contain a JSON evaluator. E4-B must not reverse that decision merely to add
-resume.
+Capability transport forwards exact wire bytes; these are distinct from P4-D
+in-memory layout. The module does not contain a schema-free JSON evaluator.
+Recovery validates results against the live verified binding before replay.
 
-The repository currently has two runtime checks, but neither is a sufficient
-authority for E4-B:
+The current codec is the sole schema-guided decode/validation authority. The
+former outer-variant checker and independent TypeRef response validator have
+been deleted; neither defines a fallback path. The required invariants are:
 
-1. `workflow_runtime.cpp::value_matches_return_type` checks only the outer
-   `evaluator::Value` variant. A `StructValue` with the wrong nominal, fields,
-   or nested values passes as any struct; an `EnumValue` with the wrong variant
-   or payload passes as any enum. It also accepts `Never`, `Any`, and
-   `Unresolved`, none of which may authorize a materialized E4-B result.
-2. `response_schema_validator.cpp` recursively checks several AHFL `TypeRef`
-   shapes, but it is a separate TypeRef-based relation. Generic declaration
-   member TypeVars have already been erased from `FieldDecl.type_ref` in the
-   Typed-to-AHFL bridge; P4-C had to persist member templates specifically to
-   avoid reconstructing them from those TypeRefs. The validator also checks
-   only enum variant existence, not positional/named payload arity and types.
-   (Historical: RFC 0026 C2b G4d DELETED `response_schema_validator.cpp`
-   entirely; the schema-guided `core_wire_codec` `validate_value` / `decode_json`
-   against a verified wire binding is now the sole native-Value validation
-   authority. This numbered item records the original motivation.)
-3. `value_from_json` is intentionally schema-free. A JSON string could mean
-   `String`, `Decimal`, or `Duration`; an array could mean `List` or `Set`; and
-   `null` could mean `Unit`, `Option::None`, or a legacy `NoneValue`. Decoding
-   first and checking the resulting untyped variant loses information needed
-   to reconstruct the declared AHFL value.
-4. The current `MapValue` JSON writer is canonical only for string-shaped keys.
-   A non-string key cannot be emitted as a valid JSON object member without an
-   additional wire encoding decision. E4-B0 therefore cannot claim all
-   materialized `Map<K,V>` values are wire-decodable.
+1. A Struct or Enum must satisfy the exact nominal, field/variant set, payload
+   arity, and recursively instantiated member types. Matching only an outer
+   runtime variant cannot prove these facts.
+2. A schema-free JSON value cannot establish the declared type: a string may be
+   String, Decimal, or Duration; an array may be List or Set; null may be Unit or
+   Option None. Decode must use the verified shape and explicit result presence.
+3. Map keys and values use the codec's exact wire encoding and declared child
+   bindings. A generic JSON-object assumption cannot replace key validation.
+4. Arena IDs and interned type pointers are owner-relative. Fresh-process
+   recovery validates transported schema and numeric invocation identity,
+   rather than treating an old memory address as proof.
 
 RFC 0022 also contains a stale implementation phrase: a persisted resume
 record cannot validate an "interned TypeContext handle" by pointer equality in
@@ -235,7 +222,7 @@ struct WireCapabilitySchema {
 };
 
 struct WireSchemaTable {
-    uint32_t format_version;
+    uint32_t format;
     vector<WireSchemaNode> nodes;
     vector<WireCapabilitySchema> capabilities;
 };
@@ -338,7 +325,7 @@ Examples:
 There is no implicit numeric widening at this boundary. A Float uses the
 canonical float JSON spelling, while Decimal uses its canonical string spelling.
 Accepting an Int as Float or Int/Float as Decimal and leaving the wrong runtime
-variant, as the legacy response validator currently permits, is forbidden.
+variant is forbidden. Deleted validators provide no alternative decode policy.
 
 Numeric provenance (C2b P0-10). The base JSON DOM records how each number was
 parsed — `SignedInteger`, `UnsignedInteger` (a high-bit magnitude stored in a
@@ -356,7 +343,7 @@ that DOM directly rather than `serialize_json` then re-parse, because a generic
 serialize→parse round-trip does NOT preserve `FloatSyntax`/`IntegerFallback`
 provenance. The generic serializer's Float branch and every legal-producer
 snapshot byte are unchanged (an integral `FloatSyntax` still emits bare `1`, so
-v1/v2 snapshot bytes and `arg_hash`, which hashes the evaluator `value_to_json`
+current snapshot bytes and `arg_hash`, which hashes the evaluator `value_to_json`
 output directly, are unaffected); the only byte change the serializer makes is
 that a formerly-corrupt high-bit unsigned integer now serializes as its correct
 unsigned decimal instead of a negative. A fully provenance-preserving serializer
@@ -387,36 +374,22 @@ RuntimeValuePolicy    -> consumes Value node, returns validation only
 
 Both policies use the same field/variant/child traversal and exact-kind rules.
 
-**Which policy applies is SOURCE-DEPENDENT, not "native memo/injected Value is
-always native-validated"** (that earlier phrasing was wrong; see §9 for the landed
-Stage-3 behavior). Concretely for durable resume:
+**The result source selects the input policy.** `StoredMemoResult` carries exact
+wire bytes and explicit presence; `WireJsonDecodePolicy` decodes them under the
+live verified binding. `InMemoryMemoResult` and a native pending result are
+validated on their original Value with `RuntimeValuePolicy`. Neither path uses
+a generic projected Value as durable authority.
 
-- a **persisted** memo entry's authority is its JSON (LegacyV2 raw `result` substring
-  or ExactSidecar sidecar wire), decoded by the `WireJsonDecodePolicy`
-  (`decode_json` / the legacy variant) — its schema-free materialized `result` Value
-  is a compat projection, NEVER the authority;
-- only a **programmatic NativeOnly** memo entry and the **host-supplied native
-  pending** result are checked by `RuntimeValuePolicy` on the ORIGINAL Value.
+### 2.5 Source type projection
 
-The shallow `workflow_runtime.cpp::value_matches_return_type` is deleted. The
-TypeRef-based response validator is migrated to the shared schema API rather than
-becoming a third durable-resume authority.
+The production compiler projects source `TypeRef` into the same wire-schema
+representation through `project_type_ref_to_wire_binding`. This is a source-to-
+transport projection, not a migration reader. It fails closed when declaration
+metadata cannot establish the exact closed shape; it never substitutes Any or
+skips a payload check. All transport configurations carry only the projected
+`response_wire_binding`. The shared decoder/validator remains the single
+schema-guided authority.
 
-### 2.5 Legacy native callers do not define durable schema
-
-Durable Wasm resume accepts only the Core projection above. A standalone native
-HTTP/gRPC binding that currently supplies a `TypeRef` may use a migration
-projector into the same `WireSchemaTable`, but that projector must fail closed
-when the available AHFL declaration has erased generic member information. It
-cannot substitute `Any` or skip a payload check. The durable differential
-harness gives both the native reference run and the Wasm host the table derived
-from the same checked-frontend-to-Core fork, mapped by source `SymbolId` with no
-name fallback.
-
-This permits compatibility migration without making TypeRef traversal a second
-durable schema authority. Projection-equivalence tests cover every closed shape
-that both layers can represent; the shared decoder/validator remains the only
-runtime rule engine.
 
 ## 3. Schema transport to a generic host
 
@@ -426,13 +399,13 @@ A generic embedder receives module bytes, not a `CoreProgram`. E4-B therefore
 serializes the verified table into one deterministic custom section:
 
 ```text
-section name: ahfl.wire-schema.v1
+section name: ahfl.wire-schema
 payload: versioned, length-delimited, canonical LEB128/index-based flat table
 ```
 
 This is the only new artifact metadata proposed by B0. It does not alter the
 `ahfl_cap` import name or `(i32,i32)->(i32,i32,i32)` signature, the public
-`run2` signature, or ABI version 1. Wasm code cannot observe the section; the
+`run_workflow` signature, or ABI version 1. Wasm code cannot observe the section; the
 host extracts and verifies it before instantiation.
 
 The earlier E1-E3 "no custom section" rule prevented accidental debug names,
@@ -443,7 +416,7 @@ The standard Wasm name section remains absent.
 
 Identity-only E1/E3 artifacts need no schema section and remain byte-identical.
 Only an E2 agent artifact whose `plan.imports` is non-empty appends exactly one
-target `ahfl.wire-schema.v1` section after the Code section (at module EOF); E1,
+target `ahfl.wire-schema` section after the Code section (at module EOF); E1,
 E3, and no-import artifacts stay byte-identical. The runtime inspector extracts
 and verifies the section before instantiation (E4-B1: writer `a73a8991`, runtime
 inspector `b75fc8ec`).
@@ -485,7 +458,7 @@ D2b) uses an opaque 32-byte `IdempotencyToken = SHA-256(preimage)` over a FIXED,
 canonical, fixed-width preimage (all integers little-endian, no ULEB/text):
 
 ```text
-"AHFL-IDEMPOTENCY-v1"            (ASCII domain, no trailing NUL)
+"AHFL-IDEMPOTENCY"            (ASCII domain, no trailing NUL)
 authority_id                    (IdempotencyAuthorityId: 16 raw bytes)
 CoreWorkflowId                  (u32-LE)
 ResumeCheckpointId              (u64-LE)
@@ -551,7 +524,7 @@ a bare `CoreWireSchemaNodeId` is never persisted or accepted as authority.
 > change. The new decoder's fixed field order + invariants are the admission
 > authority, enforced by a PERMANENT old-golden reject gate (the
 > pre-`entry_input_slot` golden is permanently rejected, not accepted by canonical
-> re-encode alone). public C ABI and `ahfl.workflow-recovery.v1|v2` are unchanged;
+> re-encode alone). the current C ABI and `ahfl.workflow-recovery` are updated together;
 > no persisted-data migration (no production persistence caller).
 
 The grammar below is the LANDED D1a record shape (including `entry_input_slot`,
@@ -562,15 +535,14 @@ deterministic (Kahn) schedule, so a single-node record cannot locate a prior
 node's memo (invocation ordinals are per-node) nor avoid re-invoking earlier
 capability nodes. Because the deterministic replay recomputes downstream inputs
 but CANNOT recompute the workflow's own entry frame (it enters the module only as
-`run2` arguments), that entry frame is persisted once as `entry_input_slot`; the
+`run_workflow` arguments), that entry frame is persisted once as `entry_input_slot`; the
 B2 record is therefore a FULL-WORKFLOW per-node replay
-ledger — append-only, versioned, index-based, authenticated:
+ledger — index-based, authenticated, and ordered:
 
 ```text
 record = body || auth_header || tag
 body:
   magic = "AHFLWR"
-  format_version = 1
   guarantees            (u32 bit flags: bit0 rollback_protected, bit1 confidential_at_rest)
   module_sha256         (64 lowercase hex; whole emitted module)
   wire_schema_sha256    (64 lowercase hex; raw AHFLWS table payload, no custom-name framing)
@@ -603,7 +575,7 @@ body:
                              capability (CoreCapabilityId),
                              source_symbol, arg_hash })
   }, ... ]
-auth_header = { alg_version = 1 (HMAC-SHA256), key_id (16 bytes), generation (u64) }
+auth_header = { alg_id = 1 (HMAC-SHA256), key_id (16 bytes), generation (u64) }
 tag         = 32 bytes (HMAC-SHA256)
 ```
 
@@ -630,7 +602,7 @@ compared without narrowing or overflow.
 The `entry_input_slot` is REQUIRED and its `PayloadSlotId` must differ from every
 `memo.result_slot` in every node (input provenance never shares slot authority
 with result provenance); admission rejects the invalid sentinel and any collision.
-It is the ONLY entry-frame authority: a fresh instance's `run2(ptr, len)` is fed
+It is the ONLY entry-frame authority: a fresh instance's `run_workflow(ptr, len)` is fed
 these exact opaque bytes verbatim. AHFLWS carries only capability Param/Result
 roots (no workflow-entry schema), so the entry frame is admitted OPAQUE (slot
 artifact authenticity + length + cap only) and is NOT type-checked against a
@@ -673,7 +645,7 @@ algorithm and `pending.arg_hash` is REQUIRED (the host holds schema-decoded args
 at suspend and persists it immediately; no `pending_args_slot` is forced). The
 record's own trust root is the HMAC-SHA256 tag over the exact on-wire record
 prefix `[0, tag)` — i.e. `body || auth_header`, the tag excluded. The prefix's
-FIRST authenticated bytes are `magic` (`AHFLWR`) then `format_version`: a record
+FIRST authenticated bytes are `magic` (`AHFLWR`) then `format`: a record
 of a different artifact class or version has a different prefix, so its tag fails
 verification under this class/version unless the MAC itself is forged.
 (Implementation benefit: that contiguous prefix is passed directly to the
@@ -682,10 +654,10 @@ of the whole record.) The artifact digests are integrity of the module and
 schema, not of the record.
 
 Admission is TWO-PASS. Layout `body || auth_header || tag` with a FIXED 57-byte
-tail (`auth_header` 25 bytes = {`alg_version` u8, `key_id` 16 bytes, `generation`
+tail (`auth_header` 25 bytes = {`alg_id` u8, `key_id` 16 bytes, `generation`
 u64 little-endian} + `tag` 32 bytes), located from EOF. PASS 1 (untrusted) checks
-ONLY: minimum total length, `magic` + `format_version`, the fixed tail offsets,
-`alg_version` in its allowed set, and equality of the record `key_id` against the
+ONLY: minimum total length, `magic` + `format`, the fixed tail offsets,
+`alg_id` in its allowed set, and equality of the record `key_id` against the
 caller-supplied `expected_key_id` — it NEVER reads a body count and NEVER
 reserves or allocates on any attacker-supplied count. `key_id` and `tag` are
 compared with a fixed-work, no-early-exit BEST-EFFORT routine (portable C++
@@ -693,7 +665,7 @@ cannot prove constant-time). Only AFTER the tag verifies does PASS 2 decode the
 body's ULEB fields/counts and enforce the structural invariants. The caller
 explicitly provides the candidate `expected_key_id` and borrowed key bytes; this
 slice has NO keyring, KMS, or key resolver. Canonical admission does NOT re-run
-HMAC: pass 2 still validates the header (`alg_version` allowed set; `key_id` /
+HMAC: pass 2 still validates the header (`alg_id` allowed set; `key_id` /
 `generation` fixed shape), then the decoder re-encodes the parsed, validated
 model's canonical `body || auth_header` and compares it byte-for-byte against the
 already-authenticated prefix `[0, tag)` (the fixed-width `auth_header` / `tag`
@@ -707,12 +679,12 @@ Approach-A ledger.
 
 Serialization uses fixed field order (one order — `invocation_ordinal` first in
 both memo entries and `pending`) and canonical numeric encoding. Integer encoding
-(single rule): every tag / discriminant / presence / version field is an EXACT u8
-with an enumerated allowed set — `format_version` u8 ∈ {1}, `entry.kind` u8 ∈
+(single rule): every tag / discriminant / presence / algorithm field is an EXACT u8
+with an enumerated allowed set — `entry.kind` u8 ∈
 {0=Workflow}, `resume_state` u8 ∈ {0=Suspended, 1=Injected}, per-node `node_kind`
 u8 ∈ {0=identity, 1=capability}, and pending presence is implied by
 `resume_state` (present iff Suspended), not a separate byte; the
-`auth_header.alg_version` u8 ∈ {1=HMAC-SHA256}; every OTHER `body`
+`auth_header.alg_id` u8 ∈ {1=HMAC-SHA256}; every OTHER `body`
 integer (`guarantees` u32; all counts, ids, ordinals, slots, `arg_hash`) is a
 canonical unsigned LEB128; and the fixed-width fields are exact — each SHA-256 is
 64 lowercase-hex ASCII bytes, `auth_header.key_id` is 16 raw bytes,
@@ -731,7 +703,7 @@ assignment, it is byte-reproducible.
 > (`guarantees` bit1 `confidential_at_rest` = 0) and NO rollback protection
 > (bit0 `rollback_protected` = 0), so it must never be described as a conforming
 > `ProtectedPayloadStore`. The existing plaintext native
-> `ahfl.workflow-recovery.v1|v2` JSON store is unchanged and is NOT relabeled.
+> `ahfl.workflow-recovery` is the unique current JSON store.
 
 Node input and capability results are application data. They may legitimately
 contain a user secret. A durable runtime cannot both persist enough state to
@@ -751,7 +723,7 @@ The correct boundary is:
 - secret-provider credentials remain handles and are never copied into either
   the record or payload; application data returned by a capability is still
   classified as sensitive runtime state; and
-- the existing plaintext native `ahfl.workflow-recovery.v2` JSON store is not
+- the existing plaintext native `ahfl.workflow-recovery` JSON store is not
   silently relabeled as a production-safe Wasm resume store.
 
 This distinguishes deterministic semantics from public artifact reproducibility.
@@ -763,7 +735,7 @@ identity or replay order.
 
 > Status: **B2-0 design LOCKED; the A2 exec-manifest decoder + runtime
 > module-context LANDED (`5bd812b2`); the B2-C capability-workflow emitter LANDED
-> (`4224a52f`).** The `ahfl.wasm-exec-manifest.v1` decoder,
+> (`4224a52f`).** The `ahfl.execution-manifest` decoder,
 > the module framing + import/schema/manifest set-equality cross-check, and the
 > eager Param/Result call-site bindings are implemented; the compiler-side
 > manifest EMITTER (`4224a52f`), the module-side capability-status scheduling with
@@ -792,47 +764,23 @@ identity or replay order.
 > conforming confidential/KMS/rollback store is a PREREQUISITE sub-slice of full
 > B2-D closure. The emitter provides only module-side manifest + event bytes.
 
-The chosen resume approach adds NO new module ABI SYMBOL or SIGNATURE and reuses
-the existing PROJECT `import_count + base` function-index RULE unchanged (imported
-functions occupy the low indices; each defined function's index is
-`import_count + base`). Precisely: the existing `run` / `run2` export and
-`ahfl_cap` import Wasm ABI signatures are unchanged, and the no-capability E1/E3
-fixtures keep `import_count == 0` so their bytes AND their function/export index
-NUMBERS stay frozen; the E2 agent artifact is not rewritten. The new
-capability-bearing WORKFLOW artifact is the first capability-workflow byte change
-and a NEW baseline: once it carries `ahfl_cap` imports its defined/export function
-indices (runners / `run` / `run2`) NECESSARILY SHIFT by `import_count` UNDER THE
-SAME RULE — that shift is expected, not a new ABI. Its `run2` BODY also
-necessarily changes (capability `PENDING` propagation + node-event writes). Only
-the ABI symbols/signatures and the index-computation rule are frozen — not the
-concrete index numbers of the capability-workflow baseline, and not that body.
-The capability-bearing workflow module carries a
-deterministic EXECUTION MANIFEST (a compiler-emitted custom section) and a
-module-written node-event buffer; the host drives a fresh instance and answers
-the existing `ahfl_cap` imports.
+The host validates the current `run_workflow` entry and the exact `ahfl_cap`
+imports. Defined function indices follow `import_count + base`; removing obsolete
+functions changes concrete indices, and structural tests must follow the actual
+current producer. There is no promise to freeze historical module bytes.
 
-Write-safety and re-entry contract (capability-workflow baseline). Legacy `run`
-is pointer-only (the v1 `(ptr, len)` ABI carries no status), so on a
-capability-workflow it MUST trap BEFORE any state mutation, input read, or
-capability effect — a `PENDING` must never leak through `run`. `run2` returns
-`OK` only after complete success; among non-OK import statuses it propagates only
-`PENDING` as `(PENDING, 0, 0)`, and `ERROR` or any unknown/unexpected status
-returns a fail-closed `(ERROR, 0, 0)` (never a fabricated status, never
-trap-as-success); a non-`OK` status writes no completion event and does not
-increment `event_count`. When `run2` returns `PENDING` it sets the private
-`pending_latched` global; the FIRST instruction of any subsequent same-instance
-`run2` checks that latch and traps BEFORE it reads or transfers a new input
-frame, clears the event-log header, or re-runs any import — otherwise a caller
-could re-invoke a suspended instance and repeat live effects. This latch is a
-genuine safety gate, independent of the event buffer: the `event_count` bound
-only limits count authority and cannot substitute for it. The `pending_latched`
-global is emitted ONLY on the capability-workflow baseline; no-capability E1/E3
-modules keep their existing global section and bytes.
+`run_workflow` returns OK after complete success, propagates PENDING as
+`(PENDING,0,0)`, and fails closed on errors or unexpected status. A suspended call
+writes no completed-node event. The pending latch is checked before a second
+same-instance call reads/transfers new input, resets observations, or invokes an
+import. Resume uses a fresh instance and validated memo replay; the latch cannot
+be replaced by an event-count bound. The pointer-only entry has been deleted.
 
-Execution manifest — `ahfl.wasm-exec-manifest.v1`, compiler-emitted, carrying NO
+
+Execution manifest — `ahfl.execution-manifest`, compiler-emitted, carrying NO
 key material and NO self-HMAC (a runtime deployment key must never enter the
 build). Its integrity is anchored by `exec_manifest_sha256` inside the authenticated
-control record. Grammar: magic `AHFLXM`, version u8 `1`, `entry{kind: u8, id: u32}`,
+control record. Grammar: magic `AHFLXM`, `entry{kind: u8, id: u32}`,
 `node_count: u32`, and per node `{ workflow_node_id: u32, schedule_pos: u32,
 cap_call_count: u8 (statically 0 or 1 today), and if 1: capability: u32,
 source_symbol: u64 }`. It carries NO Param/Result kind and NO bare
@@ -865,7 +813,7 @@ out-of-set, non-canonical, or trailing bytes fail closed. Thus
 
 Consistency ownership chain (no single stage over-claims): A1 verifies ONLY the
 record's INTERNAL uniqueness/structure (it has no plan or manifest input). B2-C's
-emitter generates the `ahfl.wasm-exec-manifest.v1` section from the verified
+emitter generates the `ahfl.execution-manifest` section from the verified
 canonical workflow plan. A2 verifies ONLY the manifest's OWN canonical invariants
 (`schedule_pos` dense, `workflow_node_id` unique within the manifest,
 `cap_call_count` in {0,1}, `entry.kind == Workflow`, `entry.id` a non-invalid
@@ -885,14 +833,14 @@ go through their own later gates (the manifest carries NO `arg_hash`, `result_sl
 or memo payload).
 
 Canonical section placement (capability-workflow artifact): the custom section
-NAMED `ahfl.wasm-exec-manifest.v1` (whose raw payload begins with the magic
+NAMED `ahfl.execution-manifest` (whose raw payload begins with the magic
 `AHFLXM`) appears EXACTLY ONCE, IMMEDIATELY BEFORE the custom section NAMED
-`ahfl.wire-schema.v1` (whose raw payload begins with `AHFLWS`), which remains the
+`ahfl.wire-schema` (whose raw payload begins with `AHFLWS`), which remains the
 module's FINAL section at EOF (the E4-B1 landed invariant is preserved). The
 runtime module-context frames the module and admits both sections in this fixed
 order; a missing, duplicated, misordered, name-framing-malformed, or
 payload-magic-wrong manifest/schema section fails closed. No other custom section
-may follow `ahfl.wire-schema.v1`.
+may follow `ahfl.wire-schema`.
 
 Manifest determinism (why Approach A is total, not a menu): the schedule is a
 deterministic Kahn order over node ids, and each node's capability call sites are
@@ -949,7 +897,7 @@ NO record and does NOT increment `event_count` (only successful completions are
 evidence). The
 region is STATICALLY sized to exactly `node_count` records (one completion per
 scheduled node), so the normal path cannot structurally overflow; a defensive
-guard against a would-be write past `node_count` fails `run2` closed as
+guard against a would-be write past `node_count` fails `run_workflow` closed as
 `AHFL_CAP_ERROR` (no fabricated Wasm status, no out-of-bounds trap). The record is
 a tagged union: tag 0 = identity-completed, tag 1 = capability-completed. Exact
 little-endian offsets (record_size = 40): `tag` u8 [0], pad [1..3], `workflow_node_id`
@@ -964,7 +912,7 @@ node never forges capability identity); the host ignores those fields for tag 0.
 The reserved [36..39] bytes stay 0: the module cannot honestly attest whether a
 call was memo-replayed, injected, or live, because its `ahfl_cap` ABI receives
 only `(status, ptr, len)`. `source_state` (memo / injected / live) is recorded by
-the PRODUCTION HOST at each import callback and, at the run2 boundary, strictly
+the PRODUCTION HOST at each import callback and, at the run_workflow boundary, strictly
 JOINED with the module event log by manifest coordinate into an HMAC-authenticated
 host event envelope; NO-REINVOKE is proven by that authenticated envelope plus the
 ledger/manifest gate, not by the module event alone. The header `event_count`
@@ -1040,16 +988,19 @@ steps below are its resume-side view:
    the committed injected ordinal as last memo; no live mutation yet);
 6. run the TOTAL result-size preflight (§5.2) BEFORE any commit, ownership
    transfer, or live call, reserving one fresh instance's actual bump allocations
-   exactly once: checked_total = the event layout's heap_base (which already covers
-   the [0,1024) baseline, the event header + all node-record slots, and 8-byte
-   align) + the entry_input_slot's ACTUAL bytes + every memo occurrence's ACTUAL
-   slot length (with multiplicity) + (Suspended only) the Verified-decoded injected
-   frame's ACTUAL bytes + the future UNKNOWN live Result bounds for call sites
-   STRICTLY AFTER the frontier; require checked_total <= the linear-memory capacity.
+   exactly once: initialize checked_total to the event layout's aligned heap_base
+   (which already covers the [0,1024) baseline, the event header + all node-record
+   slots). In allocation order, apply checked_add followed by checked_align_up to
+   8 bytes for the entry_input_slot's ACTUAL bytes, every memo occurrence's ACTUAL
+   slot length (with multiplicity), (Suspended only) the Verified-decoded injected
+   frame's ACTUAL bytes, and future UNKNOWN live Result bounds for call sites
+   STRICTLY AFTER the frontier; require each aligned cursor to fit the
+   linear-memory capacity and u32 range.
    Identity nodes add zero; the frontier is counted once (Suspended actual injected,
-   or Injected committed memo), never both actual and bound; there is NO per-alloc
-   framing/alignment overhead (the cap-private checked bump advances heap_next by
-   exactly len). If it does not fit, fail closed with no effect;
+   or Injected committed memo), never both actual and bound. Payload bounds add no
+   framing bytes, but each allocation reserves its alignment padding. This mirrors
+   the checked bump allocator's align_up(old_cursor + len, 8) advance. If it does
+   not fit, fail closed with no effect;
 7. run the fresh instance from schedule_pos 0. COMMON to EVERY import
    (below-frontier, frontier, after-frontier): verify the observed call-site +
    cursor (the import maps to the current expected coordinate) and the current
@@ -1090,7 +1041,7 @@ steps below are its resume-side view:
      trap -> fail closed, no transfer/persist/live-success claim. This OK/PENDING/
      ERROR response API is a D1b/D2b FOLLOW-ON, not defined complete in this slice —
      the contract does NOT narrate straight from ReadyForLive to terminal OK.
-   Only when `run2` finally returns OK is the FULL node-event prefix verified (all
+   Only when `run_workflow` finally returns OK is the FULL node-event prefix verified (all
    node_count events present, dense, joined). Any trap / extra / out-of-order
    import-or-event / gate mismatch prevents the FAILING step from emitting any
    additional frame / publish / live command and fails the controller closed; it
@@ -1191,7 +1142,7 @@ pending-result frame view (a Suspended record with no supplied injected frame is
 command(s) for
 imports strictly after the frontier (the live OK/PENDING/ERROR response API is a
 D1b/D2b follow-on, not a straight line to terminal OK). Terminal: `finish_run`
-classifies the raw `run2` exit via the `ahfl_host.h` SSOT (`AHFL_CAP_OK`=0 /
+classifies the raw `run_workflow` exit via the `ahfl_host.h` SSOT (`AHFL_CAP_OK`=0 /
 `AHFL_CAP_ERROR`=1 / `AHFL_CAP_PENDING`=2) — only OK, after the replay cursor has
 reached every call site AND the full published-prefix event join, yields a
 `MarkConsumedPlan{expected_generation = N}`; the adapter calls the store's
@@ -1274,7 +1225,7 @@ Param decode/validate); `resume.transition.invalid` (ineligible state transition
 `ResumePrepareReason::ResourceExhausted` — layout `Overflow` / checked-u64 TOTAL add
 / u32 transfer-domain bound / caller-capacity / per-binding SizeOverflow — a
 DISTINCT host code, never the
-compile-time `wasm.RESOURCE_EXHAUSTED`); `resume.module.error` (a `run2` `ERROR`,
+compile-time `wasm.RESOURCE_EXHAUSTED`); `resume.module.error` (a `run_workflow` `ERROR`,
 including the module's fail-closed normalization of an unknown / import `ERROR`);
 and `resume.module.trap` (a module trap). In-module statuses stay EXACTLY
 `{AHFL_CAP_OK, AHFL_CAP_ERROR, AHFL_CAP_PENDING}`; only a genuine import callback
@@ -1290,7 +1241,7 @@ reserver's work is recoverable, and `FINALIZE`/`ABORT` require the lease. Each
 transaction artifact type (control record, COMMIT manifest, slot, generation
 pointer) is HMAC-bound with a distinct domain separator + `key_id` + `generation`
 so no cross-type or cross-generation substitution is possible — for the control
-record that domain separator is its intrinsic leading `magic || format_version`
+record that domain separator is its intrinsic leading `magic || format`
 authenticated as the prefix's first bytes (§4.2), not a prepended string literal,
 and the landed `commit_manifest` (`AHFLCM`) and slot (`AHFLPS`) / generation
 pointer (`AHFLGP`) artifacts (B2-B B0 codecs `d355171b`) each carry their OWN
@@ -1330,31 +1281,22 @@ lifecycle above remains the future production contract.
 
 ### 5.2 Resource contract (FUTURE production gate)
 
-> Status: **B2-0 FOUNDATION DESIGN LOCKED; the per-Verified-Result canonical size
-> bound LANDED (B2-D1a `5fbd1a9b`); the host-independent TOTAL preflight LANDED
-> (B2-D1b `6d311320`).** The shared `make_alloc_body` / legacy lane is still an
-> unchecked bump (`heap_next += len`); the capability-workflow lane already has
-> B2-C's cap-private CHECKED alloc (`4224a52f`: returns the reserved null pointer
-> `0` without advancing `heap_next` on insufficient capacity). Memory is a fixed
-> single page and there is no `memory.grow`. What HAS landed is the runtime-owned
-> per-Verified-Result max-canonical-JSON-size bound authority
-> (`core_wire_canonical_size`, a conservative never-underestimating upper bound,
-> `max_canonical_json_size(binding) -> std::expected<std::uint64_t,
-> MaxCanonicalSizeError>`, values `MaxCanonicalSizeError::Unbounded` /
-> `MaxCanonicalSizeError::SizeOverflow`, emits no `resume.*` diagnostic string) AND
-> the D1b controller's host-independent TOTAL reservation (the fresh instance's
-> actual bump allocations counted exactly once: event-layout heap_base +
-> entry_input_slot actual bytes + every memo occurrence at actual length WITH
-> multiplicity + the Suspended injected frame's actual bytes + the future live
-> Result bounds for call sites strictly after the frontier; no separate
-> allocator-framing term — the checked bump advances heap_next by exactly len) with
-> the u32-transfer-domain + caller-supplied-`LinearMemoryCapacityBytes` verdict,
-> returning typed `ResumePrepareReason::Unbounded` / `ResumePrepareReason::ResourceExhausted`.
-> The controller renders NO fixed-single-page verdict of its own; what is NOT
-> implemented is D2a's binding of that `LinearMemoryCapacityBytes` input to the real
-> fixed single-page VM capacity, and the future D2 host mapping of
-> `MaxCanonicalSizeError` / these typed reasons to the host `resume.preflight.*`
-> catalogue.
+> Current allocator and reservation contract: `make_alloc_body` checks unsigned
+> request length, current cursor, and `old_cursor + len` against the fixed
+> 65,536-byte page before mutation. Success returns the old cursor and advances
+> `heap_next` to `align_up(old_cursor + len, 8)`; failure leaves it unchanged.
+> Agent allocation traps on failure; the capability-workflow allocation policy
+> returns the reserved null pointer. There is no unchecked allocation lane or
+> `memory.grow`.
+>
+> The per-Verified-Result canonical JSON bound remains the payload-byte authority
+> (`core_wire_canonical_size`); it does not include allocation padding. TOTAL
+> preflight must apply the same checked add-and-align operation for every actual
+> or bounded allocation, preserving multiplicity and execution order. The result
+> must fit both the u32 transfer domain and caller-supplied
+> `LinearMemoryCapacityBytes`. Unbounded bindings take priority over overflow.
+> These are host-independent checks; connecting that capacity input and reason
+> catalogue to a deployment's real VM is a separate host responsibility.
 
 Under the fixed single-page / no-`memory.grow` contract, a checked PREFLIGHT runs
 before any commit, ownership transfer, or live call — every CAS/mutation/live
@@ -1383,27 +1325,36 @@ Decimal/Duration spelling, or a productive recursive cycle in the node graph (a
 zero-capacity-cut cycle is not productive); it returns
 `MaxCanonicalSizeError::SizeOverflow` on a checked u64 add/mul overflow of a
 finite schema's bound (it makes no `size_t`/align/one-page verdict of its own).
-The D1b TOTAL controller (LANDED `6d311320`, host-independent, decision-only)
-reserves one fresh instance's actual bump
-allocations exactly once: checked_total = the event layout's heap_base
-(`align_up(event_log_base + checked(8 + node_count * 40), 8)`, already covering the
-[0,1024) baseline + event header + all node-record slots + align) + the
-entry_input_slot's ACTUAL authenticated bytes + every record memo occurrence's
-ACTUAL slot length (with multiplicity — a repeated result_slot counts per
-occurrence, including an Injected record's committed frontier injected memo) +
-(Suspended only) the externally-supplied injected frame's ACTUAL bytes after
-Verified-decode + the future UNKNOWN live Result bounds (each `result_binding()`'s
-`max_canonical_json_size`) summed ONLY over call sites with schedule_pos STRICTLY
-AFTER the frontier — the current frontier is never counted both actual and bound,
-identity nodes add zero, and there is NO allocator-framing term (the cap-private
-checked bump advances heap_next by exactly len). Pass 1 visits ALL future-live
+The TOTAL controller reserves one fresh instance's allocations exactly once.
+Start with the event layout's aligned heap_base:
+
+```text
+cursor = align_up(event_log_base + checked(8 + node_count * 40), 8)
+for each allocation length in execution order:
+    cursor = checked_align_up(checked_add(cursor, length), 8)
+```
+
+The lengths are the authenticated entry input's actual bytes, each committed
+memo occurrence's actual slot length, the Suspended injected result's actual
+bytes after verified decode, and future-live Result canonical upper bounds.
+A repeated result slot counts once per occurrence, because replay allocates
+once per occurrence. An Injected record already includes its frontier result
+as committed memo; do not add a second injected allocation. Only call sites
+strictly after the frontier contribute future-live bounds. Identity nodes add
+no allocation.
+
+Each cursor step includes up to seven bytes of padding. Summing only payload
+lengths, or aligning once at the end, underestimates several small allocations
+and can falsely admit a replay that later exhausts memory. JSON framing is
+already in the payload size; allocator alignment is a separate required term.
+Pass 1 visits ALL future-live
 bindings and records `seen_unbounded` and `seen_size_overflow` (a per-binding
 `MaxCanonicalSizeError::SizeOverflow` from D1a-4 is RECORDED, NOT early-returned —
 early-returning on the first SizeOverflow would mask a later binding's Unbounded).
 If ANY binding is Unbounded, D1b returns `ResumePrepareReason::Unbounded` (before any
 total arithmetic). Only when NO binding is Unbounded does pass 2 run: any recorded
 per-binding `MaxCanonicalSizeError::SizeOverflow`, OR an `event_region_heap_base` /
-layout `Overflow`, OR a checked-u64 TOTAL add overflow, OR the u32 transfer-domain
+layout `Overflow`, OR a checked-u64 TOTAL add/alignment overflow, OR the u32 transfer-domain
 bound (total > `UINT32_MAX`), OR checked_total
 exceeding the caller-supplied `LinearMemoryCapacityBytes`, all map to
 `ResumePrepareReason::ResourceExhausted`. An early arithmetic overflow never masks a
@@ -1420,7 +1371,7 @@ on insufficient capacity; the future D2 host maps that (and the D1b typed
 preflight/unbounded reasons) to the STABLE orchestrator diagnostics above before any
 live effect. The
 only in-module statuses remain `AHFL_CAP_OK` / `AHFL_CAP_ERROR` / `AHFL_CAP_PENDING`;
-a defensive resource guard inside `run2` fails closed as `AHFL_CAP_ERROR`, never a
+a defensive resource guard inside `run_workflow` fails closed as `AHFL_CAP_ERROR`, never a
 fabricated status. (A real in-module resource status would be a separate ABI gate;
 not chosen.)
 
@@ -1451,7 +1402,7 @@ failure-cleanup:
 - **L0 entry-input transfer frame** — the authenticated `entry_input_slot` bytes,
   OPAQUE / verbatim / reserved by ACTUAL length, never schema-decoded; the D2a
   adapter allocs + writes it into fresh-instance memory and transfers ownership to
-  the module at the `run2` invocation; a pre-transfer failure does NOT hand the
+  the module at the `run_workflow` invocation; a pre-transfer failure does NOT hand the
   frame to the module and leaves the record unconsumed.
 - **L1 host-private decoded Value** — a TEMPORARY Value produced per owner gate,
   never in module memory: a stored memo / injected / live Result is Verified-decoded
@@ -1508,7 +1459,7 @@ Implementation is intentionally split before any resume ABI:
    validator and native replay checks to the shared rules. No resume export.
 3. **B1 schema transport — LANDED** (C1 payload decoder `2d25aa3b`, C2
    custom-section writer `a73a8991`, C3 runtime module inspector `b75fc8ec`):
-   C2's `core_wasm_codegen` emits exactly one `ahfl.wire-schema.v1` after the Code
+   C2's `core_wasm_codegen` emits exactly one `ahfl.wire-schema` after the Code
    section for a reachable-capability E2 artifact (E1/E3 byte-identical); C1's
    `decode_core_wire_schema_table` is the payload admission authority; C3's
    `core_wasm_schema_transport` inspector frames a transported module, cross-checks
@@ -1559,7 +1510,7 @@ Implementation is intentionally split before any resume ABI:
      the existing `VerifiedWireSchemaBinding::table()` const-ref accessor is
      preserved for codec compatibility. Its new public factories are now directly
      consumed by the A2 module-context (§4.4, `5bd812b2`); the existing
-     `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
+     `project_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
      production paths also route through the same shared backing internally;
      their source signatures, admission/root-derivation semantics, and diagnostic
      ordering/messages are preserved. `compiler_ir` gains NO Wasm/import/manifest/
@@ -1571,7 +1522,7 @@ Implementation is intentionally split before any resume ABI:
      formats, CLI, and emitted Wasm bytes are unchanged.
    - **B2-A record codec + runtime module-context — LANDED (runtime, FOUNDATION
      only)** (A1 record codec `8a987ca1`; A2 module-context `5bd812b2`): the
-     `ahfl.wasm-resume.v1`
+     `ahfl.wasm-resume`
      ledger codec (byte-mirror + canonical re-encode) + its authenticated digest
      FIELDS (A1 only encodes / parses / holds the three 64-hex digest fields; it
      does NOT compute or compare artifact digests — that comparison against the
@@ -1580,8 +1531,8 @@ Implementation is intentionally split before any resume ABI:
      Result bindings by typed selector; holds the verified table + manifest map;
      the manifest/import/call-sequence cross-check lives ONLY here, never in
      `compiler_ir`). FOUNDATION. A1 introduces a GREENFIELD internal on-wire
-     format codec (`ahfl.wasm-resume.v1`); it does not modify the existing
-     `ahfl.workflow-recovery.v1|v2` JSON store and performs no persisted-format
+     format codec (`ahfl.wasm-resume`); it does not modify the existing
+     `ahfl.workflow-recovery` JSON store and performs no persisted-format
      migration, but it is additive (it touches runtime + test CMake and adds a
      security-sensitive artifact codec — not zero-blast) with no production
      persistence caller yet. A2's module-context is the call-site authority; the
@@ -1629,8 +1580,8 @@ Implementation is intentionally split before any resume ABI:
      (`4224a52f`)**: the workflow emitter's `allow_capability = false` refusal is
      lifted on the capability-workflow lane; a node capability `PENDING`
      propagates out of the schedule (import-time), and the compiler emits the
-     `ahfl.wasm-exec-manifest.v1` (AHFLXM) exec-manifest exactly once immediately
-     before the EOF `ahfl.wire-schema.v1` (AHFLWS) section + a module-written
+     `ahfl.execution-manifest` (AHFLXM) exec-manifest exactly once immediately
+     before the EOF `ahfl.wire-schema` (AHFLWS) section + a module-written
      node-event buffer. WorkflowFunctionTable reuses the existing
      `import_count + base` index rule (cap-lane indices shift by import_count; no
      new ABI symbol/signature). This is the FIRST capability-workflow byte change;
@@ -1723,10 +1674,10 @@ E4-A remains independent and higher priority after owner approval.
 
 ## 8. Explicit non-goals
 
-B0 does not:
+The wire-schema boundary does not define a resume opcode or clear-latch operation.
+It must not:
 
-- define `resume2`, a resume opcode, or a clear-latch operation;
-- change `ahfl_cap`, `run`, or `run2` bytes;
+- bypass `ahfl_cap` binding or change entry behavior without synchronized validation;
 - claim arbitrary Map-key wire support;
 - use P4-D layout as a wire schema;
 - accept a host/core/layout id or hash as type proof;
@@ -1739,146 +1690,45 @@ The next review decides only this wire-schema and state boundary. Production
 resume remains fail-closed until B0, B1, and a separately reviewed B2 are all
 implemented.
 
-## 9. C2b Stage 3 as implemented: memo/pending result trust seam
+## 9. Current memo and pending trust seam
 
-Stage 3 wires the RFC 0022 durable-resume memo/pending **result** boundary through
-the shared codec (§2.3/§2.4) and closes the persistence-format gaps a schema-free
-`value_to_json`/`value_from_json` round trip leaves open. This section records the
-landed facts so no reader re-derives them, and so the honest boundaries are explicit.
+`CapabilityMemoEntry` requires numeric `node`, per-node `ordinal`, `cap_id`, and
+`arg_hash`. Its result is a variant with two valid sources:
 
-### 9.1 Scope: memo-result-only seam
+```cpp
+InMemoryMemoResult { Value value; bool present; }
+StoredMemoResult { std::string result_wire_json; bool present; }
+```
 
-The trust authority is the memo/pending **result** value; HOW it is carried depends
-on the entry's persisted source (§9.2), NOT a blanket "every `CapabilityMemoEntry`
-carries an exact wire + presence". A NativeOnly entry has NO `authoritative_json`
-(its native `result` is authority); a LegacyV2 entry's presence is UNKNOWN; only an
-ExactSidecar carries both the verbatim wire (`authoritative_json`) and a presence bit.
-For Legacy/ExactSidecar the native `result` Value is a compatibility projection only.
+An in-process result is validated under the exact live binding. A stored result
+retains its precise wire spelling and is decoded only under that same verified
+binding. Disk loading does not manufacture a generic Value projection. The
+current JSON memo stores only `result_wire_json` and `result_present`; no duplicate
+`result`, optional provenance tag, or historical Float widening survives.
 
-Not in this seam (residual risks, stated honestly):
+Replay gate order is coordinate -> capability/argument identity -> binding ->
+strict decode. A mismatch fails closed before a live capability invocation.
+After validated consumption, an in-process result can be appended to the new
+replay prefix. Pending injection checks its invocation identity before reading
+or validating the host result. Reaching terminal execution while the recorded
+pending call has not been reached is a replay divergence.
 
-- `node_input` is PERSISTED for format completeness / potential observation, but the
-  current `WorkflowRuntime` does NOT restore execution from it. On resume the
-  node-input expression is RE-EVALUATED and its capability calls are replayed from the
-  memo. `node_input` is informational, NOT a trust authority; assuming it drives
-  resume is the residual risk (a future B2 restore-from-input change). The
-  `SuspendedNodeState::node_input` and `node_input_snapshot` comments are corrected to
-  say so.
-- Completed-node output (`RecoveredNodeState::output`) restores via the P0-10
-  direct-DOM `value_from_json` path, NOT this schema-guided codec. Known asymmetry.
-- **Persistence is plaintext, NOT a protected/secret-free store (security scope).**
-  This slice only ADDS append-only `result_wire_json` / `result_present` to the memo
-  entries inside the existing native `WorkflowRecoveryStore` **plaintext v2 snapshot**.
-  Because the sidecar records the raw wire spelling of the same sensitive result that
-  the compat `result` already holds, a sensitive result is now stored TWICE in
-  plaintext (compat `result` + sidecar `result_wire_json`). This is NOT secret-free /
-  protected persistence per §4.3 and MUST NOT be described as a production-safe durable
-  store.
-- **This is NOT full B2, and B2 is NOT a single "restore-from-node-input" task.**
-  Full B2 still requires, each SEPARATELY reviewed: an append-only ABI / control
-  record (§4.2), a protected payload store (§4.3), atomic memo append + crash
-  semantics, ownership / last-use gating (§5), and exact node-order observation /
-  execution evidence — plus a future decision on whether `node_input` is ever actually
-  used. This slice adds NO resume export / custom section / Wasm byte change (§8
-  non-goals hold) and does NOT complete B2. See §4 / §5 / §6 for the full boundary;
-  the point here is only that Stage 3 is a memo-result trust seam on a plaintext store,
-  not the durable-security boundary. The G4 ingress demotion (CLI/gRPC/HTTP/shim entry
-  wiring through the codec) is COMPLETE: G4a (`9821046f`), G4b (`471613af`), G4c
-  (`187ca7ad`), and G4d (delete the legacy `response_schema_validator` so the codec is
-  the sole schema-guided validation authority).
+The snapshot has one `format: "ahfl.workflow-recovery"` discriminator and a
+mandatory `suspended` field (null or an object). All memo nodes are required;
+missing coordinates or fields, wrong types, duplicate fields, or trailing
+structure are rejected. Stored absence is explicit and its bytes must be `null`.
+An absent value is admitted only at an exact Unit root; Option None remains a
+present typed value. A present valueless runtime variant is rejected.
 
-### 9.2 Three-state authority
+`node_input` is informational: a fresh module re-derives it during whole-workflow
+replay, and capability calls before the pending boundary receive validated memo
+results. The JSON store is plaintext and must not be described as confidential
+storage. Authenticated payload/control records are a separate security boundary,
+with explicit guarantees and exact current binary structure, not a JSON-history
+migration mechanism.
 
-`PersistedMemoResultSource` = {NativeOnly, LegacyV2, ExactSidecar}, enforced
-fail-closed by `memo_result_state_well_formed` at the real save / load / consume entry
-points (NOT merely a construction convenience -- the aggregate is public):
-
-- NativeOnly: `authoritative_json` ABSENT, `result_present` SET; native `result` is
-  authority. Save UPGRADES it to an ExactSidecar (writes the `value_to_json` spelling
-  + presence bit).
-- LegacyV2: `authoritative_json` PRESENT (the raw legacy `result` substring, captured
-  by offset -- no serialize/reparse laundering), `result_present` ABSENT (UNKNOWN).
-- ExactSidecar: `authoritative_json` PRESENT (verbatim `value_to_json` bytes),
-  `result_present` SET; the JSON is authority, native `result` is a best-effort compat
-  placeholder (P0-20, never a load-admission gate).
-
-Why the sidecar: a schema-free round trip loses type on
-Decimal/Duration/Set/Map/Option/Unit, and cannot distinguish integral Float (bare
-int) from Int, nor explicit Unit from a valueless success (both spell JSON `null`).
-
-### 9.3 Consume gate ORDER (P0-13 / P0-15 / P0-21)
-
-Memo replay hit: coordinate gate -> identity gate -> binding lookup ->
-trust-state+decode.
-
-- P0-13: the persisted memo is READ-ONLY, never pre-cloned into the dense prefix
-  (`clone_value` drops null List/Set/Struct/Map children = laundering before the
-  trust gate). Each hit validates + decodes the ORIGINAL entry and appends a FRESH
-  NativeOnly canonical entry carrying the resolved presence bit.
-- P0-15: the pending-call identity is verified BEFORE the host result is
-  read/validated/cloned and BEFORE leaving replay mode (the pending record has no
-  arg_hash, so identity is the integrity gate).
-- P0-21: reaching terminal state while still replaying (recorded pending never
-  reached) fails closed as a replay divergence, never a silent completion.
-
-Coordinate mismatch is a "replay diverged" fail-close, never a silent live invoke; a
-cache `SchemaFailure` (a capability whose return type did not project to a schema) or
-the defensive `MissingId` branch (no cache entry for the id — unreachable once the
-identity gate has confirmed a resolvable decl, kept as a fail-closed guard) is a
-schema-only fail-close (no payload echo). Note `MissingId` is a cache-lookup status,
-not a stored entry.
-
-### 9.4 Legacy byte-stability save gate (P0 -- provenance laundering)
-
-The LegacyV2 save branch has no binding and MUST NOT re-canonicalize. `parse` + generic
-`serialize_json` is provenance-lossy: a hostile overflowing integer parses as
-`IntegerFallback`, re-serializes to exponent/float form, re-parses as `FloatSyntax`
-which the legacy Float decoder would ACCEPT -- re-saving an UNCONSUMED entry flips a
-reject into an accept. Rule: a LegacyV2 entry re-saves ONLY when
-`serialize_json(parse(bytes)) == bytes`; any would-canonicalize spelling
-(`1.0`, `1e3`, an overflowing integer, a bare `-0`) is `InvalidSnapshot` and must be
-upgraded THROUGH CONSUMPTION (P0-13 dense prefix -> fresh NativeOnly -> ExactSidecar).
-Honest statement: an old v2 snapshot still LOADS and CONSUMES; but a non-byte-stable,
-un-binding-consumed Legacy entry cannot be schema-less re-saved -- do not assume
-`save(load(old))` always rewrites.
-
-### 9.5 Integral-Float / Unit-null compat assumptions
-
-- `decode_json_legacy_v2` accepts `SignedInteger` -> Float ONLY under a Float binding,
-  recursively (Option child etc). Sole documented relaxation vs the exact codec.
-- Unit-null presence default for pre-sidecar bytes: decoded Unit -> presence=false
-  (old replay presented NoneValue), any other value -> presence=true.
-- Legacy negative-zero: an old v2 Float `-0.0` was ALREADY written to disk by the
-  outer generic serializer as bare `-0`, so the sign was lost at that old byte layer
-  BEFORE this seam ever sees it — a legacy Float widening of `-0` can only reconstruct
-  `+0.0`. Separately, the bare `-0` byte is not byte-stable, so it cannot be
-  schema-less re-saved (it must upgrade via consumption, which preserves whatever
-  canonical value is still decodable at that point). There is NO "-0.0 on re-save"
-  case: the sign is a pre-existing old-byte ambiguity, not something this stage
-  loses.
-
-### 9.6 Presence bit (P0-17 / P0-18 / P0-19) -- presence-not-value
-
-`result_present` is `optional<bool>` (LegacyV2 UNKNOWN). Save-local normalization:
-a present bare `NoneValue` (legacy valueless compat) persists as presence=false
-WITHOUT mutating the caller; a presence=false entry MUST spell exactly JSON `null`
-(only NoneValue/UnitValue qualify) or save fails closed. Consume: presence=false is
-legal ONLY under an exact Unit root. An Option-null does NOT ride the Unit presence
-seam -- under `Option<Int>` it exact-decodes to Option None then rejects (one-negative
-vs the rich-matrix Option None present=true one-positive).
-
-### 9.7 SymbolId 0 is a legal identity (durable intent included)
-
-Identity presence is `source_capability_symbol_id.has_value()`, NEVER `!= 0`. SymbolId
-0 resolves normally on resume, and the durable-write write-ahead intent gate keys off
-`has_value()` -- a legal id=0 DurableWrite/FinancialWrite still fires its intent before
-dispatch, with the dereferenced id (including 0) flowing into the same idempotency key.
-
-### 9.8 Rollback risk
-
-Reverting Stage 3 restores the pre-C2b schema-free trust path, re-opening BOTH the
-historical type losses (Decimal/Duration/Set/Map/Option/Unit degradation,
-integral-Float ambiguity, explicit-Unit vs valueless-success collision) AND the
-false-accept surface the trust gates close (hostile null-child collections,
-cross-capability binding borrow, Legacy IntegerFallback->FloatSyntax laundering). A
-rollback is therefore not behavior-neutral.
+SymbolId zero is a legal identity; presence is checked independently of its
+numeric value. A decoded result must satisfy the exact type before becoming
+trusted replay state. Reintroducing generic projections, integer-to-Float
+relaxation, optional presence, or missing-node defaults would reopen ambiguity
+at that boundary.

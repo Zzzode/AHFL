@@ -18,7 +18,7 @@ namespace {
 [[nodiscard]] ahfl::handoff::PackageMetadata make_project_workflow_value_flow_metadata() {
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
-        .format_version = std::string(ahfl::handoff::kFormatVersion),
+        .format = std::string(ahfl::handoff::kFormat),
         .name = "workflow-value-flow",
         .version = "0.2.0",
     };
@@ -52,7 +52,7 @@ int run_local_dry_run_project_workflow_value_flow(const std::filesystem::path &p
     }
 
     const auto mock_set = ahfl::dry_run::parse_capability_mock_set_json(R"({
-  "format_version": "ahfl.capability-mocks.v0.6",
+  "format": "ahfl.capability-mocks",
   "mocks": [
     {
       "binding_key": "runtime.echo",
@@ -80,8 +80,8 @@ int run_local_dry_run_project_workflow_value_flow(const std::filesystem::path &p
     }
 
     const auto &trace = *dry_run.trace;
-    if (trace.format_version != ahfl::dry_run::kTraceFormatVersion ||
-        trace.source_execution_plan_format_version != ahfl::handoff::kExecutionPlanFormatVersion ||
+    if (trace.format != ahfl::dry_run::kTraceFormat ||
+        trace.source_execution_plan_format != ahfl::handoff::kExecutionPlanFormat ||
         !trace.source_package_identity.has_value() ||
         trace.source_package_identity->name != "workflow-value-flow" ||
         trace.workflow_canonical_name != "app::main::ValueFlowWorkflow" ||
@@ -129,7 +129,7 @@ int run_local_dry_run_rejects_missing_workflow(const std::filesystem::path &proj
             .run_id = std::nullopt,
         },
         ahfl::dry_run::CapabilityMockSet{
-            .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
+            .format = std::string(ahfl::dry_run::kCapabilityMockSetFormat),
             .mocks =
                 {
                     ahfl::dry_run::CapabilityMock{
@@ -159,7 +159,7 @@ int run_local_dry_run_rejects_missing_workflow(const std::filesystem::path &proj
 
 int run_parse_capability_mock_set_ok(const std::filesystem::path &) {
     const auto result = ahfl::dry_run::parse_capability_mock_set_json(R"({
-  "format_version": "ahfl.capability-mocks.v0.6",
+  "format": "ahfl.capability-mocks",
   "mocks": [
     {
       "binding_key": "runtime.echo",
@@ -178,7 +178,7 @@ int run_parse_capability_mock_set_ok(const std::filesystem::path &) {
     }
 
     const auto &mock_set = *result.mock_set;
-    if (mock_set.format_version != ahfl::dry_run::kCapabilityMockSetFormatVersion ||
+    if (mock_set.format != ahfl::dry_run::kCapabilityMockSetFormat ||
         mock_set.mocks.size() != 2 || !mock_set.mocks[0].binding_key.has_value() ||
         *mock_set.mocks[0].binding_key != "runtime.echo" ||
         mock_set.mocks[0].result_fixture != "fixture.echo.ok" ||
@@ -195,7 +195,7 @@ int run_parse_capability_mock_set_ok(const std::filesystem::path &) {
 
 int run_parse_capability_mock_set_rejects_duplicate_selector(const std::filesystem::path &) {
     const auto result = ahfl::dry_run::parse_capability_mock_set_json(R"({
-  "format_version": "ahfl.capability-mocks.v0.6",
+  "format": "ahfl.capability-mocks",
   "mocks": [
     {
       "binding_key": "runtime.echo",
@@ -225,8 +225,8 @@ int run_parse_capability_mock_set_rejects_duplicate_selector(const std::filesyst
 
 int run_parse_capability_mock_set_rejects_duplicate_json_field(const std::filesystem::path &) {
     const auto result = ahfl::dry_run::parse_capability_mock_set_json(R"({
-  "format_version": "ahfl.capability-mocks.v0.6",
-  "format_version": "ahfl.capability-mocks.v0.6"
+  "format": "ahfl.capability-mocks",
+  "format": "ahfl.capability-mocks"
 })");
     if (!result.has_errors()) {
         std::cerr << "expected duplicate JSON field parse failure\n";
@@ -265,7 +265,7 @@ int run_local_dry_run_rejects_missing_mock(const std::filesystem::path &project_
             .run_id = std::nullopt,
         },
         ahfl::dry_run::CapabilityMockSet{
-            .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
+            .format = std::string(ahfl::dry_run::kCapabilityMockSetFormat),
             .mocks = {},
         });
     if (!dry_run.has_errors()) {
@@ -307,7 +307,7 @@ int run_local_dry_run_rejects_unused_mock(const std::filesystem::path &project_m
             .run_id = std::nullopt,
         },
         ahfl::dry_run::CapabilityMockSet{
-            .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
+            .format = std::string(ahfl::dry_run::kCapabilityMockSetFormat),
             .mocks =
                 {
                     ahfl::dry_run::CapabilityMock{

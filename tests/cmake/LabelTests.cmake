@@ -37,7 +37,7 @@ ahfl_label_tests(
         ahflc.emit_core_ir_json.flow_workflow_semantics
         ahflc.emit_core_ir_json.fail_unlowered_statement
         ahfl.check.project.ok_expression_type_isolated
-        ahfl.handoff.package_compat.escape_control_characters
+        ahfl.handoff.package_projection.escape_control_characters
         ahfl.ir.ssot_compile_fail
 )
 
@@ -76,11 +76,11 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS package-compat
+    LABELS package-projection
     TESTS
-        ahfl.handoff.package_compat.normalize_identity_format_version
-        ahfl.handoff.package_compat.omit_empty_provenance
-        ahfl.handoff.package_compat.escape_control_characters
+        ahfl.handoff.package_projection.normalize_identity_format
+        ahfl.handoff.package_projection.omit_empty_provenance
+        ahfl.handoff.package_projection.escape_control_characters
 )
 
 ahfl_label_tests(
@@ -255,12 +255,18 @@ if(AHFL_ENABLE_BACKEND_WASM)
             ahflc.run.llm_config.fail_missing_vault_token_env
             ahflc.run.llm_tools.fail_invalid_capability_mocks
             ahflc.run.llm_provider_runtime.smoke
+            ahflc.run.llm_context_session.smoke
             ahflc.run.llm_failure_matrix.smoke
             ahflc.run.llm_secret_manager.smoke
             ahflc.run.capability_bindings.smoke
             ahflc.run.input_schema.fail_missing_field
             ahflc.run.manifest.entry_workflow_default
             ahflc.run.default_manifest.entry_workflow_default
+    )
+
+    ahfl_label_tests(
+        LABELS llm-context-session
+        TESTS ahflc.run.llm_context_session.smoke
     )
 
     # KR4.5 / RFC 0012 stabilized: real (non-stub) local LLM run evidence. Only
@@ -376,25 +382,26 @@ ahfl_label_tests(
         ahflc.check.verify.unsupported_backend
         ahflc.check.verify.checker_error
         ahflc.check.verify.checker_timeout
-        ahflc.check.verify.not_in_verified_subset_warning
+        ahflc.check.verify.data_contract_default_scope
 )
 
-# RFC 0028: the bundled Z3 discovery test is unconditional — Z3 ships in-tree,
-# so the SMT-BMC solver is always present in a default build. The external-Z3
-# refutation test still requires a real AHFL_Z3_SOLVER.
+# Control verification is default; data-contract verification is explicit.
+# Both bundled solver discovery and counterexample regressions are unconditional.
 ahfl_label_tests(
     LABELS formal-smt-bmc
     TESTS
         ahflc.check.verify.bundled_smt_solver
+        ahflc.check.verify.smt_bmc_refutation
+        ahflc.check.verify.data_contract_default_scope
+        ahflc.check.verify.data_contract_unsupported
+        ahflc.check.verify.refund_control_default
+        ahflc.check.verify.refund_data_unsupported
+        ahflc.check.verify.refund_rules
+        ahflc.check.verify.data_contract_inconsistent_assumptions
+        ahflc.check.verify.data_contract_not_requested
+        ahflc.check.verify.data_contract_verify_off
+        ahflc.check.verify.data_contract_no_targets
 )
-
-if(AHFL_Z3_SOLVER)
-    ahfl_label_tests(
-        LABELS formal-smt-bmc
-        TESTS
-            ahflc.check.verify.smt_bmc_refutation
-    )
-endif()
 
 ahfl_label_tests(
     LABELS formal-integration
@@ -577,12 +584,6 @@ ahfl_label_tests(
         ahflc.profile.smv_size_report.emit_smv
         ahflc.profile.smv_size_report.rejects_non_smv
         ahflc.profile.observability_exports
-)
-
-ahfl_label_tests(
-    LABELS abi
-    TESTS
-        ahfl.abi.compat_all
 )
 
 ahfl_label_tests(

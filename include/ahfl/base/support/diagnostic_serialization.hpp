@@ -13,8 +13,8 @@ struct JsonValue;
 
 namespace ahfl {
 
-/// Schema version for diagnostic report JSON serialization.
-inline constexpr std::string_view kDiagnosticReportSchemaVersion = "AHFL_DIAGNOSTIC_REPORT_V1";
+/// Format identity for the complete current diagnostic report structure.
+inline constexpr std::string_view kDiagnosticReportFormat = "AHFL_DIAGNOSTIC_REPORT";
 
 // ---------------------------------------------------------------------------
 // Diagnostic <-> JSON
@@ -33,12 +33,11 @@ serialize_diagnostic_json(const Diagnostic &diagnostic);
 // ---------------------------------------------------------------------------
 
 /// Serialize a DiagnosticReport to a JSON string.
-/// The output includes the schema version and a summary block.
+/// The output includes the format identity and a summary block.
 [[nodiscard]] std::string serialize_diagnostic_report_json(const DiagnosticReport &report);
 
 /// Deserialize a DiagnosticReport from a JSON string.
-/// Returns std::nullopt if the JSON structure is invalid or the schema
-/// version does not match.
+/// Returns std::nullopt unless the complete current structure and summary match.
 [[nodiscard]] std::optional<DiagnosticReport>
 deserialize_diagnostic_report_json(std::string_view json_text);
 

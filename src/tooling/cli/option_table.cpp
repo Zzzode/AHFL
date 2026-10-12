@@ -119,6 +119,10 @@ void set_verify_mode(CommandLineOptions &opts, std::optional<std::string_view> v
     opts.verify_mode = val;
 }
 
+void set_verify_data_contracts(CommandLineOptions &opts, std::optional<std::string_view>) {
+    opts.verify_data_contracts = true;
+}
+
 void set_package_archive_output(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.package_archive_output_path = val;
 }
@@ -381,8 +385,14 @@ constexpr OptionSpec kOptionSpecs[] = {
      "",
      OptionArgKind::RequiredValue,
      set_verify_mode,
-     "Formal verification stage: off or on (default for check/run/build)",
+     "Control-model verification: off or on (default for check/run/build)",
      "off|on"},
+    {"--verify-data-contracts",
+     "",
+     OptionArgKind::Flag,
+     set_verify_data_contracts,
+     "Verify user data-contract implications (requires --verify=on)",
+     ""},
     {"--output",
      "",
      OptionArgKind::RequiredValue,
@@ -571,10 +581,6 @@ struct SplitOptionResult {
            arguments[index + 1].front() != '-';
 }
 
-[[nodiscard]] bool is_removed_legacy_option(std::string_view argument) {
-    return argument == "--search-root" || argument.starts_with("--search-root=");
-}
-
 [[nodiscard]] ParseResult usage_error(std::string_view message) {
     std::cerr << "error: " << message << "\n";
     print_usage(std::cerr);
@@ -706,12 +712,6 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
 
         // Unknown option (starts with '-').
         if (!argument.empty() && argument.front() == '-') {
-            if (is_removed_legacy_option(argument)) {
-                std::cerr << "error: --search-root has been removed; use --manifest <ahfl.toml> "
-                             "or --workspace <ahfl.workspace.toml> --package <name>\n";
-                print_usage(std::cerr);
-                return ParseResult{true, 2};
-            }
             std::cerr << "error: unknown option '" << argument << "'\n";
             print_usage(std::cerr);
             return ParseResult{true, 2};

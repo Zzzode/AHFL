@@ -1,172 +1,50 @@
-# AHFL Backend Capability Matrix
+# AHFL 导出产物选择参考
 
-本文给出 AHFL 当前 backend 的能力矩阵，目标是让新增 backend、下游 consumer 和贡献者都能快速判断“哪个 backend 消费了哪些 IR 能力，哪些只是参考输出，哪些仍然不保留完整语义”。
+根据要完成的任务选择 `ahflc emit` 产物。导出的计划、部署描述和验证模型有各自的语义范围；运行 workflow 使用 `ahflc run`，构建可执行 Wasm 使用 `ahflc build`。
 
-关联文档：
+## 按任务选择
 
-- [cli-commands.zh.md](./cli-commands.zh.md)
-- [ir-format.zh.md](./ir-format.zh.md)
-- [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)
-- [backend-extension-guide.zh.md](../design/backend-extension-guide.zh.md)
-- [formal-backend.zh.md](../design/formal-backend.zh.md)
+| 任务 | 命令 | 输出与使用限制 |
+| --- | --- | --- |
+| 阅读声明、flow 和 workflow 结构 | `emit ir` | 人类可读 IR；排版不是稳定脚本接口。 |
+| 在脚本中遍历验证与编排结构 | `emit ir-json` | `ahfl.ir` JSON；校验 `format` 后读取结构化字段。 |
+| 检查执行层结构 | `emit core-ir-json` | `ahfl.core` JSON；包含逻辑身份，不含目标平台物理布局。 |
+| 检查优化效果 | `emit opt-ir` / `emit opt-ir-json` | 文本或 `AHFL_OPT_IR` JSON；用 `-O` 比较优化结果。 |
+| 查看程序能力摘要 | `emit summary` | 声明、来源和行为摘要；不保留完整表达式树。 |
+| 交接给宿主运行环境 | `emit native-json --manifest <ahfl.toml> --target <name>` | handoff package，包含目标、绑定槽位、策略义务和 workflow 执行图。 |
+| 查看 workflow 的 DAG（有向无环图） | `emit execution-plan` | `ahfl.execution-plan` 执行计划，不包含可执行代码。 |
+| 用固定输入和 mock 检查执行计划 | `emit dry-run-trace` | 确定性模拟轨迹；不调用真实服务。 |
+| 审查 package 导出内容 | `emit package-review` | package 评审视图。 |
+| 生成公开 API 快照和文档 | `emit public-api` / `emit public-api-docs` | 根据 `[exports].modules` 生成 JSON 快照或 Markdown。 |
+| 比较 API 兼容性 | `emit public-api-diff` | 比较两个快照；可配合 SemVer 版本检查。 |
+| 导出控制与时序验证模型 | `emit smv` | NuSMV 模型；适用范围见[保证与验证指南](../tutorials/assurance.zh.md)。 |
+| 检查数据合同的编码 | `emit smt` | SMT-LIB 文本；不启动 solver，不等于证明已通过。 |
+| 读取保证案例 | `emit assurance-json` | 结构化验证目标、范围和结果。 |
+| 生成部署描述 | `emit k8s-crd` / `emit openapi` / `emit terraform` | CRD、OpenAPI 或 Terraform 描述；不能替代 workflow 执行与验证。 |
 
-## 当前 backend 列表
+命令参数见 [CLI 参考](./cli-commands.zh.md)。
 
-当前 CLI 的 `emit-*` 命令按族分组（注册表见 `src/compiler/backends/driver.cpp`，CLI 接线见 `src/tooling/cli/command_registry.cpp`）：
+## 结构化产物包含什么
 
-**Core（IR 与分析产物）**
+| 信息 | `ir` / `ir-json` | `native-json` | `summary` | `smv` |
+| --- | --- | --- | --- | --- |
+| declaration 结构 | 完整 | 可执行目标子集 | 计数与摘要 | 验证所需部分 |
+| declaration 来源 | 有 | 有 | 计数与开关 | 不直接输出 |
+| package metadata | 无 | 有 | 无 | 无 |
+| execution graph / lifecycle | 无 | 有 | 无 | 间接使用 |
+| capability binding slots | 无 | 有 | 无 | 无 |
+| policy obligations | 无 | 有 | 无 | 间接使用 |
+| `formal_observations` | 有 | 有 | 计数与摘要 | 用于验证 |
+| flow statement tree | 完整 | 无 | 无 | 不直接输出 |
+| flow summary | 有 | 无 | 汇总 | 用于控制模型 |
+| workflow expression tree | 完整 | 无 | 无 | 不直接输出 |
+| workflow value summary | 有 | 有 | 汇总 | 不使用 |
+| temporal formulas | 完整 | 不导出公式树 | 无 | 可支持部分转换为 LTL |
 
-- `emit-ir` — 人读型结构化 IR
-- `emit-ir-json` — 机器消费型结构化 IR（AHFL-IR 层投影，`ahfl.ir.v2`，验证/编排层的稳定检查面）
-- `emit-core-ir-json` — 执行层分层 JSON projection（`ahfl.core.v1`），把 AHFL-IR 之下的执行层 `ir::Program` 降到 `CoreProgram`；artifact-only，无物理 layout。与 `emit-ir-json` 是不同层的并列投影，不是替代关系
-- `emit-opt-ir` / `emit-opt-ir-json` — 诊断式 Opt IR 及其 JSON 形式
-- `emit-native-json` — 面向 runtime consumer 的 handoff package JSON
-- `emit-summary` — 参考 backend，capability-oriented summary，也是新增 backend 的最小扩展路径
+IR 的 JSON 结构、身份和源范围见 [IR 格式参考](./ir-format.zh.md)。表中的结构完整性不代表模型能证明完整运行时值语义；形式化结果必须结合证明范围和未支持目标读取。
 
-**Runtime handoff（编排交接）**
+## 接入宿主运行环境
 
-- `emit-execution-plan` — workflow DAG 执行计划（`ahfl.execution-plan.v1`，无代码）
-- `emit-dry-run-trace` — execution plan 的确定性 dry-run 轨迹
-- `emit-package-review` — 包级评审视图
+`emit native-json` 输出 handoff package。它包含 `execution_graph`、workflow 节点的 `lifecycle` 摘要和 package 级 `policy_obligations`，便于宿主审查绑定和运行约束。
 
-**Public API（RFC 0009 可见性）**
-
-- `emit-public-api` / `emit-public-api-docs` / `emit-public-api-diff` — public API snapshot / docs / diff
-
-**Formal（形式化）**
-
-- `emit-smv` — NuSMV 模型（受限 formal backend）
-- `emit-assurance-json` — 保证案例 JSON
-
-**Infra（部署视图，逻辑上属于平台层）**
-
-- `emit-k8s-crd` — Agent 的 CRD YAML
-- `emit-openapi` — API surface spec
-- `emit-terraform` — IaC 配置
-- `build` — WASM 二进制（编译 + 形式化验证 + 产物输出）
-
-下文的能力矩阵只覆盖**消费完整 IR 语义**的 5 个 core/formal backend（`emit-ir`、`emit-ir-json`、`emit-native-json`、`emit-summary`、`emit-smv`）。handoff 族消费 workflow 结构与 lifecycle 摘要；public-api 族消费符号可见性；infra 族是 IR 的只读消费者，只提取 agent/flow 结构生成部署描述，不保留完整语义。
-
-## 能力矩阵
-
-| 能力 | `emit-ir` | `emit-ir-json` | `emit-native-json` | `emit-summary` | `emit-smv` |
-|------|-----------|----------------|--------------------|----------------|------------|
-| 共享版本字段 | IR 版本 | IR 版本 | handoff 版本 | summary 版本 | 间接依赖 IR 版本 |
-| declaration 结构 | 全量 | 全量 | executable subset | 计数/摘要 | 部分消费 |
-| project-aware provenance | 可见 | 可见 | 可见 | 仅计数/开关 | 不直接输出 |
-| package metadata 边界 | 否 | 否 | 是 | 否 | 否 |
-| execution graph / lifecycle 摘要 | 否 | 否 | 是 | 否 | 仅间接消费 |
-| capability binding slots | 否 | 否 | 是 | 否 | 否 |
-| policy obligations | 否 | 否 | 是 | 否 | 仅间接消费 |
-| `formal_observations` | 可见 | 可见 | 可见 | 计数/摘要 | 直接消费 |
-| flow statement tree | 全量 | 全量 | 不输出 | 不输出 tree | 不直接消费 tree |
-| flow summary | 可见 | 可见 | 当前不输出 | 汇总消费 | 直接消费控制摘要 |
-| workflow expr tree | 全量 | 全量 | 不输出 | 不输出 tree | 不直接消费值流 |
-| workflow value summary | 可见 | 可见 | 可见 | 汇总消费 | 当前不消费 |
-| temporal formulas | 全量 | 全量 | 不直接导出公式树 | 不输出公式 | 部分 lower 到 LTL |
-| 完整值语义 | 否 | 否 | 否 | 否 | 否 |
-
-## 读取方式说明
-
-### `emit-ir`
-
-适合：
-
-1. 人工审查
-2. golden diff
-3. declaration / flow / workflow 结构阅读
-
-特点：
-
-1. 保留语义最完整
-2. 不是稳定脚本接口
-
-### `emit-ir-json`
-
-适合：
-
-1. 下游工具
-2. CI 结构化消费
-3. 版本检查与字段读取
-
-特点：
-
-1. 是机器消费首选
-2. 与 `emit-ir` 共享同一 `format_version`
-
-### `emit-summary`
-
-适合：
-
-1. 快速确认某个 program 是否用到了哪些 IR 能力
-2. 审查 project-aware / observations / flow summary / workflow summary 是否进入输出边界
-3. 作为新增 backend 的最小参考实现
-
-特点：
-
-1. 不试图保留完整语义树
-2. 只输出稳定摘要
-3. 验证了 `BackendKind -> driver -> CLI -> golden -> docs` 的完整扩展路径
-
-### `emit-native-json`
-
-适合：
-
-1. future Native/runtime-adjacent consumer
-2. handoff package golden diff
-3. 审查 executable target、capability binding slot、policy obligation、formal observation 与 project-aware provenance 的 runtime-facing 投影
-4. 审查 workflow execution graph、节点 lifecycle 摘要与 workflow value summary
-
-特点：
-
-1. 基于 validate 后的统一 IR 边界
-2. 输出 handoff package，而不是 full IR
-3. 当前会显式导出 `execution_graph` 和每个 workflow node 的最小 `lifecycle` 摘要
-4. 当前会显式导出 package 级 `policy_obligations`
-5. 当前不会猜 package identity / entry / export 默认值；未提供 metadata 来源时会稳定输出空 metadata 区段
-
-### `emit-smv`
-
-适合：
-
-1. 受限 formal 导出
-2. state-machine / workflow lifecycle / temporal property 检查
-
-特点：
-
-1. 只消费 IR 的一部分
-2. 对 contract / workflow temporal 采用 observation abstraction
-3. 当前不导出完整 flow/value/workflow dataflow execution semantics
-
-## 当前推荐
-
-若目标是：
-
-1. 做机器消费
-   - 用 `emit-ir-json`
-2. 做人读审查
-   - 用 `emit-ir`
-3. 做快速 capability 检查或验证新增 backend 路径
-   - 用 `emit-summary`
-4. 做 Native/runtime-facing handoff 导出
-   - 用 `emit-native-json`
-5. 做受限 formal export
-   - 用 `emit-smv`
-
-## 对新增 backend 的含义
-
-若后续继续新增 backend，应至少回答三个问题：
-
-1. 它消费的是 full IR、summary IR，还是 observation-backed subset
-2. 它是否需要新增共享 IR 字段
-3. 它在这张矩阵中新增了哪一列，以及和现有 backend 有何边界差异
-
-## 当前状态
-
-截至当前实现：
-
-1. `emit-summary` 已作为参考 backend 进入仓库
-2. `emit-native-json` 已把 handoff package 正式接入统一 backend 扩展路径
-3. backend capability matrix 已文档化
-4. `emit-smv` 仍然是唯一正式 formal exporter，但 backend 扩展路径不再只靠它单点验证
-5. handoff / public-api / infra 族 backend 已接入统一注册表；infra 族的外部验收仍待补（见 [architecture-overview.zh.md](../design/architecture-overview.zh.md) §4.4）
+package identity、entry 和 export 来自 manifest target metadata；没有 metadata 来源时对应区段为空。需要完整配置和导出步骤时，参阅 [Native handoff 指南](../tutorials/native-handoff.zh.md)；运行事件和恢复格式见 [Native runtime 产物参考](./native-runtime-artifacts.zh.md)。

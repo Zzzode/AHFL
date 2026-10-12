@@ -51,10 +51,10 @@ def write_contract(root: Path) -> None:
     (root / "config/production-confidence-gate.json").write_text(
         json.dumps(
             {
-                "schema": "ahfl.production-confidence-gate.v2",
+                "format": "ahfl.production-confidence-gate",
                 "evidence": {
                     "path": "build/release-evidence/production-confidence/hour-scale-soak.json",
-                    "schema": "ahfl.production-confidence-soak.v2",
+                    "format": "ahfl.production-confidence-soak",
                 },
                 "minimum_duration_seconds": 3600,
                 "minimum_iterations": 100,
@@ -89,7 +89,7 @@ def metric() -> dict[str, object]:
 
 def evidence(revision: str) -> dict[str, object]:
     return {
-        "schema": "ahfl.production-confidence-soak.v2",
+        "format": "ahfl.production-confidence-soak",
         "status": "passed",
         "source_revision": revision,
         "kind": "hour-scale",

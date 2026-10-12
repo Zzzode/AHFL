@@ -1,70 +1,44 @@
-# AHFL VS Code LSP 扩展打包与发布参考
+# 在 VS Code 中使用 AHFL
 
-| 项目 | 内容 |
-|------|------|
-| 文档类型 | reference |
-| 适用范围 | `tools/vscode` VS Code extension scaffold |
-| 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test；toolchain sysroot 通过 `workspace/configuration` 按 resource scope 拉取，workspace folder extension 序列仍需扩展验证；LSP server 已支持 inlay hints、call hierarchy、type hierarchy、range formatting、$/setTrace；extension 已贡献 14 个 snippets、keybindings、editor context menu、`ahflc` problem matcher |
+AHFL 扩展提供语法高亮、补全、诊断、格式化和代码导航。语言服务由 `ahfl-lsp` 提供；LSP（Language Server Protocol）是编辑器与语言服务之间的通信协议。
 
----
+## 安装扩展
 
-## 一、发布形态
+使用与操作系统和处理器架构匹配的 VSIX 安装包，例如 `darwin-arm64` 或 `linux-x64`。平台安装包包含 `ahfl-lsp` 和标准库，无需另外配置语言服务路径。
 
-`tools/vscode` 是 VS Code 客户端扩展。面向普通 VS Code 用户发布时，主产物应是 platform-specific VSIX：
-
-1. VSIX 内包含语言客户端、语法高亮、snippet、文件关联和配置项。
-2. VSIX 内包含当前平台匹配的 release `ahfl-lsp` 服务端二进制。
-3. 扩展默认优先启动内置 `server/ahfl-lsp`；用户显式配置 `ahfl.serverPath` 时才使用外部 server。
-
-不能把一个本机开发用的 `build/dev/.../ahfl-lsp` 放进跨平台 VSIX。正确做法是按平台生成 VSIX，例如：
-
-```text
-tools/vscode/dist/ahfl-language-<version>-darwin-arm64.vsix
-tools/vscode/dist/ahfl-language-<version>-linux-x64.vsix
-```
-
-## 二、本地开发调试 LSP 服务端
-
-本地调试 VS Code 扩展时可以使用 Debug LSP：
+在 VS Code 的 Extensions 视图菜单中选择 **Install from VSIX…**，或运行：
 
 ```bash
-cmake --build --preset build-dev --target ahfl-lsp
+code --install-extension path/to/ahfl-language-<version>-<target>.vsix
 ```
 
-开发构建的默认路径是：
+然后打开工程所在文件夹和一个 `.ahfl` 文件。编辑器右下角的语言模式应显示 AHFL；悬停类型或输入标识符时应出现类型信息和补全。
 
-```text
-build/dev/src/tooling/lsp/ahfl-lsp
-```
+如果安装包只包含客户端，必须另外安装 `ahfl-lsp` 并将其放入 PATH，或配置下节中的 `ahfl.serverPath`。
 
-本地调试扩展时，可在 VS Code 设置中配置：
+## 选择语言服务和标准库
+
+常用设置可写入工程的 `.vscode/settings.json`：
 
 ```json
 {
-  "ahfl.serverPath": "<repo>/build/dev/src/tooling/lsp/ahfl-lsp"
+  "ahfl.serverPath": "/path/to/ahfl-lsp",
+  "ahfl.toolchain.sysroot": "/path/to/ahfl-toolchain"
 }
 ```
 
-该路径只适合本机开发，不应用作正式分发或公开发布的 server artifact。
+| 设置 | 用途 |
+| --- | --- |
+| `ahfl.serverPath` | 指定语言服务可执行文件。留空时依次使用扩展内置服务和 PATH 中的 `ahfl-lsp`。 |
+| `ahfl.serverArgs` | 传给语言服务的附加参数，默认为空数组。 |
+| `ahfl.toolchain.sysroot` | 标准库工具链根目录，须包含 `std/ahfl.toml`；也可直接填该 manifest 的路径。留空时使用平台安装包附带的标准库。 |
+| `ahfl.hover.detailLevel` | 悬停信息详略：`compact`、`standard`（默认）、`debug`。 |
+| `ahfl.hover.showSource` | 是否在 debug 悬停中显示源文件路径，默认 `false`。 |
+| `ahfl.hover.maxFacts` | standard 悬停显示的主要事实数量上限，默认 `3`。 |
+| `ahfl.hover.markupKind` | 悬停格式：`auto`（默认）、`markdown`、`plaintext`。 |
+| `ahfl-language-server.trace.server` | 通信日志：`off`（默认）、`messages`、`verbose`。 |
 
-## 三、本地运行扩展
-
-在仓库根目录先确保 LSP 二进制可用，然后运行：
-
-```bash
-corepack enable
-corepack prepare pnpm@10.10.0 --activate
-cd tools/vscode
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run compile
-code --extensionDevelopmentPath="$(pwd)" /Users/bytedance/Develop/AHFL
-```
-
-打开任意 `.ahfl` 文件后，扩展会按 `ahfl.serverPath` 启动 language server。
-
-### Corelib 开发 sysroot 配置
-
-开发 AHFL 仓库自身或修改 `std/` 时，workspace 必须显式把当前 checkout 作为 sysroot：
+`ahfl.toolchain.sysroot` 按文件所属 workspace folder 生效。路径支持 `${workspaceFolder}` 和相对路径；如果工作区本身包含 `std/ahfl.toml`，可以设置：
 
 ```json
 {
@@ -72,248 +46,55 @@ code --extensionDevelopmentPath="$(pwd)" /Users/bytedance/Develop/AHFL
 }
 ```
 
-该设置是 resource-scoped。扩展会在初始化时发送
-`initializationOptions.ahfl.toolchain.defaultSysroot` / `bundledSysroot` /
-`profiles[]`，并在
-server 发起 `workspace/configuration` 请求时返回展开后的
-`ahfl.toolchain.sysroot`。`${workspaceFolder}` 和相对路径由扩展按对应
-workspace folder 展开，server 只接收规范化后的工具链根或空字符串。
+选择 sysroot 只决定标准库的位置。使用标准库模块仍需在 `ahfl.toml` 的 `[dependencies]` 中声明 `std = { source = "sysroot" }`，并在源码中显式 `import`；见[包指南](../tutorials/packages.zh.md)。
 
-配置为空字符串表示“没有显式 resource 配置”。这种情况下，platform VSIX
-通过 `bundledSysroot` 使用随扩展打包的 `<extension>/std/ahfl.toml` 作为 fallback；
-扩展不得通过 server process environment 注入 `AHFL_SYSROOT`。
+## 编辑和导航
 
-### LSP workspace navigation index
+打开 `.ahfl` 文件后，可使用 VS Code 的常规功能：
 
-Server 会在 PackageGraph 与 active sysroot profile 之上构建独立的
-`LspWorkspaceIndex`。这个索引只服务 IDE 导航，不会扩大当前文件的
-import 可见性，也不会让未 import 的 `std::prelude`、`std::fmt` 或
-其他 exported module 符号变成可调用符号。
+- **Problems**：查看错误和警告，点击诊断跳到相应源码。
+- **Hover**：查看符号类型和相关信息。
+- **Go to Definition / Type Definition**：跳到声明；`String`、`Int` 等内建类型跳到标准库对应定义位置。
+- **Go to Implementations**：查看类型或 trait 的实现，包括标准库提供的方法。
+- **Find All References** 或 **AHFL: Show References**：查找引用。
+- **Rename Symbol**：重命名符号及其引用。
+- **Format Document / Format Selection**：格式化文件或选区。扩展默认启用 AHFL 文件保存时格式化。
+- **Go to Symbol in Workspace**：查找工作区符号。
 
-请求语义如下：
+需要查看实现列表时使用 **Go to Implementations**。Cmd-click 或 **Go to Definition** 返回声明位置。
 
-1. `textDocument/definition` 返回声明位置。primitive type 返回 canonical
-   primitive home，不再把 `std::fmt`、`std::json` 等 impl module 混进
-   definition 结果。
-2. `textDocument/implementation` 返回类型或 trait 的 impl 候选。corelib
-   开发和普通用户工程都通过 workspace/sysroot index 找到 exported std
-   modules 中的 primitive impl。
-3. `textDocument/references` 优先使用当前 semantic snapshot 的可见引用，
-   并按需合并 workspace/sysroot index 中未打开文件的 resolved references。
-4. `workspace/symbol` 与 CodeLens 使用 index facts；如果 snapshot 还没有
-   index，CodeLens 才退回文本级 fallback。
+导航能找到某个标准库声明，并不意味着当前源码可以直接调用它；调用仍遵循 import 和可见性规则。
 
-VS Code 客户端不需要特殊命令或非标准 payload。跳转请求返回标准
-`Location[]`；如果需要查看所有 impl，应使用 VS Code 的
-“Go to Implementations”，而不是期待 Cmd-click 的 definition 展开 impl
-列表。
+## 打开独立文件
 
-### Detached single-file mode
+当文件在工作区边界内找不到 `ahfl.toml` 时，编辑器使用单文件模式（`DetachedSourceUnit`）：
 
-当打开的 `.ahfl` 文件在当前 workspace folder 边界内找不到 `ahfl.toml` 时，
-server 进入 `DetachedSourceUnit`。该模式不会隐式加载 `std` package，也不会因为
-workspace 中存在 sibling `std/` 目录而把当前文件绑定到 sysroot package。
+1. Problems 中显示 `N::detached_source_unit` 提示。
+2. 可以使用内建类型和当前文件声明的符号，也可以格式化文件。
+3. 不允许 import，也不提供自动导入、import 补全或 organize imports。
+4. 内建类型的定义跳转依赖配置的 sysroot；缺失时显示 `W::primitive_home_unavailable`。
+5. 单文件模式不列出标准库对内建类型提供的实现。
 
-用户可见行为：
-
-1. 发布 `N::detached_source_unit` information diagnostic。
-2. `String`、`Bool`、`Int`、`Duration` 等 language primitive type 仍可用于
-   `definition` / `typeDefinition`，目标来自 active ToolchainProfile 的
-   `SysrootPrimitiveIndex`。
-3. 如果 active sysroot 缺少某个 primitive canonical home，或没有可用 default
-   ToolchainProfile，发布 `W::primitive_home_unavailable` warning。
-4. `implementation` 不为 detached primitive 返回 std facade impl candidates。
-5. completion/code action 不提供 import completion、organize imports 或自动导入
-   `std::*` 的修复动作。
-
-完整规则见 [single-file-mode.zh.md](./single-file-mode.zh.md)。
-
-### Analysis architecture (QueryEngine)
-
-LSP server 的分析读取（diagnostics、hover、completion、rename 等）全部经
-`AnalysisService` 持有的 workspace 级 `query::FrontendQueries` 引擎求值
-（RFC 0027 P4/KR6.12）。每个打开文档一个 `FileId` slot，每个被分析的
-（URI × 项目语义输入）一个 `ProjectId` slot；编辑只失效依赖子图，未受影响
-的 slot 保持 Verified 并复用已有 memo。handler 行为与旧直接流水线逐位等价
-——迁移的实质是谁拥有/驱动 stage 结果（手跑流水线 → 工作区 QueryEngine），
-不是 handler 协议或诊断格式的变化。
-
-引擎成为唯一路由（`AHFL_QUERY_LEGACY_PIPELINE` 逃生舱已删除）；前端图无环，
-引擎报告 cycle 现为 internal error 而非静默旁路。typed-HIR 持久化缓存
-（RFC 0016 cache contract 重锚为 `ahfl_tooling_cache`）服务 LSP cold-start
-降级快照，服务端默认关闭。
-
-## 四、本地打包 VSIX
-
-面向用户的 VSIX 应通过仓库根目录脚本生成：
+需要标准库或多文件模块时，在文件所在目录运行：
 
 ```bash
-scripts/package-vscode-vsix-release.sh
+ahflc init --single-file path/to/file.ahfl
 ```
 
-该脚本会：
+然后显式导入需要的模块。完整规则见[单文件模式参考](./single-file-mode.zh.md)。
 
-1. 在需要时配置 `cmake --preset release`。
-2. 运行 `cmake --build --preset build-release --target ahfl-lsp`。
-3. 把 release `ahfl-lsp` staging 到 `tools/vscode/server/ahfl-lsp`。
-4. 把 `std/ahfl.toml` 和 corelib `.ahfl` 源码 staging 到 `tools/vscode/std/`。
-5. 使用当前平台对应的 VS Code target 打包 VSIX。
+## 排查语言服务问题
 
-输出文件：
+在命令面板中运行 **AHFL: Show Language Server Output** 查看服务输出；需要重启时运行 **AHFL: Restart Language Server**。AHFL 文件中也可使用 `Cmd+Shift+L`（macOS）或 `Ctrl+Shift+L`。
 
-```text
-tools/vscode/dist/ahfl-language-<version>-<target>.vsix
-```
+| 现象 | 检查与处理 |
+| --- | --- |
+| 文件只有高亮，没有补全或诊断 | 检查 Output 中的启动错误，确认安装包平台匹配；使用外部服务时检查 `ahfl.serverPath` 或 PATH。 |
+| 标准库类型或方法找不到 | 检查 sysroot 下的 `std/ahfl.toml`，以及工程的 std dependency 和源码 import。 |
+| 显示 detached 提示，无法 import | 确认文件属于带 `ahfl.toml` 的工程，或先初始化 package。 |
+| 内建类型不能跳转 | 检查 `ahfl.toolchain.sysroot` 与标准库源文件，按 `W::primitive_home_unavailable` 提示处理。 |
+| 修改配置后服务没有恢复 | 重启语言服务并查看 Output 中的错误。 |
 
-本机安装：
+需要记录通信过程时，将 `ahfl-language-server.trace.server` 设置为 `messages` 或 `verbose`，重现问题并查看语言服务输出。报告问题时附上扩展版本、操作系统、相关设置、诊断和最小源码示例。
 
-```bash
-code --install-extension tools/vscode/dist/ahfl-language-<version>-<target>.vsix
-```
-
-发布包内容预检与安装 smoke：
-
-```bash
-cd tools/vscode
-pnpm run test:package-inventory
-pnpm run test:vsix-install
-```
-
-`test:package-inventory` 必须确认 VSIX 清单包含内置 `server/ahfl-lsp` 和
-bundled `std/ahfl.toml`。缺少 bundled std 会导致未配置
-`ahfl.toolchain.sysroot` 的普通用户工程无法获得默认标准库。
-
-如果只调试客户端扩展，可以从 `tools/vscode` 生成 client-only VSIX：
-
-```bash
-cd tools/vscode
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run package
-```
-
-输出文件：
-
-```text
-tools/vscode/dist/ahfl-language.vsix
-```
-
-Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外通过 PATH 或 `ahfl.serverPath` 提供 `ahfl-lsp`。
-
-安装后验证：
-
-1. 打开包含 `.ahfl` 文件的工作区。
-2. 对 platform VSIX，确认扩展可自动启动内置 `server/ahfl-lsp`。
-3. 在 `.ahfl` 文件中触发 diagnostics、hover、completion。Server 通过 `textDocument/diagnostic` 和 `workspace/diagnostic` full report 的 pull 模式提供诊断，并通过 `$/diagnostic/refresh` 通知客户端拉取更新。
-4. 对 primitive type 触发 definition 与 implementation：definition 应跳到 primitive home，implementation 应列出 exported std modules 中的相关 impl。
-5. 修改未打开的 imported `.ahfl` 文件后，确认 watched-files notification 会触发 workspace diagnostics 刷新。
-6. workspace folder 切换目前只有 server handler/protocol 级证据；extension-host 序列仍作为后续验证项。
-7. 如需排查 server 输出，将 `ahfl-language-server.trace.server` 设置为 `messages` 或 `verbose`，server 会通过 `$/setTrace` 通知接收 trace level 并将日志写入 stderr。
-
-## 五、Marketplace 手动发布
-
-发布前需要：
-
-1. Visual Studio Marketplace publisher。
-2. 具有 Marketplace Manage 权限的 personal access token。
-3. `tools/vscode/package.json` 中的 `publisher` 与 Marketplace publisher 一致。
-4. 已通过 `scripts/package-vscode-vsix-release.sh` 生成对应平台 VSIX。
-5. 已通过 `pnpm run test:package-inventory` 验证 Marketplace 发布包清单。
-6. 已通过 `pnpm run test:vsix-install` 验证 platform VSIX 可安装且包含可执行 release `ahfl-lsp`。
-
-先从仓库根目录生成 platform VSIX：
-
-```bash
-scripts/package-vscode-vsix-release.sh
-```
-
-再从 `tools/vscode` 发布刚刚预检过的 platform VSIX artifact：
-
-```bash
-cd tools/vscode
-pnpm run publish:vsix -- dist/ahfl-language-<version>-<target>.vsix --pat "$VSCE_PAT"
-```
-
-如果只是预检扩展包内容，不发布 Marketplace，使用：
-
-```bash
-pnpm run test:package-inventory
-```
-
-当前本地 `vsce` 没有真正的 `publish --dry-run` 选项；该门禁使用 `vsce ls --no-dependencies`
-离线验证将进入 VSIX/Marketplace 包的文件清单。
-
-官方流程参考 Visual Studio Code 的 Publishing Extensions 文档：
-
-```text
-https://code.visualstudio.com/api/working-with-extensions/publishing-extension
-```
-
-## 六、GitHub Actions 发布流程
-
-`.github/workflows/vscode-extension.yml` 提供三种产物/入口：
-
-1. push / pull request：在 Linux/macOS runner 上构建 release LSP，并打包内置该 server 的 platform VSIX。
-2. push / pull request：运行 Marketplace package inventory gate，确认发布清单包含 extension client、TextMate、snippet 与内置 release `ahfl-lsp`，且不包含 `src/`、`test/`、`dist/` 等开发产物。
-3. push / pull request：上传 platform VSIX artifact。
-4. workflow dispatch：当输入 `publish=true` 且仓库配置了 `VSCE_PAT` secret 时，发布 platform VSIX 到 Marketplace。
-
-手动发布前必须确认：
-
-1. `VSCE_PAT` 只配置在 GitHub secrets，不写入仓库。
-2. `tools/vscode/package.json` 的 `version` 已递增。
-3. `tools/vscode/CHANGELOG.md` 已更新。
-4. 对应版本的 platform VSIX 已包含 release `ahfl-lsp`。
-5. `pnpm run test:package-inventory` 与 `pnpm run test:vsix-install` 已通过。
-
-## 七、验证门禁
-
-扩展打包相关改动至少运行：
-
-```bash
-scripts/package-vscode-vsix-release.sh
-```
-
-只验证客户端编译时可运行：
-
-```bash
-cd tools/vscode
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run compile
-```
-
-验证 VS Code extension host 下的 hover、completion、rename、watched-files 与 diagnostics publish/recovery：
-
-```bash
-cmake --build --preset build-dev --target ahfl-lsp
-cd tools/vscode
-pnpm run test:extension
-```
-
-生成并校验 Problems diagnostics transcript：
-
-```bash
-cd tools/vscode
-pnpm run test:problems-transcript
-```
-
-验证 Marketplace package inventory 与 platform VSIX 安装：
-
-```bash
-cd tools/vscode
-pnpm run test:package-inventory
-pnpm run test:vsix-install
-```
-
-仓库级变更还应运行：
-
-```bash
-git diff --check
-```
-
-如果 LSP server 或协议行为也发生变化，追加：
-
-```bash
-cmake --build --preset build-release --target ahfl-lsp
-cmake --build --preset build-dev --target ahfl_tooling_lsp_json_rpc_tests ahfl_tooling_lsp_handler_tests
-ctest --preset test-dev --output-on-failure -L lsp
-```
+workflow 执行与调试方式见[调试指南](../tutorials/debugging.zh.md)。

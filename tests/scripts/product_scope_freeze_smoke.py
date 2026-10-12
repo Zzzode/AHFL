@@ -78,7 +78,7 @@ def main() -> int:
     baseline = json.loads(
         (source_root / "config/product-scope-freeze.json").read_text(encoding="utf-8")
     )
-    require(baseline["schema"] == "ahfl.product-scope-freeze.v1", "unexpected baseline schema")
+    require(baseline["format"] == "ahfl.product-scope-freeze", "unexpected baseline schema")
 
     with tempfile.TemporaryDirectory(prefix="ahfl-scope-freeze-") as temp_dir:
         root = Path(temp_dir)

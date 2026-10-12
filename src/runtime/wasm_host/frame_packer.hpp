@@ -18,7 +18,7 @@
 //     FramePackError (no echo of page bytes, names, or values).
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
 

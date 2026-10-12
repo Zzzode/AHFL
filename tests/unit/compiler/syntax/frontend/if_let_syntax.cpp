@@ -339,3 +339,13 @@ TEST_CASE("if let accepts the full match pattern surface") {
     CHECK(fmt.success);
     CHECK(fmt.formatted.find("if let Some(left | right) = ") != std::string::npos);
 }
+
+TEST_CASE("current syntax rejects removed bare assertions and reserved mutable bindings") {
+    const ahfl::Frontend frontend;
+    CHECK(frontend.parse_text("bare_assert.ahfl",
+                              "fn probe() { assert true; }").has_errors());
+    CHECK(frontend.parse_text("mutable_pattern.ahfl",
+                              "fn probe() { if let mut x = payload { consume(x); } }").has_errors());
+    CHECK_FALSE(frontend.parse_text("assert.ahfl",
+                                    "fn probe() { assert(true); }").has_errors());
+}

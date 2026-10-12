@@ -51,6 +51,9 @@ struct WasmWorkflowRuntimeConfig {
     wasm_host::WasmRuntimeHooks hooks;
     // The contextual capability invoker (production host capability dispatch).
     ContextualCapabilityInvoker invoker;
+    PendingCapabilityResolver pending_capability_resolver;
+    PendingInjectionGuard pending_injection_guard;
+    CompletedCapabilityMetadataReader completed_capability_metadata_reader;
     // Resolves a capability's source_symbol to its canonical name.
     std::function<std::optional<std::string>(std::uint64_t)> name_resolver;
     // kr68 §12.16: resolves a compile diagnostic's owning module + source range
@@ -87,12 +90,12 @@ struct WasmWorkflowRuntimeConfig {
                        std::string_view capability_name)>
         durable_write_intent_sink;
 
-    // WH-5c.5 test seam: forwarded to WorkflowSessionConfig after run2
+    // WH-5c.5 test seam: forwarded to WorkflowSessionConfig after run_workflow
     // returns, before the post-run per-node output join. A fail-closed
     // mutation pin corrupts the stash table / output bytes and asserts the
     // host decodes the corruption as kOutputDecodeFailed. Production code
     // never sets this.
-    std::function<void(std::span<std::uint8_t>)> post_run2_memory_mutator;
+    std::function<void(std::span<std::uint8_t>)> post_run_workflow_memory_mutator;
 
     // WH-8 (kr68 section 12.9.2): cancellation / interruption checks. The
     // wasm lane checks these at capability import boundaries
@@ -119,9 +122,25 @@ class WasmWorkflowRuntime {
     WasmWorkflowRuntime(const ir::Program &program,
                         WasmWorkflowRuntimeConfig config);
 
+    // Attach admitted host callbacks after pure compilation and before the first run.
+    [[nodiscard]] std::expected<void, std::string>
+    attach_execution_config(WasmWorkflowRuntimeConfig config) {
+        if (execution_started_ || execution_config_attached_)
+            return std::unexpected(
+                "workflow host configuration can only be attached once before execution");
+        execution_config_attached_ = true;
+        config_ = std::move(config);
+        return {};
+    }
+
     // Execute the named workflow.
     [[nodiscard]] WorkflowResult run(const std::string &workflow_name,
                                      Value input);
+
+    // Continue another admitted frontier without recompiling the workflow module.
+    void set_recovery_snapshot(WorkflowRecoverySnapshot snapshot) {
+        config_.recovery_snapshot = std::move(snapshot);
+    }
 
     // WH-8 (kr68 section 12.9.14): look up the compiled descriptor for a
     // workflow. The DAP uses this to classify breakpoint liveness (the
@@ -139,6 +158,8 @@ class WasmWorkflowRuntime {
     }
 
   private:
+    bool execution_started_{false};
+    bool execution_config_attached_{false};
     struct CompiledWorkflow {
         std::vector<std::uint8_t> module_bytes;
         ahfl::backends::CoreWasmExecutionDescriptor descriptor;

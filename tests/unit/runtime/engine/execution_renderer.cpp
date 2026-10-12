@@ -281,8 +281,7 @@ void test_json_renderer_emits_versioned_report() {
     if (!parsed.has_value() || !*parsed) {
         return;
     }
-    check((*parsed)->get("schema")->as_string() == "ahfl.run-report", "json schema name");
-    check((*parsed)->get("schema_version")->as_int() == 1, "json schema version");
+    check((*parsed)->get("format")->as_string() == "ahfl.run-report", "json schema name");
     const auto *run = (*parsed)->get("run");
     check(run != nullptr && run->is_object(), "json has run object");
     check(run != nullptr && run->get("id")->as_int() == 0, "json uses numeric run id");
@@ -320,7 +319,7 @@ void test_jsonl_renderer_emits_terminal_event_last() {
         const auto parsed = ahfl::json::parse_json(event_line);
         check(parsed.has_value() && *parsed && (*parsed)->is_object(), "jsonl line parses");
         if (parsed.has_value() && *parsed) {
-            check((*parsed)->get("schema")->as_string() == "ahfl.run-event",
+            check((*parsed)->get("format")->as_string() == "ahfl.run-event",
                   "jsonl event schema");
         }
     }

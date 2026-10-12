@@ -37,7 +37,7 @@ core-language 是绝对瓶颈。它一个文件同时承担了三个性质完全
 
 `docs/spec/core-language.zh.md` 当前被以下文档引用：
 
-- `docs/reference/user-guide-authoring.zh.md`、`user-guide-overview.zh.md`：面向用户，引用 spec 章节号。
+- `docs/tutorials/authoring.zh.md`、`overview.zh.md`：面向用户，引用 spec 章节号。
 - `docs/design/semantics-architecture.zh.md`、`frontend-lowering-architecture.zh.md`：面向 contributor，引用 §3/§4。
 - `docs/design/formal-backend.zh.md`：引用 §3.11 时序表达式实现说明。
 
@@ -210,7 +210,7 @@ docs/spec/
 **第 4 轮：跨文档引用修复**
 
 1. 全仓库搜索 `core-language.zh.md#§` 形式的锚点引用，更新到新分册
-2. 重点更新：`docs/reference/user-guide-*.zh.md`、`docs/design/semantics-architecture.zh.md`、`docs/design/formal-backend.zh.md`、`docs/design/frontend-lowering-architecture.zh.md`
+2. 重点更新：`docs/tutorials/*.zh.md`、`docs/design/semantics-architecture.zh.md`、`docs/design/formal-backend.zh.md`、`docs/design/frontend-lowering-architecture.zh.md`
 
 **第 5 轮：core-native-boundary 与 native 分册**
 

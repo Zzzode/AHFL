@@ -378,7 +378,7 @@ def write_http_bindings(
     bindings_path.write_text(
         json.dumps(
             {
-                "schema": "ahfl.runtime_capability_bindings.v0",
+                "format": "ahfl.runtime_capability_bindings",
                 "bindings": [binding],
             }
         ),
@@ -408,7 +408,7 @@ def write_grpc_bindings(
     bindings_path.write_text(
         json.dumps(
             {
-                "schema": "ahfl.runtime_capability_bindings.v0",
+                "format": "ahfl.runtime_capability_bindings",
                 "bindings": [binding],
             }
         ),
@@ -510,9 +510,7 @@ def assert_failure(
 # (unchanged from the original — capability-free workflow, no transport needed)
 # ---------------------------------------------------------------------------
 
-_RICH_PACKAGE_MANIFEST = """manifest_version = 1
-
-[package]
+_RICH_PACKAGE_MANIFEST = """[package]
 name = "g4b-rich-input"
 version = "0.1.0"
 edition = "2026"
@@ -875,6 +873,9 @@ def main() -> None:
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True)
+    home = run_dir / "home"
+    home.mkdir(mode=0o700)
+    os.environ["HOME"] = str(home.resolve())
 
     source_path = run_dir / "smoke.ahfl"
     source_path.write_text(SOURCE, encoding="utf-8")

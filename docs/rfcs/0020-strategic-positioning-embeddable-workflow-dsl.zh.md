@@ -313,15 +313,15 @@ evaluator 退役路径)**、**RFC 0027(query 化前端 + IR 单一真相源)**�
 语言(Lua/eBPF)+ WASI 能力模型三条成熟路线的交集,且每条都强化本 RFC 的定位(薄核心
 才好嵌、好验证、好多宿主)。具体的 ABI 字节格式由后续实现型 RFC 承载;本 RFC 只定方向。
 
-1. **embedding ABI 的语言无关形态** → **决策:稳定的 C ABI + `(ptr,len)` 帧 + 版本号,
+1. **embedding ABI 的语言无关形态** → **决策:精确当前 C ABI + `(ptr,len)` 帧,
    一个 `ahfl_host.h` 作为唯一契约。** 宿主用任意语言实现(所有语言都有 C FFI,是最大
    公约数);数据帧为长度前缀序列化字节(沿用 [RFC 0019](0019-wasm-runtime-model.zh.md)
-   的 value_json,序列化格式是版本字段可后换);capability 按 `SymbolId` 命名(索引式
+   的 canonical wire JSON，只接受完整当前结构);capability 按 `SymbolId` 命名(索引式
    身份,重命名不破 ABI);fail-closed。WASM 的 `ahfl_cap` import 与原生宿主的函数指针表
    都从这个 C 头派生。**理由**:Lua/CPython/eBPF/SQLite 等所有成功嵌入式运行时的宿主
    接口都是 C ABI——它是唯一能被 C++/Rust/Go/Java(JNI)/Node(N-API)/Python(ctypes)
-   全部调用的东西。WIT/Component Model 更优雅但浏览器支持未成熟,列为未来 major 版本
-   目标(靠版本号留迁移路径);JSON-RPC/gRPC over socket 走进程外,丢掉 in-process 嵌入
+   全部调用的东西。WIT/Component Model 更优雅但浏览器支持未成熟,列为独立后续设计
+   （不预留兼容格式）;JSON-RPC/gRPC over socket 走进程外,丢掉 in-process 嵌入
    的性能与沙箱红利,那就不是"嵌入"了。**与 Q3 联合决策**(异步 pending 状态影响帧)。
 2. **宿主如何模块化装卸能力** → **决策:两层——编译期声明白名单(静态上界,不可越)+
    运行时能力绑定表(动态,可装卸,但只能是白名单的子集)。** agent 的 `capabilities: [...]`
@@ -360,7 +360,7 @@ evaluator 退役路径)**、**RFC 0027(query 化前端 + IR 单一真相源)**�
   (native / WASM+WASI / agent 框架)。确立 A 型编排表达力无上限、B 型通用计算留在
   capability 边界外的护栏,并把 capability embedding ABI 提为项目核心资产。
 - 2026-08-25: 四个 Open Questions 给出倾向性结论并进入 review:(Q1)语言无关 C ABI +
-  `(ptr,len)` 帧 + 版本号,SymbolId 命名,WIT 为未来目标;(Q2)编译期白名单上界 +
+  `(ptr,len)` 帧,SymbolId 命名,WIT 为未来目标;(Q2)编译期白名单上界 +
   运行时能力绑定子集(WASI 能力模型);(Q3)语言同步语义 + 异步下沉宿主 + ABI 支持
   pending 挂起(JSPI/Asyncify 于浏览器);(Q4)L1 迁移一致 / L2 capability 序列一致强制、
   L3 参数逐字节作差分测试回归门。共同哲学:薄核心 + 脏东西关在宿主侧 ABI。Owners /

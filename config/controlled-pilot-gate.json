@@ -1,9 +1,9 @@
 {
-  "schema": "ahfl.controlled-pilot-gate.v1",
+  "format": "ahfl.controlled-pilot-gate",
   "reference_workflow": "examples/execution-demo",
   "evidence": {
     "path": "build/release-evidence/pilot/reference-workflow-production-matrix.json",
-    "schema": "ahfl.controlled-pilot-evidence.v1"
+    "format": "ahfl.controlled-pilot-evidence"
   },
   "minimums": {
     "soak_kind": "bounded-ci-soak",

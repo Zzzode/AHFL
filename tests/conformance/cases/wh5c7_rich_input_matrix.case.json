@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/wh5c7_rich_input_matrix.ahfl",
   "kind": "workflow",
   "entry": "app::rich_matrix::RichMatrix",

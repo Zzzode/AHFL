@@ -92,7 +92,6 @@ std::vector<nev::NodeEventRecord> decode(const std::vector<std::uint8_t> &page,
 CoreWasmResumeRecord make_suspended_ledger(const std::vector<ManifestNodeSpec> &nodes,
                                            std::size_t node_count) {
     CoreWasmResumeRecord r;
-    r.format_version = 1;
     r.entry_id = ahfl::ir::core::CoreWorkflowId{7};
     r.entry_input_slot = PayloadSlotId{9};
     r.resume_state = ResumeState::Suspended;

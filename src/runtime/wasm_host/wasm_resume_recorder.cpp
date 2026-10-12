@@ -29,32 +29,26 @@ std::uint64_t WasmResumeRecorder::begin_import(std::size_t schedule_pos,
     return ordinal;
 }
 
-WasmResumeRecorder::CurrentImport *
-WasmResumeRecorder::current_import() noexcept {
+WasmResumeRecorder::CurrentImport *WasmResumeRecorder::current_import() noexcept {
     return current_ ? &*current_ : nullptr;
 }
 
-void WasmResumeRecorder::append_memo_entry(
-    std::string authoritative_json,
-    PersistedMemoResultSource source) {
+void WasmResumeRecorder::append_memo_entry() {
     if (!current_.has_value() || !current_->arg_hash_set) {
-        return; // state violation; the wrapper guards this
+        return; // The session guards this state before capturing a reply.
     }
-    CapabilityMemoEntry entry{
+    memo_.push_back(CapabilityMemoEntry{
         .ordinal = current_->ordinal,
         .cap_id = current_->cap_id,
         .arg_hash = current_->arg_hash,
-        .result = current_->result.has_value()
-                      ? runtime::clone_value(*current_->result)
-                      : runtime::Value{runtime::NoneValue{}},
-        .source = source,
-        .result_present = current_->result_present,
+        .result =
+            InMemoryMemoResult{
+                .value = current_->result.has_value() ? runtime::clone_value(*current_->result)
+                                                      : runtime::Value{runtime::NoneValue{}},
+                .present = current_->result_present,
+            },
         .node = current_->node,
-    };
-    if (source == PersistedMemoResultSource::ExactSidecar) {
-        entry.authoritative_json = std::move(authoritative_json);
-    }
-    memo_.push_back(std::move(entry));
+    });
 }
 
 void WasmResumeRecorder::stamp_pending() {
@@ -70,8 +64,7 @@ void WasmResumeRecorder::stamp_pending() {
     };
 }
 
-std::optional<WasmResumeRecorder::PendingCoordinate>
-WasmResumeRecorder::pending() const noexcept {
+std::optional<WasmResumeRecorder::PendingCoordinate> WasmResumeRecorder::pending() const noexcept {
     return pending_;
 }
 
@@ -79,9 +72,8 @@ std::vector<CapabilityMemoEntry> WasmResumeRecorder::take_memo() {
     return std::move(memo_);
 }
 
-bool WasmResumeRecorder::load_replay(
-    WorkflowRecoverySnapshot snapshot,
-    std::span<const std::size_t> node_to_schedule) {
+bool WasmResumeRecorder::load_replay(WorkflowRecoverySnapshot snapshot,
+                                     std::span<const std::size_t> node_to_schedule) {
     if (!snapshot.suspended.has_value()) {
         return false;
     }
@@ -106,19 +98,19 @@ bool WasmResumeRecorder::load_replay(
         // The wasm consumer requires a node coordinate on every memo entry
         // (whole-workflow memo for fresh-instance replay). A snapshot
         // without one -> fail closed.
-        if (!entry.node.has_value()) {
+        if (!entry.node.valid()) {
             return false;
         }
-        if (entry.node->index() >= node_to_schedule.size()) {
+        if (entry.node.index() >= node_to_schedule.size()) {
             return false;
         }
         replay_index_.push_back(
-            ReplayIndexEntry{.schedule_pos =
-                                 node_to_schedule[entry.node->index()],
+            ReplayIndexEntry{.schedule_pos = node_to_schedule[entry.node.index()],
                              .ordinal = entry.ordinal,
                              .memo_index = i});
     }
-    std::sort(replay_index_.begin(), replay_index_.end(),
+    std::sort(replay_index_.begin(),
+              replay_index_.end(),
               [](const ReplayIndexEntry &lhs, const ReplayIndexEntry &rhs) {
                   if (lhs.schedule_pos != rhs.schedule_pos) {
                       return lhs.schedule_pos < rhs.schedule_pos;
@@ -129,15 +121,13 @@ bool WasmResumeRecorder::load_replay(
     return true;
 }
 
-WasmResumeRecorder::ReplayClass
-WasmResumeRecorder::classify(std::size_t schedule_pos,
-                             std::uint64_t ordinal) const {
+WasmResumeRecorder::ReplayClass WasmResumeRecorder::classify(std::size_t schedule_pos,
+                                                             std::uint64_t ordinal) const {
     if (!frontier_.has_value()) {
         return ReplayClass::PostFrontier; // not a resume run: everything live
     }
     // Frontier hit?
-    if (frontier_->schedule_pos == schedule_pos &&
-        frontier_->ordinal == ordinal) {
+    if (frontier_->schedule_pos == schedule_pos && frontier_->ordinal == ordinal) {
         return ReplayClass::Frontier;
     }
     // Before the frontier (same node, lower ordinal; or a node that precedes
@@ -148,32 +138,27 @@ WasmResumeRecorder::classify(std::size_t schedule_pos,
     // a MemoHit, not a PostFrontier live re-execution.
     const bool before_frontier =
         schedule_pos < frontier_->schedule_pos ||
-        (schedule_pos == frontier_->schedule_pos &&
-         ordinal < frontier_->ordinal);
+        (schedule_pos == frontier_->schedule_pos && ordinal < frontier_->ordinal);
     if (!before_frontier) {
         return ReplayClass::PostFrontier;
     }
     // Before the frontier: must be a memo hit, else divergence.
-    return memo_entry(schedule_pos, ordinal) != nullptr
-               ? ReplayClass::MemoHit
-               : ReplayClass::PreFrontierMiss;
+    return memo_entry(schedule_pos, ordinal) != nullptr ? ReplayClass::MemoHit
+                                                        : ReplayClass::PreFrontierMiss;
 }
 
-const CapabilityMemoEntry *
-WasmResumeRecorder::memo_entry(std::size_t schedule_pos,
-                               std::uint64_t ordinal) const {
+const CapabilityMemoEntry *WasmResumeRecorder::memo_entry(std::size_t schedule_pos,
+                                                          std::uint64_t ordinal) const {
     // Linear scan over the (small) sorted replay index.
     for (const auto &entry : replay_index_) {
-        if (entry.schedule_pos == schedule_pos &&
-            entry.ordinal == ordinal) {
+        if (entry.schedule_pos == schedule_pos && entry.ordinal == ordinal) {
             return &memo_[entry.memo_index];
         }
     }
     return nullptr;
 }
 
-const WasmResumeRecorder::PendingCoordinate *
-WasmResumeRecorder::frontier() const noexcept {
+const WasmResumeRecorder::PendingCoordinate *WasmResumeRecorder::frontier() const noexcept {
     return frontier_ ? &*frontier_ : nullptr;
 }
 

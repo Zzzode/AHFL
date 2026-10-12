@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/value/value.hpp"
@@ -26,7 +26,7 @@
 //   * validate_value: a native runtime Value is checked structurally against the
 //                    schema without being rebuilt.
 //
-// Trust-boundary invariants (Codex C2b policy rev2, locked):
+// Trust-boundary invariants:
 //   * Decimal/Duration decode PRESERVES the input spelling verbatim; the parsed
 //     mantissa/scale/ms are used only to check validity, scale, and overflow —
 //     never to normalize or rewrite the bytes.
@@ -40,18 +40,12 @@
 //     input by canonicalizing a clone and comparing structural equality.
 //   * Int/String honor the schema's bounds / length_bounds.
 //
-// This codec does NOT change value_json / the wire encoder, nor
-// workflow_recovery's save path or its persisted bytes; those shapes are
-// unchanged in this checkpoint. (The P0-10 direct-DOM load admission is a
-// separate, already-landed shared gate, not part of this codec.)
 
 namespace ahfl::runtime {
 
 // The shared {valid, error} validation result. Owned here because this codec is
 // the SOLE schema-guided authority for native-Value validation across the runtime
-// (RFC 0026 C2b G4d: the legacy TypeRef-based response_schema_validator has been
-// deleted; all validation now flows through validate_value / decode_json against a
-// verified wire binding).
+// through validate_value / decode_json against a verified wire binding.
 struct SchemaValidationResult {
     bool valid{true};
     std::string error;

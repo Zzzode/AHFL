@@ -13,18 +13,12 @@ namespace ahfl::formal {
 namespace {
 
 // Everything gathered from one contract before goals are discharged: the union
-// of free symbols to declare, the precondition assumptions, the invariant
-// terms (each tagged with its clause index so a goal never assumes itself),
-// and the list of goals to prove.
+// of free symbols to declare, the preconditions, and independent proof goals.
 struct ContractQueries {
+    const ir::ContractDecl *first_contract{nullptr};
     std::string target;
     std::vector<SmtSymbol> symbols;
     std::vector<std::string> requires_terms;
-    struct Invariant {
-        std::size_t clause_index;
-        std::string term;
-    };
-    std::vector<Invariant> invariants;
     struct Goal {
         ir::ContractClauseKind kind;
         std::size_t clause_index;
@@ -57,10 +51,10 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
 }
 
 // Build the refutation query for one goal: declare all contract symbols, assert
-// the bound constraints, the preconditions, every invariant *except* the goal's
-// own clause, then the negated goal. Unsat ⇒ the goal holds.
+// the bound constraints and preconditions, then the negated goal.
+// Other goals cannot serve as assumptions. Unsat implies the contract formula.
 [[nodiscard]] std::string build_query(const ContractQueries &contract,
-                                      const ContractQueries::Goal &goal) {
+                                      const ContractQueries::Goal *goal = nullptr) {
     std::ostringstream doc;
     doc << "(set-logic QF_NIA)\n";
     for (const auto &symbol : contract.symbols) {
@@ -73,13 +67,9 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
     for (const auto &assumption : contract.requires_terms) {
         doc << "(assert " << assumption << ")\n";
     }
-    for (const auto &invariant : contract.invariants) {
-        if (invariant.clause_index == goal.clause_index) {
-            continue; // never assume the very invariant we are proving
-        }
-        doc << "(assert " << invariant.term << ")\n";
+    if (goal != nullptr) {
+        doc << "(assert (not " << goal->goal_term << "))\n";
     }
-    doc << "(assert (not " << goal.goal_term << "))\n";
     doc << "(check-sat)\n";
     return doc.str();
 }
@@ -89,7 +79,7 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
 // I fails). With havoc transitions (transition relation = true), there is no
 // constraint between step 0 and step 1, so the step is Unsat only when I is a
 // tautology. A Sat result honestly downgrades the goal to BoundedSafe.
-[[nodiscard]] std::string build_inductive_step_query(const ContractQueries::Goal &goal,
+[[nodiscard]] std::optional<std::string> build_inductive_step_query(const ContractQueries::Goal &goal,
                                                      const SmtEncodeOptions &base_options) {
     // Re-encode at step 0 (hypothesis) and step 1 (negation).
     SmtEncodeOptions step0_options = base_options;
@@ -100,11 +90,9 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
     const auto encoded_step0 = encode_predicate(goal.expr, step0_options);
     const auto encoded_step1 = encode_predicate(goal.expr, step1_options);
 
-    // If either re-encoding fails (should not happen — the base encoding
-    // succeeded), fall back to a trivially Sat query so the goal is honestly
-    // downgraded to BoundedSafe rather than silently dropped.
+    // Encoding failure must remain unproven, rather than fabricate a solver verdict.
     if (!encoded_step0.ok() || !encoded_step1.ok()) {
-        return "(set-logic QF_NIA)\n(declare-const havoc_proxy Bool)\n(assert (not havoc_proxy))\n(check-sat)\n";
+        return std::nullopt;
     }
 
     std::ostringstream doc;
@@ -138,8 +126,10 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
 }
 
 [[nodiscard]] ContractQueries collect_contract(const ir::ContractDecl &contract,
-                                               const SmtEncodeOptions &encode_options) {
+                                               const SmtEncodeOptions &encode_options,
+                                               std::size_t clause_begin) {
     ContractQueries queries;
+    queries.first_contract = &contract;
     queries.target = std::string(ir::symbol_canonical_name(contract.target_ref));
 
     const auto &clauses = contract.clauses;
@@ -152,7 +142,7 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
 
         const auto encoded = encode_predicate(*expr, encode_options);
         if (!encoded.ok()) {
-            continue; // out-of-subset clauses are abstracted (reported by slice 1)
+            continue; // eligibility was checked before collecting proof queries
         }
         merge_symbols(queries.symbols, encoded.symbols);
 
@@ -163,17 +153,16 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
             queries.requires_terms.push_back(*encoded.term);
             break;
         case ir::ContractClauseKind::Invariant:
-            queries.invariants.push_back({i, *encoded.term});
-            queries.goals.push_back({clause.kind, i, kind_name, *encoded.term, *expr, clause.source_range});
+            queries.goals.push_back({clause.kind, clause_begin + i, kind_name, *encoded.term, *expr, clause.source_range});
             break;
         case ir::ContractClauseKind::Ensures:
-            queries.goals.push_back({clause.kind, i, kind_name, *encoded.term, *expr, clause.source_range});
+            queries.goals.push_back({clause.kind, clause_begin + i, kind_name, *encoded.term, *expr, clause.source_range});
             break;
         case ir::ContractClauseKind::Forbid:
             // The forbidden predicate must be unreachable, so the goal is its
             // negation.
             queries.goals.push_back(
-                {clause.kind, i, kind_name, "(not " + *encoded.term + ")", *expr, clause.source_range});
+                {clause.kind, clause_begin + i, kind_name, "(not " + *encoded.term + ")", *expr, clause.source_range});
             break;
         case ir::ContractClauseKind::Decreases:
             break; // unreachable (skipped above)
@@ -182,7 +171,7 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
         // Divide/modulo divisor-non-zero obligations become goals of their own,
         // attributed to the clause that produced them.
         for (const auto &obligation : encoded.obligations) {
-            queries.goals.push_back({clause.kind, i, kind_name + " divisor != 0",
+            queries.goals.push_back({clause.kind, clause_begin + i, kind_name + " divisor != 0",
                                      obligation.predicate, *expr, clause.source_range});
         }
     }
@@ -195,6 +184,15 @@ void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &f
 SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &options) {
     SmtBmcResult result;
 
+    result.unsupported_clauses = analyze_contract_subset_eligibility(program, options.encode).ineligible;
+    if (!result.unsupported_clauses.empty()) {
+        result.status = SmtBmcStatus::Unsupported;
+        result.error_message = "selected contract predicates or assumptions are not SMT-encodable";
+        return result;
+    }
+
+    ir::ContractClauseIndex clause_index;
+    clause_index.rebuild(program);
     std::vector<ContractQueries> contracts;
     std::size_t total_goals = 0;
     for (const auto &decl : program.declarations) {
@@ -202,9 +200,22 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
         if (contract == nullptr) {
             continue;
         }
-        auto queries = collect_contract(*contract, options.encode);
+        auto queries = collect_contract(*contract, options.encode, clause_index.clause_begin(*contract));
         total_goals += queries.goals.size();
-        contracts.push_back(std::move(queries));
+        bool merged = false;
+        for (auto &existing : contracts) {
+            if (!clause_index.same_agent(*existing.first_contract, *contract)) continue;
+            merge_symbols(existing.symbols, queries.symbols);
+            for (auto &term : queries.requires_terms) {
+                existing.requires_terms.push_back(std::move(term));
+            }
+            for (auto &goal : queries.goals) {
+                existing.goals.push_back(std::move(goal));
+            }
+            merged = true;
+            break;
+        }
+        if (!merged) contracts.push_back(std::move(queries));
     }
 
     if (total_goals == 0) {
@@ -213,19 +224,37 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
         return result;
     }
 
+    bool any_inconsistent = false;
     bool any_unknown = false;
     bool any_unsafe = false;
     bool any_unavailable = false;
     bool any_bounded_only = false;
 
     for (const auto &contract : contracts) {
+        if (contract.goals.empty()) {
+            continue;
+        }
+        const auto assumptions = run_smt_solver(build_query(contract), options.solver);
+        const bool consistent = assumptions.status == SmtSolverStatus::Sat;
+        result.assumption_checks.push_back({contract.target, assumptions.status, consistent});
+        if (!consistent) {
+            any_inconsistent |= assumptions.status == SmtSolverStatus::Unsat;
+            any_unavailable |= assumptions.status == SmtSolverStatus::SolverUnavailable;
+            any_unknown |= assumptions.status != SmtSolverStatus::Unsat &&
+                           assumptions.status != SmtSolverStatus::SolverUnavailable;
+            if (result.error_message.empty()) {
+                result.error_message = assumptions.status == SmtSolverStatus::Unsat
+                    ? "contract assumptions are inconsistent for " + contract.target
+                    : assumptions.error_message;
+            }
+        }
         for (const auto &goal : contract.goals) {
-            const auto query = build_query(contract, goal);
+            const auto query = build_query(contract, &goal);
             // Request a model so a refutation (Sat) comes with a concrete
             // counterexample assignment to materialize.
             SmtSolverOptions solver_options = options.solver;
             solver_options.request_model = true;
-            const auto verdict = run_smt_solver(query, solver_options);
+            const auto verdict = consistent ? run_smt_solver(query, solver_options) : assumptions;
 
             SmtBmcGoal record;
             record.kind = goal.kind;
@@ -233,7 +262,7 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
             record.clause_index = goal.clause_index;
             record.description = goal.description;
             record.verdict = verdict.status;
-            record.proven = verdict.status == SmtSolverStatus::Unsat;
+            record.proven = consistent && verdict.status == SmtSolverStatus::Unsat;
             record.source_range = goal.source_range;
             // KR2.6: carry the contract's symbols (with per-field source ranges)
             // so a counterexample assignment can be joined by name to its field
@@ -255,13 +284,23 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
                 // no inductive step and are not flagged.
                 if (options.use_k_induction && goal.kind == ir::ContractClauseKind::Invariant) {
                     const auto step_query = build_inductive_step_query(goal, options.encode);
-                    const auto step_verdict = run_smt_solver(step_query, options.solver);
-                    if (step_verdict.status != SmtSolverStatus::Unsat) {
+                    const auto step_verdict = step_query.has_value()
+                        ? run_smt_solver(*step_query, options.solver)
+                        : SmtSolverResult{};
+                    if (step_verdict.status == SmtSolverStatus::Sat) {
                         record.bounded_only = true;
                         any_bounded_only = true;
+                    } else if (step_verdict.status != SmtSolverStatus::Unsat) {
+                        record.proven = false;
+                        --result.proven_count;
+                        record.verdict = step_verdict.status;
+                        any_unavailable |= step_verdict.status == SmtSolverStatus::SolverUnavailable;
+                        any_unknown |= step_verdict.status != SmtSolverStatus::SolverUnavailable;
+                        result.error_message = step_query.has_value() ? step_verdict.error_message
+                            : "cannot encode invariant induction query";
                     }
                 }
-            } else if (verdict.status == SmtSolverStatus::Sat) {
+            } else if (consistent && verdict.status == SmtSolverStatus::Sat) {
                 any_unsafe = true;
                 record.counterexample = verdict.model; // concrete violating assignment
             } else if (verdict.status == SmtSolverStatus::SolverUnavailable) {
@@ -269,18 +308,22 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
                 if (result.error_message.empty()) {
                     result.error_message = verdict.error_message;
                 }
-            } else {
+            } else if (consistent) {
                 any_unknown = true;
+                if (result.error_message.empty()) {
+                    result.error_message = verdict.error_message;
+                }
             }
 
             result.goals.push_back(std::move(record));
         }
     }
 
-    // Resolution order: a real refutation (Unsafe) is the strongest signal; a
-    // missing solver must never read as Safe; then Unknown; then, when every
-    // goal is proven, either unconditional Safe or (k-induction) BoundedSafe.
-    if (any_unsafe) {
+    // Inconsistent premises cannot establish a proof. Refutations and missing
+    // or inconclusive solvers also prevent a successful proof result.
+    if (any_inconsistent) {
+        result.status = SmtBmcStatus::InconsistentAssumptions;
+    } else if (any_unsafe) {
         result.status = SmtBmcStatus::Unsafe;
     } else if (any_unavailable) {
         result.status = SmtBmcStatus::SolverUnavailable;
@@ -301,6 +344,8 @@ std::string_view smt_bmc_status_name(SmtBmcStatus status) noexcept {
         return "safe";
     case SmtBmcStatus::BoundedSafe:
         return "bounded_safe";
+    case SmtBmcStatus::InconsistentAssumptions:
+        return "inconsistent_assumptions";
     case SmtBmcStatus::Unsafe:
         return "unsafe";
     case SmtBmcStatus::Unknown:
@@ -314,7 +359,8 @@ std::string_view smt_bmc_status_name(SmtBmcStatus status) noexcept {
 }
 
 bool smt_bmc_result_is_failure(const SmtBmcResult &result) noexcept {
-    return result.status == SmtBmcStatus::Unsafe;
+    return result.status != SmtBmcStatus::Safe && result.status != SmtBmcStatus::BoundedSafe &&
+           !(result.status == SmtBmcStatus::Unsupported && result.unsupported_clauses.empty());
 }
 
 void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out) {
@@ -322,12 +368,26 @@ void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out) {
     out << "smt_bmc_goals: " << result.goals.size() << '\n';
     out << "smt_bmc_proven: " << result.proven_count << '\n';
 
-    if (result.status == SmtBmcStatus::Unsupported) {
-        // No data-predicate goals — nothing more to say.
-        return;
+    out << "smt_bmc_scope: contract_implication\n";
+    out << "smt_bmc_assumption_checks: " << result.assumption_checks.size() << '\n';
+    std::size_t consistent_count = 0;
+    for (const auto &assumptions : result.assumption_checks) {
+        consistent_count += assumptions.consistent ? 1 : 0;
     }
-    if (result.status == SmtBmcStatus::SolverUnavailable && !result.error_message.empty()) {
-        out << "smt_bmc_skip_reason: " << result.error_message << '\n';
+    out << "smt_bmc_assumptions_consistent: " << consistent_count << '\n';
+    for (const auto &assumptions : result.assumption_checks) {
+        out << "smt_bmc_assumptions: contract " << assumptions.target_name << " "
+            << (assumptions.consistent ? "consistent" : "not_established") << " ("
+            << smt_solver_status_name(assumptions.verdict) << ")\n";
+    }
+    out << "smt_bmc_unsupported_clauses: " << result.unsupported_clauses.size() << '\n';
+    for (const auto &clause : result.unsupported_clauses) {
+        out << "smt_bmc_unsupported: contract " << clause.target_name << " "
+            << ir::contract_clause_kind_name(clause.kind) << "[" << clause.clause_index
+            << "] " << describe_rejection(clause.rejection) << '\n';
+    }
+    if (!result.error_message.empty()) {
+        out << "smt_bmc_error: " << result.error_message << '\n';
     }
 
     for (const auto &goal : result.goals) {
@@ -335,7 +395,7 @@ void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out) {
             out << "smt_bmc_refuted: contract " << goal.target_name << " " << goal.description
                 << "[" << goal.clause_index << "]\n";
             for (const auto &[name, value] : goal.counterexample) {
-                out << "  counterexample: " << name << " = " << value;
+                out << "  formula_counterexample: " << name << " = " << value;
                 // KR2.6: annotate with the field's source offsets when the
                 // encoder recorded a range for this symbol.
                 for (const auto &symbol : goal.symbols) {

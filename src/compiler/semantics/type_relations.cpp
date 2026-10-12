@@ -278,7 +278,7 @@ bool equivalent_impl(const Type &lhs,
 
     // Nominal stdlib containers: short-circuit with dedicated path labels
     // before falling through to the generic StructT/EnumT handler. This keeps
-    // the constraint-skeleton tree shape aligned with the legacy bridge: only
+    // the constraint-skeleton tree shape aligned with the relation bridge: only
     // the container's shape/element sub-constraints appear under the outer
     // And (no struct.name / enum.name leaf emitted when the canonical names
     // already agree via the nominal guard).
@@ -674,7 +674,7 @@ RelationDecision subtype_impl(const Type &source,
     // Nominal generic subtyping for struct / enum.
     //
     // For stdlib containers the variance + path-segment contract is hardcoded
-    // to match the legacy bridge (covariant element for Option/List/Set; Map
+    // to match the relation bridge (covariant element for Option/List/Set; Map
     // keys invariant, Map values covariant). All other user-defined nominals
     // are invariant (type arguments compared via equivalent) until the trait-
     // based variance system ships in PHASE B.
@@ -784,7 +784,7 @@ RelationDecision subtype_impl(const Type &source,
             // nominals. Each argument position is compared according to its
             // declared/inferred variance (Covariant -> subtype, Contravariant
             // -> reversed subtype, Invariant -> equivalence). Absent a variance
-            // provider every position defaults to Invariant (legacy behavior).
+            // provider every position defaults to Invariant (default invariant behavior).
             std::vector<TypedAdjustmentOp> ops;
             for (std::size_t i = 0; i < s->type_args.size(); ++i) {
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {

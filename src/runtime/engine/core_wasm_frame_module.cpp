@@ -23,14 +23,15 @@ using ahfl::ir::core::VerifiedWireSchemaTable;
 namespace irc = ahfl::ir::core;
 
 constexpr std::uint8_t kSectionCustom = 0;
-constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout.v1";
-constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
+constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout";
+constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema";
 
 void add_error(std::vector<CoreLowerDiagnostic> &diagnostics, std::string message) {
     diagnostics.push_back(CoreLowerDiagnostic{ahfl::ir::core::CoreDiagnosticSeverity::Error,
                                               "core.frame-module",
                                               std::move(message),
-                                              std::nullopt, {}});
+                                              std::nullopt,
+                                              {}});
 }
 
 // Canonical-LEB section cursor. No byte is ever echoed in a diagnostic.
@@ -38,8 +39,12 @@ class Cursor {
   public:
     explicit Cursor(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
 
-    [[nodiscard]] bool at_end() const noexcept { return offset_ == bytes_.size(); }
-    [[nodiscard]] std::size_t offset() const noexcept { return offset_; }
+    [[nodiscard]] bool at_end() const noexcept {
+        return offset_ == bytes_.size();
+    }
+    [[nodiscard]] std::size_t offset() const noexcept {
+        return offset_;
+    }
 
     [[nodiscard]] std::optional<std::uint8_t> byte() {
         if (offset_ >= bytes_.size()) {
@@ -82,8 +87,7 @@ class Cursor {
         return slice;
     }
 
-    [[nodiscard]] bool
-    match(const std::array<std::uint8_t, 8> &expected) {
+    [[nodiscard]] bool match(const std::array<std::uint8_t, 8> &expected) {
         const auto slice = take(8);
         if (!slice.has_value()) {
             return false;
@@ -113,8 +117,8 @@ struct FrameFraming {
 [[nodiscard]] std::optional<FrameFraming>
 frame_module(std::span<const std::uint8_t> module_bytes,
              std::vector<CoreLowerDiagnostic> &diagnostics) {
-    static constexpr std::array<std::uint8_t, 8> kHeader{0x00, 0x61, 0x73, 0x6d,
-                                                        0x01, 0x00, 0x00, 0x00};
+    static constexpr std::array<std::uint8_t, 8> kHeader{
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     Cursor cursor(module_bytes);
     if (!cursor.match(kHeader)) {
         add_error(diagnostics, "frame module header is not wasm v1");
@@ -216,8 +220,7 @@ bool AdmitFrameResult::has_errors() const noexcept {
     return false;
 }
 
-AdmitFrameResult
-admit_core_wasm_frame_sections(std::span<const std::uint8_t> module_bytes) {
+AdmitFrameResult admit_core_wasm_frame_sections(std::span<const std::uint8_t> module_bytes) {
     AdmitFrameResult result;
 
     auto framing = frame_module(module_bytes, result.diagnostics);
@@ -225,7 +228,7 @@ admit_core_wasm_frame_sections(std::span<const std::uint8_t> module_bytes) {
         return result;
     }
 
-    // 1. Decode the core-layout payload (magic/version/local verify + canonical
+    // 1. Decode the core-layout payload (magic/local verify + canonical
     //    re-encode equality).
     auto layout_decoded = irc::decode_core_frame_layout_section(framing->layout_bytes);
     if (!layout_decoded.ok() || !layout_decoded.section.has_value()) {
@@ -257,27 +260,27 @@ admit_core_wasm_frame_sections(std::span<const std::uint8_t> module_bytes) {
     }
 
     // 3. Layout/wire consistency at BOTH boundary roots.
-    auto input_diags = irc::verify_frame_layout_wire_consistency(
-        layout_section.table, layout_section.input_layout, wire_table,
-        wire_table.frame_roots->input);
-    auto output_diags = irc::verify_frame_layout_wire_consistency(
-        layout_section.table, layout_section.output_layout, wire_table,
-        wire_table.frame_roots->output);
+    auto input_diags = irc::verify_frame_layout_wire_consistency(layout_section.table,
+                                                                 layout_section.input_layout,
+                                                                 wire_table,
+                                                                 wire_table.frame_roots->input);
+    auto output_diags = irc::verify_frame_layout_wire_consistency(layout_section.table,
+                                                                  layout_section.output_layout,
+                                                                  wire_table,
+                                                                  wire_table.frame_roots->output);
     if (!input_diags.empty() || !output_diags.empty()) {
         auto &bag = input_diags.empty() ? output_diags : input_diags;
         for (auto &d : bag) {
             result.diagnostics.push_back(std::move(d));
         }
-        add_error(result.diagnostics,
-                  "frame layout and wire schema disagree at a boundary root");
+        add_error(result.diagnostics, "frame layout and wire schema disagree at a boundary root");
         return result;
     }
 
-    // V2-C: every capability bridge call site must name a capability the wire
+    // Capability bridge: every capability bridge call site must name a capability the wire
     // schema projects and be layout/wire consistent at every argument/result
     // root.
-    auto bridge_diags =
-        irc::verify_frame_bridge_sites(layout_section, wire_table);
+    auto bridge_diags = irc::verify_frame_bridge_sites(layout_section, wire_table);
     if (!bridge_diags.empty()) {
         for (auto &d : bridge_diags) {
             result.diagnostics.push_back(std::move(d));
@@ -312,13 +315,12 @@ admit_core_wasm_frame_sections(std::span<const std::uint8_t> module_bytes) {
         return result;
     }
 
-    AdmittedFrameSections admitted{
-        std::move(*layout_decoded.section),
-        std::move(*input_binding),
-        std::move(*output_binding),
-        ahfl::support::sha256(module_bytes),
-        ahfl::support::sha256(framing->layout_bytes),
-        ahfl::support::sha256(framing->schema_bytes)};
+    AdmittedFrameSections admitted{std::move(*layout_decoded.section),
+                                   std::move(*input_binding),
+                                   std::move(*output_binding),
+                                   ahfl::support::sha256(module_bytes),
+                                   ahfl::support::sha256(framing->layout_bytes),
+                                   ahfl::support::sha256(framing->schema_bytes)};
     result.sections = std::move(admitted);
     return result;
 }

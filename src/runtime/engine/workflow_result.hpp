@@ -63,8 +63,11 @@ struct WorkflowResult {
     // passing this snapshot back via WorkflowRuntimeConfig::recovery_snapshot
     // together with exactly one pending-result source: the native
     // resume_pending_result Value or the raw resume_pending_result_wire_json bytes
-    // (mutually exclusive; the runtime rejects supplying both at the consume gate).
+    // (mutually exclusive; the runtime rejects supplying both at the consume gate),
+    // or a matching provider resolver supplies the pending result.
     std::optional<WorkflowRecoverySnapshot> suspended{};
+    // A provider prepared a durable session and requests an internal resume.
+    bool automatically_resumable_pending{false};
 
     [[nodiscard]] bool has_errors() const;
     [[nodiscard]] WorkflowStatus status() const noexcept;

@@ -29,6 +29,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -85,10 +86,35 @@ constexpr std::uint32_t kCollectionInputLen = 2;
     if (use_repo_std) {
         namespace fs = std::filesystem;
         const auto repo_root = test_support::repo_root_from_source_file(path);
-        const auto root = fs::temp_directory_path() /
-                          ("ahfl_p6_probe_repo_std_" + path.stem().string());
+        // Node and standalone probes compile the same fixture concurrently.
+        // Atomically reserve a private directory before copying any source.
+        std::random_device nonce;
+        fs::path root;
         std::error_code ec;
-        fs::remove_all(root, ec);
+        for (unsigned attempt = 0; attempt < 128; ++attempt) {
+            auto candidate = fs::temp_directory_path() /
+                ("ahfl_p6_probe_repo_std_" + path.stem().string() + "_" +
+                 std::to_string(nonce()));
+            if (fs::create_directory(candidate, ec)) {
+                root = std::move(candidate);
+                break;
+            }
+            if (ec) {
+                std::cerr << "cannot reserve fixture directory: " << ec.message() << '\n';
+                return std::nullopt;
+            }
+        }
+        if (root.empty()) {
+            std::cerr << "cannot reserve a private fixture directory\n";
+            return std::nullopt;
+        }
+        struct DirectoryCleanup {
+            fs::path root;
+            ~DirectoryCleanup() {
+                std::error_code ignored;
+                fs::remove_all(root, ignored);
+            }
+        } cleanup{root};
         const auto main_path = root / "app" / "main.ahfl";
         fs::create_directories(main_path.parent_path(), ec);
         {
@@ -353,9 +379,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: for a COMPUTED FINAL
+    // RFC 0026 P6-7 frame bridge rung computed-final: for a COMPUTED FINAL
     // fixture, report the exact P4-D frame facts the Node host needs to
-    // pack an input and validate the runv output frame: the runv root
+    // pack an input and validate the run_frame output frame: the run_frame root
     // bases/root sizes, and every scalar leaf word `@offset:width`
     // (width 32/64) of the input and output nominals. The host mirrors
     // these facts instead of re-deriving offsets; it pins the expected
@@ -421,7 +447,7 @@ int main(int argc, char **argv) {
         }
         std::cout << "\n";
 
-        // RFC 0026 P6-7 frame-bridge v2 rung V2-B fix-forward: the Node hosts
+        // RFC 0026 P6-7 frame bridge rung string-frame fix-forward: the Node hosts
         // also pack the input-payload ARENA (bounded List<String> fixtures) and
         // read inlined String PtrLen words (enum/passthrough fixtures), so
         // report:

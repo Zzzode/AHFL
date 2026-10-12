@@ -4,7 +4,7 @@
 
 本计划服务 [RFC 0004](../rfcs/0004-native-grpc-transport.zh.md)。当前 AHFL runtime 已有 `grpc_json_transcoding` 路径；这不能证明 native gRPC/Protobuf transport 应该进入实现。本门禁的目的，是在任何 native gRPC 代码落库前完成可复核的 Go/No-Go 决策。
 
-机器可读证据记录在 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)。该文件使用 `ahfl.native_grpc_decision_evidence.v1` schema，由 `scripts/check-native-grpc-gate.py` 校验；RFC0004 仍为 `draft` 时可以保留 `missing` gate，但一旦推进到 `accepted` 或 `implementing`，状态和证据必须与下列门槛一致。所有证据时间戳使用日历有效的 UTC `YYYY-MM-DDTHH:MM:SSZ` 格式，远端证据引用只允许带非空 path、无 credential、无 fragment 的绝对 `https` URL；仓库内证据引用必须使用 POSIX 相对路径且不得包含控制字符；源码、TOML/CMake/YAML/JSON 配置和 proto contract 中的 native marker 都必须经过同一个 gate；feature flag、fallback transport、benchmark transport 和 diagnostics namespace 使用本文列出的 canonical value，不接受同义字符串。
+机器可读证据记录在 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)。该文件使用 `ahfl.native_grpc_decision_evidence` schema，由 `scripts/check-native-grpc-gate.py` 校验；RFC0004 仍为 `draft` 时可以保留 `missing` gate，但一旦推进到 `accepted` 或 `implementing`，状态和证据必须与下列门槛一致。所有证据时间戳使用日历有效的 UTC `YYYY-MM-DDTHH:MM:SSZ` 格式，远端证据引用只允许带非空 path、无 credential、无 fragment 的绝对 `https` URL；仓库内证据引用必须使用 POSIX 相对路径且不得包含控制字符；源码、TOML/CMake/YAML/JSON 配置和 proto contract 中的 native marker 都必须经过同一个 gate；feature flag、fallback transport、benchmark transport 和 diagnostics namespace 使用本文列出的 canonical value，不接受同义字符串。
 
 ## 决策原则
 
@@ -28,7 +28,7 @@
 
 ## Owner Decision Requirements
 
-`runtime_owner_decision` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_owner_decision.v1`。该 artifact 是 RFC0004 从 `draft` 进入 `accepted`、`postponed` 或 `rejected` 的唯一机器可复核 owner sign-off 入口，必须包含：
+`runtime_owner_decision` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_owner_decision`。该 artifact 是 RFC0004 从 `draft` 进入 `accepted`、`postponed` 或 `rejected` 的唯一机器可复核 owner sign-off 入口，必须包含：
 
 1. `decision`：只能是 `go` 或 `no-go`，且必须与 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json) 的 `decision.state` 完全一致。
 2. `owner`、`signed_off_at`、`decision_record`、`scope`、`rationale`：均为非空字符串；其中 `signed_off_at` 必须是日历有效的 UTC 时间戳，`owner`、`signed_off_at`、`decision_record` 必须分别与 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json) 的 `decision.owner`、`decision.signed_off_at`、`decision.record` 完全一致。
@@ -51,7 +51,7 @@ Benchmark 至少包含：
 
 Benchmark 必须固定输入、输出 schema 和 mock server 行为；不得依赖外部 provider 或公网延迟。
 
-`benchmark` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_benchmark.v1`。该 artifact 至少包含：
+`benchmark` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_benchmark`。该 artifact 至少包含：
 
 1. `environment.platform`、`environment.runner`、`environment.cpu_model`、`environment.timestamp`，其中 `environment.timestamp` 必须是日历有效的 UTC 时间戳。
 2. `runs[]` 覆盖三类 workload：`small_unary`、`large_structured_response`、`high_concurrency`。
@@ -72,16 +72,16 @@ Benchmark 必须固定输入、输出 schema 和 mock server 行为；不得依�
 6. CI cache strategy。
 7. Failure mode and local developer setup impact。
 
-`build_matrix` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_build_matrix.v1`。该 artifact 必须覆盖 `linux`、`macos`、`windows` 三个平台，并为每个平台记录 dependency source、clean configure/build time、incremental build time、binary size delta、CI cache strategy、failure mode 和 local setup impact。
+`build_matrix` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_build_matrix`。该 artifact 必须覆盖 `linux`、`macos`、`windows` 三个平台，并为每个平台记录 dependency source、clean configure/build time、incremental build time、binary size delta、CI cache strategy、failure mode 和 local setup impact。
 
 其余实现前置 gate 也必须有仓库内结构化 JSON artifact：
 
-1. `dependency_policy`：`ahfl.native_grpc_dependency_policy.v1`，记录 dependency source、license review、vendoring/cache policy、local setup impact 和 process owner approval。
-2. `feature_flag`：`ahfl.native_grpc_feature_flag.v1`，记录 `AHFL_ENABLE_GRPC_NATIVE` build flag、`runtime.transport.native_grpc` runtime config、默认关闭策略、`runtime.grpc_native.*` disabled diagnostics 和 `ahfl.runtime.native_grpc_release_evidence` release evidence gate。
-3. `fallback_semantics`：`ahfl.native_grpc_fallback_semantics.v1`，覆盖 `native_unavailable`、`schema_mismatch`、`transport_failure`、`timeout` 四类场景的 fail-closed / fallback 行为；每个场景必须使用 `runtime.grpc_native.*` diagnostic，fallback transport 只能是 `grpc_json_transcoding` 或 `http_json`，并且 `fail_closed = true`。
-4. `test_strategy`：`ahfl.native_grpc_test_strategy.v1`，覆盖 unit、integration、mock server、capability binding 和 release evidence 五类测试入口。
+1. `dependency_policy`：`ahfl.native_grpc_dependency_policy`，记录 dependency source、license review、vendoring/cache policy、local setup impact 和 process owner approval。
+2. `feature_flag`：`ahfl.native_grpc_feature_flag`，记录 `AHFL_ENABLE_GRPC_NATIVE` build flag、`runtime.transport.native_grpc` runtime config、默认关闭策略、`runtime.grpc_native.*` disabled diagnostics 和 `ahfl.runtime.native_grpc_release_evidence` release evidence gate。
+3. `fallback_semantics`：`ahfl.native_grpc_fallback_semantics`，覆盖 `native_unavailable`、`schema_mismatch`、`transport_failure`、`timeout` 四类场景的 fail-closed / fallback 行为；每个场景必须使用 `runtime.grpc_native.*` diagnostic，fallback transport 只能是 `grpc_json_transcoding` 或 `http_json`，并且 `fail_closed = true`。
+4. `test_strategy`：`ahfl.native_grpc_test_strategy`，覆盖 unit、integration、mock server、capability binding 和 release evidence 五类测试入口。
 
-这些 schema artifact 不代替 owner sign-off；owner sign-off 由 `ahfl.native_grpc_owner_decision.v1` 单独表达。它们只保证 RFC0004 一旦从 `draft` 推进到实现阶段，所有实现前置证据都具备机器可复核结构。
+这些 schema artifact 不代替 owner sign-off；owner sign-off 由 `ahfl.native_grpc_owner_decision` 单独表达。它们只保证 RFC0004 一旦从 `draft` 推进到实现阶段，所有实现前置证据都具备机器可复核结构。
 
 ## Decision Outputs
 
@@ -110,9 +110,9 @@ No-Go 决策必须写回 RFC0004：
 7. `feature_flag` artifact 必须使用精确字段值：`build_flag = "AHFL_ENABLE_GRPC_NATIVE"`、`runtime_config = "runtime.transport.native_grpc"`、`default_enabled = false`、`release_evidence_gate = "ahfl.runtime.native_grpc_release_evidence"`，且所有 disabled diagnostics 都必须位于 `runtime.grpc_native.` namespace 下。
 8. `fallback_semantics` artifact 必须覆盖四类场景且不得重复；每个场景的 fallback transport 只能是 `grpc_json_transcoding` 或 `http_json`，diagnostic 必须位于 `runtime.grpc_native.` namespace 下，并保持 `fail_closed = true`，不能用 fail-open 语义通过 gate。
 9. `draft`：允许 `native-grpc-decision-evidence.json` 中 gate 仍为 `missing` / `planned`，但仓库禁止 native gRPC build flag、`runtime.transport.native_grpc` / `[runtime.transport] native_grpc` runtime config、C++ gRPC/Protobuf dependency wiring、native proto service contract 和 `native-grpc` implementation artifact；marker 扫描覆盖源码、TOML、CMake、YAML、JSON 和 shell / Python 工具文件，防止通过 `ahfl.toml`、`CMakePresets.json` 或其他配置文件提前打开 native transport。
-10. `accepted`：必须有 `decision.state = "go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；仍不允许 implementation marker。
+10. `accepted`：必须有 `decision.state = "go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision` JSON artifact；仍不允许 implementation marker。
 11. `implementing` / `implemented` / `stabilized`：必须有 `decision.state = "go"`，并且所有 gate 都为 `complete` 且带 evidence 引用；此后才允许 native implementation marker。
-12. `postponed` / `rejected` / `out-of-scope`：必须有 `decision.state = "no-go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；native implementation marker 仍禁止。
+12. `postponed` / `rejected` / `out-of-scope`：必须有 `decision.state = "no-go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision` JSON artifact；native implementation marker 仍禁止。
 
 证据引用必须指向可复核 artifact，例如 benchmark 报告、CI run、三平台 build log、dependency review、feature flag design、fallback semantics test matrix 或 release evidence archive 条目。空字符串、口头描述和没有 artifact 的 `complete` 状态都不能作为完成证据。机器门禁会拒绝 `TBD` / `TODO` / `DEFERRED` / `PLACEHOLDER` 证据引用、拒绝非 `https` 远端 URL 的占位 URI、拒绝带 credential / fragment / 空 path 的 `https` URL，并要求仓库内相对路径 evidence artifact 使用 POSIX 分隔符、真实存在且不能逃逸仓库根目录。所有仓库内 JSON evidence artifact 都按 strict JSON 解析，`NaN` / `Infinity` / `-Infinity` 直接 fail closed。
 

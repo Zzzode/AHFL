@@ -8,6 +8,7 @@
 #include <limits>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -342,7 +343,7 @@ class IrJsonPrinter final {
     void print(const ir::Program &program) {
         program_ = &program;
         print_object(0, [&](const auto &field) {
-            field("format_version", [&]() { write_string(program.format_version); });
+            field("format", [&]() { write_string(program.format); });
             field("formal_observations", [&]() {
                 print_array(1, [&](const auto &item) {
                     for (const auto &observation : ir::formal_observations(program)) {
@@ -760,6 +761,16 @@ class IrJsonPrinter final {
                     });
                 });
             }
+            entry("has_decreases", [&]() { write_bool(effect.has_decreases); });
+            if (effect.has_decreases || !effect.decreases_terms.empty()) {
+                entry("decreases_terms", [&]() {
+                    print_array(indent_level + 1, [&](const auto &item) {
+                        for (const auto &term : effect.decreases_terms) {
+                            item([&]() { print_expr(*term, indent_level + 2); });
+                        }
+                    });
+                });
+            }
         });
     }
 
@@ -997,7 +1008,6 @@ class IrJsonPrinter final {
                         field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("name", [&]() { write_string(value.name); });
-                        field("is_mut", [&]() { write_bool(value.is_mut); });
                         field("nested", [&]() {
                             if (value.nested) {
                                 print_match_pattern(*value.nested, indent_level + 1);
@@ -1385,6 +1395,11 @@ class IrJsonPrinter final {
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("name", [&]() { write_string(value.name); });
                         field("type", [&]() { write_string(type_name(value.type_ref)); });
+                        if (has_type_ref(value.type_ref)) {
+                            field("type_ref", [&]() {
+                                print_type_ref(value.type_ref, indent_level + 1);
+                            });
+                        }
                         field("initializer",
                               [&]() { print_expr(*value.initializer, indent_level + 1); });
                         // RFC 0026 P4 (coercion): additive; only emitted when a
@@ -2025,10 +2040,8 @@ class IrJsonPrinter final {
                                             // P4.S6: decreases clause fields.
                                             // Omits the entire block when no
                                             // decreases is declared so JSON
-                                            // size stays compact for legacy
-                                            // programs; a from-json consumer
-                                            // treats missing fields as `false`
-                                            // / empty.
+                                            // size stays compact when the
+                                            // clause has no decreases target.
                                             if (clause.decreases_wildcard ||
                                                 !clause.decreases_terms.empty()) {
                                                 entry("decreases", [&]() {
@@ -2245,47 +2258,7 @@ class IrJsonPrinter final {
                         }
                         field("has_body", [&]() { write_bool(value.has_body); });
                         field("effect", [&]() {
-                            print_object(indent_level + 1, [&](const auto &entry) {
-                                entry("kind", [&]() {
-                                    switch (value.effect.kind) {
-                                    case ir::FnEffectKind::Pure:
-                                        write_string("Pure");
-                                        break;
-                                    case ir::FnEffectKind::Nondet:
-                                        write_string("Nondet");
-                                        break;
-                                    case ir::FnEffectKind::Capability:
-                                        write_string("Capability");
-                                        break;
-                                    }
-                                });
-                                if (!value.effect.capabilities.empty()) {
-                                    entry("capabilities", [&]() {
-                                        print_array(indent_level + 2, [&](const auto &item) {
-                                            for (const auto &capability :
-                                                 value.effect.capabilities) {
-                                                item([&]() {
-                                                    print_symbol_ref(capability, indent_level + 3);
-                                                });
-                                            }
-                                        });
-                                    });
-                                }
-                                // D-3 (Wave-24): effect-clause decreases measure.
-                                entry("has_decreases",
-                                      [&]() { write_bool(value.effect.has_decreases); });
-                                if (value.effect.has_decreases ||
-                                    !value.effect.decreases_terms.empty()) {
-                                    entry("decreases_terms", [&]() {
-                                        print_array(indent_level + 2, [&](const auto &item) {
-                                            for (const auto &term : value.effect.decreases_terms) {
-                                                item(
-                                                    [&]() { print_expr(*term, indent_level + 3); });
-                                            }
-                                        });
-                                    });
-                                }
-                            });
+                            print_fn_effect_clause(value.effect, indent_level + 1);
                         });
                         if (value.body) {
                             field("body", [&]() { print_block(*value.body, indent_level + 1); });
@@ -2732,12 +2705,17 @@ class IrJsonReader final {
         return std::string(*value);
     }
 
-    [[nodiscard]] bool opt_bool(const JsonValue &obj, std::string_view key, bool fallback = false) {
+    [[nodiscard]] bool opt_bool(const JsonValue &obj, std::string_view key) {
         const auto *field = obj.get(key);
-        if (field == nullptr) { return fallback; }
+        if (field == nullptr) { return false; }
         const auto value = field->as_bool();
-        if (!value.has_value()) { fail(); return fallback; }
+        if (!value.has_value()) { fail(); return false; }
         return *value;
+    }
+
+    [[nodiscard]] bool req_bool(const JsonValue &obj, std::string_view key) {
+        if (obj.get(key) == nullptr) { fail(); return false; }
+        return opt_bool(obj, key);
     }
 
     [[nodiscard]] std::int64_t req_i64(const JsonValue &obj, std::string_view key) {
@@ -2953,27 +2931,19 @@ class IrJsonReader final {
         return ref;
     }
 
-    // Optional type_ref field; default-constructed when absent (kind stays
-    // Unresolved). Also seeds display_name from the paired display string so
-    // re-emit of the "type"/"return_type"/... field reproduces byte-identically
-    // even when the structured _ref object was omitted.
+    // A structured type may be absent only when the current writer has no
+    // type to emit. Display text never reconstructs semantic type information.
     [[nodiscard]] ir::TypeRef opt_type_ref(const JsonValue &obj, std::string_view ref_key,
-                                           std::string_view display_key) {
+                                          std::string_view display_key) {
         const auto *field = obj.get(ref_key);
         if (field != nullptr) { return type_ref(*field); }
-        ir::TypeRef ref;
-        if (!display_key.empty()) {
-            const auto *display = obj.get(display_key);
-            if (display != nullptr) {
-                const auto value = display->as_string();
-                if (value.has_value() && *value != "Any") {
-                    // "Any" is the emitter's fallback for an empty ref; keep the
-                    // ref empty in that case so has_type_ref() stays false.
-                    ref.display_name = std::string(*value);
-                }
-            }
+        if (display_key.empty()) { fail(); return {}; }
+        const auto *display = obj.get(display_key);
+        if (display != nullptr) {
+            const auto value = display->as_string();
+            if (!value.has_value() || *value != "Any") { fail(); }
         }
-        return ref;
+        return {};
     }
 
     // RFC 0026 P4 (coercion): parse a LetStatement adjustment plan (mirror of
@@ -3051,11 +3021,22 @@ class IrJsonReader final {
                                          effect);
     }
 
-    // Optional expr field; returns null ExprRef when absent or JSON null.
+    // Optional expression fields are omitted only when the writer omits them.
     [[nodiscard]] ir::ExprRef opt_expr(const JsonValue &obj, std::string_view key) {
         const auto *field = obj.get(key);
         if (field == nullptr || field->is_null()) { return nullptr; }
         return expr(*field);
+    }
+
+    [[nodiscard]] ir::ExprRef nullable_expr(const JsonValue &obj, std::string_view key) {
+        if (obj.get(key) == nullptr) { fail(); return nullptr; }
+        return opt_expr(obj, key);
+    }
+
+    [[nodiscard]] ir::ExprRef req_expr(const JsonValue &obj, std::string_view key) {
+        auto result = opt_expr(obj, key);
+        if (!result) { fail(); }
+        return result;
     }
 
     // Map a JSON `"kind"` wire spelling onto the shared ExprNode wire-name
@@ -3085,7 +3066,7 @@ class IrJsonReader final {
         switch (*node_identity) {
         using ir::expr_node_detail::ExprNodeIndex;
         case ExprNodeIndex::BoolLiteralExpr:
-            return ir::BoolLiteralExpr{.value = opt_bool(obj, "value")};
+            return ir::BoolLiteralExpr{.value = req_bool(obj, "value")};
         case ExprNodeIndex::IntegerLiteralExpr:
             return ir::IntegerLiteralExpr{.spelling = req_string(obj, "spelling")};
         case ExprNodeIndex::FloatLiteralExpr:
@@ -3118,7 +3099,7 @@ class IrJsonReader final {
         }
         case ExprNodeIndex::MethodCallExpr: {
             ir::MethodCallExpr call;
-            call.receiver = opt_expr(obj, "receiver");
+            call.receiver = nullable_expr(obj, "receiver");
             call.method = req_string(obj, "method");
             if (const auto *mref = obj.get("method_ref"); mref != nullptr) {
                 call.method_ref = symbol_ref(*mref);
@@ -3134,7 +3115,7 @@ class IrJsonReader final {
             ir::LambdaExpr lambda;
             lambda.params = string_array(obj, "params");
             lambda.captures = string_array(obj, "captures");
-            lambda.body = opt_expr(obj, "body");
+            lambda.body = nullable_expr(obj, "body");
             return lambda;
         }
         case ExprNodeIndex::StructLiteralExpr: {
@@ -3148,7 +3129,7 @@ class IrJsonReader final {
             for (const auto &item : fields->array_items) {
                 ir::StructFieldInit init;
                 init.name = req_string(*item, "name");
-                init.value = opt_expr(*item, "value");
+                init.value = req_expr(*item, "value");
                 lit.fields.push_back(std::move(init));
             }
             return lit;
@@ -3156,31 +3137,31 @@ class IrJsonReader final {
         case ExprNodeIndex::UnaryExpr: {
             ir::UnaryExpr unary;
             if (!parse_expr_unary_op(req_string(obj, "op"), unary.op)) { fail(); }
-            unary.operand = opt_expr(obj, "operand");
+            unary.operand = req_expr(obj, "operand");
             return unary;
         }
         case ExprNodeIndex::BinaryExpr: {
             ir::BinaryExpr binary;
             if (!parse_expr_binary_op(req_string(obj, "op"), binary.op)) { fail(); }
-            binary.lhs = opt_expr(obj, "lhs");
-            binary.rhs = opt_expr(obj, "rhs");
+            binary.lhs = req_expr(obj, "lhs");
+            binary.rhs = req_expr(obj, "rhs");
             return binary;
         }
         case ExprNodeIndex::MemberAccessExpr: {
             ir::MemberAccessExpr access;
-            access.base = opt_expr(obj, "base");
+            access.base = req_expr(obj, "base");
             access.member = req_string(obj, "member");
             return access;
         }
         case ExprNodeIndex::IndexAccessExpr: {
             ir::IndexAccessExpr access;
-            access.base = opt_expr(obj, "base");
-            access.index = opt_expr(obj, "index");
+            access.base = req_expr(obj, "base");
+            access.index = req_expr(obj, "index");
             return access;
         }
         case ExprNodeIndex::MatchExpr: {
             ir::MatchExpr match;
-            match.scrutinee = opt_expr(obj, "scrutinee");
+            match.scrutinee = req_expr(obj, "scrutinee");
             const auto *arms = obj.get("arms");
             if (arms == nullptr || !arms->is_array()) { fail(); return match; }
             for (const auto &item : arms->array_items) {
@@ -3189,29 +3170,30 @@ class IrJsonReader final {
                 if (pattern == nullptr) { fail(); } else {
                     arm.pattern = match_pattern(*pattern);
                 }
-                arm.guard = opt_expr(*item, "guard");
-                arm.body = opt_expr(*item, "body");
+                arm.guard = nullable_expr(*item, "guard");
+                arm.body = req_expr(*item, "body");
                 match.arms.push_back(std::move(arm));
             }
             return match;
         }
         case ExprNodeIndex::UnwrapExpr: {
             ir::UnwrapExpr unwrap;
-            unwrap.operand = opt_expr(obj, "operand");
-            unwrap.fallback_none_message = opt_expr(obj, "fallback_none_message");
+            unwrap.operand = req_expr(obj, "operand");
+            unwrap.fallback_none_message = nullable_expr(obj, "fallback_none_message");
             return unwrap;
         }
         case ExprNodeIndex::UnitLiteralExpr:
             return ir::UnitLiteralExpr{};
         case ExprNodeIndex::QuantifierExpr: {
             ir::QuantifierExpr quant;
-            quant.kind = req_string(obj, "quantifier") == "exists"
-                             ? ir::QuantifierExpr::Kind::Exists
-                             : ir::QuantifierExpr::Kind::ForAll;
+            const auto quantifier = req_string(obj, "quantifier");
+            if (quantifier == "exists") { quant.kind = ir::QuantifierExpr::Kind::Exists; }
+            else if (quantifier == "forall") { quant.kind = ir::QuantifierExpr::Kind::ForAll; }
+            else { fail(); }
             quant.binder = req_string(obj, "binder");
             quant.value_binder = req_string(obj, "value_binder");
-            quant.collection = opt_expr(obj, "collection");
-            quant.body = opt_expr(obj, "body");
+            quant.collection = req_expr(obj, "collection");
+            quant.body = req_expr(obj, "body");
             return quant;
         }
         }
@@ -3299,7 +3281,7 @@ class IrJsonReader final {
                 for (const auto &item : fields->array_items) {
                     ir::VariantPatternField field;
                     field.name = req_string(*item, "name");
-                    field.is_rest = opt_bool(*item, "is_rest");
+                    field.is_rest = req_bool(*item, "is_rest");
                     const auto *pat = item->get("pattern");
                     if (pat != nullptr) { field.pattern = opt_pattern_ptr(*pat); }
                     variant.fields.push_back(std::move(field));
@@ -3312,7 +3294,6 @@ class IrJsonReader final {
         case MatchPatternNodeIndex::BindingPattern: {
             ir::BindingPattern binding;
             binding.name = req_string(obj, "name");
-            binding.is_mut = opt_bool(obj, "is_mut");
             const auto *nested = obj.get("nested");
             if (nested != nullptr) { binding.nested = opt_pattern_ptr(*nested); }
             return binding;
@@ -3357,7 +3338,7 @@ class IrJsonReader final {
         switch (*node_identity) {
         using ir::temporal_node_detail::TemporalExprNodeIndex;
         case TemporalExprNodeIndex::EmbeddedTemporalExpr:
-            result->node = ir::EmbeddedTemporalExpr{.expr = opt_expr(obj, "expr")};
+            result->node = ir::EmbeddedTemporalExpr{.expr = req_expr(obj, "expr")};
             break;
         case TemporalExprNodeIndex::CalledTemporalExpr:
             result->node = ir::CalledTemporalExpr{.capability = req_string(obj, "capability")};
@@ -3437,7 +3418,7 @@ class IrJsonReader final {
             ir::LetStatement let;
             let.name = req_string(obj, "name");
             let.type_ref = opt_type_ref(obj, "type_ref", "type");
-            let.initializer = opt_expr(obj, "initializer");
+            let.initializer = req_expr(obj, "initializer");
             let.adjustment = opt_adjustment_plan(obj);
             result->node = std::move(let);
             break;
@@ -3446,13 +3427,13 @@ class IrJsonReader final {
             ir::AssignStatement assign;
             const auto *target = obj.get("target");
             if (target == nullptr) { fail(); } else { assign.target = path(*target); }
-            assign.value = opt_expr(obj, "value");
+            assign.value = req_expr(obj, "value");
             result->node = std::move(assign);
             break;
         }
         case StmtNodeIndex::IfStatement: {
             ir::IfStatement stmt;
-            stmt.condition = opt_expr(obj, "condition");
+            stmt.condition = req_expr(obj, "condition");
             stmt.then_block = req_block_ptr(obj, "then_block");
             stmt.else_block = opt_block_ptr(obj, "else_block");
             result->node = std::move(stmt);
@@ -3462,7 +3443,7 @@ class IrJsonReader final {
             ir::IfLetStatement stmt;
             const auto *pattern = obj.get("pattern");
             if (pattern == nullptr) { fail(); } else { stmt.pattern = match_pattern(*pattern); }
-            stmt.scrutinee = opt_expr(obj, "scrutinee");
+            stmt.scrutinee = req_expr(obj, "scrutinee");
             stmt.then_block = req_block_ptr(obj, "then_block");
             stmt.else_block = opt_block_ptr(obj, "else_block");
             result->node = std::move(stmt);
@@ -3473,12 +3454,12 @@ class IrJsonReader final {
             break;
         }
         case StmtNodeIndex::ReturnStatement: {
-            result->node = ir::ReturnStatement{.value = opt_expr(obj, "value")};
+            result->node = ir::ReturnStatement{.value = nullable_expr(obj, "value")};
             break;
         }
         case StmtNodeIndex::AssertStatement: {
             ir::AssertStatement stmt;
-            stmt.condition = opt_expr(obj, "condition");
+            stmt.condition = req_expr(obj, "condition");
             stmt.message = opt_expr(obj, "message");
             result->node = std::move(stmt);
             break;
@@ -3499,7 +3480,7 @@ class IrJsonReader final {
             break;
         }
         case StmtNodeIndex::ExprStatement: {
-            result->node = ir::ExprStatement{.expr = opt_expr(obj, "expr")};
+            result->node = ir::ExprStatement{.expr = req_expr(obj, "expr")};
             break;
         }
         }
@@ -3599,7 +3580,7 @@ class IrJsonReader final {
             d.name = req_string(obj, "name");
             d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
             d.type_ref = opt_type_ref(obj, "type_ref", "type");
-            d.value = opt_expr(obj, "value");
+            d.value = req_expr(obj, "value");
             return ir::Decl{std::move(d)};
         }
         case DeclNodeIndex::TypeAliasDecl: {
@@ -3627,7 +3608,7 @@ class IrJsonReader final {
                     field.name = req_string(*item, "name");
                     field.type_ref = opt_type_ref(*item, "type_ref", "type");
                     field.source_range = source_range(*item);
-                    field.default_value = opt_expr(*item, "default_value");
+                    field.default_value = nullable_expr(*item, "default_value");
                     d.fields.push_back(std::move(field));
                 }
             }
@@ -3687,7 +3668,7 @@ class IrJsonReader final {
 
     [[nodiscard]] ir::CapabilityEffectSpec capability_effect(const JsonValue &obj) {
         ir::CapabilityEffectSpec effect;
-        effect.declared = opt_bool(obj, "declared");
+        effect.declared = req_bool(obj, "declared");
         if (!parse_capability_effect_kind(req_string(obj, "kind"), effect.kind)) { fail(); }
         if (!parse_capability_receipt_mode(req_string(obj, "receipt_mode"), effect.receipt_mode)) {
             fail();
@@ -3746,7 +3727,7 @@ class IrJsonReader final {
                         field.name = req_string(*field_obj, "name");
                         field.type_ref = opt_type_ref(*field_obj, "type_ref", "type");
                         field.source_range = source_range(*field_obj);
-                        field.default_value = opt_expr(*field_obj, "default_value");
+                        field.default_value = nullable_expr(*field_obj, "default_value");
                         variant.fields.push_back(std::move(field));
                     }
                 }
@@ -3809,7 +3790,7 @@ class IrJsonReader final {
                     clause.value = temporal_expr(*t);
                 }
                 if (const auto *dec = item->get("decreases"); dec != nullptr) {
-                    clause.decreases_wildcard = opt_bool(*dec, "wildcard");
+                    clause.decreases_wildcard = req_bool(*dec, "wildcard");
                     const auto *terms = dec->get("terms");
                     if (terms != nullptr && terms->is_array()) {
                         for (const auto &term : terms->array_items) {
@@ -3877,7 +3858,7 @@ class IrJsonReader final {
                 node.name = req_string(*item, "name");
                 node.source_range = source_range(*item);
                 node.target_ref = opt_symbol_ref(*item, "target_ref");
-                node.input = opt_expr(*item, "input");
+                node.input = req_expr(*item, "input");
                 // "input_summary" is derived; recomputed after load.
                 node.after = string_array(*item, "after");
                 d.nodes.push_back(std::move(node));
@@ -3894,7 +3875,7 @@ class IrJsonReader final {
             }
         }
         // "return_summary" is derived; recomputed after load.
-        d.return_value = opt_expr(obj, "return_value");
+        d.return_value = req_expr(obj, "return_value");
         return ir::Decl{std::move(d)};
     }
 
@@ -3908,7 +3889,7 @@ class IrJsonReader final {
             d.has_return_type = true;
             d.return_type_ref = opt_type_ref(obj, "return_type_ref", "return_type");
         }
-        d.has_body = opt_bool(obj, "has_body");
+        d.has_body = req_bool(obj, "has_body");
         if (const auto *effect = obj.get("effect"); effect != nullptr) {
             d.effect = fn_effect(*effect);
         }
@@ -3931,7 +3912,7 @@ class IrJsonReader final {
                 effect.capabilities.push_back(symbol_ref(*item));
             }
         }
-        effect.has_decreases = opt_bool(obj, "has_decreases");
+        effect.has_decreases = req_bool(obj, "has_decreases");
         if (const auto *terms = obj.get("decreases_terms");
             terms != nullptr && terms->is_array()) {
             for (const auto &item : terms->array_items) {
@@ -3980,7 +3961,7 @@ class IrJsonReader final {
         ir::ImplDecl d;
         d.provenance = provenance(obj);
         d.index = static_cast<std::size_t>(req_i64(obj, "index"));
-        d.is_inherent = opt_bool(obj, "is_inherent");
+        d.is_inherent = req_bool(obj, "is_inherent");
         d.target_type_ref = opt_type_ref(obj, "target_type_ref", "target_type");
         d.trait_ref = opt_symbol_ref(obj, "trait_ref");
         if (const auto *args = obj.get("trait_type_args"); args != nullptr && args->is_array()) {
@@ -4032,7 +4013,8 @@ class IrJsonReader final {
 
     [[nodiscard]] bool read_program(const JsonValue &root) {
         if (!root.is_object()) { fail(); return false; }
-        program_->format_version = req_string(root, "format_version");
+        program_->format = req_string(root, "format");
+        if (program_->format != ir::kFormat) { fail(); return false; }
         // "formal_observations" is a derived analysis recomputed after load.
         const auto *declarations = root.get("declarations");
         if (declarations == nullptr || !declarations->is_array()) { fail(); return false; }
@@ -4049,6 +4031,37 @@ class IrJsonReader final {
     bool ok_{true};
 };
 
+// Use the current writer as the structural contract, including its deliberate
+// conditional fields. Unknown fields and defaulted missing required fields must
+// not turn a historical artifact into a current one on re-emission.
+[[nodiscard]] bool matches_current_structure(const JsonValue &input, const JsonValue &current) {
+    if (input.kind != current.kind) { return false; }
+    if (input.is_object()) {
+        if (input.object_fields.size() != current.object_fields.size()) { return false; }
+        for (const auto &[name, value] : current.object_fields) {
+            const auto *actual = input.get(name);
+            if (actual == nullptr || !matches_current_structure(*actual, *value)) { return false; }
+        }
+    } else if (input.is_array()) {
+        if (input.array_items.size() != current.array_items.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < current.array_items.size(); ++i) {
+            if (!matches_current_structure(*input.array_items[i], *current.array_items[i])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool matches_current_program(const JsonValue &input, const ir::Program &program) {
+    std::ostringstream output;
+    print_program_ir_json(program, output);
+    const auto current = ahfl::json::parse_json(output.str());
+    return current.has_value() && matches_current_structure(input, **current);
+}
+
 } // namespace
 
 std::optional<ir::Program> parse_program_ir_json(std::string_view json) {
@@ -4057,16 +4070,18 @@ std::optional<ir::Program> parse_program_ir_json(std::string_view json) {
         return std::nullopt;
     }
     ir::Program program;
-    // The default-constructed Program carries format_version = kFormatVersion;
-    // read_program overwrites it from JSON.
     IrJsonReader reader(program);
     if (!reader.read_program(**parsed)) {
         return std::nullopt;
     }
+    const bool matches_unanalyzed = matches_current_program(**parsed, program);
     // Derived analyses (formal observations, flow/workflow summaries) are not
     // stored in JSON — recompute them from the parsed declarations so a
     // subsequent print_program_ir_json reproduces the input byte-for-byte.
     ir::recompute_derived_analyses(program, ir::ProgramPhase::Analyzed);
+    if (!matches_unanalyzed && !matches_current_program(**parsed, program)) {
+        return std::nullopt;
+    }
     return program;
 }
 

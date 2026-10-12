@@ -6,8 +6,6 @@
 # into a TemporaryDirectory before invoking ahflc. Running ahflc against this
 # file in place will fail to resolve its source — that is expected, not a broken
 # fixture.
-manifest_version = 1
-
 [package]
 name = "wasm-capability-workflow"
 version = "0.1.0"

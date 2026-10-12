@@ -199,8 +199,8 @@ void accumulate_workflow_reads(const ir::WorkflowExprSummary &summary,
 void print_program_summary(const ir::Program &program, std::ostream &out) {
     const auto stats = summarize_program(program);
 
-    out << "ahfl.summary.v1\n";
-    line(out, 0, "ir_format " + program.format_version);
+    out << "ahfl.summary\n";
+    line(out, 0, "ir_format " + program.format);
     line(out, 0, "project_aware " + bool_name(stats.declarations_with_provenance != 0));
     line(out, 0, "declarations " + std::to_string(program.declarations.size()));
     line(out,

@@ -5,13 +5,13 @@
 关联文档：
 
 - [结构化执行事件 RFC](../rfcs/0012-structured-workflow-execution-ux.zh.md)
-- [Native handoff 使用](../reference/native-handoff-usage.zh.md)
-- [执行与包指南](../reference/user-guide-execution.zh.md)
+- [Native handoff 使用](../tutorials/native-handoff.zh.md)
+- [执行与包指南](../tutorials/execution.zh.md)
 - [项目状态](../plans/project-status.zh.md)
 
 ## 用户故事
 
-一个高风险 Agent workflow 在第三个节点调用外部 capability 时收到 `AHFL_CAP_PENDING`：运行在该 capability 边界挂起，并把 workflow 级恢复快照（schema v2）原子落盘——包含已完成节点、pending 坐标与覆盖挂起点之前整个 workflow 的精确 capability memo。随后一个**冷启动的新 runtime**（fresh wasm instance）加载快照、从头重放整个模块：frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），重放到 pending 调用时由 host 提供结果后继续。WH-9 后仓库里只有 wasm 这一条执行路径，旧的杀进程节点 checkpoint / operator 批准恢复路径已退役。恢复过程必须满足：
+一个高风险 Agent workflow 在第三个节点调用外部 capability 时收到 `AHFL_CAP_PENDING`：运行在该 capability 边界挂起，并把 workflow 级恢复快照（`format: "ahfl.workflow-recovery"`）原子落盘——包含已完成节点、pending 坐标与覆盖挂起点之前整个 workflow 的精确 capability memo。随后一个**冷启动的新 runtime**（fresh wasm instance）加载快照、从头重放整个模块：frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），重放到 pending 调用时由 host 提供结果后继续。WH-9 后仓库里只有 wasm 这一条执行路径，旧的杀进程节点 checkpoint / operator 批准恢复路径已退役。恢复过程必须满足：
 
 1. 已完成节点不会再次执行副作用。
 2. scheduler、audit、replay 和恢复候选来自同一组 execution events。
@@ -126,13 +126,13 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 
 ## Recovery Contract
 
-加载器接受 `ahfl.workflow-recovery.v1` 与 `v2`；wasm lane 写 `v2`。
+加载器只接受 `format: "ahfl.workflow-recovery"` 的完整当前结构；wasm lane 写同一结构。
 
 1. checkpoint projection 只保存 completed nodes 与对应 `RuntimeValueId`。
 2. materialization 从 `WorkflowResult` 的 value store 深拷贝 runtime values，禁止保存悬空引用。
-3. v2 快照额外保存挂起节点坐标、节点 input（信息性）与覆盖挂起点之前整个 workflow 的 capability memo（per-node ordinal 索引，cap_id/arg_hash 交叉校验，ExactSidecar 逐字 wire 字节）。
+3. 当前快照必填保存挂起节点坐标、节点 input（信息性）与覆盖挂起点之前整个 workflow 的 capability memo（per-node ordinal 索引，cap_id/arg_hash 交叉校验，StoredMemoResult 精确 wire 字节）。
 4. `WorkflowRecoveryStore` 通过 atomic replace 保存 snapshot。
-5. load 必须验证 schema、ID、节点唯一性、memo 三态与坐标；损坏、部分写入或 memo/frontier 与实际调用坐标不一致 fail closed。
+5. load 必须验证 format、ID、节点唯一性、memo 两种有效来源与坐标；损坏、部分写入或 memo/frontier 与实际调用坐标不一致 fail closed。
 6. 恢复在冷启动 fresh wasm instance 上整模块重放：frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），发 `RunResumed` 与 `NodeRestored`，已恢复节点不会再次触发 capability side effect。
 7. WH-9 前的 operator approval / SIGKILL 节点 checkpoint 恢复路径已随树步评估器退役，不在当前 contract 内；跨进程生产级 exactly-once host 是 RFC 0026 E4-B2 后续。
 

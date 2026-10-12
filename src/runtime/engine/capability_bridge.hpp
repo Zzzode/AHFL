@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -12,15 +13,26 @@
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "ahfl/compiler/ir/types.hpp"
 #include "ahfl/runtime/execution_event.hpp"
+#include "base/support/sha256.hpp"
 #include "runtime/engine/capability_transport_adapter.hpp"
-#include "runtime/value/value.hpp"
 #include "runtime/providers/secret/auth_provider.hpp"
+#include "runtime/value/value.hpp"
 
 namespace ahfl::runtime {
 
+// Stable source coordinates, independent of a process-local event invocation ID.
+struct WorkflowCapabilityCoordinate {
+    WorkflowId workflow;
+    WorkflowNodeId node;
+    CapabilityId capability;
+    std::uint64_t ordinal{0};
+
+    [[nodiscard]] friend bool operator==(const WorkflowCapabilityCoordinate &,
+                                         const WorkflowCapabilityCoordinate &) noexcept = default;
+};
 
 struct CapabilityInvocationContext {
     std::string workflow_name;
@@ -42,6 +54,9 @@ struct CapabilityInvocationContext {
     // across resume so a host can dedup a `durable_write` / `financial_write`
     // effect that committed before a crash. 0 when no node context is present.
     std::uint64_t idempotency_key{0};
+    std::optional<WorkflowCapabilityCoordinate> workflow_coordinate{};
+    support::Sha256Digest module_digest{};
+    support::Sha256Digest workflow_input_digest{};
 };
 
 // Capability call status
@@ -114,6 +129,8 @@ struct CapabilityCallResult {
     // (index/id-based: cap_id is a SymbolId, ordinal a per-node counter).
     std::size_t pending_cap_id{0};
     std::uint64_t pending_ordinal{0};
+    // Transient scheduling hint; never an authority for persisted recovery.
+    bool automatically_resumable{false};
 };
 
 // Deep-clone a CapabilityCallResult (Rust `Clone::clone` pattern): Value is
@@ -131,6 +148,19 @@ using ContextualCapabilityInvoker =
     std::function<CapabilityCallResult(const CapabilityInvocationContext &context,
                                        const std::string &name,
                                        const std::vector<Value> &args)>;
+
+// Called only at an admitted pending frontier without an explicit supplied result.
+using PendingCapabilityResolver = std::function<std::optional<CapabilityCallResult>(
+    const CapabilityInvocationContext &, const std::string &, const std::vector<Value> &)>;
+
+// Pure validation before a manually supplied pending result is packed or memoized.
+using PendingInjectionGuard = std::function<std::optional<std::string>(
+    const CapabilityInvocationContext &, const std::string &, const std::vector<Value> &)>;
+
+// Pure read of a previously completed call's report metadata; cannot dispatch.
+using CompletedCapabilityMetadataReader =
+    std::function<std::expected<std::optional<CapabilityCallResult>, std::string>(
+        const CapabilityInvocationContext &, const std::string &, const std::vector<Value> &)>;
 
 enum class CapabilityResponseFormat {
     Json,
@@ -226,12 +256,7 @@ struct HTTPCapabilityConfig {
     CircuitBreakerConfig circuit_breaker;
     std::optional<ahfl::secret::AuthConfig> auth;
     std::shared_ptr<ahfl::secret::SecretManager> secret_manager;
-    std::shared_ptr<const ir::TypeRef> response_schema;
-    // RFC 0026 C2b G4a: the projected, verified wire-schema binding for this
-    // capability's response. When engaged it is the response decode/validate
-    // authority (exact codec path); `response_schema` above is the legacy TypeRef
-    // input to the admission gate (prepare_wire_response_schema). The two are
-    // mutually exclusive — supplying both is a fail-closed conflict.
+    // The projected verified binding is the response decode authority.
     std::optional<ir::core::VerifiedWireSchemaBinding> response_wire_binding;
 };
 [[nodiscard]] CapabilityBinding make_http_capability(const std::string &name,
@@ -251,7 +276,6 @@ struct GrpcJsonTranscodingCapabilityConfig {
     CircuitBreakerConfig circuit_breaker;
     std::optional<ahfl::secret::AuthConfig> auth;
     std::shared_ptr<ahfl::secret::SecretManager> secret_manager;
-    std::shared_ptr<const ir::TypeRef> response_schema;
     // RFC 0026 C2b G4a: see HTTPCapabilityConfig::response_wire_binding.
     std::optional<ir::core::VerifiedWireSchemaBinding> response_wire_binding;
 };

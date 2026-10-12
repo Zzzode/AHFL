@@ -50,8 +50,8 @@ def validate_contract(config: Any) -> list[str]:
     failures: list[str] = []
     if not isinstance(config, dict):
         return ["beta gate config must be a JSON object"]
-    if config.get("schema") != "ahfl.beta-gate.v1":
-        failures.append("beta gate config schema must be ahfl.beta-gate.v1")
+    if config.get("format") != "ahfl.beta-gate":
+        failures.append("beta gate config schema must be ahfl.beta-gate")
     criteria = config.get("criteria")
     if not isinstance(criteria, list):
         return failures + ["beta gate config criteria must be an array"]
@@ -84,7 +84,7 @@ def validate_contract(config: Any) -> list[str]:
                 continue
             if not str(entry.get("path", "")).strip():
                 failures.append(f"{criterion} evidence path must not be empty")
-            if not str(entry.get("schema", "")).strip():
+            if not str(entry.get("format", "")).strip():
                 failures.append(f"{criterion} evidence schema must not be empty")
     return failures
 
@@ -93,12 +93,12 @@ def evaluate_evidence(
     root: Path, criterion: dict[str, Any], entry: dict[str, Any]
 ) -> dict[str, str]:
     relative_path = str(entry["path"])
-    expected_schema = str(entry["schema"])
+    expected_schema = str(entry["format"])
     path = root / relative_path
     if not path.is_file():
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "missing_evidence",
             "message": "evidence file does not exist",
         }
@@ -107,28 +107,28 @@ def evaluate_evidence(
     except (OSError, json.JSONDecodeError) as error:
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "failed",
             "message": f"evidence is not valid JSON: {error}",
         }
     if not isinstance(evidence, dict):
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "failed",
             "message": "evidence must be a JSON object",
         }
-    if evidence.get("schema") != expected_schema:
+    if evidence.get("format") != expected_schema:
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "failed",
-            "message": f"schema mismatch: found {evidence.get('schema')!r}",
+            "message": f"schema mismatch: found {evidence.get('format')!r}",
         }
     if evidence.get("criterion") != criterion["id"]:
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "failed",
             "message": f"criterion mismatch: found {evidence.get('criterion')!r}",
         }
@@ -136,20 +136,20 @@ def evaluate_evidence(
     if not source_revision:
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "failed",
             "message": "source_revision must not be empty",
         }
     if evidence.get("status") != "passed":
         return {
             "path": relative_path,
-            "schema": expected_schema,
+            "format": expected_schema,
             "status": "failed",
             "message": f"evidence status is {evidence.get('status')!r}, expected 'passed'",
         }
     return {
         "path": relative_path,
-        "schema": expected_schema,
+        "format": expected_schema,
         "status": "passed",
         "message": "evidence passed",
         "source_revision": source_revision,
@@ -239,7 +239,7 @@ def main() -> int:
 
     ready = all(criterion["status"] == "passed" for criterion in reports)
     report = {
-        "schema": "ahfl.beta-gate-report.v1",
+        "format": "ahfl.beta-gate-report",
         "rfc": "0012",
         "status": "ready" if ready else "not_ready",
         "source_revision": canonical_revision,

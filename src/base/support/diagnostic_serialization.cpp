@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -17,6 +18,19 @@ namespace ahfl {
 namespace {
 
 using Json = json::JsonValue;
+
+[[nodiscard]] bool has_exact_fields(const Json &value,
+                                    std::initializer_list<std::string_view> fields) {
+    if (!value.is_object() || value.object_fields.size() != fields.size()) {
+        return false;
+    }
+    for (const auto field : fields) {
+        if (value.get(field) == nullptr) {
+            return false;
+        }
+    }
+    return true;
+}
 
 [[nodiscard]] std::unique_ptr<Json> j_int(std::size_t value) {
     return Json::make_int(static_cast<std::int64_t>(value));
@@ -55,7 +69,7 @@ using Json = json::JsonValue;
 }
 
 [[nodiscard]] std::optional<SourceRange> deserialize_source_range(const Json &value) {
-    if (!value.is_object()) {
+    if (!has_exact_fields(value, {"begin", "end"})) {
         return std::nullopt;
     }
     auto begin = read_size_t(value, "begin");
@@ -78,7 +92,7 @@ using Json = json::JsonValue;
 }
 
 [[nodiscard]] std::optional<SourcePosition> deserialize_source_position(const Json &value) {
-    if (!value.is_object()) {
+    if (!has_exact_fields(value, {"offset", "line", "column"})) {
         return std::nullopt;
     }
     auto offset = read_size_t(value, "offset");
@@ -117,7 +131,7 @@ deserialize_related(const Json &value) {
     }
     std::vector<Diagnostic::Related> result;
     for (const auto &item_ptr : value.array_items) {
-        if (!item_ptr->is_object()) {
+        if (item_ptr == nullptr || !has_exact_fields(*item_ptr, {"message", "range"})) {
             return std::nullopt;
         }
         const auto &item = *item_ptr;
@@ -245,8 +259,22 @@ std::unique_ptr<json::JsonValue> serialize_diagnostic_json(const Diagnostic &dia
 }
 
 std::optional<Diagnostic> deserialize_diagnostic_json(const json::JsonValue &value) {
-    if (!value.is_object()) {
+    if (!has_exact_fields(value,
+                          {"severity",
+                           "message",
+                           "code",
+                           "source_name",
+                           "range",
+                           "position",
+                           "related",
+                           "data"})) {
         return std::nullopt;
+    }
+    for (const auto key : {"code", "source_name"}) {
+        const auto *field = value.get(key);
+        if (!field->is_null() && !field->as_string().has_value()) {
+            return std::nullopt;
+        }
     }
 
     // severity (required)
@@ -277,7 +305,7 @@ std::optional<Diagnostic> deserialize_diagnostic_json(const json::JsonValue &val
     diag.severity = *severity;
     diag.message = std::string(*message_str);
 
-    // code (optional)
+    // Nullable fields remain present in the current structure.
     diag.code = read_optional_string(value, "code");
 
     // source_name (optional)
@@ -314,14 +342,11 @@ std::optional<Diagnostic> deserialize_diagnostic_json(const json::JsonValue &val
     }
     diag.related = std::move(*related);
 
-    auto *data_field = value.get("data");
-    if (data_field != nullptr && !data_field->is_null()) {
-        auto data = deserialize_diagnostic_data(*data_field);
-        if (!data.has_value()) {
-            return std::nullopt;
-        }
-        diag.data = std::move(*data);
+    auto data = deserialize_diagnostic_data(*value.get("data"));
+    if (!data.has_value()) {
+        return std::nullopt;
     }
+    diag.data = std::move(*data);
 
     return diag;
 }
@@ -333,7 +358,7 @@ std::optional<Diagnostic> deserialize_diagnostic_json(const json::JsonValue &val
 std::unique_ptr<json::JsonValue> serialize_diagnostic_report_value(const DiagnosticReport &report) {
     auto obj = Json::make_object();
 
-    obj->set("schema_version", Json::make_string(std::string(kDiagnosticReportSchemaVersion)));
+    obj->set("format", Json::make_string(std::string(kDiagnosticReportFormat)));
     obj->set("result_id", Json::make_string(report.result_id));
     obj->set("kind", Json::make_string(report.kind));
 
@@ -361,17 +386,17 @@ std::string serialize_diagnostic_report_json(const DiagnosticReport &report) {
 }
 
 std::optional<DiagnosticReport> deserialize_diagnostic_report_value(const json::JsonValue &value) {
-    if (!value.is_object()) {
+    if (!has_exact_fields(value, {"format", "result_id", "kind", "summary", "diagnostics"})) {
         return std::nullopt;
     }
 
-    // schema_version (required)
-    auto *schema_field = value.get("schema_version");
+    // format (required)
+    auto *schema_field = value.get("format");
     if (schema_field == nullptr) {
         return std::nullopt;
     }
     auto schema_str = schema_field->as_string();
-    if (!schema_str.has_value() || *schema_str != kDiagnosticReportSchemaVersion) {
+    if (!schema_str.has_value() || *schema_str != kDiagnosticReportFormat) {
         return std::nullopt;
     }
 
@@ -405,11 +430,23 @@ std::optional<DiagnosticReport> deserialize_diagnostic_report_value(const json::
         return std::nullopt;
     }
     for (const auto &item_ptr : diagnostics_field->array_items) {
+        if (item_ptr == nullptr) {
+            return std::nullopt;
+        }
         auto diag = deserialize_diagnostic_json(*item_ptr);
         if (!diag.has_value()) {
             return std::nullopt;
         }
         report.diagnostics.push_back(std::move(*diag));
+    }
+
+    const auto &summary = *value.get("summary");
+    if (!has_exact_fields(summary, {"error_count", "warning_count", "note_count", "total_count"}) ||
+        read_size_t(summary, "error_count") != report.error_count() ||
+        read_size_t(summary, "warning_count") != report.warning_count() ||
+        read_size_t(summary, "note_count") != report.note_count() ||
+        read_size_t(summary, "total_count") != report.diagnostics.size()) {
+        return std::nullopt;
     }
 
     return report;

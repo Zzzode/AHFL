@@ -147,8 +147,8 @@ def main() -> int:
         if not baseline_path.is_file():
             raise ValueError("missing product-scope input: config/product-scope-freeze.json")
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-        if baseline.get("schema") != "ahfl.product-scope-freeze.v1":
-            raise ValueError("product scope baseline schema must be ahfl.product-scope-freeze.v1")
+        if baseline.get("format") != "ahfl.product-scope-freeze":
+            raise ValueError("product scope baseline schema must be ahfl.product-scope-freeze")
 
         command_kinds = enum_values(
             read(root, "src/tooling/cli/command_catalog.hpp"), "CommandKind"

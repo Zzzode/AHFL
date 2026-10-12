@@ -5,7 +5,7 @@
 // This is a pure DECISION-ONLY authority. It owns the deterministic transition rules
 // of a single fresh-instance replay: which stored memo bytes an import must return,
 // when the frontier import needs an injected result, the EXACT bytes/slot set of the
-// Suspended->Injected publish, and whether a run2 exit may be tombstoned. It NEVER
+// Suspended->Injected publish, and whether a run_workflow exit may be tombstoned. It NEVER
 // touches a Wasm VM, allocates linear memory, transfers a frame, authenticates an
 // artifact, writes the durable store, or performs a CAS. The production VM / host
 // adapter (future D2a) drives it: the adapter obtains a `ResumeSnapshot` from the
@@ -27,7 +27,7 @@
 //
 // The `PreparedResume` then drives an in-place state machine (no moved-from handoff):
 // per-import decisions, a two-step publish handshake for the frontier injection, and
-// a terminal run2-exit gate. Every controller fault (wrong phase, invalid slot,
+// a terminal run_workflow-exit gate. Every controller fault (wrong phase, invalid slot,
 // duplicate / late / mismatched ACK) is `ResumeStepReason::TransitionInvalid` and
 // moves the controller to a terminal Failed state; a store error is carried back
 // verbatim as the real `PayloadStoreError` arm.
@@ -164,7 +164,7 @@ struct GatedResumeOptions {
 
     // When set, every AFTER-frontier import consults this authority READ-ONLY
     // (preview_begin: it seals nothing) before issuing ReadyForLive. When
-    // absent, the controller behaves exactly as pre-D2b-4 (always ReadyForLive)
+    // absent, the controller prepares recovery without authorizing live effects
     // and no token is computed. Borrowed for the GatedResume lifetime only; the
     // caller owns the (shared, backend-backed) authority.
     const durable_effect_authority::DurableEffectAuthority *dedup_authority{nullptr};
@@ -342,16 +342,16 @@ struct PublishInjectedPlan {
     std::span<const payload_store::Slot> slots_{};
 };
 
-// The raw run2 exit the adapter observed, classified by the CONTROLLER (not the
+// The raw run_workflow exit the adapter observed, classified by the CONTROLLER (not the
 // adapter): a normal return with the raw u32 status word and the whole linear memory,
 // or a trap. The adapter never pre-classifies OK / PENDING / ERROR / trap into an
 // enum; the controller maps the raw status.
-struct Run2Returned {
+struct WorkflowRunReturned {
     std::uint32_t raw_status{0};
     std::span<const std::uint8_t> whole_linear_memory{};
 };
-struct Run2Trapped {};
-using Run2Exit = std::variant<Run2Returned, Run2Trapped>;
+struct WorkflowRunTrapped {};
+using WorkflowRunExit = std::variant<WorkflowRunReturned, WorkflowRunTrapped>;
 
 // The controller-owned plan to tombstone the consumed generation. The store call is
 // manifest-only, so the plan carries only the expected current generation.
@@ -398,7 +398,7 @@ struct FormNewPendingCoordinatePlan {
     std::span<const payload_store::Slot> slots_{};
 };
 
-// The terminal run2-exit plan: a completed replay tombstones the consumed
+// The terminal run_workflow-exit plan: a completed replay tombstones the consumed
 // generation (MarkConsumedPlan); a suspended replay persists a new pending
 // coordinate (FormNewPendingCoordinatePlan, D2b-8).
 using FinishRunPlan = std::variant<MarkConsumedPlan, FormNewPendingCoordinatePlan>;
@@ -467,12 +467,12 @@ ack_publish_injected(
     std::expected<std::uint64_t, payload_store::PayloadStoreError> store_result);
 
 // -------------------------------------------------------------------------------
-// Terminal run2-exit gate. Valid in the Replaying phase (a complete replay) or
+// Terminal run_workflow-exit gate. Valid in the Replaying phase (a complete replay) or
 // the AwaitingLiveResult phase (D2b-5: the driver served the live result and the
 // module finished). The controller classifies the raw exit:
-//   Run2Returned raw OK       -> full published-prefix gate -> MarkConsumedPlan
+//   WorkflowRunReturned raw OK       -> full published-prefix gate -> MarkConsumedPlan
 //                                (moves to AwaitingConsumedAck)
-//   Run2Returned raw PENDING  -> D2b-8: valid ONLY in AwaitingLiveResult (the
+//   WorkflowRunReturned raw PENDING  -> D2b-8: valid ONLY in AwaitingLiveResult (the
 //                                live call returned PENDING). Forms a new pending
 //                                coordinate (the retained suspended call site +
 //                                its computed arg_hash) and yields a
@@ -480,11 +480,11 @@ ack_publish_injected(
 //                                AwaitingPendingPublishAck). In any other phase
 //                                (incl. Replaying -- a module that returns PENDING
 //                                without a PENDING import) it is TransitionInvalid.
-//   Run2Returned raw ERROR/*  -> ModuleError
-//   Run2Trapped               -> ModuleTrap
+//   WorkflowRunReturned raw ERROR/*  -> ModuleError
+//   WorkflowRunTrapped               -> ModuleTrap
 // -------------------------------------------------------------------------------
 [[nodiscard]] std::expected<FinishRunPlan, ResumeStepError>
-finish_run(PreparedResume &prepared, const Run2Exit &exit);
+finish_run(PreparedResume &prepared, const WorkflowRunExit &exit);
 
 // ACK the `mark_consumed` store result. Only valid in AwaitingConsumedAck. On error
 // keeps the `PayloadStoreError` and fails; on success checks N+1 == M and moves to

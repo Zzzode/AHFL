@@ -353,18 +353,18 @@ add_test(NAME ahfl.dry_run.local.fail_unused_mock
 )
 
 
-add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
-    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_compat_tests>
-            normalize-identity-format-version
+add_test(NAME ahfl.handoff.package_projection.normalize_identity_format
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_projection_tests>
+            normalize-identity-format
 )
 
-add_test(NAME ahfl.handoff.package_compat.omit_empty_provenance
-    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_compat_tests>
+add_test(NAME ahfl.handoff.package_projection.omit_empty_provenance
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_projection_tests>
             omit-empty-provenance
 )
 
-add_test(NAME ahfl.handoff.package_compat.escape_control_characters
-    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_compat_tests>
+add_test(NAME ahfl.handoff.package_projection.escape_control_characters
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_projection_tests>
             escape-control-characters
 )
 
@@ -373,7 +373,7 @@ add_test(NAME ahflc.check.search_root_removed
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
             "-DAHFLC_ARGS=check\;--search-root\;${AHFL_TESTS_DIR}/integration/ok\;${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
-            "-DEXPECTED_REGEX=--search-root has been removed"
+            "-DEXPECTED_REGEX=unknown option"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
@@ -433,6 +433,39 @@ add_test(NAME ahflc.check.manifest_basic
 set_tests_properties(ahflc.check.manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
+
+foreach(try_target IN ITEMS option result boundaries)
+    add_test(NAME ahflc.check.try_operator.${try_target}
+        COMMAND $<TARGET_FILE:ahflc> check
+                --manifest "${AHFL_TESTS_DIR}/integration/try_operator/ahfl.toml"
+                --target "${try_target}"
+                --sysroot "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(ahflc.check.try_operator.${try_target} PROPERTIES
+        FAIL_REGULAR_EXPRESSION "invalid IR"
+        LABELS "semantics;ir;try-operator"
+    )
+endforeach()
+
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahflc.run.try_operator.smoke
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/try_operator_cli_smoke.py"
+                $<TARGET_FILE:ahflc> "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(ahflc.run.try_operator.smoke PROPERTIES
+        LABELS "semantics;ir;wasm;try-operator"
+    )
+    add_test(NAME ahflc.wasm.alloc.node_host
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/wasm_alloc_node_host.py"
+                $<TARGET_FILE:ahflc> "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(ahflc.wasm.alloc.node_host PROPERTIES
+        SKIP_RETURN_CODE 77
+        LABELS "wasm;node;execution"
+    )
+endif()
 
 add_test(NAME ahflc.check.manifest_accepts_sysroot_manifest_input
     COMMAND $<TARGET_FILE:ahflc> check
@@ -1426,6 +1459,10 @@ add_test(NAME ahfl.runtime.payload_store
 # Btrfs); on any other platform or filesystem the test SKIPs (exit 77).
 set_tests_properties(ahfl.runtime.payload_store PROPERTIES SKIP_RETURN_CODE 77)
 
+add_test(NAME ahfl.llm_provider.session COMMAND $<TARGET_FILE:ahfl_runtime_llm_session_tests>)
+add_test(NAME ahfl.cli.llm_run_lease COMMAND $<TARGET_FILE:ahfl_cli_llm_run_lease_tests>)
+set_tests_properties(ahfl.llm_provider.session ahfl.cli.llm_run_lease PROPERTIES LABELS "llm-provider")
+
 add_test(NAME ahfl.llm_provider.all
     COMMAND $<TARGET_FILE:ahfl_runtime_provider_llm_tests>
 )
@@ -1527,12 +1564,9 @@ add_test(NAME ahfl.query.hir_equiv
     COMMAND $<TARGET_FILE:ahfl_compiler_hir_query_tests>
 )
 
-# RFC 0027 P3 (KR6.11-S4C): the query engine is the DEFAULT CLI route. Runs
-# `ahflc check` twice per bare-file corpus source and `check` / `emit ir-json`
-# per package fixture (default environment vs AHFL_QUERY_LEGACY_PIPELINE=1) and
-# asserts identical exit code / stdout / stderr; the route trace makes the gate
-# non-vacuous (the default run must report the engine route, the legacy-forced
-# run the direct pipeline).
+# RFC 0027: CLI analysis always uses the query engine. Run the corpus twice
+# to prove deterministic outputs and assert that every analyzed input reports
+# the engine route. Both file and package/workspace inputs are covered.
 add_test(NAME ahfl.query.cli_default_engine_route
     COMMAND ${Python3_EXECUTABLE}
             "${AHFL_TESTS_DIR}/scripts/query_engine_cli_equiv.py"
@@ -1879,10 +1913,6 @@ add_test(NAME ahfl.telemetry.telemetry_all
 
 add_test(NAME ahfl.profiling.profiling_all
     COMMAND $<TARGET_FILE:ahfl_tooling_profiling_tests>
-)
-
-add_test(NAME ahfl.abi.compat_all
-    COMMAND $<TARGET_FILE:ahfl_tooling_abi_tests>
 )
 
 add_test(NAME ahfl.cache.cache_core_all

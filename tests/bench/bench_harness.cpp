@@ -15,7 +15,7 @@
 namespace ahfl::bench {
 namespace {
 
-// Writes the `ahfl.bench-report.v1` document with the repository's canonical
+// Writes the `ahfl.bench-report` document with the repository's canonical
 // `PrettyJsonWriter` (2-space indent), the same spelling the IR / assurance /
 // counterexample JSON artifacts use.
 class BenchReportWriter final : private PrettyJsonWriter {
@@ -24,7 +24,7 @@ class BenchReportWriter final : private PrettyJsonWriter {
 
     void write(std::string_view kind, const std::vector<BenchMetric> &metrics) {
         print_object(0, [&](const auto &field) {
-            field("schema", [&]() { write_string(kBenchReportSchema); });
+            field("format", [&]() { write_string(kBenchReportSchema); });
             field("kind", [&]() { write_string(kind); });
             field("budgets", [&]() {
                 print_array(1, [&](const auto &item) {

@@ -149,8 +149,8 @@ struct ProcessMetrics {
 [[nodiscard]] bool write_process_metrics(const std::filesystem::path &path) {
     const auto metrics = process_metrics();
     auto root = JsonValue::make_object();
-    root->set("schema",
-              JsonValue::make_string("ahfl.reference-worker-process-metrics.v1"));
+    root->set("format",
+              JsonValue::make_string("ahfl.reference-worker-process-metrics"));
     root->set("peak_rss_bytes",
               JsonValue::make_int(
                   static_cast<std::int64_t>(metrics.peak_rss_bytes)));
@@ -180,11 +180,11 @@ load_soak_control(const std::filesystem::path &path) {
     if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
         return std::nullopt;
     }
-    const auto *schema = (*parsed)->get("schema");
+    const auto *schema = (*parsed)->get("format");
     const auto *duration = (*parsed)->get("minimum_duration_seconds");
     const auto *iterations = (*parsed)->get("minimum_iterations");
     if (schema == nullptr ||
-        schema->as_string() != "ahfl.reference-soak-control.v1" ||
+        schema->as_string() != "ahfl.reference-soak-control" ||
         duration == nullptr || iterations == nullptr) {
         return std::nullopt;
     }
@@ -420,8 +420,8 @@ int main(int argc, char **argv) {
                                  std::chrono::steady_clock::now() - started)
                                  .count();
         auto report = JsonValue::make_object();
-        report->set("schema",
-                    JsonValue::make_string("ahfl.reference-worker-soak.v1"));
+        report->set("format",
+                    JsonValue::make_string("ahfl.reference-worker-soak"));
         report->set("process_model",
                     JsonValue::make_string("single-long-lived-worker"));
         report->set("duration_seconds", JsonValue::make_float(elapsed));

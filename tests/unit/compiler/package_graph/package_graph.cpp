@@ -61,9 +61,7 @@ constexpr std::string_view kDigestC =
 }
 
 [[nodiscard]] PackageInput std_input() {
-    return package_input(R"TOML(manifest_version = 1
-
-[package]
+    return package_input(R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -89,9 +87,7 @@ allow = ["option_*"]
 }
 
 [[nodiscard]] PackageInput app_input(std::string_view extra_deps = "") {
-    std::string text = R"TOML(manifest_version = 1
-
-[package]
+    std::string text = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -123,7 +119,7 @@ std = { source = "sysroot" }
                                          std::string_view prefix,
                                          PackageSourceKind source,
                                          std::string_view deps = "") {
-    std::string text = "manifest_version = 1\n\n";
+    std::string text;
     text += "[package]\n";
     text += "name = \"";
     text += name;
@@ -146,9 +142,7 @@ std = { source = "sysroot" }
 }
 
 [[nodiscard]] PackageInput app_v2_with_registry_dependency(std::string_view requirement) {
-    std::string text = R"TOML(manifest_version = 2
-
-[package]
+    std::string text = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -180,9 +174,7 @@ risk-model = { source = "registry", registry = "default", version = ")TOML";
 
 [[nodiscard]] PackageInput registry_package_input() {
     auto package =
-        package_input(R"TOML(manifest_version = 2
-
-[package]
+        package_input(R"TOML([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -295,9 +287,7 @@ build_manifest_graph_with_exports(std::string_view exported_modules,
     }
 
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -318,9 +308,7 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
 
-    std::string manifest = R"TOML(manifest_version = 1
-
-[package]
+    std::string manifest = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -394,9 +382,7 @@ TEST_CASE("PackageGraph can build a sysroot-only graph for toolchain sources") {
     REQUIRE(std::filesystem::create_directories(sysroot_dir, error));
     REQUIRE(write_text_file(sysroot_dir / "prelude.ahfl", "module std::prelude;\n"));
     REQUIRE(write_text_file(sysroot_dir / "option.ahfl", "module std::option;\n"));
-    REQUIRE(write_text_file(sysroot_dir / "ahfl.toml", R"TOML(manifest_version = 1
-
-[package]
+    REQUIRE(write_text_file(sysroot_dir / "ahfl.toml", R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -589,9 +575,7 @@ TEST_CASE("PackageGraph fails closed for registry dependencies before registry r
     auto result = ahfl::package_graph::build_package_graph(BuildInput{
         .sysroot_std = std_input(),
         .root_package = package_input(
-            R"TOML(manifest_version = 2
-
-[package]
+            R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -820,9 +804,7 @@ TEST_CASE("Manifest PackageGraph loader resolves path dependencies") {
     REQUIRE(write_text_file(package_dir / "src" / "main.ahfl", "module refund_audit::main;\n"));
     REQUIRE(write_text_file(dependency_dir / "src" / "lib.ahfl", "module audit_core::lib;\n"));
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -843,9 +825,7 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
     REQUIRE(write_text_file(package_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -868,9 +848,7 @@ std = { source = "sysroot" }
 audit-core = { source = "path", path = "packages/audit-core", version = "0.1.0" }
 )TOML"));
     REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "audit-core"
 version = "0.1.0"
 edition = "2026"
@@ -932,9 +910,7 @@ TEST_CASE("PackageGraph checksum boundaries follow RFC 0005 source rules") {
     REQUIRE(write_text_file(sysroot_dir / "option.ahfl", "module std::option;\n"));
     REQUIRE(write_text_file(package_dir / "src" / "main.ahfl", "module refund_audit::main;\n"));
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -955,9 +931,7 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
     REQUIRE(write_text_file(package_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -1070,9 +1044,7 @@ TEST_CASE("Manifest PackageGraph loader rejects path dependency key/name mismatc
     REQUIRE(write_text_file(package_dir / "src" / "main.ahfl", "module refund_audit::main;\n"));
     REQUIRE(write_text_file(dependency_dir / "src" / "lib.ahfl", "module audit_core::lib;\n"));
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -1093,9 +1065,7 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
     REQUIRE(write_text_file(package_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -1118,9 +1088,7 @@ std = { source = "sysroot" }
 audit-alias = { source = "path", path = "packages/audit-core", version = "0.1.0" }
 )TOML"));
     REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "audit-core"
 version = "0.1.0"
 edition = "2026"
@@ -1179,9 +1147,7 @@ TEST_CASE("Workspace PackageGraph loader resolves normalized path member depende
     REQUIRE(write_text_file(app_dir / "src" / "main.ahfl", "module refund_audit::main;\n"));
     REQUIRE(write_text_file(dependency_dir / "src" / "lib.ahfl", "module audit_core::lib;\n"));
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -1202,22 +1168,15 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
     REQUIRE(write_text_file(workspace_dir / "ahfl.workspace.toml",
-                            R"TOML(manifest_version = 1
-
-[workspace]
+                            R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/../packages/refund-audit", "packages/../packages/audit-core"]
-
-[resolver]
-version = 1
 
 [dependencies]
 std = { source = "sysroot" }
 )TOML"));
     REQUIRE(write_text_file(app_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -1239,9 +1198,7 @@ exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow"
 audit-core = { source = "path", path = "../audit-core", version = "0.1.0" }
 )TOML"));
     REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "audit-core"
 version = "0.1.0"
 edition = "2026"
@@ -1307,9 +1264,7 @@ TEST_CASE("Workspace PackageGraph loader rejects dependency default conflicts") 
     REQUIRE_FALSE(error);
 
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -1330,22 +1285,15 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
     REQUIRE(write_text_file(workspace_dir / "ahfl.workspace.toml",
-                            R"TOML(manifest_version = 1
-
-[workspace]
+                            R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/refund-audit"]
-
-[resolver]
-version = 1
 
 [dependencies]
 audit-core = { source = "workspace" }
 )TOML"));
     REQUIRE(write_text_file(app_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -1367,9 +1315,7 @@ exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow"
 audit-core = { source = "path", path = "../../vendor/audit-core", version = "0.1.0" }
 )TOML"));
     REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "audit-core"
 version = "0.1.0"
 edition = "2026"
@@ -1418,9 +1364,7 @@ TEST_CASE("Workspace PackageGraph loader rejects nested member packages") {
     REQUIRE_FALSE(error);
 
     REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -1441,23 +1385,16 @@ modules = ["prelude", "option"]
 allow = ["option_*"]
 )TOML"));
     REQUIRE(write_text_file(workspace_dir / "ahfl.workspace.toml",
-                            R"TOML(manifest_version = 1
-
-[workspace]
+                            R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/parent", "packages/parent/nested-child"]
-
-[resolver]
-version = 1
 
 [dependencies]
 std = { source = "sysroot" }
 )TOML"));
     REQUIRE(write_text_file(parent_dir / "src" / "lib.ahfl", "module parent::lib;\n"));
     REQUIRE(write_text_file(parent_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "parent"
 version = "0.1.0"
 edition = "2026"
@@ -1476,9 +1413,7 @@ entry = "src/lib.ahfl"
 )TOML"));
     REQUIRE(write_text_file(child_dir / "src" / "lib.ahfl", "module nested_child::lib;\n"));
     REQUIRE(write_text_file(child_dir / "ahfl.toml",
-                            R"TOML(manifest_version = 1
-
-[package]
+                            R"TOML([package]
 name = "nested-child"
 version = "0.1.0"
 edition = "2026"
@@ -1513,8 +1448,7 @@ TEST_CASE("Lockfile serializes and parses PackageGraph identity") {
     const auto graph = graph_with_workspace_dependency();
 
     const auto lockfile = ahfl::package_graph::make_lockfile(graph);
-    CHECK(lockfile.format_version == "ahfl.lock.v1");
-    CHECK(lockfile.resolver_version == 1);
+    CHECK(lockfile.format == "ahfl.lock");
     CHECK(lockfile.root_package == "refund-audit");
     REQUIRE(lockfile.packages.size() == 3);
     CHECK(lockfile.packages[0].id.value == 0);
@@ -1623,7 +1557,7 @@ TEST_CASE("Lockfile drift rejects PackageId assignment drift") {
 
 TEST_CASE("Lockfile reader rejects schema errors with source ranges") {
     auto parsed = ahfl::package_graph::parse_lockfile_json(R"JSON({
-  "format_version": "ahfl.lock.v1",
+  "format": "ahfl.lock",
   "resolver_version": "1",
   "root_package": "refund-audit",
   "packages": [],
@@ -1637,10 +1571,9 @@ TEST_CASE("Lockfile reader rejects schema errors with source ranges") {
           parsed.diagnostics.front().range.begin_offset);
 }
 
-TEST_CASE("Lockfile reader rejects unknown format versions") {
+TEST_CASE("Lockfile reader rejects wrong format identity") {
     auto parsed = ahfl::package_graph::parse_lockfile_json(R"JSON({
-  "format_version": "ahfl.lock.v2",
-  "resolver_version": 1,
+  "format": "ahfl.lock.invalid",
   "root_package": "refund-audit",
   "packages": [],
   "edges": []
@@ -1648,5 +1581,5 @@ TEST_CASE("Lockfile reader rejects unknown format versions") {
 
     REQUIRE(parsed.has_errors());
     REQUIRE_FALSE(parsed.lockfile.has_value());
-    CHECK(has_diagnostic(parsed.diagnostics, "format_version must be 'ahfl.lock.v1'"));
+    CHECK(has_diagnostic(parsed.diagnostics, "format must be 'ahfl.lock'"));
 }

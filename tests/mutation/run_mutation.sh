@@ -4,7 +4,7 @@
 # This is the "real tool" path: it drives mull (mull-runner + the
 # mull-ir-frontend pass plugin) when that toolchain is installed. Regardless
 # of whether the tool is present, it ALWAYS emits a machine-readable JSON
-# score report (schema ahfl.mutation.mull.v1, documented in README.md):
+# score report (schema ahfl.mutation.mull, documented in README.md):
 #   - tool present  -> parses mull's JSON report and computes killed/
 #                       survived/score.
 #   - tool absent   -> emits status "tool_unavailable" with a clear reason and
@@ -40,7 +40,7 @@ emit_unavailable() {
     local reason="$1"
     cat > "${REPORT_PATH}" <<JSON
 {
-  "schema": "ahfl.mutation.mull.v1",
+  "format": "ahfl.mutation.mull",
   "runner": "mull",
   "status": "tool_unavailable",
   "reason": "${reason}",
@@ -102,7 +102,7 @@ if command -v jq &>/dev/null; then
     SCORE="$(awk -v k="${KILLED}" -v t="${TOTAL}" 'BEGIN{ if (t==0) print "null"; else printf "%.4f", k/t }')"
     cat > "${REPORT_PATH}" <<JSON
 {
-  "schema": "ahfl.mutation.mull.v1",
+  "format": "ahfl.mutation.mull",
   "runner": "mull",
   "status": "ok",
   "source_report": "${MULL_JSON}",

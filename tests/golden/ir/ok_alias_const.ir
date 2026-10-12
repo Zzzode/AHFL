@@ -1,4 +1,4 @@
-ahfl.ir.v2
+ahfl.ir
 formal_observations {
   observation agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo: called_capability(agent=ir::alias_const::EchoAgent, capability=ir::alias_const::Echo)
   observation contract_ir_alias_const_EchoAgent_0_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::alias_const::EchoAgent, clause=0, atom=0)

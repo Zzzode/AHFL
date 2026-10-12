@@ -150,6 +150,7 @@ WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
 
 WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
                                         Value input) {
+    execution_started_ = true;
     // Compilation failure: every run returns a failed result carrying the
     // compile diagnostics (§12.7.8: the bag holds the pipeline diagnostics
     // with their SourceRanges, not a flattened string).
@@ -188,8 +189,8 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
     session_config.capability_result_observer =
         config_.hooks.capability_result_observer;
     session_config.node_completed_hook = config_.hooks.node_completed_hook;
-    session_config.post_run2_memory_mutator =
-        config_.post_run2_memory_mutator;
+    session_config.post_run_workflow_memory_mutator =
+        config_.post_run_workflow_memory_mutator;
     session_config.name_resolver = config_.name_resolver;
     // WH-8: thread the cancellation / interruption checks to the session
     // (kr68 section 12.9.2). Copied (not moved) so a second run() still
@@ -264,6 +265,10 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         };
     }
     session_config.invoker = std::move(session_invoker);
+    session_config.pending_capability_resolver = config_.pending_capability_resolver;
+    session_config.pending_injection_guard = config_.pending_injection_guard;
+    session_config.completed_capability_metadata_reader =
+        config_.completed_capability_metadata_reader;
 
     // WH-4b: thread the recovery fields. The snapshot + pending result are
     // move-only and are consumed on the first resume run (reset after move

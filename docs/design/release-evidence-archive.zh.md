@@ -9,7 +9,7 @@
 
 ## 目标
 
-1. 提供确定性的 `ahfl.release_evidence_archive.v1` manifest。
+1. 提供确定性的 `ahfl.release_evidence_archive` manifest。
 2. 汇总 CLI、package graph、sysroot、VSIX bundled sysroot、public API snapshot/docs/diff 等 release-facing evidence。
 3. 记录每个 evidence item 的覆盖 RFC、执行命令、输出 artifact、digest 和通过状态。
 4. 让 `implemented` RFC 推进到 `stabilized` 时有可检查证据，而不是只依赖 RFC 文本。
@@ -25,11 +25,11 @@
 
 ## Manifest Schema
 
-顶层 schema 为 `ahfl.release_evidence_archive.v1`。
+顶层 schema 为 `ahfl.release_evidence_archive`。
 
 | 字段 | 类型 | 描述 |
 | --- | --- | --- |
-| schema | string | 固定为 `ahfl.release_evidence_archive.v1` |
+| schema | string | 固定为 `ahfl.release_evidence_archive` |
 | generated_at | string | UTC ISO 8601 时间戳；测试中可固定为确定值 |
 | is_release_ready | bool | 所有 evidence item 是否通过 |
 | total_evidence_count | int | evidence item 总数 |
@@ -65,7 +65,7 @@ scripts/generate-release-evidence-archive.py \
 | Evidence ID | 覆盖 | 证明内容 |
 | --- | --- | --- |
 | `rfc0005.package_graph.non_std_package` | RFC0005 | 非 std package 可解析 PackageGraph，包含 root/path/sysroot packages |
-| `rfc0005.lockfile.non_std_package` | RFC0005 | v1 lockfile 固定 package identity 与 dependency edges |
+| `rfc0005.lockfile.non_std_package` | RFC0005 | 当前 lockfile 固定 package identity 与 dependency edges |
 | `rfc0006.user_package_with_repo_sysroot` | RFC0005, RFC0006 | 普通用户 package 可显式使用 repo source sysroot |
 | `rfc0006.source_sysroot_corelib_development` | RFC0006 | active std package 可作为 source sysroot 开发，不触发 duplicate std/package 特判错误 |
 | `rfc0006.vsix_bundled_sysroot_contract` | RFC0006, RFC0007 | platform VSIX 发布链路必须 staging release `ahfl-lsp`、bundled `std`，并运行 package inventory 与 install smoke |
@@ -74,8 +74,8 @@ scripts/generate-release-evidence-archive.py \
 | `rfc0009.public_api.docs.non_std_package` | RFC0009 | public API Markdown docs 从 visibility facts 生成 |
 | `rfc0009.public_api.diff.baseline` | RFC0009 | 两个 public API snapshot 可通过结构化 diff 比较 |
 | `rfc0010.registry_publish.dry_run_semver_gate` | RFC0010 | 本地 fixture registry 上执行 publish dry-run，并通过 previous-release SemVer gate |
-| `rfc0010.registry_publish.upload` | RFC0010 | 本地 fixture registry 接收 validated publish request，返回同 coordinate / digest 的 `ahfl.registry.index.v1` |
-| `rfc0010.registry_resolve.lockfile` | RFC0010 | manifest v2 registry dependency 从本地 fixture registry 解析为带 registry coordinate / digest 的 `ahfl.lock` |
+| `rfc0010.registry_publish.upload` | RFC0010 | 本地 fixture registry 接收 validated publish request，返回同 coordinate / digest 的 `ahfl.registry.index` |
+| `rfc0010.registry_resolve.lockfile` | RFC0010 | manifest registry dependency 从本地 fixture registry 解析为带 registry coordinate / digest 的 `ahfl.lock` |
 | `rfc0010.registry_yank.local_fixture` | RFC0010 | 已发布版本通过 registry mutation 标记为 yanked，source archive / public API digest 不被重写 |
 | `rfc0010.registry_publish.semver_rejection` | RFC0010 | publish-time SemVer gate 在 incompatible patch release 上传前 fail closed |
 
@@ -100,7 +100,7 @@ RFC0006 的 VSIX evidence 不能由 client-only VSIX 代替。有效发布链路
 
 ## Durable Store Provider Archive
 
-Durable store import provider 仍可以生成 domain-specific release evidence archive manifest。该 manifest 属于 provider feature 的发布证据之一；仓库级 `ahfl.release_evidence_archive.v1` 可以把它作为普通 evidence artifact 引用，但两者不是同一个 schema。
+Durable store import provider 仍可以生成 domain-specific release evidence archive manifest。该 manifest 属于 provider feature 的发布证据之一；仓库级 `ahfl.release_evidence_archive` 可以把它作为普通 evidence artifact 引用，但两者不是同一个 schema。
 
 ## 完成定义
 

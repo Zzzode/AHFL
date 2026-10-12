@@ -2,7 +2,7 @@
 #
 # Invoked by the ahfl.mutation.fallback_score ctest. It runs
 # run_fallback_mutation.sh, then validates the emitted JSON score report
-# (schema ahfl.mutation.fallback.v2) against the COMMITTED target specs. This
+# (schema ahfl.mutation.fallback) against the COMMITTED target specs. This
 # is what turns "a config report + a score exists" into the release-blocking
 # mutation signal KR7.3 names:
 #
@@ -55,8 +55,8 @@ endif()
 file(READ "${REPORT_FILE}" report)
 
 # --- Structural validation via string(JSON ...) ---------------------------
-string(JSON schema ERROR_VARIABLE e GET "${report}" schema)
-if(e OR NOT schema STREQUAL "ahfl.mutation.fallback.v2")
+string(JSON schema ERROR_VARIABLE e GET "${report}" format)
+if(e OR NOT schema STREQUAL "ahfl.mutation.fallback")
     message(FATAL_ERROR "Report schema mismatch: '${schema}' (err='${e}')")
 endif()
 

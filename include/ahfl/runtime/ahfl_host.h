@@ -14,18 +14,11 @@
  * absorbed host-side via AHFL_CAP_PENDING; the language never gains async/await.
  *
  * ---------------------------------------------------------------------------
- * ABI STABILITY RULES (non-negotiable — this is a published FFI boundary):
- *   1. Every multi-field struct crossing the boundary begins with
- *      `uint32_t struct_size` set by the caller to sizeof(the struct). Fields
- *      are ADDED ONLY by appending at the end; a published field is never moved
- *      or repurposed. Readers use struct_size to detect which fields exist.
- *   2. Fixed-width integer types only (stdint.h). No bitfields. No enums as
- *      struct/return types (implementation-defined width) — enums are for named
- *      constants only; the ABI type is always uint32_t. No #pragma pack;
- *      natural alignment.
- *   3. Published symbols are append-only: to change a signature, add
- *      `ahfl_invoke2`; never mutate `ahfl_invoke`.
- *   4. Wire frames are length-prefixed little-endian; endianness is pinned now.
+ * CURRENT ABI RULES:
+ *   Fixed-width integer types and natural alignment; no bitfields or packed
+ *   layouts. Callers and runtime use the same current header. struct_size must
+ *   equal sizeof(ahfl_invoke_args); missing or appended layouts are rejected.
+ *   Wire frames are length-prefixed canonical wire JSON bytes.
  * ---------------------------------------------------------------------------
  *
  * This header is slice 1: it defines the contract. The native/WASM bindings,
@@ -41,24 +34,6 @@
 extern "C" {
 #endif
 
-/* ---- Version + wire format (split: two independent axes) ---------------- */
-
-/* Struct-layout / symbol contract version. Bumped only on an ABI-breaking
- * change to this header. Distinct from the wire format: the struct/symbol
- * contract and the frame serialization format evolve independently. */
-#define AHFL_ABI_VERSION 1u
-
-/* Returns AHFL_ABI_VERSION of the AHFL runtime the host is linked against.
- * The host and the runtime must agree on the major contract version. */
-uint32_t ahfl_abi_version(void);
-
-/* Frame serialization format, negotiated at the CONNECTION level (one format
- * per connection; never a per-frame tag). value_json is v1; a compact binary
- * format would be a future value. Codes 0x0001..0x0FFF are reserved for the
- * core; 0x1000+ are available to hosts. */
-typedef uint32_t ahfl_wire_format;
-enum { AHFL_WIRE_VALUE_JSON = 1u };
-
 /* ---- Capability call status: fixed width, fail-closed --------------------
  * The ABI type is uint32_t (not a bare enum). OK is 0. Codes 0x0001..0x0FFF
  * are reserved for the core; 0x1000+ for hosts. RULE (fail-closed): any status
@@ -72,7 +47,7 @@ enum {
 
 /* ---- Opaque per-connection host context --------------------------------
  * Passed to every entry point so the runtime can carry per-connection /
- * multi-instance / thread state without a future signature break. The host
+ * multi-instance / thread state for the current invocation. The host
  * defines the concrete type; the runtime treats it as opaque. */
 typedef struct ahfl_host ahfl_host;
 
@@ -84,9 +59,9 @@ typedef struct ahfl_host ahfl_host;
 uint8_t *ahfl_alloc(ahfl_host *host, uint32_t len);
 void ahfl_dealloc(ahfl_host *host, uint8_t *ptr, uint32_t len);
 
-/* ---- Invoke arguments (size-prefixed; grow by appending only) -----------
+/* ---- Invoke arguments (exact current layout) ---------------------------
  * Frames are length-prefixed little-endian serialized bytes in the connection's
- * negotiated wire format. */
+ * canonical wire JSON format. */
 typedef struct ahfl_invoke_args {
     uint32_t struct_size;  /* caller sets = sizeof(ahfl_invoke_args)          */
     uint32_t cap_id;       /* capability SymbolId (index-based identity)      */
@@ -94,8 +69,6 @@ typedef struct ahfl_invoke_args {
     uint32_t args_len;
     uint8_t **result_ptr;  /* out: callee-allocated result frame, or NULL     */
     uint32_t *result_len;  /* out: result frame length, or 0                  */
-    /* FUTURE fields are appended ONLY here (timeout, trace id, resume handle,
-     * cancel token, ...), never as new positional parameters. */
 } ahfl_invoke_args;
 
 /* ---- The capability call ------------------------------------------------

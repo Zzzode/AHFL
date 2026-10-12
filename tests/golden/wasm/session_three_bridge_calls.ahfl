@@ -1,0 +1,44 @@
+module wasm::session_three_bridge_calls;
+
+pub struct Frame { n: Int; }
+pub struct Ctx { tag: Int = 0; }
+capability Bridge(n: Int) -> Frame;
+
+pub agent ThreeCallAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, CallA, CallB, CallC, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [Bridge];
+    transition Decide -> CallA;
+    transition CallA -> CallB;
+    transition CallB -> CallC;
+    transition CallC -> Done;
+}
+flow for ThreeCallAgent {
+    state Decide { goto CallA; }
+    state CallA {
+        let reply = Bridge(input.n);
+        ctx.tag = reply.n;
+        goto CallB;
+    }
+    state CallB {
+        let reply = Bridge(ctx.tag);
+        ctx.tag = reply.n;
+        goto CallC;
+    }
+    state CallC {
+        let reply = Bridge(ctx.tag);
+        ctx.tag = reply.n;
+        goto Done;
+    }
+    state Done { return Frame { n: ctx.tag }; }
+}
+pub workflow ThreeBridgeCalls {
+    input: Frame;
+    output: Frame;
+    node runner: ThreeCallAgent(input);
+    return: runner;
+}

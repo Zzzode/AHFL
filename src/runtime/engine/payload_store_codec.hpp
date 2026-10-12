@@ -7,12 +7,8 @@
 //   * commit_manifest -- raw payload magic "AHFLCM" (Available / Consumed variants)
 //   * generation ptr  -- raw payload magic "AHFLGP"
 //
-// It is GREENFIELD and additive: it holds no key material of its own, opens no
-// files, performs no fsync/rename/locking, and has NO production caller yet. It does
-// not touch `ahfl.workflow-recovery.v1|v2`, the A1 resume record / A2 exec-manifest
-// codecs, `atomic_file`, compiler_ir, the public C ABI, or any emitted Wasm bytes.
-// The POSIX store (publish/load/recovery, Consumed transition, fsync/lock/crash
-// tests) is the SEPARATE B2-B1 slice; this file has none of it.
+// It holds no key material of its own and performs no filesystem operations.
+// The payload store owns publication, recovery and locking.
 //
 // This backend is INTEGRITY-ONLY. Its HMAC proves authenticity + tamper detection;
 // it provides NO confidentiality (nothing is encrypted at rest) and NO rollback
@@ -21,11 +17,11 @@
 // and are enforced by the B1 store, not claimed here.
 //
 // Wire layout (all three classes): `body || auth_header || tag`, where `auth_header`
-// is a fixed 25 bytes {alg_version u8, key_id 16 bytes, generation u64 little-endian}
+// is a fixed 25 bytes {alg_id u8, key_id 16 bytes, generation u64 little-endian}
 // and `tag` is a fixed 32-byte HMAC-SHA256 -- a fixed 57-byte tail located from EOF.
 // The trust root is a single HMAC over the exact on-wire prefix `[0, tag)`; the
-// prefix's leading `magic || format_version` are the authenticated artifact-class /
-// version domain separator (a distinct magic per class => a distinct HMAC domain).
+// prefix's leading `magic` is the authenticated artifact-class
+// domain separator (a distinct magic per class => a distinct HMAC domain).
 // Admission is two-pass: an untrusted bounds-only pass 1 (never reads a body count,
 // never allocates on an attacker count) verifies framing + key_id + tag, and only
 // then does a trusted pass 2 decode the body and require a canonical re-encode.
@@ -43,7 +39,7 @@
 #include <variant>
 #include <vector>
 
-#include "ahfl/compiler/ir/core_ir.hpp"          // ir::core::CoreWorkflowId
+#include "ahfl/compiler/ir/core_ir.hpp"               // ir::core::CoreWorkflowId
 #include "runtime/engine/core_wasm_resume_record.hpp" // core_wasm_resume::PayloadSlotId
 
 namespace ahfl::runtime::payload_store {
@@ -71,29 +67,29 @@ using DigestHex = std::array<char, 64>;
 // the B1 store layer that builds on this codec; every codec error is fixed and
 // echoes no payload byte, key, digest, id, length, or count.
 enum class PayloadStoreError {
-    NotFound,              // (B1 store) no generation is published for the checkpoint
-    Consumed,             // (B1 store) the live generation is a Consumed tombstone
-    IntegrityFailed,       // HMAC tag mismatch
-    KeyIdMismatch,         // record key_id != caller expected key_id
-    GenerationMismatch,    // body generation != auth generation, or consumed range bad
-    StateMismatch,         // (B1 store) cross-artifact state disagreement
-    SizeCapExceeded,       // input span exceeds the caller-supplied artifact byte cap
-    Truncated,             // input shorter than the minimum framing
-    TrailingBytes,         // body has bytes after the last field
-    Malformed,             // any other structural / canonical-form violation
-    SlotSetMismatch,       // manifest slot_meta unsorted or duplicated (self-contained)
+    NotFound,                // (B1 store) no generation is published for the checkpoint
+    Consumed,                // (B1 store) the live generation is a Consumed tombstone
+    IntegrityFailed,         // HMAC tag mismatch
+    KeyIdMismatch,           // record key_id != caller expected key_id
+    GenerationMismatch,      // body generation != auth generation, or consumed range bad
+    StateMismatch,           // (B1 store) cross-artifact state disagreement
+    SizeCapExceeded,         // input span exceeds the caller-supplied artifact byte cap
+    Truncated,               // input shorter than the minimum framing
+    TrailingBytes,           // body has bytes after the last field
+    Malformed,               // any other structural / canonical-form violation
+    SlotSetMismatch,         // manifest slot_meta unsorted or duplicated (self-contained)
     CrossCheckpointRejected, // (B1 store) artifact namespace != caller namespace
-    WriteFailed,           // (B1 store) durable write failed
-    CommitInterrupted,     // (B1 store) publish interrupted before commit
-    UnsupportedPlatform,   // (B1 store) non-POSIX platform
-    UnsupportedFilesystem, // (B1 store) filesystem outside the supported allowlist
+    WriteFailed,             // (B1 store) durable write failed
+    CommitInterrupted,       // (B1 store) publish interrupted before commit
+    UnsupportedPlatform,     // (B1 store) non-POSIX platform
+    UnsupportedFilesystem,   // (B1 store) filesystem outside the supported allowlist
 };
 
 // The authenticated header carried alongside every artifact so a decoded model
 // round-trips. `generation` is written u64 little-endian; `key_id` is the caller's
 // candidate key identity (there is no keyring / KMS / resolver in this slice).
 struct AuthHeader {
-    std::uint8_t alg_version{1}; // 1 = HMAC-SHA256
+    std::uint8_t alg_id{1}; // 1 = HMAC-SHA256
     std::array<std::uint8_t, 16> key_id{};
     std::uint64_t generation{0};
     [[nodiscard]] friend bool operator==(const AuthHeader &, const AuthHeader &) noexcept = default;
@@ -181,10 +177,10 @@ struct GenerationPointer {
 };
 
 // The exact maximum on-wire length of a generation pointer:
-// magic(6) + format_version(1) + wf(<=5 ULEB) + ckpt(<=10 ULEB) +
+// magic(6) + wf(<=5 ULEB) + ckpt(<=10 ULEB) +
 // current_generation(8 LE) + manifest_sha256(64) + auth_header(25) + tag(32).
-inline constexpr std::uint64_t kMaxGenerationPointerBytes = 6 + 1 + 5 + 10 + 8 + 64 + 25 + 32;
-static_assert(kMaxGenerationPointerBytes == 151);
+inline constexpr std::uint64_t kMaxGenerationPointerBytes = 6 + 5 + 10 + 8 + 64 + 25 + 32;
+static_assert(kMaxGenerationPointerBytes == 150);
 
 // ---- encode: validate-first, then authenticate -----------------------------
 //
@@ -208,8 +204,8 @@ encode_pointer(const GenerationPointer &pointer, std::span<const std::uint8_t> k
 //
 // Each decoder first rejects `bytes.size() > cap` (SizeCapExceeded) before any
 // framing work, then runs the two-pass admission: pass 1 (untrusted, bounds-only)
-// checks minimum length, magic + format_version, the fixed 57-byte tail offsets,
-// alg_version, and key_id equality (fixed-work), then recomputes the HMAC over
+// checks minimum length, magic, the fixed 57-byte tail offsets,
+// alg_id, and key_id equality (fixed-work), then recomputes the HMAC over
 // `[0, tag)` and compares the tag (fixed-work); only after the tag verifies does
 // pass 2 decode the body, enforce every structural invariant, reject trailing
 // bytes, and require a canonical re-encode byte-equal to the authenticated prefix.
@@ -220,13 +216,15 @@ encode_pointer(const GenerationPointer &pointer, std::span<const std::uint8_t> k
 
 [[nodiscard]] std::expected<SlotArtifact, PayloadStoreError>
 decode_slot(std::span<const std::uint8_t> bytes,
-            std::span<const std::uint8_t, 16> expected_key_id, std::span<const std::uint8_t> key,
+            std::span<const std::uint8_t, 16> expected_key_id,
+            std::span<const std::uint8_t> key,
             std::uint64_t max_slot_artifact_bytes);
 
 [[nodiscard]] std::expected<CommitManifest, PayloadStoreError>
 decode_manifest(std::span<const std::uint8_t> bytes,
                 std::span<const std::uint8_t, 16> expected_key_id,
-                std::span<const std::uint8_t> key, std::uint64_t max_manifest_artifact_bytes);
+                std::span<const std::uint8_t> key,
+                std::uint64_t max_manifest_artifact_bytes);
 
 // The pointer cap is the fixed grammar-derived maximum `kMaxGenerationPointerBytes`.
 [[nodiscard]] std::expected<GenerationPointer, PayloadStoreError>

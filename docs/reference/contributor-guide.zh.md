@@ -75,7 +75,7 @@ WasmWorkflowRuntime
 3. 定义 start/terminal pairing、retry/fallback/cancel/interruption path。
 4. 在 `WasmWorkflowRuntime` 产生 event。
 5. 同步 report 和所有受影响 projection。
-6. 若影响恢复，更新 `ahfl.workflow-recovery.v1`/`v2` 的迁移或拒绝策略。
+6. 若影响恢复，同步更新 `ahfl.workflow-recovery` 精确结构，旧产物必须拒绝并重建。
 7. 最后更新 renderer；renderer 不得补造运行事实。
 
 禁止：
@@ -150,7 +150,7 @@ worker 之前验证 GitHub Actions、仓库、workflow、event、job 和 commit 
 拒绝本地执行。开发机和普通 CI 只运行 `ahfl.reference_workflow.long_soak_smoke`
 （2 秒）；正式 3600 秒任务只能由 `Production Confidence` workflow 的 nightly
 schedule 或 `workflow_dispatch` 启动。`check-production-confidence-gate.py` 可以在
-本地读取已下载 evidence，但只接受带匹配 GitHub Actions provenance 的 v2 evidence。
+本地读取已下载 evidence，但只接受带匹配 GitHub Actions provenance 的 当前 evidence。
 
 runtime kernel 变更至少覆盖：
 

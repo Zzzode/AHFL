@@ -33,9 +33,7 @@ namespace {
 } // namespace
 
 TEST_CASE("Package manifest schema accepts RFC 0005 minimal package") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -84,10 +82,8 @@ std = { source = "sysroot" }
     CHECK(result.manifest->dependencies.front().source == "sysroot");
 }
 
-TEST_CASE("Package manifest schema v2 accepts registry dependencies") {
-    constexpr std::string_view input = R"TOML(manifest_version = 2
-
-[package]
+TEST_CASE("Package manifest schema accepts registry dependencies") {
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -113,7 +109,6 @@ risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
     const auto result = ahfl::manifest::parse_package_manifest(input);
     REQUIRE_FALSE(result.has_errors());
     REQUIRE(result.manifest.has_value());
-    CHECK(result.manifest->manifest_version == 2);
     REQUIRE(result.manifest->dependencies.size() == 2);
     const auto &dependency = result.manifest->dependencies[1];
     CHECK(dependency.key == "risk-model");
@@ -127,7 +122,7 @@ risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
                          "version = \"^2.1.0\" }") != std::string::npos);
 }
 
-TEST_CASE("Package manifest schema v1 rejects registry dependency fields") {
+TEST_CASE("Package manifest rejects removed format selector") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 
 [package]
@@ -155,15 +150,13 @@ risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
 
     const auto result = ahfl::manifest::parse_package_manifest(input);
     REQUIRE(result.has_errors());
-    CHECK(has_message(result.diagnostics,
-                      "unsupported manifest field 'dependencies.risk-model.registry'"));
-    CHECK(has_message(result.diagnostics, "unsupported dependency source 'registry'"));
+    CHECK(has_message(result.diagnostics, "unsupported manifest field 'manifest_version'"));
+    const auto &diagnostic = result.diagnostics.front();
+    CHECK(slice(input, diagnostic.range) == "manifest_version");
 }
 
 TEST_CASE("Package manifest parses default run configuration and sparse profiles") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "execution-demo"
 version = "0.1.0"
 edition = "2026"
@@ -223,9 +216,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest rejects invalid run formats and escaping paths") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "execution-demo"
 version = "0.1.0"
 edition = "2026"
@@ -272,9 +263,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest canonicalization is schema ordered and formatting insensitive") {
-    constexpr std::string_view first = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view first = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -296,9 +285,7 @@ exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow"
 std = { source = "sysroot" }
 audit-core = { source = "path", path = "packages/audit-core", version = "0.1.0" }
 )TOML";
-    constexpr std::string_view second = R"TOML(manifest_version = 1
-
-[dependencies]
+    constexpr std::string_view second = R"TOML([dependencies]
 audit-core = { version = "0.1.0", path = "packages/audit-core", source = "path" }
 std = { source = "sysroot" }
 
@@ -365,9 +352,7 @@ TEST_CASE("Package manifest schema accepts repository sysroot std manifest") {
 }
 
 TEST_CASE("Package manifest schema accepts snake case target names") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -396,12 +381,10 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema keeps TOML syntax separate from schema diagnostics") {
-    constexpr std::string_view input = R"TOML(manifest_version = "1"
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "RefundAudit"
 version = "0.1"
-edition = "2025"
+edition = 2025
 kind = "service"
 
 [module]
@@ -420,9 +403,7 @@ registry = { source = "registry" }
 }
 
 TEST_CASE("Package manifest schema rejects invalid target names") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -454,9 +435,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects invalid dependency keys") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -486,9 +465,7 @@ audit_core = { source = "path", path = "packages/audit-core", version = "0.1.0" 
 }
 
 TEST_CASE("Package manifest schema reports dependency source range on the value") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -507,23 +484,21 @@ entry = "refund_audit::main::RefundAuditWorkflow"
 exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
 
 [dependencies]
-registry-core = { source = "registry" }
+registry-core = { source = "git" }
 )TOML";
 
     const auto result = ahfl::manifest::parse_package_manifest(input);
     REQUIRE(result.has_errors());
     const auto found = std::find_if(
         result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
-            return diagnostic.message == "unsupported dependency source 'registry'";
+            return diagnostic.message == "unsupported dependency source 'git'";
         });
     REQUIRE(found != result.diagnostics.end());
-    CHECK(slice(input, found->range) == "\"registry\"");
+    CHECK(slice(input, found->range) == "\"git\"");
 }
 
 TEST_CASE("Package manifest schema rejects absolute path dependencies") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -554,9 +529,7 @@ audit-core = { source = "path", path = "/tmp/audit-core", version = "0.1.0" }
 }
 
 TEST_CASE("Package manifest schema reports dependency version range on the value") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -593,9 +566,7 @@ audit-core = { source = "path", path = "packages/audit-core", version = "0.1" }
 }
 
 TEST_CASE("Package manifest schema allows relative parent path dependencies") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -626,9 +597,7 @@ audit-core = { source = "path", path = "../audit-core", version = "0.1.0" }
 }
 
 TEST_CASE("Package manifest schema accepts normalized non-escaping paths") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -655,9 +624,7 @@ entry = "src/../src/lib.ahfl"
 }
 
 TEST_CASE("Package manifest schema rejects string handoff exports") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -686,9 +653,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects non-canonical handoff export names") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -719,9 +684,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects empty handoff exports") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -750,9 +713,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects exports on non-handoff targets") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -781,9 +742,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects sysroot dependency payload fields") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -825,9 +784,7 @@ std = { source = "sysroot", path = "../std", version = "0.1.0" }
 }
 
 TEST_CASE("Package manifest schema validates target entry shapes") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -868,9 +825,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects normalized escaping paths") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -898,9 +853,7 @@ entry = "src/../../lib.ahfl"
 }
 
 TEST_CASE("Package manifest schema rejects prelude on non-standard-library packages") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -933,9 +886,7 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Package manifest schema rejects invalid compiler intrinsic allow patterns") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "std"
 version = "0.1.0"
 edition = "2026"
@@ -965,9 +916,7 @@ allow = ["option_*", "*", "string-raw", "time_**", "Bad"]
 }
 
 TEST_CASE("Package manifest schema rejects unknown fields") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -992,9 +941,7 @@ entry = "src/lib.ahfl"
 }
 
 TEST_CASE("Package manifest schema rejects empty string fields") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = ""
 version = "0.1.0"
 edition = "2026"
@@ -1029,9 +976,7 @@ audit-core = { source = "path", path = "", version = "" }
 }
 
 TEST_CASE("Manifest path validation treats parent traversal as a path component") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"
@@ -1056,14 +1001,9 @@ entry = "src/a..b/lib.ahfl"
 }
 
 TEST_CASE("Workspace manifest schema accepts members and sysroot default") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/refund-audit", "packages/risk-review"]
-
-[resolver]
-version = 1
 
 [dependencies]
 std = { source = "sysroot" }
@@ -1079,13 +1019,8 @@ std = { source = "sysroot" }
 }
 
 TEST_CASE("Workspace manifest canonicalization is schema ordered") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[dependencies]
+    constexpr std::string_view input = R"TOML([dependencies]
 std = { source = "sysroot" }
-
-[resolver]
-version = 1
 
 [workspace]
 members = ["packages/refund-audit", "packages/audit-core"]
@@ -1097,25 +1032,18 @@ name = "commerce-workflows"
     REQUIRE(result.manifest.has_value());
 
     CHECK(ahfl::manifest::canonicalize_workspace_manifest(*result.manifest) ==
-          "manifest_version = 1\n\n"
           "[workspace]\n"
           "name = \"commerce-workflows\"\n"
           "members = [\"packages/refund-audit\", \"packages/audit-core\"]\n\n"
-          "[resolver]\n"
-          "version = 1\n\n"
           "[dependencies]\n"
           "std = { source = \"sysroot\" }\n");
 }
 
 TEST_CASE("Workspace manifest schema rejects path escape") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["../outside"]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1132,14 +1060,10 @@ version = 1
 }
 
 TEST_CASE("Workspace manifest schema accepts normalized non-escaping members") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/../refund-audit"]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1150,14 +1074,10 @@ version = 1
 }
 
 TEST_CASE("Workspace manifest schema rejects normalized escaping members") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/../../outside"]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1174,14 +1094,10 @@ version = 1
 }
 
 TEST_CASE("Workspace manifest schema rejects duplicate member paths") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/refund-audit", "packages/refund-audit"]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1199,14 +1115,10 @@ version = 1
 }
 
 TEST_CASE("Workspace manifest schema rejects normalized duplicate member paths") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/refund-audit", "packages/../packages/refund-audit"]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1217,14 +1129,10 @@ version = 1
 }
 
 TEST_CASE("Workspace manifest schema rejects empty string fields") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = ""
 members = ["packages/refund-audit", ""]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1236,14 +1144,10 @@ version = 1
 }
 
 TEST_CASE("Workspace manifest schema allows dots inside member path names") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[workspace]
+    constexpr std::string_view input = R"TOML([workspace]
 name = "commerce-workflows"
 members = ["packages/a..b"]
 
-[resolver]
-version = 1
 )TOML";
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
@@ -1251,4 +1155,19 @@ version = 1
     REQUIRE(result.manifest.has_value());
     REQUIRE(result.manifest->members.size() == 1);
     CHECK(result.manifest->members.front() == "packages/a..b");
+}
+
+TEST_CASE("Workspace manifest rejects removed format selectors") {
+    constexpr std::string_view current = R"TOML([workspace]
+name = "commerce-workflows"
+members = ["packages/refund-audit"]
+)TOML";
+    for (const std::string &prefix :
+         {std::string{"manifest_version = 2\n"}, std::string{"[resolver]\nversion = 1\n"}}) {
+        const auto input = prefix + std::string(current);
+        const auto result = ahfl::manifest::parse_workspace_manifest(input);
+        REQUIRE(result.has_errors());
+        CHECK(has_code(result.diagnostics, "E::manifest_unknown_field"));
+        CHECK_FALSE(result.manifest.has_value());
+    }
 }

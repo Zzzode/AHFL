@@ -5,32 +5,8 @@ import std::collections;
 import std::option;
 import std::result;
 
-// ===========================================================================
-// B-12 P6 prelude 显式导入验收 (Wave-23 Group B 收尾)
-//
-// 本文件显式 `import std::prelude;`。所有裸名符号均通过普通 package
-// source graph 装载 prelude 后，再由 resolver 的 prelude fallback 提供
-// bare-name 解析。public CLI / PackageGraph 入口不得依赖隐式 prelude 注入。
-//
-// 设计说明：
-//   • RFC 0005 后 prelude injection 是显式配置边界，不再作为用户语言
-//     默认语义。这个 fixture 覆盖 public CLI 可见的显式入口。
-//
-// Scope：7 家族 40 assertions
-//   (A) TYPES 类型别名       6 (Option/Result/List/Set/Map/Ordering)
-//   (B) 大写构造子            6 (Some/None/Ok/Err/Less/Equal)
-//   (C) Option 裸名函数       5 (is_some/is_none/get_or_insert/some/
-//                               inherent map)
-//   (D) Result 裸名函数       4 (is_ok/is_err/map_err/ok)
-//   (E) List/Set/Map 裸名函数 8 (empty / singleton / length / is_empty /
-//                                 reverse / first / set_singleton 探测 /
-//                                 map_singleton 探测)
-//   (F) Cmp 裸名函数          6 (compare / is_less / is_equal / is_greater /
-//                                 min / max / clamp)
-//   (G) String 裸名函数       5 (starts_with / ends_with / length via method /
-//                                 contains via method / join)
-// ===========================================================================
-
+// Explicit prelude coverage: exported types and constructors, inherent
+// receiver methods, comparisons and string joining.
 fn prelude_ut() -> Int effect Pure decreases 0 {
     // ====== (A) TYPES 类型别名 (6) ======
     let a:   Option<Int>         = Some<Int>(1);
@@ -41,74 +17,71 @@ fn prelude_ut() -> Int effect Pure decreases 0 {
     // map_empty / map_singleton（B-12 追加到 prelude）
     let s_set: Set<Int> = set_singleton<Int>(3);
     let m_map: Map<String, Int> = map_singleton<String, Int>("a", 1);
-    assert(is_some<Int>(a));
-    assert(is_ok<Int, String>(b));
-    assert(not is_empty<Int>(xs));
+    assert(a.is_some());
+    assert(b.is_ok());
+    assert(not xs.is_empty());
     assert(s_set.length() == 1);
-    assert(contains_key<String, Int>(m_map, "a"));
+    assert(m_map.contains_key("a"));
     assert(ord == Less());
 
     // ====== (B) 大写构造子 roundtrip 通过 List (6) ======
     let opts: List<Option<Int>> =
-        append<Option<Int>>(singleton<Option<Int>>(Some<Int>(1)),
-                            singleton<Option<Int>>(None<Int>()));
-    assert(length<Option<Int>>(opts) == 2);
+        (singleton<Option<Int>>(Some<Int>(1))).append(singleton<Option<Int>>(None<Int>()));
+    assert(opts.length() == 2);
     let res_ok:  List<Result<Int, String>> =
         singleton<Result<Int, String>>(Ok<Int, String>(1));
     let res_err: List<Result<Int, String>> =
         singleton<Result<Int, String>>(Err<Int, String>("bad"));
     let first_ok: Option<Result<Int, String>> =
-        first<Result<Int, String>>(res_ok);
+        res_ok.first();
     let first_bad: Option<Result<Int, String>> =
-        first<Result<Int, String>>(res_err);
-    assert(get_or_insert<Result<Int, String>>(
-        first_ok, Err<Int, String>("def")).is_ok());
-    assert(get_or_insert<Result<Int, String>>(
-        first_bad, Ok<Int, String>(-1)).is_err());
+        res_err.first();
+    assert(first_ok.get_or_insert(Err<Int, String>("def")).is_ok());
+    assert(first_bad.get_or_insert(Ok<Int, String>(-1)).is_err());
     let or_eq: Ordering = Equal();
     assert(is_equal(or_eq));
     let or_gr: Ordering = Greater();
     assert(is_greater(or_gr));
 
-    // ====== (C) Option 裸名函数 (5) ======
-    assert(not is_none<Int>(a));
+    // ====== (C) Option 方法与构造 (5) ======
+    assert(not a.is_none());
     let a3: Option<Int> = some<Int>(5);
-    assert(is_some<Int>(a3));
-    let hit:  Int = get_or_insert<Int>(a3, 99);
+    assert(a3.is_some());
+    let hit:  Int = a3.get_or_insert(99);
     assert(hit == 5);
     // Option inherent map requires the defining impl module to be imported.
     let doubled: Option<Int> = a.map<Int>(\x: Int -> x * 2);
-    assert(get_or_insert<Int>(doubled, 0) == 2);
+    assert(doubled.get_or_insert(0) == 2);
 
-    // ====== (D) Result 裸名函数 (4) ======
+    // ====== (D) Result 方法 (4) ======
     let mapped_e: Result<Int, String> =
-        map_err<Int, String, String>(b, \s: String -> s);
-    assert(is_ok<Int, String>(mapped_e));
-    let as_opt: Option<Int> = ok<Int, String>(b);
-    assert(is_some<Int>(as_opt));
+        b.map_err<String>(\s: String -> s);
+    assert(mapped_e.is_ok());
+    let as_opt: Option<Int> = b.ok();
+    assert(as_opt.is_some());
     let bad: Result<Int, String> = Err<Int, String>("boom");
-    let bad_opt: Option<String> = err<Int, String>(bad);
-    assert(is_some<String>(bad_opt));
-    assert(is_ok<Int, String>(mapped_e));
+    let bad_opt: Option<String> = bad.err();
+    assert(bad_opt.is_some());
+    assert(mapped_e.is_ok());
 
-    // ====== (E) List/Set/Map 裸名函数 (8) ======
+    // ====== (E) List/Set/Map 构造与方法 (8) ======
     let e_list: List<Int> = empty<Int>();
-    assert(is_empty<Int>(e_list));
+    assert(e_list.is_empty());
     let s_list: List<Int> = singleton<Int>(42);
-    assert(length<Int>(s_list) == 1);
-    let combo: List<Int> = append<Int>(s_list, singleton<Int>(99));
-    assert(length<Int>(combo) == 2);
-    let rev: List<Int> = reverse<Int>(combo);
-    let first_r: Option<Int> = first<Int>(rev);
-    let last_r:  Option<Int> = last<Int>(rev);
-    assert(get_or_insert<Int>(first_r, -1) == 99);
-    assert(get_or_insert<Int>(last_r,  -1) == 42);
-    assert(not is_empty<Int>(combo));
+    assert(s_list.length() == 1);
+    let combo: List<Int> = s_list.append(singleton<Int>(99));
+    assert(combo.length() == 2);
+    let rev: List<Int> = combo.reverse();
+    let first_r: Option<Int> = rev.first();
+    let last_r:  Option<Int> = rev.last();
+    assert(first_r.get_or_insert(-1) == 99);
+    assert(last_r.get_or_insert(-1) == 42);
+    assert(not combo.is_empty());
     // Set / Map 的 bare name constructor 探测（B-12 新增到 prelude）
     let s_empty: Set<Int> = set_empty<Int>();
     assert(s_empty.length() == 0);
     let m_empty: Map<String, Int> = map_empty<String, Int>();
-    assert(get_or<String, Int>(m_empty, "a", 0) == 0);
+    assert(m_empty.get_or("a", 0) == 0);
 
     // ====== (F) Cmp 裸名函数 (6) ======
     assert(is_less(compare<Int>(1, 2)));
@@ -118,9 +91,9 @@ fn prelude_ut() -> Int effect Pure decreases 0 {
     assert(max<Int>(3, 7) == 7);
     assert(clamp<Int>(11, 1, 10) == 10);
 
-    // ====== (G) String 裸名函数 (5) ======
-    assert(starts_with("ahfl", "ah"));
-    assert(ends_with("ahfl", "fl"));
+    // ====== (G) String 方法与join (5) ======
+    assert(("ahfl").starts_with("ah"));
+    assert(("ahfl").ends_with("fl"));
     // length via inherent-impl (String inherent impl, always available)
     let s_len: Int = "ahfl".length();
     assert(s_len == 4);
@@ -128,7 +101,7 @@ fn prelude_ut() -> Int effect Pure decreases 0 {
     assert("hello world".contains("world"));
     // join via bare name — join(["a","b"], ",") == "a,b"
     let parts: List<String> =
-        append<String>(singleton<String>("a"), singleton<String>("b"));
+        (singleton<String>("a")).append(singleton<String>("b"));
     assert(join(parts, ",") == "a,b");
 
     return 0;

@@ -23,7 +23,7 @@ decision_due: "2026-07-21"
 
 ## Summary
 
-本 RFC 定义 AHFL package registry、package publishing、SemVer compatibility gate 和 publish-time public API diff 的 v1 设计边界。它接续 [RFC 0005](./0005-package-configuration-system.zh.md) 的 package manifest / PackageGraph / lockfile 基础，以及 [RFC 0009](./0009-symbol-visibility.zh.md) 的 public API surface artifact，但不把 registry、publishing 或 SemVer 规则回填到 RFC 0005 的 manifest v1 contract。
+本 RFC 定义 AHFL package registry、package publishing、SemVer compatibility gate 和 publish-time public API diff 的当前设计边界。它接续 [RFC 0005](./0005-package-configuration-system.zh.md) 的 package manifest / PackageGraph / lockfile 基础，以及 [RFC 0009](./0009-symbol-visibility.zh.md) 的 public API surface artifact，并在唯一当前 manifest 中声明 registry 依赖。
 
 核心决策是：registry package 是不可变 source archive 加可变 registry index metadata；dependency resolution 生成结构化 PackageGraph 和 lockfile；publishing 必须先生成 public API snapshot，并根据 SemVer bump 对 `emit public-api-diff` 的结构化结果执行 fail-closed gate。
 
@@ -33,7 +33,7 @@ RFC 0005 已经把 AHFL 工程输入统一到 `ahfl.toml`，但它明确不设�
 
 如果没有独立 registry / publishing RFC，后续实现会出现三个结构性问题：
 
-1. 把 registry source 和 version range 临时塞进 manifest v1，破坏 RFC 0005 的 v1 identity contract。
+1. 把 registry source、version requirement 和解析结果混为同一个身份事实。
 2. 把 public API diff 当作普通 CLI 报告，而不是 package publishing 的强制门禁。
 3. 让 resolver、lockfile、source archive、registry metadata 和 SemVer policy 各自发明身份规则，重新落回 display string 或 ad-hoc JSON 的双事实来源。
 
@@ -42,7 +42,7 @@ RFC 0005 已经把 AHFL 工程输入统一到 `ahfl.toml`，但它明确不设�
 ## Goals
 
 1. 定义 registry package coordinate、registry source、source archive、registry index metadata 和 lockfile 扩展的职责。
-2. 定义 manifest schema v2 如何引入 registry dependency 和 version requirement，而不改变 manifest v1 contract。
+2. 定义当前 manifest 的 registry dependency 和 version requirement 校验规则。
 3. 定义 publish pipeline：package graph check、public API snapshot、public API diff、SemVer gate、source archive、registry upload 和 lockfile evidence。
 4. 定义 SemVer compatibility matrix，明确哪些 public API diff 需要 major、minor 或 patch bump。
 5. 定义 yanking、immutability、checksum、provenance 和 registry failure semantics。
@@ -86,13 +86,11 @@ flowchart TD
 3. Registry coordinate 是外部包坐标：`registry_id + package_name + version`。它只能进入 resolver input、lockfile 和 diagnostics，不得替代 `PackageId` / `SourceUnitId` / `SymbolId`。
 4. Source archive digest、manifest digest、public API digest 和 registry metadata digest 必须分别记录；任何一项变化都不能被 display string 合并。
 
-### Manifest Schema V2
+### Current manifest schema
 
-RFC 0005 manifest v1 保持不变。Registry dependency 和 version requirement 只能进入 manifest schema v2：
+Package 和 workspace manifest 使用唯一当前字段集合；registry dependency 和 version requirement 无需格式选择字段：
 
 ```toml
-manifest_version = 2
-
 [package]
 name = "refund-audit"
 version = "1.2.0"
@@ -112,13 +110,13 @@ risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
 local-fixture = { source = "path", path = "../local-fixture" }
 ```
 
-V2 rules:
+Current dependency rules:
 
 1. `source = "registry"` requires `version` and may specify `registry`; missing `registry` means workspace default registry.
-2. Registry dependency key must equal the resolved package name unless a future alias RFC changes import identity. V2 does not introduce package alias.
-3. Version requirement supports exact, caret and tilde requirements: `1.2.3`, `^1.2.0`, `~1.2.0`。Wildcard、Git branch、date range 和 arbitrary predicate 不进入 v2。
+2. Registry dependency key must equal the resolved package name unless a future alias RFC changes import identity. The current schema does not introduce package alias.
+3. Version requirement supports exact, caret and tilde requirements: `1.2.3`, `^1.2.0`, `~1.2.0`。Wildcard、Git branch、date range 和 arbitrary predicate 不受支持。
 4. `std = { source = "sysroot" }` remains special only because sysroot is toolchain-provided; registry std is out of scope.
-5. Manifest v1 parser must reject registry dependency fields; it must not silently accept and ignore them.
+5. The parser validates registry dependency fields and rejects unknown fields or removed format selectors.
 
 ### Registry Metadata
 
@@ -126,7 +124,7 @@ Registry index entry format is a structured JSON document:
 
 ```json
 {
-  "format_version": "ahfl.registry.index.v1",
+  "format": "ahfl.registry.index",
   "registry_id": "default",
   "package": "risk-model",
   "version": "2.1.3",
@@ -244,7 +242,7 @@ Formatter does not change registry semantics. Test helpers must use local fixtur
 
 Users gain a standard package publishing path:
 
-1. Library authors can depend on registry packages through manifest v2.
+1. Library authors can depend on registry packages through manifest.
 2. `ahfl.lock` pins exact published versions and source digests.
 3. Publishing fails before upload when public API changes do not match the version bump.
 4. Yanked versions are excluded from fresh resolution but remain reproducible through existing locks.
@@ -252,33 +250,33 @@ Users gain a standard package publishing path:
 
 ## Compatibility and Migration
 
-This RFC introduces a new manifest schema version for registry dependency support. It does not change manifest v1 semantics.
+The current manifest directly supports registry dependencies. Package and workspace manifests have no format selector or resolver generation field.
 
 Breaking impact:
 
-1. Packages that want registry dependencies must migrate from `manifest_version = 1` to `manifest_version = 2`.
-2. Manifest v1 files containing registry fields remain invalid.
+1. Remove the old manifest selector and workspace resolver table; both are rejected as unknown fields.
+2. Registry dependencies use the same current manifest contract as other dependency sources.
 3. Publishing may reject version bumps that previously would have been accepted as plain source changes.
 
 Migration:
 
-1. Keep v1 packages on sysroot/path/workspace dependencies.
-2. Move registry dependencies to manifest v2 only when package publishing is needed.
+1. Remove the obsolete root format selector and workspace resolver table.
+2. Declare sysroot, path, workspace or registry dependencies directly in the current manifest.
 3. Run `ahflc emit public-api` before first publish to establish the public API baseline.
 4. Use SemVer gate diagnostics to choose major/minor/patch bump.
 
 ## Implementation Plan
 
-1. Manifest v2 parser and diagnostics.
-   - Add schema v2 tables for registry dependency source and version requirement.
-   - Keep manifest v1 rejection paths explicit.
+1. manifest parser and diagnostics.
+   - Validate registry dependency source and version requirement in the current schema.
+   - Reject unknown fields, unsupported sources and invalid version requirements with source ranges.
    - Add source ranges for registry fields.
-   - Initial implementation slice: `manifest_version = 2` package/workspace manifests accept registry dependency tables with exact/caret/tilde version requirements; manifest v1 keeps rejecting registry fields. PackageGraph materialization currently fails closed until the registry resolver slice lands.
+   - Package and workspace manifests accept exact/caret/tilde registry requirements without a generation field. PackageGraph materializes verified resolver inputs.
 
 2. Registry metadata model.
    - Add typed structs for registry coordinate, version requirement, registry package version, source archive digest and public API digest.
    - Add JSON parser/printer with fail-closed unknown field behavior.
-   - Initial implementation slice: `RegistryIndexEntry` parses and serializes `ahfl.registry.index.v1` metadata with immutable package coordinate, yanked flag, source archive digest, manifest digest, public API digest and dependency metadata. Unknown fields, invalid digest shape and local path/workspace dependency leakage fail closed.
+   - Initial implementation slice: `RegistryIndexEntry` parses and serializes `ahfl.registry.index` metadata with immutable package coordinate, yanked flag, source archive digest, manifest digest, public API digest and dependency metadata. Unknown fields, invalid digest shape and local path/workspace dependency leakage fail closed.
 
 3. Resolver.
    - Add registry source to PackageGraph resolution.
@@ -289,11 +287,11 @@ Migration:
 4. Source archive.
    - Add normalized source archive builder.
    - Verify archive round-trip by re-parsing manifest and public API snapshot.
-   - Initial implementation slice: `SourceArchive` builds a deterministic `ahfl.source_archive.v1` payload from package roots, includes only `.ahfl` / `.toml` source inputs, excludes VCS/build/cache/lockfile artifacts, rejects symlinks, requires root `ahfl.toml`, normalizes CRLF/CR to LF, records per-file `sha256:<digest>`, `manifest_sha256` and `archive_sha256`, and parses/prints archive manifests with fail-closed unknown-field, digest, duplicate-path and path-escape validation. `ahflc package archive --manifest <ahfl.toml> --out <dir>` is implemented as the first CLI entrypoint and writes metadata/payload artifacts. `materialize_source_archive` verifies payload/archive/file digests, rejects duplicate or escaping paths, requires an empty output root, and writes a source tree suitable for registry resolver input; archive-backed registry `PackageInput` materialization is implemented for resolver use. Remote artifact fetch verifies fetched source archive payload digest before caching it. Public API snapshot re-check remains follow-up.
+   - Initial implementation slice: `SourceArchive` builds a deterministic `ahfl.source_archive` payload from package roots, includes only `.ahfl` / `.toml` source inputs, excludes VCS/build/cache/lockfile artifacts, rejects symlinks, requires root `ahfl.toml`, normalizes CRLF/CR to LF, records per-file `sha256:<digest>`, `manifest_sha256` and `archive_sha256`, and parses/prints archive manifests with fail-closed unknown-field, digest, duplicate-path and path-escape validation. `ahflc package archive --manifest <ahfl.toml> --out <dir>` is implemented as the first CLI entrypoint and writes metadata/payload artifacts. `materialize_source_archive` verifies payload/archive/file digests, rejects duplicate or escaping paths, requires an empty output root, and writes a source tree suitable for registry resolver input; archive-backed registry `PackageInput` materialization is implemented for resolver use. Remote artifact fetch verifies fetched source archive payload digest before caching it. Public API snapshot re-check remains follow-up.
 
 5. Publish gate.
    - Wire `ahflc package publish` through check, public API snapshot, diff, SemVer gate and registry upload.
-   - Initial implementation slice: `ahflc emit public-api-diff --semver-gate --from <old> --to <new>` evaluates the RFC SemVer matrix directly on structured public API diff facts. `ahflc package publish --dry-run --manifest <ahfl.toml> --registry <id> --out <dir>` runs the local publish gate subset without upload: it builds and validates the PackageGraph, checks any present lockfile, typechecks and validates exported public API input, emits a public API snapshot and digest, builds the normalized source archive, rejects local path/workspace dependency leakage, emits `ahfl.registry.index.v1` metadata, and writes `ahfl.publish_dry_run.v1` evidence. Registry public API snapshot artifact fetch is available as the lower layer for previous-release SemVer comparison: it retrieves `/public-api`, verifies `public_api_sha256`, validates `ahfl.public_api.v1` schema and uses cache fallback only on transport unavailability. `package publish --dry-run --semver-gate --from <previous-version>` now fetches the previous release's public API snapshot from registry metadata, compares it with the current snapshot, fails closed on incompatible bumps and writes previous-snapshot evidence on success. `ahflc package publish --manifest <ahfl.toml> --registry <id> --out <dir>` runs the same gates and then sends an `ahfl.registry.publish_request.v1` envelope to the registry; the client validates returned registry index coordinates, digests, dependency metadata and `yanked=false` before writing `ahfl.publish.v1` evidence with `upload_performed=true`. `ahflc package yank <package>@<version> --registry <id> [--reason <text>]` sends an `ahfl.registry.yank_request.v1` mutation and accepts only a registry index response for the same coordinate with `yanked=true`.
+   - Initial implementation slice: `ahflc emit public-api-diff --semver-gate --from <old> --to <new>` evaluates the RFC SemVer matrix directly on structured public API diff facts. `ahflc package publish --dry-run --manifest <ahfl.toml> --registry <id> --out <dir>` runs the local publish gate subset without upload: it builds and validates the PackageGraph, checks any present lockfile, typechecks and validates exported public API input, emits a public API snapshot and digest, builds the normalized source archive, rejects local path/workspace dependency leakage, emits `ahfl.registry.index` metadata, and writes `ahfl.publish_dry_run` evidence. Registry public API snapshot artifact fetch is available as the lower layer for previous-release SemVer comparison: it retrieves `/public-api`, verifies `public_api_sha256`, validates `ahfl.public_api` schema and uses cache fallback only on transport unavailability. `package publish --dry-run --semver-gate --from <previous-version>` now fetches the previous release's public API snapshot from registry metadata, compares it with the current snapshot, fails closed on incompatible bumps and writes previous-snapshot evidence on success. `ahflc package publish --manifest <ahfl.toml> --registry <id> --out <dir>` runs the same gates and then sends an `ahfl.registry.publish_request` envelope to the registry; the client validates returned registry index coordinates, digests, dependency metadata and `yanked=false` before writing `ahfl.publish` evidence with `upload_performed=true`. `ahflc package yank <package>@<version> --registry <id> [--reason <text>]` sends an `ahfl.registry.yank_request` mutation and accepts only a registry index response for the same coordinate with `yanked=true`.
 
 6. Tooling integration.
    - Keep LSP network-free by default.
@@ -303,7 +301,7 @@ Migration:
 
 ## Test Plan
 
-1. Manifest tests: v1 rejects registry fields; v2 accepts registry dependency with valid version requirement; invalid requirement reports source-range diagnostic.
+1. Manifest tests accept current dependency fields without format selectors, reject removed selectors and report source ranges for invalid requirements.
 2. Registry metadata tests: parse/print round trip, unknown field rejection, digest mismatch, yanked flag mutation only.
 3. Resolver tests: exact/caret/tilde selection, highest compatible version, yanked skip, lockfile preference, checksum mismatch, cache fallback only on transport unavailability.
 4. PackageGraph tests: registry package `PackageId` assignment is stable within a graph and never uses package name strings as canonical identity.
@@ -317,27 +315,27 @@ Migration:
 
 Draft exit criteria:
 
-1. Owners agree manifest v2 is the right boundary for registry dependency fields.
+1. Owners agree manifest is the right boundary for registry dependency fields.
 2. Public API diff severity taxonomy is sufficient for RFC 0009 public API facts.
 3. Registry cache fallback semantics match the package registry transport failure model.
 
 Owner review decision:
 
-1. Accepted for v1: manifest v2 is the only boundary for registry dependency fields; manifest v1 remains the RFC 0005 identity contract.
-2. Accepted for v1: package publishing is gated by structured public API diff facts and SemVer policy before registry upload.
-3. Accepted for v1: source archive, manifest, public API and registry metadata digests remain distinct identity facts; display coordinates are diagnostics/output only.
-4. Accepted for v1: workspace-mode registry fetch is not productized. Registry package acquisition stays behind explicit CLI actions such as `ahflc registry resolve` and manifest-mode package graph commands. LSP and ordinary workspace analysis must not perform implicit network fetches.
+1. Accepted: manifest is the only boundary for registry dependency fields; manifest remains the RFC 0005 identity contract.
+2. Accepted: package publishing is gated by structured public API diff facts and SemVer policy before registry upload.
+3. Accepted: source archive, manifest, public API and registry metadata digests remain distinct identity facts; display coordinates are diagnostics/output only.
+4. Accepted: workspace-mode registry fetch is not productized. Registry package acquisition stays behind explicit CLI actions such as `ahflc registry resolve` and manifest-mode package graph commands. LSP and ordinary workspace analysis must not perform implicit network fetches.
 5. Non-blocking follow-up: editor diagnostics/code actions may suggest explicit registry resolution later, but they must preserve the same network-free default.
 
 Accepted exit criteria:
 
-1. CLI command names and manifest v2 fields are approved.
+1. CLI command names and manifest fields are approved.
 2. SemVer matrix has owner sign-off.
 3. Source archive normalization and digest strategy are approved.
 
 Implemented exit criteria:
 
-1. Manifest v2, registry resolver, lockfile extension and publish workflow are implemented. The manifest v2 parser, registry metadata parser/printer, candidate-selection resolver, normalized source archive builder/parser, verified source archive payload materialization, archive-backed registry `PackageInput` construction, remote registry artifact fetch, registry public API snapshot artifact fetch, manifest-mode CLI registry dependency resolution, explicit `registry resolve` lockfile writing, `package archive` CLI, PackageGraph resolver-provided registry package materialization, lockfile registry digest, local publish dry-run, publish-time previous-release SemVer gate, real registry upload, yanking and release evidence slices are implemented; workspace-mode registry fetch remains follow-up only if productized.
+1. manifest, registry resolver, lockfile extension and publish workflow are implemented. The manifest parser, registry metadata parser/printer, candidate-selection resolver, normalized source archive builder/parser, verified source archive payload materialization, archive-backed registry `PackageInput` construction, remote registry artifact fetch, registry public API snapshot artifact fetch, manifest-mode CLI registry dependency resolution, explicit `registry resolve` lockfile writing, `package archive` CLI, PackageGraph resolver-provided registry package materialization, lockfile registry digest, local publish dry-run, publish-time previous-release SemVer gate, real registry upload, yanking and release evidence slices are implemented; workspace-mode registry fetch remains follow-up only if productized.
 2. Local fixture registry tests pass under CTest. Current local tests cover metadata parse/print fail-closed behavior, deterministic candidate selection, remote artifact fetch with cache fallback, public API snapshot fetch/digest/schema validation, source archive normalization/manifest validation, verified payload materialization, archive-backed registry `PackageInput` construction, CLI archive artifact creation, manifest-mode CLI registry dependency resolution, explicit registry lockfile resolution, PackageGraph registry package materialization, lockfile digest drift detection, publish dry-run artifact/evidence creation, publish-time SemVer gate pass/fail, registry publish upload envelope validation and package yanking.
 3. Public API SemVer gate blocks incompatible publish attempts. The standalone CLI gate slice, publish dry-run previous-release gate slice and real publish pre-upload gate are implemented.
 4. LSP never fetches registry packages implicitly.
@@ -351,17 +349,17 @@ Stabilized exit criteria:
 
 当前状态为 `stabilized`。`docs/reference/cli-commands.zh.md` 已记录 registry dependency
 resolution、package publish、SemVer gate 和 package yank 的公开 workflow；
-`ahfl.release_evidence_archive.v1` 已覆盖 `rfc0010.registry_publish.dry_run_semver_gate`、
+`ahfl.release_evidence_archive` 已覆盖 `rfc0010.registry_publish.dry_run_semver_gate`、
 `rfc0010.registry_publish.upload`、`rfc0010.registry_resolve.lockfile`、
 `rfc0010.registry_yank.local_fixture` 和 `rfc0010.registry_publish.semver_rejection`。
 其中 `registry_resolve.lockfile` 通过同一个本地 fixture registry 在 publish 后执行显式
 `registry resolve`，并把 registry coordinate / source archive digest / public API digest
-写入 `ahfl.lock`。workspace-mode registry fetch 仍不属于 v1 产品化范围。
+写入 `ahfl.lock`。workspace-mode registry fetch 仍不属于当前产品化范围。
 
 ## Alternatives
 
-1. Put registry fields into manifest v1.
-   - Rejected because RFC 0005 v1 deliberately excludes registry source and version range. Mutating v1 would make existing release evidence ambiguous.
+1. Keep separate manifest generations for registry dependencies.
+   - Rejected because the repository maintains one current schema and synchronizes every producer and consumer in the same change.
 
 2. Use Git URLs as the first remote dependency source.
    - Rejected because Git branch/tag resolution is not a package registry, does not provide immutable package version metadata, and weakens reproducibility.
@@ -377,7 +375,7 @@ resolution、package publish、SemVer gate 和 package yank 的公开 workflow�
 
 ## Open Questions
 
-1. Should registry authentication and provenance use Sigstore/OIDC in v1, or begin with token auth plus signed checksum manifest?
+1. Should registry authentication and provenance use Sigstore/OIDC in the current design, or begin with token auth plus signed checksum manifest?
 2. Should package namespace be flat package names only, or should AHFL introduce organization scopes before public registry launch?
 3. Should `application` packages be publishable to the same registry as libraries, or should runtime handoff bundles use a separate artifact registry?
 4. Should SemVer gate allow an explicit owner-approved override, and if so how is that override represented in release evidence?
@@ -385,21 +383,23 @@ resolution、package publish、SemVer gate 和 package yank 的公开 workflow�
 ## Decision History
 
 - 2026-07-07: Draft opened to move registry, publishing, SemVer and publish-time public API compatibility out of RFC 0005 and RFC 0009 into a dedicated RFC.
-- 2026-07-07: Landed the first implementation slice for the public API SemVer gate as an explicit `emit public-api-diff` mode; registry resolver, manifest v2, source archives and publish workflow remain draft/implementation follow-up.
-- 2026-07-07: Landed the manifest v2 parser slice for registry dependency syntax and fail-closed PackageGraph diagnostics; registry resolver, source archive, lockfile registry fields and publish dry run remain follow-up.
-- 2026-07-07: Landed the registry metadata model slice with typed `ahfl.registry.index.v1` parser/printer and fail-closed validation; resolver candidate selection and archive materialization remain follow-up.
+- 2026-07-07: Landed the first implementation slice for the public API SemVer gate as an explicit `emit public-api-diff` mode; registry resolver, manifest, source archives and publish workflow remain draft/implementation follow-up.
+- 2026-07-07: Landed the manifest parser slice for registry dependency syntax and fail-closed PackageGraph diagnostics; registry resolver, source archive, lockfile registry fields and publish dry run remain follow-up.
+- 2026-07-07: Landed the registry metadata model slice with typed `ahfl.registry.index` parser/printer and fail-closed validation; resolver candidate selection and archive materialization remain follow-up.
 - 2026-07-07: Landed registry candidate selection over typed metadata, including highest compatible non-yanked selection and locked yanked reproduction; PackageGraph materialization, source archive fetch/verify and lockfile registry fields remain follow-up.
 - 2026-07-07: Landed the normalized source archive builder/parser slice with deterministic source payloads, source-only file filtering, digest metadata and fail-closed archive manifest validation; CLI archive/publish wiring, PackageGraph archive materialization and lockfile registry digest fields remain follow-up.
 - 2026-07-07: Landed `ahflc package archive --manifest <ahfl.toml> --out <dir>` as the first source archive CLI productization slice, with smoke coverage for artifact creation and option validation; at that point publish wiring, registry upload/yank and archive-backed PackageGraph materialization were still follow-up.
 - 2026-07-07: Landed verified source archive payload materialization for registry resolver use: payload/archive/file digests, duplicate paths, path escape and non-empty output roots fail closed before any source tree is accepted.
 - 2026-07-07: Landed PackageGraph materialization for resolver-provided registry packages, including registry id/version validation, package graph JSON metadata, lockfile registry digest fields and drift detection.
 - 2026-07-07: Landed `ahflc package publish --dry-run` as the network-free local publish gate slice, emitting source archive, public API snapshot, registry index metadata and dry-run evidence artifacts before the later upload/yank slice.
-- 2026-07-07: Landed archive-backed registry `PackageInput` construction from verified source archive payloads and `ahfl.registry.index.v1` metadata, including fail-closed digest, manifest version and dependency metadata validation.
+- 2026-07-07: Landed archive-backed registry `PackageInput` construction from verified source archive payloads and `ahfl.registry.index` metadata, including fail-closed digest, manifest version and dependency metadata validation.
 - 2026-07-07: Landed remote registry artifact fetch for registry index, source archive manifest and source archive payload, with cache fallback only on transport unavailability and fail-closed validation before producing artifacts for PackageInput materialization.
 - 2026-07-07: Landed manifest-mode CLI registry dependency resolution from package index metadata to fetched source archive artifacts and PackageGraph registry packages, with cache-backed smoke coverage and no LSP network fetch.
 - 2026-07-08: Landed `ahflc registry resolve --manifest <ahfl.toml> --lockfile <ahfl.lock>` as the explicit lockfile-writing registry resolver CLI and extended cache-backed smoke coverage to assert registry package and edge metadata in `ahfl.lock`.
-- 2026-07-07: Landed registry public API snapshot artifact fetch with `public_api_sha256` verification, `ahfl.public_api.v1` schema validation and cache fallback only on transport unavailability, preparing the previous-release SemVer gate wiring.
+- 2026-07-07: Landed registry public API snapshot artifact fetch with `public_api_sha256` verification, `ahfl.public_api` schema validation and cache fallback only on transport unavailability, preparing the previous-release SemVer gate wiring.
 - 2026-07-07: Landed publish dry-run previous-release SemVer gate wiring: `package publish --dry-run --semver-gate --from <previous-version>` fetches registry package index metadata and previous public API snapshot, compares against the current snapshot, records pass evidence and fails closed on incompatible bumps.
 - 2026-07-07: Landed registry upload/yank wiring and RFC0010 release evidence: `package publish` now uploads a validated publish request envelope after local gates, `package yank` requires a yanked registry index response, and the release evidence archive covers dry-run SemVer pass, upload, yank and SemVer rejection through a local fixture registry.
-- 2026-07-08: Owner review accepted the v1 design boundary. Manifest v2, SemVer-gated publishing, digest-separated registry identity and explicit registry resolution are approved; workspace-mode registry fetch remains out of v1 productization, and LSP/workspace analysis must stay network-free by default.
+- 2026-07-08: Owner review accepted the current design boundary. manifest, SemVer-gated publishing, digest-separated registry identity and explicit registry resolution are approved; workspace-mode registry fetch remains outside the current scope, and LSP/workspace analysis must stay network-free by default.
 - 2026-07-08: Stabilized RFC0010 after release evidence archive gained live fixture-registry resolve coverage: a published non-std package is resolved into a lockfile with registry coordinate and digest metadata, alongside publish dry-run, real upload, yanking and SemVer rejection evidence.
+
+- 2026-10-12: Removed manifest and resolver format selectors and the dual dependency parser; current manifests directly support all four dependency sources.

@@ -216,7 +216,7 @@ def main() -> int:
     control.write_text(
         json.dumps(
             {
-                "schema": "ahfl.reference-soak-control.v1",
+                "format": "ahfl.reference-soak-control",
                 "minimum_duration_seconds": args.minimum_seconds,
                 "minimum_iterations": args.minimum_iterations,
             }
@@ -245,7 +245,7 @@ def main() -> int:
     )
     worker_report = json.loads(result.stdout)
     require(
-        worker_report["schema"] == "ahfl.reference-worker-soak.v1",
+        worker_report["format"] == "ahfl.reference-worker-soak",
         "long-lived worker report schema mismatch",
     )
     require(
@@ -317,7 +317,7 @@ def main() -> int:
     evidence.write_text(
         json.dumps(
             {
-                "schema": "ahfl.production-confidence-soak.v2",
+                "format": "ahfl.production-confidence-soak",
                 "status": "passed",
                 "source_revision": source_revision,
                 "kind": args.contract_kind,

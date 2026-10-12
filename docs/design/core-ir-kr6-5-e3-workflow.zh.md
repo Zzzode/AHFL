@@ -11,7 +11,7 @@
 
 E1 proved one selected agent could become a deterministic executable wasm
 module without lowering expressions. E2 added the exact `ahfl_cap` import and
-the append-only `run2` status/length boundary for one terminal capability call.
+the explicit `run_workflow` status/length boundary for one terminal capability call.
 E3 adds the next orchestration-only vertical slice:
 
 1. select one entry by typed Core identity rather than choosing the first
@@ -39,7 +39,7 @@ workflow IdentityPipeline {
 ```
 
 Both agents may have a deterministic acyclic goto prefix, but each final
-handler must be the E1 canonical identity return. The wasm `run2` executes
+handler must be the E1 canonical identity return. The wasm `run_workflow` executes
 `first` and `second`, reports two completed workflow nodes, and returns the
 original input pointer and length unchanged.
 
@@ -216,7 +216,7 @@ the normalized plan is self-contained. The source node must appear earlier in
 the computed schedule.
 
 The encoder assigns two wasm i32 locals `(ptr,len)` to each node output in
-`CoreWorkflowNodeId` order. At a scheduled node it selects either the `run2`
+`CoreWorkflowNodeId` order. At a scheduled node it selects either the `run_workflow`
 input pair or an earlier node pair and calls that target instance's internal
 identity runner. The runner returns the same pair. E3 stores the pair and
 increments `workflow_completed_count` once.
@@ -231,7 +231,7 @@ The E3 frame is a borrowed opaque wire frame for the duration of the run:
 - the outer host owns the input allocation;
 - identity agent runners do not read, write, retain, allocate, or free it;
 - all workflow node pairs may alias that same allocation;
-- `run2` returns the selected pair with `OK`; in the accepted slice it is the
+- `run_workflow` returns the selected pair with `OK`; in the accepted slice it is the
   original input pair, so ownership remains with the outer host; and
 - the host deallocates its input allocation exactly once with the same module
   allocator.
@@ -254,7 +254,7 @@ Each distinct reachable `CoreInstanceId` gets one private internal runner in
 ascending instance-id order. Node dispatch calls these functions by a fixed
 index table. Repeated nodes targeting the same instance reuse the same runner.
 
-An internal runner has the E2 `run2` tuple shape:
+An internal runner has the E2 `run_workflow` tuple shape:
 
 ```wat
 (func (param i32 i32) (result i32 i32 i32))
@@ -269,34 +269,20 @@ for explicit agent entries remains E2's reachable `CoreCapabilityId` order.
 
 ### 4.2 Exports
 
-The ABI version remains 1 and E1/E2 agent-entry exports keep their behavior.
-For a workflow entry:
+A workflow exports `memory`, `alloc`, `dealloc`, `run_workflow`, `step`,
+`current_state`, `transition_count`, `workflow_node_count`, and
+`workflow_completed_count`. It does not export a pointer-only `run` or an
+ABI-version global.
 
-- `memory`, `alloc`, `dealloc`, `run`, `run2`, `transition_count`, and
-  `ahfl_abi_version` remain exported with their existing signatures;
-- `run2` resets workflow counters, executes the complete schedule, and returns
-  `(OK,ptr,len)`;
-- legacy `run` is safe because this slice cannot produce ERROR/PENDING or a
-  new-length result; it executes the same schedule and returns the input
-  pointer;
-- `transition_count` is the sum of agent goto transitions performed by the
-  workflow run;
-- `step` and `current_state` trap before any effect, because a multi-agent DAG
-  has no single honest agent state and these signatures carry no entry/node
-  coordinate; and
-- E3 append-only exports immutable `workflow_node_count` and mutable
-  `workflow_completed_count`, both i32 globals.
+`run_workflow` resets workflow counters, executes the complete schedule, and
+returns `(status,ptr,len)`. `transition_count` counts agent transitions;
+`workflow_completed_count` resets at entry and advances once per completed node.
+These counters are telemetry, not proof of exact runtime order. Node events
+provide ordered observations. `step` and `current_state` cannot invent a single
+agent state for an uncoordinated multi-agent DAG; invalid uses fail before effects.
 
-`workflow_completed_count` resets to zero at run entry and increments exactly
-once after each internal runner returns. It is execution telemetry, not a
-substitute for an event log. E3 does not claim that observing only the final
-count proves the complete order; binary/structural evidence separately locks
-the unrolled call order. A later embedded workflow host may add a durable trace
-API without changing these exports.
-
-The private E2 `pending_latched` global is absent from an E3 workflow artifact,
-because capability-bearing agents are rejected. Explicit E2 agent artifacts
-retain it unchanged.
+The current module's optional pending latch is determined by actual capability
+execution. It is a runtime state invariant, not a historical format selector.
 
 ### 4.3 Encoder determinism and atomicity
 
@@ -358,7 +344,7 @@ reconstruct edges from names.
 
 An E1/E2 explicit agent entry remains supported in a package containing other
 declarations. Its bytes, import set, status normalization, pending latch, and
-legacy `run` behavior are unchanged. Only the obsolete ambiguity rule is
+current explicit-status entry behavior is validated. Only the obsolete ambiguity rule is
 lifted once the typed entry has already resolved selection.
 
 ## 7. Evidence model
@@ -373,7 +359,7 @@ Always-on tests prove:
    pruned;
 4. internal runners are ordered by `CoreInstanceId` and reused;
 5. canonical node-input/return normalization and the full fail-closed matrix;
-6. workflow `run`/`run2` contain no frame load/store/parse/copy/allocation;
+6. workflow `run`/`run_workflow` contain no frame load/store/parse/copy/allocation;
 7. `step`/`current_state` trap before effects for workflow entries;
 8. completed and transition counters have the stated update points;
 9. no imports are emitted for the accepted workflow, and unreachable
@@ -402,7 +388,7 @@ and identity output bytes. No Core interpreter is added.
 ### 7.3 Real execution and honest classification
 
 An optional embedded Node host instantiates the emitted workflow module in one
-persistent instance, allocates an input frame, calls `run2`, and checks:
+persistent instance, allocates an input frame, calls `run_workflow`, and checks:
 
 - `OK` and exact `(ptr,len)` identity;
 - `workflow_node_count` and `workflow_completed_count`;

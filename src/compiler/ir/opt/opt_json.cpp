@@ -603,10 +603,10 @@ void print_skipped_temporal(const SkippedTemporalFragment &fragment, std::ostrea
 void print_opt_program_json(const OptProgram &program, std::ostream &out) {
     out << "{\n";
     indent(out, 1);
-    out << "\"format\": \"AHFL_OPT_IR_V1\",\n";
+    out << "\"format\": \"AHFL_OPT_IR\",\n";
     indent(out, 1);
-    out << "\"source_program_version\": ";
-    write_string(out, program.source_program_version);
+    out << "\"source_program_format\": ";
+    write_string(out, program.source_program_format);
     out << ",\n";
     indent(out, 1);
     out << "\"skipped_temporal\": ";

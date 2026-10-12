@@ -127,6 +127,19 @@ void test_mixed_and_decreases_skipped() {
           "forbid clause reported ineligible");
 }
 
+void test_cumulative_clause_ordinals() {
+    ir::Program p;
+    add_contract(p, "Agent", {{ir::ContractClauseKind::Decreases, int_lit(p, "1")}});
+    add_contract(p, "Agent", {{ir::ContractClauseKind::Ensures,
+        bin(p, ir::ExprBinaryOp::Equal, str_lit(p, "\"x\""), str_lit(p, "\"y\""))}});
+    for (auto &decl : p.declarations) {
+        std::get<ir::ContractDecl>(decl).target_ref.id = 7;
+    }
+    const auto report = analyze_contract_subset_eligibility(p);
+    check(report.ineligible.size() == 1 && report.ineligible.front().clause_index == 1,
+          "unsupported clause ordinal includes prior contract and decreases clauses");
+}
+
 void test_empty_program() {
     ir::Program p;
     auto report = analyze_contract_subset_eligibility(p);
@@ -141,6 +154,7 @@ int main() {
     test_string_predicate_ineligible();
     test_mixed_and_decreases_skipped();
     test_empty_program();
+    test_cumulative_clause_ordinals();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

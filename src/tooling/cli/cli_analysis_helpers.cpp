@@ -251,7 +251,8 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
     // `core.UNLOWERED_*`). Those are user-actionable conditions, not internal
     // faults, so they are reported without the "internal error" prefix.
     const bool reports_user_facing_lowering_diagnostic =
-        *backend == ahfl::BackendKind::InfraWasm || *backend == ahfl::BackendKind::CoreIrJson;
+        *backend == ahfl::BackendKind::InfraWasm || *backend == ahfl::BackendKind::CoreIrJson ||
+        *backend == ahfl::BackendKind::InfraK8sCrd;
 
     const bool needs_smv_size_report =
         options.smv_size_report_requested && effective_command == CommandKind::EmitSmv;
@@ -382,6 +383,7 @@ build_formal_checker_options(const CommandLineOptions &options) {
         }
     }
     formal_options.explain = options.explain_requested;
+    formal_options.verify_data_contracts = options.verify_data_contracts;
 
     if (options.bmc_depth.has_value()) {
         if (auto depth = parse_bmc_depth(*options.bmc_depth); depth.has_value()) {
@@ -404,66 +406,101 @@ bool run_pipeline_formal_verification(const ahfl::ir::Program &program,
                                       const CommandLineOptions &options,
                                       std::ostream &out,
                                       std::ostream &err) {
-    // 1. Subset eligibility (always) — warn for clauses outside the verifiable
-    //    subset so "verification passed" stays honest.
-    const auto eligibility = ahfl::formal::analyze_contract_subset_eligibility(program);
-    for (const auto &clause : eligibility.ineligible) {
-        err << "warning[" << ahfl::error_codes::formal::NotInVerifiedSubset.full_code()
-            << "]: "
-            << ahfl::messages::formal::NotInVerifiedSubset.format_with(
-                   ahfl::ir::contract_clause_kind_name(clause.kind),
-                   clause.target_name,
-                   ahfl::formal::describe_rejection(clause.rejection))
-            << '\n';
-    }
-
-    // 2. SMT-BMC path. Unsupported = no encodable goals, the silent fast path
-    //    (no Z3 launch). Everything else is fail-closed.
-    const auto smt_result = ahfl::formal::run_smt_bmc(program, {});
-    const bool smt_had_goals = smt_result.status != ahfl::formal::SmtBmcStatus::Unsupported;
-    const bool smt_failed = ahfl::formal::smt_bmc_result_is_failure(smt_result);
-
-    if (smt_had_goals) {
-        if (smt_failed) {
-            ahfl::formal::print_smt_bmc_report(smt_result, err);
-            return false;
-        }
-        if (smt_result.status == ahfl::formal::SmtBmcStatus::SolverUnavailable) {
-            err << "error: SMT-BMC solver (Z3) not found; formal verification requires it\n";
-            return false;
-        }
-        if (smt_result.status == ahfl::formal::SmtBmcStatus::Unknown) {
-            ahfl::formal::print_smt_bmc_report(smt_result, err);
-            err << "error: SMT-BMC returned unknown; formal verification is fail-closed\n";
-            return false;
-        }
-    }
-
-    // 3. SMV path — always run, no state-space gate. Fail-closed on anything
-    //    that is not Passed.
-    auto formal_options = build_formal_checker_options(options);
-    auto smv_result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
-
-    if (!ahfl::formal::is_formal_verification_success(smv_result)) {
-        ahfl::formal::print_formal_verification_report(smv_result, err);
-        return false;
-    }
-
-    // 4. Report. All formal-stage output goes to stderr: the stage is a
-    //    diagnostic pass, not a command, and stdout must stay clean for
-    //    machine-parseable command output (e.g. `run --output-format json`).
-    //    Silent when there was nothing to verify (zero-spec fast path).
+    // Verification is a diagnostic stage; keep stdout available for command
+    // output such as run --output-format json.
     (void)out;
-    const bool smv_had_specs = smv_result.expected_specification_count > 0;
-    if (!smt_had_goals && !smv_had_specs) {
-        return true;
+    ir::ContractClauseIndex clause_index;
+    clause_index.rebuild(program);
+    std::size_t assumptions = 0;
+    std::size_t goals = 0;
+    for (const auto &decl : program.declarations) {
+        const auto *contract = std::get_if<ir::ContractDecl>(&decl);
+        if (contract == nullptr)
+            continue;
+        for (const auto &clause : contract->clauses) {
+            if (!std::holds_alternative<ir::ExprRef>(clause.value) ||
+                clause.kind == ir::ContractClauseKind::Decreases)
+                continue;
+            if (clause.kind == ir::ContractClauseKind::Requires)
+                ++assumptions;
+            else
+                ++goals;
+        }
     }
-    if (smt_had_goals) {
-        ahfl::formal::print_smt_bmc_report(smt_result, err);
+    err << "data_contract_scope: contract_implication\n"
+        << "data_contract_assumptions: " << assumptions << '\n'
+        << "data_contract_goals: " << goals << '\n'
+        << "runtime_contract_checks: not_implemented\n";
+    for (const auto &decl : program.declarations) {
+        const auto *contract = std::get_if<ir::ContractDecl>(&decl);
+        if (contract == nullptr)
+            continue;
+        for (std::size_t i = 0; i < contract->clauses.size(); ++i) {
+            const auto &clause = contract->clauses[i];
+            if (!std::holds_alternative<ir::ExprRef>(clause.value) ||
+                clause.kind == ir::ContractClauseKind::Decreases)
+                continue;
+            err << (clause.kind == ir::ContractClauseKind::Requires ? "data_contract_assumption: "
+                                                                    : "data_contract_goal: ")
+                << ir::symbol_canonical_name(contract->target_ref) << " "
+                << ir::contract_clause_kind_name(clause.kind) << "["
+                << clause_index.clause_begin(*contract) + i << "] "
+                << (options.verify_data_contracts ? "requested" : "not_requested") << " "
+                << contract->provenance.source_path;
+            if (clause.source_range) {
+                err << " @[" << clause.source_range->begin_offset << ","
+                    << clause.source_range->end_offset << ")";
+            }
+            err << '\n';
+        }
     }
-    ahfl::formal::print_formal_verification_report(smv_result, err);
 
-    return true;
+    const auto smv_result = ahfl::formal::verify_program_with_smv_checker(
+        program, build_formal_checker_options(options));
+    ahfl::formal::print_formal_verification_report(smv_result, err);
+    const bool control_passed = ahfl::formal::is_formal_verification_success(smv_result);
+    if (!options.verify_data_contracts) {
+        err << "data_contract_status: not_requested\n";
+        return control_passed;
+    }
+
+    const auto smt_result = ahfl::formal::run_smt_bmc(program, {});
+    std::string_view data_status = ahfl::formal::smt_bmc_status_name(smt_result.status);
+    switch (smt_result.status) {
+    case ahfl::formal::SmtBmcStatus::Safe:
+        data_status = "proved";
+        break;
+    case ahfl::formal::SmtBmcStatus::BoundedSafe:
+        data_status = "bounded";
+        break;
+    case ahfl::formal::SmtBmcStatus::Unsafe:
+        data_status = "refuted";
+        break;
+    case ahfl::formal::SmtBmcStatus::Unsupported:
+        if (smt_result.unsupported_clauses.empty())
+            data_status = "no_targets";
+        break;
+    default:
+        break;
+    }
+    err << "data_contract_status: " << data_status << '\n';
+    ahfl::formal::print_smt_bmc_report(smt_result, err);
+    for (const auto &clause : smt_result.unsupported_clauses) {
+        err << "error[" << ahfl::error_codes::formal::NotInVerifiedSubset.full_code()
+            << "]: requested contract " << clause.target_name << " "
+            << ir::contract_clause_kind_name(clause.kind) << "[" << clause.clause_index
+            << "] cannot be proven: " << ahfl::formal::describe_rejection(clause.rejection);
+        if (const auto location =
+                clause_index.find_clause(clause.target_name, clause.clause_index)) {
+            err << " " << location->contract->provenance.source_path;
+        }
+        if (clause.source_range) {
+            err << " @[" << clause.source_range->begin_offset << ","
+                << clause.source_range->end_offset << ")";
+        }
+        err << '\n';
+    }
+    return control_passed && !ahfl::formal::smt_bmc_result_is_failure(smt_result);
 }
 
 // ---------------------------------------------------------------------------

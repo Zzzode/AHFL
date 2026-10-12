@@ -76,6 +76,7 @@ struct ExpressionValue {
     // TypedExpr::match_arm_pattern_indexes by remember_expression_type. Empty
     // for every non-match expression.
     std::vector<std::uint32_t> match_arm_pattern_indexes{};
+    std::optional<TypedTryInfo> try_info{};
 };
 
 struct ExpressionPatternLoweringResult {
@@ -213,7 +214,7 @@ class ExpressionValueFactory final {
     [[nodiscard]] TypePtr bounded_string_type(std::int64_t minimum, std::int64_t maximum) const;
     [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const;
     [[nodiscard]] TypePtr make_error_type() const;
-    [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const;
+    [[nodiscard]] TypePtr type_or_any(MaybeCRef<Type> type) const;
 
     [[nodiscard]] ExpressionValue typed(TypePtr type, bool is_pure = true) const;
     [[nodiscard]] ExpressionValue typed_effect(TypePtr type, ExprEffect effect) const;

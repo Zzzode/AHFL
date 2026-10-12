@@ -4,12 +4,12 @@
 // Two real-run KATs plus synthetic fail-closed tests:
 //   1. trace_ring_kat: a P6-frame workflow (wh4_trace_workflow) with a
 //      computed-goto routing agent, driven on the REAL wasm3 engine through
-//      run2 with a host-packed P6 input. The decoded trace ring is pinned
+//      run_workflow with a host-packed P6 input. The decoded trace ring is pinned
 //      against the descriptor's all_states for BOTH branches (n=1 -> High,
 //      n=0 -> Low), proving the ring captures input-dependent computed
 //      handlers a static walk cannot derive.
 //   2. node_event_kat: a P6 capability workflow (e3_capability_workflow)
-//      driven on the REAL wasm3 engine through run2 with an echo import
+//      driven on the REAL wasm3 engine through run_workflow with an echo import
 //      callback. The decoded node-event buffer (88 bytes = 8 header + 2*40
 //      records) is pinned against the descriptor's schedule -- the same
 //      common-KAT the JS oracle pins byte-for-byte against the golden hex.
@@ -20,7 +20,7 @@
 // Every module is emitted in-process through the real wasm backend (no
 // shelling out, no hand-built bytes for the execution tests) and driven on
 // the real wasm3 engine, so the tests prove the REAL pipeline:
-// emit -> pack -> run2 -> decode trace ring / node events.
+// emit -> pack -> run_workflow -> decode trace ring / node events.
 
 #include "runtime/wasm_host/state_trace_decoder.hpp"
 #include "runtime/wasm_host/frame_packer.hpp"
@@ -164,7 +164,7 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return regions;
 }
 
-// ==== 1. trace ring KAT (P6-frame workflow, real wasm3 run2) ====
+// ==== 1. trace ring KAT (P6-frame workflow, real wasm3 run_workflow) ====
 
 void test_trace_ring_kat(const std::filesystem::path &repo_root) {
     const auto source = repo_root / "tests/golden/wasm/wh4_trace_workflow.ahfl";
@@ -266,14 +266,14 @@ void test_trace_ring_kat(const std::filesystem::path &repo_root) {
             return;
         }
 
-        auto outcome = engine.invoke_run2(
+        auto outcome = engine.invoke_run_workflow(
             eng::GuestPointer{block.input_base}, block.input_size);
-        check(outcome.has_value(), prefix + ".invoke_run2");
+        check(outcome.has_value(), prefix + ".invoke_run_workflow");
         if (!outcome.has_value()) {
             return;
         }
 
-        const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
+        const auto *tuple = std::get_if<eng::WorkflowRunResultTuple>(&*outcome);
         check(tuple != nullptr, prefix + ".result_tuple");
         if (tuple == nullptr) {
             return;
@@ -307,7 +307,7 @@ void test_trace_ring_kat(const std::filesystem::path &repo_root) {
     }
 }
 
-// ==== 2. node-event KAT (P6 capability workflow, real wasm3 run2) ====
+// ==== 2. node-event KAT (P6 capability workflow, real wasm3 run_workflow) ====
 
 void test_node_event_kat(const std::filesystem::path &repo_root) {
     const auto source =
@@ -378,9 +378,6 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
                         return desc.imports[ordinal].canonical_name;
                     }
                 }
-            } else if (node.source_symbol == source_symbol &&
-                       node.capability_ordinal < desc.imports.size()) {
-                return desc.imports[node.capability_ordinal].canonical_name;
             }
         }
         return std::nullopt;
@@ -406,7 +403,7 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
     }
 
     // Pack the workflow input as a P4-D frame into the entry node's I_k block
-    // (the P6-only world has no wire-JSON entry lane; run2 receives the P4-D
+    // (the P6-only world has no wire-JSON entry lane; run_workflow receives the P4-D
     // frame pointer, not a JSON pointer).
     const auto &section = desc.frame_section;
     const auto &wire = desc.wire_schema;
@@ -446,14 +443,14 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
         return;
     }
 
-    auto outcome = engine.invoke_run2(
+    auto outcome = engine.invoke_run_workflow(
         eng::GuestPointer{block.input_base}, block.input_size);
-    check(outcome.has_value(), "node_event_kat.invoke_run2");
+    check(outcome.has_value(), "node_event_kat.invoke_run_workflow");
     if (!outcome.has_value()) {
         return;
     }
 
-    const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
+    const auto *tuple = std::get_if<eng::WorkflowRunResultTuple>(&*outcome);
     check(tuple != nullptr, "node_event_kat.result_tuple");
     if (tuple == nullptr) {
         return;
@@ -506,7 +503,8 @@ void test_node_event_kat(const std::filesystem::path &repo_root) {
     check(r0.workflow_node_id.value == 0, "node_event_kat.r0.node_id");
     check(r0.schedule_pos.value == 0, "node_event_kat.r0.schedule_pos");
     check(r0.capability.value == 0, "node_event_kat.r0.capability_ordinal");
-    check(r0.source_symbol == desc.nodes[0].source_symbol,
+    check(!desc.nodes[0].all_capabilities.empty() &&
+              r0.source_symbol == desc.nodes[0].all_capabilities[0].second,
           "node_event_kat.r0.source_symbol");
     check(r0.status == 0, "node_event_kat.r0.status_ok");
 

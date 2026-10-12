@@ -22,8 +22,7 @@ set(lockfile_path "${WORK_DIR}/ahfl.lock")
 set(bad_checksum "sha256:0000000000000000000000000000000000000000000000000000000000000000")
 string(CONCAT lockfile_json
     "{\n"
-    "  \"format_version\": \"ahfl.lock.v1\",\n"
-    "  \"resolver_version\": 1,\n"
+    "  \"format\": \"ahfl.lock\",\n"
     "  \"root_package\": \"refund-audit\",\n"
     "  \"packages\": [\n"
     "    {\n"

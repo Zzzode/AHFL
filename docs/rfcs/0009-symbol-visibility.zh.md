@@ -62,11 +62,11 @@ AHFL 当前已经有 package graph 和 module export：
 3. Go 用 exported identifiers 和 import declaration 共同决定跨 package 访问；import 只启用被导入 package 的 exported identifiers。参考 [Go spec: Exported identifiers](https://go.dev/ref/spec#Exported_identifiers) 和 [Go spec: Import declarations](https://go.dev/ref/spec#Import_declarations)。
 4. OCaml 通过 signatures 描述 module 的外部形状，并支持 abstract type 隐藏表示。参考 [OCaml manual: Module types and signatures](https://ocaml.org/manual/5.2/modtypes.html)。
 
-AHFL 应吸收这些系统的核心原则，但不照搬其全部复杂度：v1 只引入 `pub` 与默认 package-internal，不引入 Rust scoped visibility、Swift `open/fileprivate/private` 或 OCaml 完整 signature language。
+AHFL 应吸收这些系统的核心原则，但不照搬其全部复杂度：当前模型只包含 `pub` 与默认 package-internal，不引入 Rust scoped visibility、Swift `open/fileprivate/private` 或 OCaml 完整 signature language。
 
 ## Goals
 
-1. 定义 AHFL v1 符号可见性模型：`pub` 与默认 package-internal。
+1. 定义 AHFL 符号可见性模型：`pub` 与默认 package-internal。
 2. 明确 `[exports].modules` 是 module gate，不是 symbol export list。
 3. 定义哪些 declaration 可以标记 `pub`，以及 public signature well-formedness。
 4. 定义 `pub use` 作为 curated facade/re-export 机制，避免强迫用户暴露内部 module path。
@@ -79,12 +79,12 @@ AHFL 应吸收这些系统的核心原则，但不照搬其全部复杂度：v1 
 
 1. 不把 visibility 当作 runtime security boundary。权限、secret、capability authorization 仍由 runtime/provider/assurance 体系定义。
 2. 不引入 class/protected/friend/inheritance 风格可见性。AHFL 数据模型遵循 `std::variant`/trait/impl，不采用 OO 继承层级。
-3. 不在 v1 引入 field-level privacy。`pub struct` 的字段和 `pub enum` 的 variants 在 v1 视为该 type public representation 的一部分。
-4. 不引入 Rust `pub(crate)`、`pub(super)`、`pub(in path)`。AHFL v1 的内部边界是 package，不是任意 module subtree。
-5. 不引入完整 signature/module-interface language。`pub use` 与 `pub` declaration 足够覆盖 v1 public API。
+3. 不引入 field-level privacy。`pub struct` 的字段和 `pub enum` 的 variants 视为该 type public representation 的一部分。
+4. 不引入 Rust `pub(crate)`、`pub(super)`、`pub(in path)`。AHFL 的内部边界是 package，不是任意 module subtree。
+5. 不引入完整 signature/module-interface language。`pub use` 与 `pub` declaration 足够覆盖 public API。
 6. 不设计 registry version solver 或 semver enforcement。API snapshot / docs / diff 可以作为 tooling stabilization artifact，但 registry 发布策略另行设计。
 7. 不改变 RFC 0008 定义的 primitive prelude：`String`、`Bool`、`Int` 等 primitive type name visibility 不来自 `std` module import。
-8. 不在 v1 引入 module re-export、glob re-export 或 import-all 语义；`pub use` 只 re-export named symbols。
+8. 不引入 module re-export、glob re-export 或 import-all 语义；`pub use` 只 re-export named symbols。
 
 ## Design
 
@@ -106,7 +106,7 @@ AHFL 应吸收这些系统的核心原则，但不照搬其全部复杂度：v1 
 
 ### Visibility lattice
 
-AHFL v1 只有两个 source-level visibility levels：
+AHFL 只有两个 source-level visibility levels：
 
 | Source marker | Semantic level | Cross-package visible | Notes |
 | --- | --- | --- | --- |
@@ -210,7 +210,7 @@ topLevelDecl:
 
 `contractDecl` 和 `flowDecl` 不接受 `pub`，因为它们不是独立可 import 的命名实体；它们的 public artifact 可见性由所绑定的 `pub` agent/workflow/fn/type 决定。
 
-`impl` block 本身 v1 不接受 `pub`；inherent impl 的 item 可以带 `pub`，trait impl 的 item 不接受 `pub`，因为 trait contract 决定其外部可调用 surface：
+`impl` block 本身不接受 `pub`；inherent impl 的 item 可以带 `pub`，trait impl 的 item 不接受 `pub`，因为 trait contract 决定其外部可调用 surface：
 
 ```antlr
 implDecl:
@@ -236,7 +236,7 @@ useDecl:
 3. 最后一段之前的 prefix 是 module path。
 4. `use audit_core::types::Request as Req;` 因此加载 `audit_core::types` module，并在当前 source 引入 symbol alias `Req`。
 5. `pub use audit_core::types::Request;` 还会在当前 module 定义 public alias symbol `Request`。
-6. v1 不支持 re-export enum variants、associated items 或 nested members；这些必须通过拥有它们的 top-level type/trait/impl surface 暴露。
+6. 当前模型不支持 re-export enum variants、associated items 或 nested members；这些必须通过拥有它们的 top-level type/trait/impl surface 暴露。
 
 Source examples：
 
@@ -329,7 +329,7 @@ Detached mode rule：
 
 ### Re-export and facade rules
 
-`pub use` 用于构建 curated public API facade。v1 只支持 symbol re-export，不支持 module re-export、glob re-export 或 import-all：
+`pub use` 用于构建 curated public API facade。只支持 symbol re-export，不支持 module re-export、glob re-export 或 import-all：
 
 1. `use` 不带 `pub` 时只在当前 module 内引入 alias，不改变外部 API。
 2. `pub use` 在当前 module 定义一个 public alias symbol。
@@ -340,7 +340,7 @@ Detached mode rule：
 7. `pub use foo::bar::Baz as Qux;` 暴露的是当前 module member `Qux`；依赖方仍通过 module import 访问，例如 `import audit_core::lib as api;` 后写 `api::Qux`。
 8. `use`/`pub use` 都创建 source graph dependency edge，edge target 是 use path 中最后一段之前的 module prefix。
 9. Alias 的 API identity 使用 `AliasDefId`；semantic target identity 保留 target `DefId`。这避免 docs/API diff/rename 把 facade path 和 implementation path 混为一个 declaration。
-10. `pub use` 不能 re-export impl block、inherent method、associated item、trait impl conformance 或 enum variant；这些不是 top-level symbols。
+10. `pub use` 不能把 impl block、inherent method、associated item、trait impl conformance 或 enum variant 创建为独立 alias；这些不是 top-level symbols。公开 nominal type 的公开 inherent methods 仍按 target `SymbolId` 查找，不因类型经过 facade 而消失。
 
 Example：
 
@@ -427,7 +427,7 @@ Public signature well-formedness has three layers:
 
 ### Struct fields and enum variants
 
-AHFL v1 does not introduce field-level privacy.
+AHFL does not introduce field-level privacy.
 
 Rules：
 
@@ -466,10 +466,10 @@ impl String {
 Rules：
 
 1. Inherent methods default to package-internal.
-2. Cross-package method lookup only considers public inherent methods from semantically visible impl modules.
+2. Public inherent methods of a reachable nominal receiver are looked up by its canonical target `SymbolId`, including through a public type alias. Primitive extension methods continue to require their defining module to be visible.
 3. Same-package method lookup may consider package-internal methods.
 4. `pub fn` inside impl must pass public signature checking if callable cross-package.
-5. v1 does not support re-exporting an inherent method through `pub use`; inherent methods are visible only through the module that owns the impl. A facade that wants to expose a method must place the impl in an exported facade module or expose a public wrapper function.
+5. `pub use` does not create independent inherent-method aliases. A public nominal type carries its public methods through a facade; private methods remain package-internal. No forwarding wrapper is required.
 
 Trait impl visibility:
 
@@ -486,7 +486,7 @@ Trait impl visibility:
 
 这有意不同于 Rust 的 crate-global impl visibility。AHFL 已经在 RFC 0008 中选择了 primitive facade method 必须服从显式 module import；trait conformance 也必须遵循同一 source-graph 规则，避免隐藏的 std/user impl module 静默改变 typecheck 结果。
 
-`pub use` v1 不 re-export trait impl conformance。原因是 conformance 不是 named top-level symbol；把它伪装成 symbol alias 会破坏 coherence、orphan checking 和 navigation identity。未来若需要 curated conformance facade，必须单独设计 `pub impl use` 或 signature/module-interface RFC。
+`pub use` 不 re-export trait impl conformance。原因是 conformance 不是 named top-level symbol；把它伪装成 symbol alias 会破坏 coherence、orphan checking 和 navigation identity。未来若需要 curated conformance facade，必须单独设计 `pub impl use` 或 signature/module-interface RFC。
 
 ### Capabilities, agents, workflows
 
@@ -815,7 +815,7 @@ No legacy mode:
    - Add visibility to inherent impl items.
    - Filter method lookup by semantic visibility.
    - Filter trait bounds, trait conformance and trait method dispatch by public trait/type/impl-module visibility.
-   - Keep v1 `pub use` from re-exporting impls, methods, associated items or trait conformance.
+   - Reject independent `pub use` aliases for impls, methods, associated items or trait conformance; keep nominal public methods attached to their canonical receiver identity.
    - Keep trait impl coherence unchanged.
 
 6. Std/corelib migration
@@ -867,7 +867,7 @@ Parser tests:
 4. Reject `pub impl`.
 5. Reject `pub` in expression/local binding positions.
 6. Reject `pub` on `module`, `contract`, `flow` and trait impl items.
-7. Reject single-segment `use Name;` because v1 `useDecl` requires `module_path::Symbol`.
+7. Reject single-segment `use Name;` because `useDecl` requires `module_path::Symbol`.
 8. Reject duplicate visibility modifiers such as `pub pub fn`.
 
 Resolver/package tests:
@@ -886,7 +886,7 @@ Resolver/package tests:
 12. Detached files reject `pub use` and do not form public API from `pub` declarations.
 13. `use` and `pub use` load the target module prefix as a source graph dependency.
 14. Public symbol in non-exported module reports `visibility.UNREACHABLE_PUBLIC` unless exposed by an API-reachable alias or artifact export root.
-15. `pub use` cannot re-export methods, associated items, enum variants, impl blocks or trait conformance.
+15. `pub use` cannot create independent aliases for methods, associated items, enum variants, impl blocks or trait conformance. Re-exported nominal types retain public inherent methods; their private methods remain unavailable cross-package.
 
 Type/signature tests:
 
@@ -903,7 +903,7 @@ Type/signature tests:
 Std/corelib tests:
 
 1. Raw builtin hooks are hidden outside `std`.
-2. Public facade methods resolve only when defining module/facade is visible.
+2. Public nominal facade methods resolve through the reachable type identity; primitive extension methods require their defining module/facade to be visible.
 3. `std/prelude.ahfl` exposes curated `pub use` names only.
 4. Public std docs exclude internal builtin hooks.
 
@@ -927,7 +927,7 @@ Golden/conformance tests:
 
 Draft exit criteria:
 
-1. Language owners agree v1 only needs `pub` and package-internal.
+1. Language owners agree the visibility model only needs `pub` and package-internal.
 2. Compiler owners agree symbol identity and visibility storage use indexed IDs.
 3. Std owners agree raw builtin hooks stay internal by default.
 4. Tooling owners agree LSP index does not widen semantic visibility.
@@ -984,17 +984,17 @@ Stabilized exit criteria:
    - Advantage: small grammar.
    - Rejected because AHFL naming should not encode semantic visibility through casing; this also conflicts with DSL readability and future generated names.
 
-4. Rust full scoped visibility in v1.
+4. Rust full scoped visibility.
    - Advantage: expressive module-subtree controls.
-   - Rejected for v1 because AHFL package/module model is not yet deep enough to justify `pub(in path)` complexity. Package-internal plus public is the right first semantic cut.
+   - Rejected for the current scope because AHFL package/module model is not yet deep enough to justify `pub(in path)` complexity. Package-internal plus public is the right first semantic cut.
 
 5. Swift-style `open/public/internal/fileprivate/private`.
    - Advantage: mature module/file model.
-   - Rejected because AHFL has no inheritance or source-file privacy need in v1; `open`/`fileprivate` would add concepts with no immediate language role.
+   - Rejected because AHFL has no inheritance or source-file privacy need; `open`/`fileprivate` would add concepts with no immediate language role.
 
 6. OCaml-style complete signatures.
    - Advantage: strongest interface abstraction and opaque types.
-   - Rejected for v1 because AHFL first needs stable symbol IDs, package graph and public signature checking. Opaque/signature modules should be a future RFC.
+   - Rejected for the current scope because AHFL first needs stable symbol IDs, package graph and public signature checking. Opaque/signature modules should be a future RFC.
 
 ## Open Questions
 
@@ -1012,3 +1012,5 @@ Stabilized exit criteria:
 - 2026-07-07: Added public API snapshot/docs/diff CLI tooling; kept `implemented` until release evidence archives stabilize the generated artifacts.
 - 2026-07-07: Stabilized after `scripts/generate-release-evidence-archive.py` added non-std public API snapshot/docs/diff evidence and `ctest -L release-evidence-archive` covered the release-facing path.
 - 2026-07-07: Moved package publish validation and SemVer gate follow-up into RFC 0010.
+
+- 2026-10-12: **Canonical nominal receiver method visibility correction.** 独立决策代理 `method_visibility_decision` 选择公开 nominal type 的公开 inherent methods 随 target `SymbolId` 可用；builder 与 decider 分离。Rust 的 inherent method 模型及现有 alias target identity 规则支持此方案。拒绝按 impl module import 隔断方法：同一类型会因 facade 拼写而失去方法，并迫使标准库恢复已删除的转发 wrapper。也拒绝为方法/impl 新建 alias：会扩大 API graph，混淆 private item 与 trait conformance。primitive extension 和 trait conformance 保留 AHFL 的显式 module-import 规则，它们没有此 nominal receiver 归属，避免隐藏扩展改变 lookup。成本是破坏性纠正旧 facade 负向预期，不增加 ABI、持久化格式或兼容开关。验收为 facade public 方法成功/private 方法拒绝、显式 prelude 的 Option/Optional 方法成功、primitive facade 原有门禁不变；对应注册 CTest 和 native canonical-dispatch 回归必须通过。

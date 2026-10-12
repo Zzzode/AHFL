@@ -5,14 +5,14 @@
 //
 // This is the ONE authority for string literal decoding, shared by the
 // frontend (parser/sema) and the Core-Wasm backend's rodata literal pool
-// (frame-bridge v2 D1), so a String a computed module returns and the String
+// (frame bridge D1), so a String a computed module returns and the String
 // the runtime returns are byte-identical by construction — a differential
 // fixture never has to guess which escape table a lane applied.
 //
 // Accepted escapes (the source spelling is front-end validated): \n \r \t
 // \\ \". Any other backslash sequence keeps the escaped character verbatim
-// (the runtime's permissive historical rule). A spelling that is not wrapped
-// in quotes is returned unchanged.
+// under the source literal decoding rule. A spelling that is not wrapped in
+// quotes is returned unchanged.
 
 #include <cstddef>
 #include <string>

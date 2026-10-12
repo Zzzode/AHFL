@@ -10,6 +10,8 @@ namespace ahfl::formal {
 SubsetEligibilityReport analyze_contract_subset_eligibility(const ir::Program &program,
                                                             const SmtEncodeOptions &options) {
     SubsetEligibilityReport report;
+    ir::ContractClauseIndex clause_index;
+    clause_index.rebuild(program);
 
     for (const auto &decl : program.declarations) {
         const auto *contract = std::get_if<ir::ContractDecl>(&decl);
@@ -44,7 +46,7 @@ SubsetEligibilityReport analyze_contract_subset_eligibility(const ir::Program &p
             report.ineligible.push_back(SubsetIneligibleClause{
                 .kind = clause.kind,
                 .target_name = target,
-                .clause_index = i,
+                .clause_index = clause_index.clause_begin(*contract) + i,
                 .rejection = encoded.rejection.value_or(SmtEncodeRejection::UnsupportedNode),
                 .source_range = clause.source_range,
             });

@@ -42,7 +42,7 @@ def owner_decision_artifact(
     decision_record: str = "docs/plans/evidence/decision.json",
 ) -> dict[str, object]:
     artifact: dict[str, object] = {
-        "schema": "ahfl.native_grpc_owner_decision.v1",
+        "format": "ahfl.native_grpc_owner_decision",
         "rfc": "0004-native-grpc-transport",
         "decision": decision,
         "owner": owner,
@@ -82,7 +82,7 @@ def build_matrix_artifact() -> dict[str, object]:
             }
         )
     return {
-        "schema": "ahfl.native_grpc_build_matrix.v1",
+        "format": "ahfl.native_grpc_build_matrix",
         "rfc": "0004-native-grpc-transport",
         "platforms": platforms,
     }
@@ -108,7 +108,7 @@ def benchmark_artifact() -> dict[str, object]:
                 }
             )
     return {
-        "schema": "ahfl.native_grpc_benchmark.v1",
+        "format": "ahfl.native_grpc_benchmark",
         "rfc": "0004-native-grpc-transport",
         "environment": {
             "platform": "test-platform",
@@ -122,7 +122,7 @@ def benchmark_artifact() -> dict[str, object]:
 
 def dependency_policy_artifact() -> dict[str, object]:
     return {
-        "schema": "ahfl.native_grpc_dependency_policy.v1",
+        "format": "ahfl.native_grpc_dependency_policy",
         "rfc": "0004-native-grpc-transport",
         "dependency_source": "system package manager or vendored cache",
         "license_review": "Apache-2.0 compatible dependency review",
@@ -135,7 +135,7 @@ def dependency_policy_artifact() -> dict[str, object]:
 
 def feature_flag_artifact() -> dict[str, object]:
     return {
-        "schema": "ahfl.native_grpc_feature_flag.v1",
+        "format": "ahfl.native_grpc_feature_flag",
         "rfc": "0004-native-grpc-transport",
         "build_flag": "AHFL_ENABLE_" + "GRPC_NATIVE",
         "runtime_config": "runtime.transport." + "native_grpc",
@@ -158,7 +158,7 @@ def fallback_semantics_artifact() -> dict[str, object]:
             }
         )
     return {
-        "schema": "ahfl.native_grpc_fallback_semantics.v1",
+        "format": "ahfl.native_grpc_fallback_semantics",
         "rfc": "0004-native-grpc-transport",
         "scenarios": scenarios,
     }
@@ -166,7 +166,7 @@ def fallback_semantics_artifact() -> dict[str, object]:
 
 def test_strategy_artifact() -> dict[str, object]:
     return {
-        "schema": "ahfl.native_grpc_test_strategy.v1",
+        "format": "ahfl.native_grpc_test_strategy",
         "rfc": "0004-native-grpc-transport",
         "coverage": [
             {"area": "unit", "tests": ["ahfl.runtime.grpc_native.unit"]},
@@ -250,7 +250,7 @@ def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None
             "notes": "test fixture",
         }
     return {
-        "schema": "ahfl.native_grpc_decision_evidence.v1",
+        "format": "ahfl.native_grpc_decision_evidence",
         "rfc": "0004-native-grpc-transport",
         "updated_at": "2026-07-08T00:00:00Z",
         "decision": {
@@ -665,9 +665,9 @@ def test_complete_owner_decision_rejects_invalid_artifact_schema(checker: Path) 
         root = Path(tmp)
         write_repo(root, status="accepted", evidence=fixture)
         (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
-            json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
+            json.dumps({"format": "wrong"}, indent=2) + "\n", encoding="utf-8"
         )
-        assert_fails(run_checker(checker, root), "ahfl.native_grpc_owner_decision.v1")
+        assert_fails(run_checker(checker, root), "ahfl.native_grpc_owner_decision")
 
 
 def test_complete_owner_decision_rejects_decision_mismatch(checker: Path) -> None:
@@ -758,9 +758,9 @@ def test_complete_benchmark_rejects_invalid_artifact_schema(checker: Path) -> No
         root = Path(tmp)
         write_repo(root, status="implementing", evidence=fixture)
         (root / "docs" / "plans" / "evidence" / "benchmark.json").write_text(
-            json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
+            json.dumps({"format": "wrong"}, indent=2) + "\n", encoding="utf-8"
         )
-        assert_fails(run_checker(checker, root), "ahfl.native_grpc_benchmark.v1")
+        assert_fails(run_checker(checker, root), "ahfl.native_grpc_benchmark")
 
 
 def test_complete_benchmark_requires_local_structured_artifact(checker: Path) -> None:
@@ -832,9 +832,9 @@ def test_complete_build_matrix_rejects_invalid_artifact_schema(checker: Path) ->
         root = Path(tmp)
         write_repo(root, status="implementing", evidence=fixture)
         (root / "docs" / "plans" / "evidence" / "build_matrix.json").write_text(
-            json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
+            json.dumps({"format": "wrong"}, indent=2) + "\n", encoding="utf-8"
         )
-        assert_fails(run_checker(checker, root), "ahfl.native_grpc_build_matrix.v1")
+        assert_fails(run_checker(checker, root), "ahfl.native_grpc_build_matrix")
 
 
 def test_complete_build_matrix_rejects_duplicate_platform(checker: Path) -> None:

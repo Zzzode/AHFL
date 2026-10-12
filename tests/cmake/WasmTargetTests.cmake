@@ -27,7 +27,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;target"
     )
 
-    # KR6.5 E2: exact ahfl_cap import + run2 binary contract. This gate parses
+    # KR6.5 E2: exact ahfl_cap import + run_workflow binary contract. This gate parses
     # bytes but does not claim execution evidence.
     add_test(NAME ahflc.build.e2_binary_gate
         COMMAND ${Python3_EXECUTABLE}

@@ -20,11 +20,11 @@
 //     pointer / max-length pointer), each independently fixed by python hmac AND
 //     independently re-verified with `openssl dgst -sha256 -mac HMAC`;
 //   * encode==golden and decode-admits-golden for each;
-//   * per-field tamper (magic, version, alg, key_id, digest, state) fails closed;
+//   * per-field tamper (magic, workflow ID, alg, key_id, digest, state) fails closed;
 //   * every one of the 32 tag bytes tampered individually -> IntegrityFailed;
 //   * wrong key + wrong key_id rejected symmetrically across all three artifacts;
-//   * size caps: over-cap rejected before framing; pointer exact 151-byte cap, plus a
-//     canonical 151-byte pointer (wf=u32max-1, ckpt=u64max-1) proving the maximum is
+//   * size caps: over-cap rejected before framing; pointer exact 150-byte cap, plus a
+//     canonical 150-byte pointer (wf=u32max-1, ckpt=u64max-1) proving the maximum is
 //     reachable;
 //   * HMAC-valid-but-forged (re-signed on the authenticated bytes): invalid enum
 //     state, invalid sentinel ids (slot/manifest/pointer), zero generation, bad
@@ -35,8 +35,7 @@
 //   * Consumed consumed_generation >= current rejected;
 //   * embedded-NUL payload round-trip / no truncation;
 //   * no-echo: a failing decode leaks no payload/key/digest bytes.
-// The codec has NO filesystem / store / production caller; the B1 store is a separate
-// slice. This test is the only caller today.
+// The codec has no filesystem operations; the payload store is a separate layer.
 
 namespace {
 
@@ -54,7 +53,9 @@ void check(bool ok, std::string_view name) {
 
 // A fixed 32-byte test key (0x2b*32) and a fixed key_id 01..10. Not production key
 // material; only exercises the HMAC path. These match the golden generator.
-std::vector<std::uint8_t> test_key() { return std::vector<std::uint8_t>(32, 0x2b); }
+std::vector<std::uint8_t> test_key() {
+    return std::vector<std::uint8_t>(32, 0x2b);
+}
 
 std::array<std::uint8_t, 16> test_key_id() {
     std::array<std::uint8_t, 16> id{};
@@ -66,7 +67,7 @@ std::array<std::uint8_t, 16> test_key_id() {
 
 AuthHeader make_auth(std::uint64_t generation) {
     AuthHeader h;
-    h.alg_version = 1;
+    h.alg_id = 1;
     h.key_id = test_key_id();
     h.generation = generation;
     return h;
@@ -80,7 +81,9 @@ DigestHex hex_of(char fill) {
 
 std::vector<std::uint8_t> from_hex(std::string_view hex) {
     std::vector<std::uint8_t> out;
-    auto nib = [](char c) -> int { return (c >= '0' && c <= '9') ? c - '0' : (c - 'a') + 10; };
+    auto nib = [](char c) -> int {
+        return (c >= '0' && c <= '9') ? c - '0' : (c - 'a') + 10;
+    };
     for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
         out.push_back(static_cast<std::uint8_t>((nib(hex[i]) << 4) | nib(hex[i + 1])));
     }
@@ -142,39 +145,44 @@ GenerationPointer make_pointer() {
 // the pointer tag was additionally cross-checked with openssl HMAC-SHA256). See
 // tests/scripts note in the review packet for the reproduction command.
 constexpr std::string_view kSlotGolden =
-    "4148464c505301070305000000000000000904deadbeef010102030405060708090a0b0c"
-    "0d0e0f1005000000000000008623b7ba274daeedc04afab6d5770781b6b8bb781ea24830"
-    "eba8e22a2a3609e2";
+
+    "4148464c5053070305000000000000000904deadbeef010102030405060708090a0b0c0d"
+    "0e0f100500000000000000f0429e4f6efdeec5d81cf33c79486e5c8bcf087db3f056c7b2"
+    "2484fd2766a85b";
 constexpr std::string_view kAvailableGolden =
-    "4148464c434d010703050000000000000000616161616161616161616161616161616161"
+
+    "4148464c434d070305000000000000000061616161616161616161616161616161616161"
     "616161616161616161616161616161616161616161616161616161616161616161616161"
-    "616161616161616161618402020962626262626262626262626262626262626262626262"
+    "616161616161616161840202096262626262626262626262626262626262626262626262"
     "626262626262626262626262626262626262626262626262626262626262626262626262"
-    "626262626262042a63636363636363636363636363636363636363636363636363636363"
-    "636363636363636363636363636363636363636363636363636363636363636363636363"
-    "10010102030405060708090a0b0c0d0e0f100500000000000000778ceee89897d60571da"
-    "f5b152bef01afc1ded617915eb79a2a9375a1e9b7690";
+    "6262626262042a6363636363636363636363636363636363636363636363636363636363"
+    "636363636363636363636363636363636363636363636363636363636363636363636310"
+    "010102030405060708090a0b0c0d0e0f100500000000000000bec7b0eb39877ee1b41d74"
+    "eba01b61cb7abe72c21e895fb124784345ff42bbbf";
 constexpr std::string_view kConsumedGolden =
-    "4148464c434d010703060000000000000001050000000000000064646464646464646464"
+
+    "4148464c434d070306000000000000000105000000000000006464646464646464646464"
     "646464646464646464646464646464646464646464646464646464646464646464646464"
-    "646464646464646464646464646464646464010102030405060708090a0b0c0d0e0f1006"
-    "00000000000000ace0d3c4f99e82193b632f02fc19ee76cadee48eb17bf358860864126d"
-    "78028c";
+    "6464646464646464646464646464646464010102030405060708090a0b0c0d0e0f100600"
+    "000000000000ac741721339d6721114b101cfeab65feadcbe07bed00120e992cc9ac820c"
+    "4120";
 constexpr std::string_view kPointerGolden =
-    "4148464c4750010703050000000000000065656565656565656565656565656565656565"
+
+    "4148464c4750070305000000000000006565656565656565656565656565656565656565"
     "656565656565656565656565656565656565656565656565656565656565656565656565"
-    "656565656565656565010102030405060708090a0b0c0d0e0f100500000000000000e1cb"
-    "a0972b31c246cb80dfa5fd4f069c3464ba3b1f366be3c9c317706806bd6c";
+    "6565656565656565010102030405060708090a0b0c0d0e0f10050000000000000030f3d0"
+    "3c951d42d47cc80db6b68494dafacc38b4fb9f8794e5a387af85ce4993";
 // A canonical MAX-length pointer: wf=0xfffffffe (u32max-1, 5-byte ULEB),
 // ckpt=0xfffffffffffffffe (u64max-1, 10-byte ULEB), generation=0xfffffffffffffffe.
-// Its length is exactly kMaxGenerationPointerBytes (151), proving that cap is the
+// Its length is exactly kMaxGenerationPointerBytes (150), proving that cap is the
 // reachable maximum, not a loose bound. Independently python+openssl verified.
 constexpr std::string_view kMaxPointerGolden =
-    "4148464c475001feffffff0ffeffffffffffffffff01feffffffffffffff666666666666"
+
+    "4148464c4750feffffff0ffeffffffffffffffff01feffffffffffffff66666666666666"
     "666666666666666666666666666666666666666666666666666666666666666666666666"
-    "66666666666666666666666666666666666666666666010102030405060708090a0b0c0d"
-    "0e0f10feffffffffffffff374a75f826034368d27da7a6bf854134692b8ba80889e8d802"
-    "ac8485840a81dc";
+    "666666666666666666666666666666666666666666010102030405060708090a0b0c0d0e"
+    "0f10feffffffffffffff8bd58ffb1a883210dd05f85b76cae954fb8dff91e658b7d8c71b"
+    "b57d30af2c52";
 
 // ---- decode helpers (fixed key + generous caps unless overridden) -----------
 
@@ -233,7 +241,7 @@ int main() {
         auto enc = encode_slot(make_slot(), key);
         check(enc.has_value() && *enc == slot_g, "golden.slot.encode_matches");
         check(slot_admits(slot_g), "golden.slot.decode_admits");
-        check(slot_g.size() == 80, "golden.slot.length");
+        check(slot_g.size() == 79, "golden.slot.length");
         auto dec = decode_slot(slot_g, id_span, key, kBigCap);
         check(dec.has_value() && *dec == make_slot(), "golden.slot.roundtrip");
 
@@ -241,7 +249,7 @@ int main() {
         auto enc_a = encode_manifest(make_available(), key);
         check(enc_a.has_value() && *enc_a == avail_g, "golden.available.encode_matches");
         check(manifest_admits(avail_g), "golden.available.decode_admits");
-        check(avail_g.size() == 274, "golden.available.length");
+        check(avail_g.size() == 273, "golden.available.length");
         auto dec_a = decode_manifest(avail_g, id_span, key, kBigCap);
         check(dec_a.has_value() && *dec_a == make_available(), "golden.available.roundtrip");
 
@@ -249,7 +257,7 @@ int main() {
         auto enc_c = encode_manifest(make_consumed(), key);
         check(enc_c.has_value() && *enc_c == consumed_g, "golden.consumed.encode_matches");
         check(manifest_admits(consumed_g), "golden.consumed.decode_admits");
-        check(consumed_g.size() == 147, "golden.consumed.length");
+        check(consumed_g.size() == 146, "golden.consumed.length");
         auto dec_c = decode_manifest(consumed_g, id_span, key, kBigCap);
         check(dec_c.has_value() && *dec_c == make_consumed(), "golden.consumed.roundtrip");
 
@@ -257,14 +265,14 @@ int main() {
         auto enc_p = encode_pointer(make_pointer(), key);
         check(enc_p.has_value() && *enc_p == ptr_g, "golden.pointer.encode_matches");
         check(pointer_admits(ptr_g), "golden.pointer.decode_admits");
-        check(ptr_g.size() == 138, "golden.pointer.length");
+        check(ptr_g.size() == 137, "golden.pointer.length");
         check(ptr_g.size() <= kMaxGenerationPointerBytes, "golden.pointer.within_cap");
         auto dec_p = decode_pointer(ptr_g, id_span, key);
         check(dec_p.has_value() && *dec_p == make_pointer(), "golden.pointer.roundtrip");
 
-        // Max-length pointer: proves kMaxGenerationPointerBytes (151) is reachable.
+        // Max-length pointer: proves kMaxGenerationPointerBytes (150) is reachable.
         const auto maxptr_g = from_hex(kMaxPointerGolden);
-        check(maxptr_g.size() == kMaxGenerationPointerBytes, "golden.maxpointer.is_151");
+        check(maxptr_g.size() == kMaxGenerationPointerBytes, "golden.maxpointer.is_150");
         GenerationPointer max_p;
         max_p.wf = CoreWorkflowId{0xfffffffeU};
         max_p.ckpt = ResumeCheckpointId{0xfffffffffffffffeULL};
@@ -294,8 +302,7 @@ int main() {
         check(decode_manifest(avail_g, id_span, bad_key, kBigCap).error() ==
                   PayloadStoreError::IntegrityFailed,
               "wrongkey.manifest.integrity");
-        check(decode_pointer(ptr_g, id_span, bad_key).error() ==
-                  PayloadStoreError::IntegrityFailed,
+        check(decode_pointer(ptr_g, id_span, bad_key).error() == PayloadStoreError::IntegrityFailed,
               "wrongkey.pointer.integrity");
 
         check(decode_slot(slot_g, bad_id_span, key, kBigCap).error() ==
@@ -304,8 +311,7 @@ int main() {
         check(decode_manifest(avail_g, bad_id_span, key, kBigCap).error() ==
                   PayloadStoreError::KeyIdMismatch,
               "wrongid.manifest.keyid");
-        check(decode_pointer(ptr_g, bad_id_span, key).error() ==
-                  PayloadStoreError::KeyIdMismatch,
+        check(decode_pointer(ptr_g, bad_id_span, key).error() == PayloadStoreError::KeyIdMismatch,
               "wrongid.pointer.keyid");
     }
 
@@ -333,12 +339,12 @@ int main() {
         }
         {
             auto b = base;
-            b[6] = 0x02; // format_version
-            check(!slot_admits(b), "tamper.slot.version");
+            b[6] = 0x02; // workflow ID
+            check(!slot_admits(b), "tamper.slot.workflow");
         }
         {
             auto b = base;
-            b[b.size() - 57] = 0xff; // alg_version in auth_header
+            b[b.size() - 57] = 0xff; // alg_id in auth_header
             check(!slot_admits(b), "tamper.slot.alg");
         }
         {
@@ -358,19 +364,26 @@ int main() {
         }
     }
 
+    // A valid artifact authenticated with the same key never crosses magic domains.
+    {
+        check(!slot_admits(from_hex(kAvailableGolden)), "domain.manifest_is_not_slot");
+        check(!manifest_admits(from_hex(kPointerGolden)), "domain.pointer_is_not_manifest");
+        check(!pointer_admits(from_hex(kSlotGolden)), "domain.slot_is_not_pointer");
+    }
+
     // ---- per-field tamper: manifest state byte + digest ----------------------
     {
         auto avail = from_hex(kAvailableGolden);
         {
             auto b = avail;
-            // state byte is right after magic(6)+fmt(1)+wf(1)+ckpt(1)+gen(8) = index 17.
-            check(b[17] == 0x00, "tamper.manifest.state_is_available");
-            b[17] = 0x07; // invalid state -> tag fails (authenticated byte changed)
+            // state byte is right after magic(6)+wf(1)+ckpt(1)+gen(8) = index 16.
+            check(b[16] == 0x00, "tamper.manifest.state_is_available");
+            b[16] = 0x07; // invalid state -> tag fails (authenticated byte changed)
             check(!manifest_admits(b), "tamper.manifest.bad_state_byte");
         }
         {
             auto b = avail;
-            b[18] ^= 0x20; // flip a record-digest hex byte -> tag fails
+            b[17] ^= 0x20; // flip a record-digest hex byte -> tag fails
             check(!manifest_admits(b), "tamper.manifest.digest");
         }
     }
@@ -387,7 +400,7 @@ int main() {
         check(manifest_error(avail_g, avail_g.size() - 1) == PayloadStoreError::SizeCapExceeded,
               "cap.manifest.over");
 
-        // Pointer cap is the fixed grammar maximum; a pointer padded past 151 bytes
+        // Pointer cap is the fixed grammar maximum; a pointer padded past 150 bytes
         // (which would also be non-canonical) is rejected by the cap first.
         auto ptr = from_hex(kPointerGolden);
         std::vector<std::uint8_t> too_big(kMaxGenerationPointerBytes + 1, 0x00);
@@ -407,7 +420,7 @@ int main() {
     {
         // Forge an invalid manifest state byte (2) then re-seal.
         auto b = from_hex(kAvailableGolden);
-        b[17] = 0x02;
+        b[16] = 0x02;
         b = reseal(b);
         check(manifest_error(b) == PayloadStoreError::Malformed, "forge.manifest.invalid_state");
     }
@@ -415,8 +428,8 @@ int main() {
         // Forge a zero generation into a pointer (body current_gen and auth gen both
         // zeroed, re-sealed) -> current_generation==0 -> Malformed. encode() would
         // reject this, so build the bytes by zeroing the golden's two gen fields.
-        // Pointer body layout: magic(6) fmt(1) wf(1@7) ckpt(1@8) gen(8@9..16)
-        // digest(64@17..80); auth generation is the last 8 prefix bytes.
+        // Pointer body layout: magic(6) wf(1@6) ckpt(1@7) gen(8@8..15)
+        // digest(64@16..79); auth generation is the last 8 prefix bytes.
         auto b = from_hex(kPointerGolden);
         for (std::size_t i = 0; i < 8; ++i) {
             b[9 + i] = 0x00;                 // body current_generation
@@ -428,7 +441,7 @@ int main() {
     {
         // Forge body.generation != auth.generation: bump only the body generation.
         auto b = from_hex(kPointerGolden);
-        b[9] = 0x06; // body current_generation low byte 5 -> 6 (auth stays 5)
+        b[8] = 0x06; // body current_generation low byte 5 -> 6 (auth stays 5)
         b = reseal(b);
         check(pointer_error(b) == PayloadStoreError::GenerationMismatch,
               "forge.pointer.generation_mismatch");
@@ -437,81 +450,81 @@ int main() {
         // Forge an overlong ULEB for the slot wf field: 0x07 -> 0x87 0x00 and shift
         // the rest, re-seal. Canonical re-encode gate must reject (non-shortest).
         auto b = from_hex(kSlotGolden);
-        // wf is at body index 7 (after magic 6 + fmt 1), currently 0x07.
-        check(b[7] == 0x07, "forge.slot.wf_is_canonical");
-        b[7] = 0x87;                    // continuation bit set...
-        b.insert(b.begin() + 8, 0x00);  // ...redundant zero group
+        // wf is at body index 6 (after magic 6), currently 0x07.
+        check(b[6] == 0x07, "forge.slot.wf_is_canonical");
+        b[6] = 0x87;                   // continuation bit set...
+        b.insert(b.begin() + 7, 0x00); // ...redundant zero group
         b = reseal(b);
         check(slot_error(b) == PayloadStoreError::Malformed, "forge.slot.overlong_uleb");
     }
     {
         // Slot body.generation != auth.generation: bump only the body generation.
-        // Slot body layout: magic(6) fmt(1) wf(1@7) ckpt(1@8) gen(8@9..16).
+        // Slot body layout: magic(6) wf(1@6) ckpt(1@7) gen(8@8..15).
         auto b = from_hex(kSlotGolden);
-        check(b[9] == 0x05, "forge.slot.gen_low_is_5");
-        b[9] = 0x06; // body generation 5 -> 6 (auth stays 5)
+        check(b[8] == 0x05, "forge.slot.gen_low_is_5");
+        b[8] = 0x06; // body generation 5 -> 6 (auth stays 5)
         b = reseal(b);
         check(slot_error(b) == PayloadStoreError::GenerationMismatch,
               "forge.slot.generation_mismatch");
     }
     {
         // CommitManifest body.generation != auth.generation.
-        // Manifest body layout: magic(6) fmt(1) wf(1@7) ckpt(1@8) gen(8@9..16).
+        // Manifest body layout: magic(6) wf(1@6) ckpt(1@7) gen(8@8..15).
         auto b = from_hex(kAvailableGolden);
-        check(b[9] == 0x05, "forge.manifest.gen_low_is_5");
-        b[9] = 0x06;
+        check(b[8] == 0x05, "forge.manifest.gen_low_is_5");
+        b[8] = 0x06;
         b = reseal(b);
         check(manifest_error(b) == PayloadStoreError::GenerationMismatch,
               "forge.manifest.generation_mismatch");
     }
     {
         // Re-signed sentinel slot id (UINT64_MAX ULEB) -> Malformed. slot id is at
-        // body index 9(gen 8 bytes)+... : after magic6+fmt1+wf1+ckpt1+gen8 = index 17.
+        // body index 8(gen 8 bytes)+... : after magic6+wf1+ckpt1+gen8 = index 16.
         auto b = from_hex(kSlotGolden);
-        check(b[17] == 0x09, "forge.slot.slotid_is_9");
+        check(b[16] == 0x09, "forge.slot.slotid_is_9");
         // Replace single-byte 0x09 with the 10-byte ULEB of UINT64_MAX.
-        std::vector<std::uint8_t> sentinel = {0xff, 0xff, 0xff, 0xff, 0xff,
-                                              0xff, 0xff, 0xff, 0xff, 0x01};
-        b.erase(b.begin() + 17);
-        b.insert(b.begin() + 17, sentinel.begin(), sentinel.end());
+        std::vector<std::uint8_t> sentinel = {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01};
+        b.erase(b.begin() + 16);
+        b.insert(b.begin() + 16, sentinel.begin(), sentinel.end());
         b = reseal(b);
         check(slot_error(b) == PayloadStoreError::Malformed, "forge.slot.sentinel_id");
     }
     {
         // Re-signed sentinel manifest slot_meta id (first slot) -> Malformed. Body
-        // layout up to the first slot id: magic6+fmt1+wf1+ckpt1+gen8+state1+recdig64
-        // +reclen(2 ULEB for 260)+count(1) = index 85; the first slot id is the
-        // single byte 0x09 at index 85 (index 84 is slot_count).
+        // layout up to the first slot id: magic6+wf1+ckpt1+gen8+state1+recdig64
+        // +reclen(2 ULEB for 260)+count(1) = index 84; the first slot id is the
+        // single byte 0x09 at index 84 (index 83 is slot_count).
         auto b = from_hex(kAvailableGolden);
-        check(b[85] == 0x09, "forge.manifest.first_slotid_is_9");
-        std::vector<std::uint8_t> sentinel = {0xff, 0xff, 0xff, 0xff, 0xff,
-                                              0xff, 0xff, 0xff, 0xff, 0x01};
-        b.erase(b.begin() + 85);
-        b.insert(b.begin() + 85, sentinel.begin(), sentinel.end());
+        check(b[84] == 0x09, "forge.manifest.first_slotid_is_9");
+        std::vector<std::uint8_t> sentinel = {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01};
+        b.erase(b.begin() + 84);
+        b.insert(b.begin() + 84, sentinel.begin(), sentinel.end());
         b = reseal(b);
         check(manifest_error(b) == PayloadStoreError::Malformed, "forge.manifest.sentinel_id");
     }
     {
         // Re-signed sentinel pointer generation is covered by zero-generation; here
         // forge a sentinel ResumeCheckpointId (ckpt) in the pointer -> Malformed.
-        // Pointer body: magic6+fmt1+wf1@7+ckpt1@8; replace the ckpt byte 0x03 with
+        // Pointer body: magic6+wf1@6+ckpt1@7; replace the ckpt byte 0x03 with
         // the 10-byte ULEB of UINT64_MAX.
         auto b = from_hex(kPointerGolden);
-        check(b[8] == 0x03, "forge.pointer.ckpt_is_3");
-        std::vector<std::uint8_t> sentinel = {0xff, 0xff, 0xff, 0xff, 0xff,
-                                              0xff, 0xff, 0xff, 0xff, 0x01};
-        b.erase(b.begin() + 8);
-        b.insert(b.begin() + 8, sentinel.begin(), sentinel.end());
+        check(b[7] == 0x03, "forge.pointer.ckpt_is_3");
+        std::vector<std::uint8_t> sentinel = {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01};
+        b.erase(b.begin() + 7);
+        b.insert(b.begin() + 7, sentinel.begin(), sentinel.end());
         b = reseal(b);
         check(pointer_error(b) == PayloadStoreError::Malformed, "forge.pointer.sentinel_ckpt");
     }
     {
         // Re-signed non-lowercase-hex digest: uppercase a byte of the pointer's
         // manifest_sha256 (all 'e' = 0x65 -> 'E' = 0x45). digest starts at body
-        // index 17 (after gen). Only the canonical/charset gate can catch it.
+        // index 16 (after gen). Only the canonical/charset gate can catch it.
         auto b = from_hex(kPointerGolden);
-        check(b[17] == 0x65, "forge.pointer.digest_is_e");
-        b[17] = 0x45; // 'E' -> not lowercase hex
+        check(b[16] == 0x65, "forge.pointer.digest_is_e");
+        b[16] = 0x45; // 'E' -> not lowercase hex
         b = reseal(b);
         check(pointer_error(b) == PayloadStoreError::Malformed, "forge.pointer.bad_hex_digest");
     }
@@ -530,11 +543,11 @@ int main() {
         // (9 and 42) so they descend, re-seal. Structural validate must reject with
         // SlotSetMismatch (the encoder-side symmetry is tested separately).
         auto b = from_hex(kAvailableGolden);
-        // first slot id byte at index 85 (0x09), second slot id byte: after
-        // slot0 = id(1)+digest(64)+plen(1) = 66 bytes, so index 85+66 = 151 (0x2a).
-        check(b[85] == 0x09 && b[151] == 0x2a, "forge.manifest.slot_ids_located");
-        b[85] = 0x2a;
-        b[151] = 0x09;
+        // first slot id byte at index 84 (0x09), second slot id byte: after
+        // slot0 = id(1)+digest(64)+plen(1) = 66 bytes, so index 84+66 = 150 (0x2a).
+        check(b[84] == 0x09 && b[150] == 0x2a, "forge.manifest.slot_ids_located");
+        b[84] = 0x2a;
+        b[150] = 0x09;
         b = reseal(b);
         check(manifest_error(b) == PayloadStoreError::SlotSetMismatch,
               "forge.manifest.decoder_unsorted");
@@ -543,8 +556,8 @@ int main() {
         // Decoder-side duplicate manifest slot_meta id: set the second slot id equal
         // to the first (both 9), re-seal -> SlotSetMismatch.
         auto b = from_hex(kAvailableGolden);
-        check(b[151] == 0x2a, "forge.manifest.second_slot_is_42");
-        b[151] = 0x09; // duplicate the first id
+        check(b[150] == 0x2a, "forge.manifest.second_slot_is_42");
+        b[150] = 0x09; // duplicate the first id
         b = reseal(b);
         check(manifest_error(b) == PayloadStoreError::SlotSetMismatch,
               "forge.manifest.decoder_duplicate");
@@ -554,7 +567,7 @@ int main() {
     {
         // Build an Available manifest whose slot_count is enormous but the body is
         // short; re-seal so the tag passes and only count-before-reserve can catch.
-        // slot_count is right after: magic6+fmt1+wf1+ckpt1+gen8+state1+recdig64+reclen(uleb).
+        // slot_count is right after: magic6+wf1+ckpt1+gen8+state1+recdig64+reclen(uleb).
         // Simplest: take consumed golden shape is wrong; craft from available with 0
         // slots then rewrite the count to a huge ULEB and re-seal.
         CommitManifest m = make_available();
@@ -565,9 +578,9 @@ int main() {
         // Find the slot_count byte: it is the byte at prefix end minus auth_header(25)
         // minus tag(32)... instead, decode offset: after state(1) come recdig(64) +
         // reclen ULEB. reclen==260 -> ULEB 0x84 0x02 (2 bytes). So slot_count sits at
-        // magic6+fmt1+wf1+ckpt1+gen8+state1+64+2 = 84. In the zero-slot manifest it is
+        // magic6+wf1+ckpt1+gen8+state1+64+2 = 83. In the zero-slot manifest it is
         // a single 0x00 byte; overwrite with a huge ULEB (0xFF..0x0F ~ 0xffffffff).
-        const std::size_t count_off = 6 + 1 + 1 + 1 + 8 + 1 + 64 + 2;
+        const std::size_t count_off = 6 + 1 + 1 + 8 + 1 + 64 + 2;
         check(b[count_off] == 0x00, "hugecount.count_is_zero");
         std::vector<std::uint8_t> huge = {0xf0, 0xff, 0xff, 0xff, 0x0f}; // ~4.29e9
         b.erase(b.begin() + static_cast<long>(count_off));
@@ -585,7 +598,7 @@ int main() {
         std::get<AvailableBody>(m.state).slots.clear();
         auto enc = encode_manifest(m, key);
         auto b = *enc;
-        const std::size_t count_off = 6 + 1 + 1 + 1 + 8 + 1 + 64 + 2;
+        const std::size_t count_off = 6 + 1 + 1 + 8 + 1 + 64 + 2;
         std::vector<std::uint8_t> huge = {0xf0, 0xff, 0xff, 0xff, 0x0f};
         b.erase(b.begin() + static_cast<long>(count_off));
         b.insert(b.begin() + static_cast<long>(count_off), huge.begin(), huge.end());
@@ -606,9 +619,9 @@ int main() {
         auto enc = encode_slot(s, key);
         check(enc.has_value(), "reserve.slot.base_encodes");
         auto b = *enc;
-        // Slot body layout: magic6+fmt1+wf1+ckpt1+gen8+slot1 = index 18 is
+        // Slot body layout: magic6+wf1+ckpt1+gen8+slot1 = index 17 is
         // payload_len; in the zero-payload slot it is a single 0x00 byte.
-        const std::size_t len_off = 6 + 1 + 1 + 1 + 8 + 1;
+        const std::size_t len_off = 6 + 1 + 1 + 8 + 1;
         check(b[len_off] == 0x00, "reserve.slot.len_is_zero");
         std::vector<std::uint8_t> huge = {0xf0, 0xff, 0xff, 0xff, 0x0f}; // ~4.29e9
         b.erase(b.begin() + static_cast<long>(len_off));
@@ -684,8 +697,7 @@ int main() {
     //      recognizable marker whose bytes must not appear in any observable output.
     {
         SlotArtifact s = make_slot();
-        const std::array<std::uint8_t, 8> marker = {0xDE, 0xAD, 0xC0, 0xDE,
-                                                    0xFE, 0xED, 0xFA, 0xCE};
+        const std::array<std::uint8_t, 8> marker = {0xDE, 0xAD, 0xC0, 0xDE, 0xFE, 0xED, 0xFA, 0xCE};
         s.payload.assign(marker.begin(), marker.end());
         auto enc = encode_slot(s, key);
         check(enc.has_value(), "noecho.encodes");

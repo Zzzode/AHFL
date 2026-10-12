@@ -2,9 +2,9 @@ module stdlib_units::option_neg_arity;
 
 import std::option as option;
 
-// Negative (M0-3): map takes (self, f) — arity 2. Omitting the closure is a
+// Negative: map requires one closure argument. Omitting it is a
 // WRONG_ARITY error.
 fn neg() -> Int effect Pure decreases 0 {
-    let m = option::map<Int, Int>(option::Option::Some(1));
+    let m = (option::some<Int>(1)).map<Int>();
     return 0;
 }

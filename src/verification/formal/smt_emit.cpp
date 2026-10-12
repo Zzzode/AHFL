@@ -34,10 +34,10 @@ struct Document {
 };
 
 // The SMT-LIB assertion for one encodable clause. requires/invariant assert the
-// predicate directly (an assumption / always-true goal); ensures asserts it as
-// a postcondition goal; forbid asserts its negation. The distinction is a
-// comment here — the solver seam (slice 4/5) turns these into real proof
-// queries; the emit artifact just records the sort-correct encoding.
+// predicate directly, as does ensures; forbid asserts its negation. This is
+// an encoding artifact with a satisfiability check, not a proof of contract
+// implications or execution logic. The SMT-BMC engine constructs independent
+// refutation queries and checks their premises separately.
 [[nodiscard]] std::string clause_assertion(ir::ContractClauseKind kind, const std::string &term) {
     if (kind == ir::ContractClauseKind::Forbid) {
         return "(assert (not " + term + "))";
@@ -50,6 +50,8 @@ struct Document {
 void emit_program_smt(const ir::AhflIr &program, std::ostream &out,
                       const SmtEncodeOptions &options) {
     Document doc;
+    ir::ContractClauseIndex clause_index;
+    clause_index.rebuild(program);
 
     for (const auto &decl : program.declarations) {
         const auto *contract = std::get_if<ir::ContractDecl>(&decl);
@@ -67,7 +69,7 @@ void emit_program_smt(const ir::AhflIr &program, std::ostream &out,
 
             const auto kind_name = std::string(ir::contract_clause_kind_name(clause.kind));
             const auto label =
-                "contract " + target + " " + kind_name + "[" + std::to_string(i) + "]";
+                "contract " + target + " " + kind_name + "[" + std::to_string(clause_index.clause_begin(*contract) + i) + "]";
 
             const auto encoded = encode_predicate(*expr, options);
             if (!encoded.ok()) {

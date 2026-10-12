@@ -8,7 +8,7 @@
 // ("Cross-process exactly-once dedup"); the preimage below is a byte-for-byte
 // transcription:
 //
-//   "AHFL-IDEMPOTENCY-v1"                  (ASCII domain, 19 bytes, no NUL)
+//   "AHFL-IDEMPOTENCY"                  (ASCII domain, 16 bytes, no NUL)
 //   authority_id                           (IdempotencyAuthorityId, 16 bytes)
 //   CoreWorkflowId                         (u32-LE)
 //   ResumeCheckpointId                     (u64-LE)
@@ -18,7 +18,7 @@
 //   source_symbol                          (u64-LE)
 //   SHA-256(canonical typed Param bytes)   (32 raw bytes)
 //
-// Total preimage length: 103 fixed bytes. `generation` and `attempt` are
+// Total preimage length: 100 fixed bytes. `generation` and `attempt` are
 // EXCLUDED by construction (they change across replay).
 //
 // This is a PURE authority only: it computes a 32-byte SHA-256 token over the
@@ -93,7 +93,7 @@ struct IdempotencyCoordinate {
 
 /// Compute the 32-byte IdempotencyToken for `coordinate`.
 ///
-/// The preimage is a single fixed-size 103-byte stack buffer (no heap
+/// The preimage is a single fixed-size 100-byte stack buffer (no heap
 /// allocation) laid out at compile-time-constant offsets, so every field is
 /// fully contained by construction and no truncation path exists. All integers
 /// are little-endian. Pure and deterministic: equal coordinates always yield

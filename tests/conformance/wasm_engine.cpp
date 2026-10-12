@@ -98,7 +98,7 @@ namespace json = ahfl::json;
 render_descriptor(const ConformanceCase &manifest,
                   const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
     auto root = json::JsonValue::make_object();
-    root->set("schema", jstr(std::string(kConformanceWasmDescriptorFormat)));
+    root->set("format", jstr(std::string(kConformanceWasmDescriptorFormat)));
     root->set("case", jstr(manifest.source));
     root->set("entry", jstr(manifest.entry));
     root->set("kind", jstr(manifest.kind == CaseKind::Workflow ? "workflow" : "agent"));

@@ -71,7 +71,7 @@ class NativeJsonPrinter final : private PipelineJsonHelpers {
 
     void print(const handoff::Package &package) {
         print_object(0, [&](const auto &field) {
-            field("format_version", [&]() { write_string(handoff::kFormatVersion); });
+            field("format", [&]() { write_string(handoff::kFormat); });
             field("metadata", [&]() { print_metadata(package.metadata, 1); });
             field("executable_targets", [&]() {
                 print_array(1, [&](const auto &item) {
@@ -154,8 +154,8 @@ class NativeJsonPrinter final : private PipelineJsonHelpers {
                 }
 
                 print_object(indent_level + 1, [&](const auto &identity_field) {
-                    identity_field("format_version",
-                                   [&]() { write_string(metadata.identity->format_version); });
+                    identity_field("format",
+                                   [&]() { write_string(metadata.identity->format); });
                     identity_field("name", [&]() { write_string(metadata.identity->name); });
                     identity_field("version", [&]() { write_string(metadata.identity->version); });
                 });

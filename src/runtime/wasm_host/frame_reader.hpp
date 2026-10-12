@@ -16,13 +16,13 @@
 //     placements, and the runtime construct-heap span [construct_heap_base,
 //     65536) (KR6.6 String concat result payloads); anything else (scratch,
 //     heap gaps, OOB, arena-outside, rodata-outside) fails closed;
-//   * runv root authorization: a computed final's value_ptr must equal the
+//   * run_frame root authorization: a computed final's value_ptr must equal the
 //     output base (12288), an identity final's the input base (1024); the
 //     module-kind discriminator comes from the admitted descriptor/frame
 //     section, never inferred from the constants.
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
 
@@ -34,7 +34,7 @@
 
 namespace ahfl::runtime::wasm_host {
 
-/// The P6-frame final-kind discriminator for runv root authorization. Sourced
+/// The P6-frame final-kind discriminator for run_frame root authorization. Sourced
 /// by the driver from the codegen C++ descriptor's frame lane (decision doc
 /// section 11.2), never inferred from layout ids or constants.
 enum class P6FinalKind { Identity, Computed, Capability };
@@ -55,13 +55,13 @@ enum class FrameReadError {
     CollectionLengthOutOfRange,
     CollectionOverrunsPlacement,
     SetDuplicateElement,
-    RunvRootUnauthorized,
+    FrameRunRootUnauthorized,
     PageBoundsExceeded,
     ArithmeticOverflow,
 };
 
-/// Authorize the runv root and encode the output frame as canonical value
-/// JSON. `value_ptr` is the second runv result (the frame base the module
+/// Authorize the run_frame root and encode the output frame as canonical value
+/// JSON. `value_ptr` is the second run_frame result (the frame base the module
 /// named); `final_kind` selects the authorized base (identity -> input base,
 /// computed -> output base). Fails closed on any bounds/schema/region/root
 /// violation.

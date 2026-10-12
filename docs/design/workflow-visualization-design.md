@@ -4,11 +4,11 @@
 **Date**: 2026-10-05
 **Author**: Coordinator (autonomous)
 
-## Revision History
+## Design Decisions
 
-- **v1**: Simple DAG boxes + static DOT export. Rejected — not industry best practice.
-- **v2**: Card+connection-line canvas. Direction correct, details refined.
-- **v3**: Incorporates research on Coze, Dify, n8n, Nuke, Houdini, Node-RED, Step Functions,
+- **Static DAG proposal**: Simple DAG boxes + static DOT export. Rejected — not industry best practice.
+- **Canvas proposal**: Card+connection-line canvas. Direction correct, details refined.
+- **Current design**: Incorporates research on Coze, Dify, n8n, Nuke, Houdini, Node-RED, Step Functions,
   XState, React Flow, and litegraph.js. Key corrections: status badge (not full-card color),
   auto-layout (not manual positioning), flowing-dash edge animation, hover-highlight pattern.
 
@@ -279,16 +279,16 @@ litegraph, Cytoscape all use this pattern):
 
 | Element | Source |
 |---------|--------|
-| Card name, agent type | `execution-plan.v1` → `nodes[].name`, `nodes[].target` |
-| Input/output types | `execution-plan.v1` → `input_type`, `output_type` |
-| Connections | `execution-plan.v1` → `dependency_edges[]` |
-| Capabilities | `execution-plan.v1` → `nodes[].capability_bindings[]` |
-| Lifecycle | `execution-plan.v1` → `nodes[].lifecycle` |
+| Card name, agent type | `execution-plan` → `nodes[].name`, `nodes[].target` |
+| Input/output types | `execution-plan` → `input_type`, `output_type` |
+| Connections | `execution-plan` → `dependency_edges[]` |
+| Capabilities | `execution-plan` → `nodes[].capability_bindings[]` |
+| Lifecycle | `execution-plan` → `nodes[].lifecycle` |
 | Agent states | IR `AgentDecl.states` + `AgentDecl.transitions` |
-| Execution state | `run-event.v1` JSONL → replay events |
-| Duration | `run-event.v1` → `monotonic_offset_ns` deltas |
-| Token usage | `run-event.v1` → `capability_usage_recorded` |
-| Input/output values | `run-event.v1` → `node_completed.output` |
+| Execution state | `run-event` JSONL → replay events |
+| Duration | `run-event` → `monotonic_offset_ns` deltas |
+| Token usage | `run-event` → `capability_usage_recorded` |
+| Input/output values | `run-event` → `node_completed.output` |
 
 ### CLI Integration
 

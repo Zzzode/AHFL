@@ -54,11 +54,11 @@ ahfl_apply_project_warnings(ahfl_bench_ir_pipeline)
 
 # KR7.3: compile-time / memory-proxy trend gate. Beyond the static per-budget
 # ceilings asserted by the two binaries above, this drives both through their
-# opt-in machine-readable report (ahfl.bench-report.v1) and compares every
+# opt-in machine-readable report (ahfl.bench-report) and compares every
 # budget against the committed baseline (config/benchmark-baseline.json): any
 # structural drift (source_bytes / typed_exprs / typed_statements / ir_decls /
 # ir_exprs) fails exactly, and the memory proxy fails beyond a relative
-# tolerance. It emits a trend artifact (ahfl.benchmark-trend.v1) so a release
+# tolerance. It emits a trend artifact (ahfl.benchmark-trend) so a release
 # process can chart drift, converting the ceiling into a release-blocking trend
 # guard. duration_us is report-only (wall-clock); the static ceilings remain the
 # wall-clock bound. The baseline is the single source of truth for the budget

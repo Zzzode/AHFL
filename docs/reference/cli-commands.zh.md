@@ -1,46 +1,12 @@
 # AHFL CLI Commands
 
-本文是 `docs/reference` 中 CLI 命令参考的合并入口，统一覆盖原多版本文档。当前为唯一维护口径；历史版本内容仅作为演进背景纳入摘要，不再保留独立入口。
+本文列出 `ahflc` 的命令、选项、输出格式和退出码。选择任务后，先确定输入是 package、workspace member 还是独立 `.ahfl` 文件。
 
-关联文档：
-
-- [project-usage.zh.md](./project-usage.zh.md)
-- [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)
-- [migration-policy.zh.md](./migration-policy.zh.md)
-- [contributor-guide.zh.md](./contributor-guide.zh.md)
-- [single-file-mode.zh.md](./single-file-mode.zh.md)
-
-## 合并范围
-
-| 演进阶段 | 合并后保留的信息 |
-|----------|------------------|
-| 早期 core 命令族 | core check / dump / emit / formal 命令族、基础输入模式、退出码。 |
-| PackageGraph 扩展 | `ahfl.toml`、`ahfl.workspace.toml`、`dump package-graph`、manifest/workspace 命令形态。 |
-| Handoff target authoring | handoff target、`emit native-json --manifest --target`、native package 路径。 |
-| Runtime execution | manifest run profile、structured execution events、human / JSON / JSONL renderer 与 recovery。 |
-| 选项表 | 声明式选项表、`CliDriver`、结构化 diagnostics 与 `run` 入口。 |
-
-## 当前口径摘要
-
-1. `ahflc` 是主要编译、验证、artifact 与 runtime CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
-2. package-aware 输入优先使用 `--manifest <ahfl.toml>`，workspace 输入使用 `--workspace <ahfl.workspace.toml> --package <name>`。
-3. 单文件 `<input.ahfl>` 只用于草稿、smoke 和低层调试；无 manifest 时进入
-   `DetachedSourceUnit`，只获得 primitive prelude、当前文件局部语义和有限诊断，
-   不会隐式加载 `std` package。
-4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
-5. 运行期 replay、audit、scheduler、checkpoint 和 recovery 都由 `WasmWorkflowRuntime`（wasm3 内嵌执行）的 event log 投影，不再暴露平行 artifact catalog。
-6. Opt IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 AHFL-IR。
-7. Public API artifact 通过 `emit public-api` / `emit public-api-docs` / `emit public-api-diff` 输出 visibility facts 驱动的 API snapshot、Markdown docs 和 API diff。
-8. `init --single-file` 是从 detached 裸文件迁移到正式 `ahfl.toml` package 的显式脚手架入口，不改变 detached mode 语义。
-9. `package archive` 是 registry publishing 的源码打包入口，生成 normalized source archive payload 和对应 metadata manifest。
-10. `registry resolve --manifest <ahfl.toml> --lockfile <ahfl.lock>` 是显式 registry dependency 解析入口，会解析 manifest v2 registry dependencies 并写出带 registry coordinate/digest 的 lockfile。
-11. manifest-mode `dump package-graph` 会解析 manifest v2 registry dependencies：通过 registry package index 选择版本，拉取 registry index、source archive metadata/payload，校验 digest 后把 registry package 注入 PackageGraph。workspace-mode registry fetch 仍未产品化。
-12. `package publish [--dry-run]` 是 RFC0010 的发布入口，生成 source archive、public API snapshot、registry index metadata 和 publish evidence；可选 `--semver-gate --from <previous-version>` 会从 registry metadata 拉取 previous public API snapshot 并执行 publish-time SemVer gate。未传 `--dry-run` 时会把 validated publish request 上传到 registry。
-13. `package yank <package>@<version> --registry <id>` 会通过 registry mutation 把不可变版本标记为 yanked；yanked 版本不会参与 fresh resolution，但已有 lockfile 仍可复现。
-14. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
-15. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
-16. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
-17. 三层 IR 定型后，每层各自提供稳定的检查面投影：`emit ir` / `emit ir-json` 投影 AHFL-IR 层（`ir::Program`，`ahfl.ir.v2`，供 verification/orchestration 与 SMV/assurance 调试），`emit core-ir-json` 投影 Core-IR 执行层（`ahfl.core.v1`）。二者是不同层的并列一等投影，不存在取代或弃用关系（类比 rustc 同时提供 `--emit=mir` 与 `--emit=llvm-ir`）。
+- 检查、格式化和构建工程：见「总览」「输入选项」与「Formatter」。
+- 运行 workflow 并读取结果：见「Runtime Output Contract」与[执行指南](../tutorials/execution.zh.md)。
+- 配置导出目标：见 [Native handoff 指南](../tutorials/native-handoff.zh.md)。
+- 管理依赖和发布包：见「Registry Dependency Resolution」「Package Publish」与[包指南](../tutorials/packages.zh.md)。
+- 读取三层 IR 的输出：AHFL-IR 用于验证/编排检查，Core-IR 用于执行层检查，Wasm 是可执行产物。格式见 [IR 参考](./ir-format.zh.md)。
 
 ## 总览
 
@@ -97,8 +63,6 @@ ahfl-repl [--help]
 ahfl-dap [--help]
 ```
 
-> `ahfl-incremental` 已在 RFC 0027 P5(KR6.12)退役,见下文 [Incremental](#incremental) 一节。
-
 ## 选项
 
 ### 输入选项
@@ -123,7 +87,7 @@ ahfl-dap [--help]
 | `--recovery-store` | `<path>` | durable resume([RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)):存在则本次 `run` 从该快照恢复;能力返回 `PENDING` 挂起时把 resume record 写到该路径。完成的 run 不写快照。 |
 | `--resume-pending-result` | `<json>` | 恢复挂起 workflow 时,为那个 pending 能力注入的结果 JSON。非法 JSON 报错并中止。 |
 | `--suspend-capability` | `<name>` | 令指定能力在**全新** run 时返回 `PENDING`(挂起),用于从 shell 驱动 suspend→resume 往返;从 `--recovery-store` 恢复时该标志无效(该调用从 memo 命中)。 |
-| `--intent-log` | `<path>` | exactly-once([RFC 0022](../rfcs/0022-durable-capability-resume.zh.md) slice 4):在每次 `durable_write`/`financial_write` 能力派发**前**向该路径追加一行 JSONL write-ahead intent `{idempotency_key, capability}`,供宿主跨崩溃去重。恢复时命中 memo 的调用不重放派发,故不重复记录。 |
+| `--intent-log` | `<path>` | 写入去重:在每次 `durable_write`/`financial_write` 能力派发**前**向该路径追加一行 JSONL write-ahead intent `{idempotency_key, capability}`,供宿主跨崩溃去重。恢复时命中 memo 的调用不重放派发,故不重复记录。 |
 | `--output-format` | `<human\|json\|jsonl\|quiet>` | 选择同一 canonical event/report 的输出 renderer |
 | `--verbosity` | `<normal\|verbose\|trace>` | 控制展示细节，不改变 event 语义 |
 
@@ -131,7 +95,8 @@ ahfl-dap [--help]
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
-| `--verify` | `<off\|on>` | 形式化验证阶段(RFC 0028)。`check`/`run`/`build` 默认 `on`(fail-closed:缺 solver、超时、反例均阻塞编译);其他命令默认 `off`。零规格时静默跳过。NuSMV 和 Z3 已内置于安装包,默认安装即有 solver |
+| `--verify` | `<off\|on>` | `check`/`run`/`build` 默认 `on`：通用 Agent/workflow 控制义务与用户控制时序目标。其他命令默认 `off`。所请求检查 fail closed；不隐式请求数据合同证明 |
+| `--verify-data-contracts` | - | 需 `--verify=on`：显式请求 package 数据合同蕴含验证。unsupported、unknown、缺 solver、矛盾前提、反例均失败；证明范围为 `contract_implication` |
 | `--formal-backend` | `<nuxmv\|nusmv\|spin\|tlaplus>` | 需 `--verify=on`: 选择形式化 backend。当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证；`spin` / `tlaplus` 会报告 `verification_unsupported` |
 | `--model-checker` | `<path>` | 需 `--verify=on`: NuSMV/nuXmv checker 路径 |
 | `--checker-timeout-seconds` | `<seconds>` | 需 `--verify=on`: 外部 checker 进程 timeout；超时会报告 `checker_status: checker_error` 与 `checker_timed_out: true` |
@@ -157,10 +122,6 @@ ahfl-dap [--help]
 | `--from` | `<version>` | SemVer gate 的 previous version；`package publish` 用它定位 previous release |
 | `--to` | `<version>` | 仅 `emit public-api-diff --semver-gate`: 显式 next version；`package publish` 使用 manifest version |
 
-## 已移除入口
-
-`--search-root` 和 `dump project` 不再是公开 CLI。多文件编译、调试 source graph 或检查依赖关系时，使用 `--manifest <ahfl.toml>` 或 `--workspace <ahfl.workspace.toml> --package <name>`；source graph / dependency 诊断使用 `dump package-graph`。
-
 ## 单文件 Check
 
 `ahflc check path/to/file.ahfl` 若在工作区边界内找不到 `ahfl.toml`，不会把当前目录
@@ -180,7 +141,7 @@ ahflc init --single-file path/to/file.ahfl
 ```
 
 该命令只创建文件所在目录的 `ahfl.toml`，并在缺少 module 声明的已有源文件头部补入
-`module <prefix>::<file-stem>;`。生成的 manifest 是 RFC 0005 package manifest：
+`module <prefix>::<file-stem>;`。生成的 manifest 声明标准库依赖：
 `[dependencies] std = { source = "sysroot" }` 只建立 package dependency，不会隐式 import
 任何 std module；源码仍必须显式写 `import std::...`。
 
@@ -188,7 +149,7 @@ ahflc init --single-file path/to/file.ahfl
 
 ## Package Archive
 
-`ahflc package archive --manifest <ahfl.toml> --out <dir>` 生成 RFC0010 定义的 normalized source archive。当前命令只接受显式 package manifest，不接受 workspace selector、`--target`、`--sysroot` 或 positional source file；registry upload/yank 由 `package publish` / `package yank` 承担，不混入 archive 命令。
+`ahflc package archive --manifest <ahfl.toml> --out <dir>` 生成规范化的源码归档。当前命令只接受显式 package manifest，不接受 workspace selector、`--target`、`--sysroot` 或 positional source file；registry upload/yank 由 `package publish` / `package yank` 承担，不混入 archive 命令。
 
 输出文件：
 
@@ -197,7 +158,7 @@ ahflc init --single-file path/to/file.ahfl
 <package>-<version>.source-archive.payload
 ```
 
-metadata manifest 使用 `ahfl.source_archive.v1` schema，记录 package name、`manifest_sha256`、`archive_sha256` 和每个源码文件的 path/size/digest。payload 是 deterministic binary archive payload，当前只包含 `.ahfl` / `.toml` source inputs，排除 VCS/build/cache/lockfile artifacts，拒绝 symlink，并把 CRLF/CR 归一化为 LF。
+metadata manifest 使用 `ahfl.source_archive` schema，记录 package name、`manifest_sha256`、`archive_sha256` 和每个源码文件的 path/size/digest。payload 是 deterministic binary archive payload，当前只包含 `.ahfl` / `.toml` source inputs，排除 VCS/build/cache/lockfile artifacts，拒绝 symlink，并把 CRLF/CR 归一化为 LF。
 
 示例：
 
@@ -207,7 +168,7 @@ ahflc package archive --manifest path/to/ahfl.toml --out dist/
 
 ## Registry Dependency Resolution
 
-manifest v2 package 可以声明 registry dependency。显式解析入口是：
+manifest package 可以声明 registry dependency。显式解析入口是：
 
 ```bash
 ahflc registry resolve --manifest path/to/ahfl.toml --lockfile path/to/ahfl.lock --sysroot .
@@ -224,7 +185,7 @@ ahflc dump package-graph --manifest path/to/ahfl.toml --sysroot .
 如果 root manifest 含 registry dependency，CLI 会：
 
 1. 读取 registry package index，按 exact/caret/tilde requirement 选择最高可用版本。
-2. 拉取选中版本的 `ahfl.registry.index.v1`、`ahfl.source_archive.v1` metadata 和 source archive payload。
+2. 拉取选中版本的 `ahfl.registry.index`、`ahfl.source_archive` metadata 和 source archive payload。
 3. 校验 registry metadata、source archive digest、manifest digest 和 dependency metadata。
 4. materialize verified source archive，并把 registry package 作为结构化 PackageGraph input 注入。
 5. 递归解析 transitive registry dependencies。
@@ -233,22 +194,22 @@ ahflc dump package-graph --manifest path/to/ahfl.toml --sysroot .
 
 | 变量 | 说明 |
 |------|------|
-| `AHFL_REGISTRY_URL` | 覆盖默认 registry endpoint；仅默认 `https://registry.ahfl.io/v1` 构造路径读取该变量。 |
+| `AHFL_REGISTRY_URL` | 覆盖默认 registry endpoint；仅默认 `https://registry.ahfl.io` 构造路径读取该变量。 |
 | `AHFL_PACKAGE_CACHE` | 指定 registry fetch cache 目录；transport unavailable 时允许回退缓存，live invalid response 不回退。 |
 
 边界：
 
 1. LSP 不会隐式执行 registry 网络拉取。
-2. workspace-mode registry dependency fetch 仍未产品化；需要先走 manifest-mode。
+2. workspace 输入不支持 registry dependency 网络拉取；请用对应 package 的 `--manifest` 解析依赖。
 3. registry upload 和 yank 走显式 `package publish` / `package yank`，LSP 与普通 PackageGraph 查询不会隐式执行 mutation。
 
 ## Package Publish
 
-`ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir> [--sysroot <path>] [--semver-gate --from <previous>]` 执行 RFC0010 发布流水线。它会构建 PackageGraph、检查已有 `ahfl.lock` drift、解析并 typecheck exported public API 输入、生成 public API snapshot 和 digest、构建 normalized source archive、拒绝 path/workspace local dependency 泄漏到 registry metadata，并输出 registry index metadata 与 publish evidence。
+`ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir> [--sysroot <path>] [--semver-gate --from <previous>]` 检查并发布 package。它会构建 PackageGraph、检查已有 `ahfl.lock` drift、解析并 typecheck exported public API 输入、生成 public API snapshot 和 digest、构建 normalized source archive、拒绝 path/workspace local dependency 泄漏到 registry metadata，并输出 registry index metadata 与 publish evidence。
 
 如果传入 `--semver-gate --from <previous>`，CLI 会读取 registry package index，定位同 registry id 下的 previous release，拉取并校验 previous public API snapshot，然后把 previous snapshot 和当前 snapshot 交给 `public-api-diff --semver-gate` 同一套结构化 SemVer gate。gate 失败时命令失败，不执行 upload；gate 通过时 evidence 记录 `semver_gate: "pass"`、`semver_from`、`semver_to`、`previous_public_api_sha256` 和 previous snapshot artifact。
 
-未传 `--dry-run` 时，CLI 会在本地 gate 全部通过后向 registry 发送 `ahfl.registry.publish_request.v1` envelope。请求包含 `ahfl.registry.index.v1`、`ahfl.source_archive.v1` metadata、source archive payload 和 public API snapshot。客户端只接受同 coordinate、同 digest、同 dependency metadata 且 `yanked=false` 的 registry index 响应，成功后写出 `ahfl.publish.v1` evidence，并设置 `upload_performed: true`。
+未传 `--dry-run` 时，CLI 会在本地 gate 全部通过后向 registry 发送 `ahfl.registry.publish_request` envelope。请求包含 `ahfl.registry.index`、`ahfl.source_archive` metadata、source archive payload 和 public API snapshot。客户端只接受同 coordinate、同 digest、同 dependency metadata 且 `yanked=false` 的 registry index 响应，成功后写出 `ahfl.publish` evidence，并设置 `upload_performed: true`。
 
 输出文件：
 
@@ -262,7 +223,7 @@ ahflc dump package-graph --manifest path/to/ahfl.toml --sysroot .
 <package>-<version>.publish.json               # without --dry-run
 ```
 
-`registry-index.json` 使用 `ahfl.registry.index.v1` schema。`publish-dry-run.json` 使用 `ahfl.publish_dry_run.v1` schema，固定记录 `upload_performed: false`；`publish.json` 使用 `ahfl.publish.v1` schema，记录 `upload_performed: true`。未传 `--semver-gate` 时 `semver_gate` 为 `not-run`，传入并通过时为 `pass`。
+`registry-index.json` 使用 `ahfl.registry.index` schema。`publish-dry-run.json` 使用 `ahfl.publish_dry_run` schema，固定记录 `upload_performed: false`；`publish.json` 使用 `ahfl.publish` schema，记录 `upload_performed: true`。未传 `--semver-gate` 时 `semver_gate` 为 `not-run`，传入并通过时为 `pass`。
 
 示例：
 
@@ -288,7 +249,7 @@ ahflc package publish \
 
 `ahflc package yank <package>@<version> --registry <id> [--reason <text>]` 标记 registry 中已发布版本为 yanked。yank 不会修改 source archive、manifest digest 或 public API snapshot；它只允许 registry metadata 的 `yanked` 字段从 `false` 变为 `true`。
 
-客户端发送 `ahfl.registry.yank_request.v1`，并只接受同 registry id、同 package、同 version 且 `yanked=true` 的 `ahfl.registry.index.v1` 响应。registry 返回空 body、错误 coordinate 或 `yanked=false` 都会 fail closed。
+客户端发送 `ahfl.registry.yank_request`，并只接受同 registry id、同 package、同 version 且 `yanked=true` 的 `ahfl.registry.index` 响应。registry 返回空 body、错误 coordinate 或 `yanked=false` 都会 fail closed。
 
 示例：
 
@@ -335,43 +296,17 @@ printf ':help\n:quit\n' | ahfl-repl
 
 ## DAP
 
-`ahfl-dap` 启动 AHFL Debug Adapter Protocol server，通过 stdin/stdout 读写 `Content-Length` frame。当前入口暴露现有 DAP library handler：`initialize`、`launch`、`disconnect`、`configurationDone`、`setBreakpoints`、`threads`、`stackTrace`、`scopes`、`variables`、`continue`、`next`、`evaluate`。
+`ahfl-dap` 通过 Debug Adapter Protocol（DAP，编辑器与调试器的通信协议）提供 workflow 调试。使用编辑器的行断点，在状态转移处暂停和步进，查看当前状态、输入输出和已完成节点结果。启动配置与示例见 [调试指南](../tutorials/debugging.zh.md)。
 
-当前边界：
+当前不支持按 capability 名称设置函数断点、条件断点、修改变量或 attach 到运行中的进程。Step Into 与 Step Over 行为相同，不能进入外部服务；Step Out 在不同 Agent 的状态转移处暂停。Context 和 handler 局部变量当前不可见。
 
-1. `ahfl-dap` 已有进程级 smoke test。
-2. breakpoint、state inspector 与基础 command handler 已在库级测试覆盖。
-3. runtime state、capability breakpoint 与真实 step execution 仍属于 DAP 产品化后续工作。
+## 增量分析
 
-## Incremental
-
-> **BREAKING CHANGE(RFC 0027 P5 / KR6.12):`ahfl-incremental` 入口已移除。**
->
-> 下面的用法仅作为历史记录保留;该可执行文件不再构建或发布。增量编译现由主编译路径的
-> QueryEngine 原生提供:`ahflc check`(及 LSP)经查询图求值 parse → resolve → typecheck,
-> 编辑只失效依赖子图,不存在旁路的手工 dependency graph。其 RFC 0016 持久化 cache contract
-> 重锚为 QueryEngine 持久化层,代码位于 `src/tooling/cache/`(库名 `ahfl_tooling_cache`),
-> 仍被 LSP 的 opt-in typed-HIR 持久缓存复用;独立 daemon 与 changed-compile CLI 不再存在。
-
-`ahfl-incremental` 是历史上 incremental compiler 的窄入口,接收一组 changed source paths,
-构建单层 dependency graph,运行 parse / resolve / typecheck / IR lowering,并输出模块状态和
-cache stats。**该入口已随 RFC 0027 P5 删除**;等价能力(增量重算 + IR cache)由 QueryEngine
-原生提供。
-
-历史命令(不再可用):
-
-```bash
-ahfl-incremental tests/golden/ir/ok_workflow_value_flow.ahfl
-```
-
-历史边界(已被 QueryEngine 取代):
-
-1. 入口曾使用进程内 `IrCache`;现统一为 `src/tooling/cache/` 的 RFC 0016 持久化契约。
-2. 手工 dependency graph / daemon 已删除;package-aware 失效由查询图的 revision 失效原生覆盖。
+在编辑器中继续编辑同一工程时，LSP 会复用未受影响的分析结果，并重新分析受编辑影响的文件与依赖。CLI 检查仍使用 `ahflc check`。使用方式与缓存配置见[增量编译指南](../tutorials/incremental-compilation.zh.md)。
 
 ## Profiling
 
-`--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 是当前已产品化的 CLI profiling / size-report / observability flag。它们都不改变 stdout artifact；`--time-passes` 和 `--smv-size-report` 报告写入 stderr，`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 写入侧路文件。
+`--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 用于分析命令耗时、产物规模和执行日志。它们都不改变 stdout artifact；`--time-passes` 和 `--smv-size-report` 报告写入 stderr，`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 写入侧路文件。
 
 ```bash
 ahflc emit summary -O --time-passes examples/refund/audit.ahfl
@@ -392,22 +327,16 @@ ahflc emit summary \
 4. `--metrics-export` 输出 `ahfl.cli.duration_ms` 与 `ahfl.cli.exit_code` metrics，包含 command label。
 5. `--structured-log` 输出 `ahflc command completed` 事件，包含 level、command、exit_code 和 duration_ms fields。
 6. `--memory-report` 输出 AHFL 内存报告格式 JSON，包含 source、TypedProgram、IR 规模和结构性 memory proxy；这不是 RSS / allocator 观测。
-7. Opt IR function-level optimization timing、pass-level trace schema 和平台可比 RSS / allocator memory report 仍是后续工作。
 
 ## Core-IR 分层 JSON Artifact
 
-`emit core-ir-json` / `emit-core-ir-json` 是执行层 Core-IR 的机器可读入口，输出 `ahfl.core.v1` 分层 JSON projection。它在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 AHFL-IR lowering 之后，把 `ir::Program` 降到 `CoreProgram`（`lower_ahfl_to_core`，自动跑 Core verifier），再序列化为单个 bundled envelope：`format_version`、固定 `layer: "core"` 判别符，以及 `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances` 表。
+`emit core-ir-json` / `emit-core-ir-json` 输出执行层 Core-IR 的 `ahfl.core` JSON。输出包含 `format`、固定 `layer: "core"` 判别符，以及 `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances` 表。
 
 ```bash
 ahflc emit core-ir-json examples/refund/audit.ahfl
 ```
 
-当前边界：
-
-1. 这是**新增**的投影，不改变任何既有 artifact；单层 `emit-ir` / `emit-ir-json` 输出逐字节不变。
-2. 它是 artifact-only，不回写 AHFL-IR，也不改变任何普通 backend 的消费类型。
-3. JSON envelope 只携带逻辑身份，不携带 target data-layout fact（物理布局是独立的 target-specific artifact）。
-4. 完整 schema / 规范化 / round-trip 契约见设计文档 `docs/design/core-ir-p9-layered-json.zh.md`；既有单层投影的弃用边界见 [ir-format.zh.md](./ir-format.zh.md) 的「分层投影与弃用边界」。
+选择 `emit ir-json` 读取验证与编排结构，选择 `emit core-ir-json` 读取执行结构。Core-IR JSON 是 artifact-only 检查产物，不改变程序或 backend 输入；它只携带逻辑身份，不包含目标平台的物理数据布局。格式与分层边界见 [IR 参考](./ir-format.zh.md#分层投影边界)。
 
 ## Workflow Canvas 可视化
 
@@ -432,94 +361,67 @@ ahflc visualize plan.json --format mermaid -o graph.mmd
 | `--format html\|dot\|mermaid` | 输出格式（默认 `html`） |
 
 HTML canvas 功能：
-- 自动分层 DAG 布局（Kahn 拓扑排序 + 最长路径分层 + barycenter 交叉消除）
+
+- 自动布局 workflow 节点和依赖连线
 - 拖拽平移、滚轮缩放、Fit 自适应
 - 点击节点查看详情（agent 类型、输入输出类型、capability、依赖）
 - 加载 trace 后：状态徽章（pending/scheduled/running/completed/failed/skipped）、耗时显示、流动虚线动画、时间线、agent 状态机路径
 
-trace 文件由 `ahflc run --format jsonl` 生成（`ahfl.run-event.v1` JSONL）。
+trace 文件由 `ahflc run --output-format jsonl` 生成（`ahfl.run-event` JSONL）。
 
 ## Opt IR Artifact
 
-`emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR_V1` JSON artifact。二者都会在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 AHFL-IR lowering 之后，把 `ir::Program` 降到 `ir::opt::OptProgram`。artifact 包含 OptFunction、local、basic block、statement、terminator、source range，以及无法降为 pure expression fragment 的 temporal atom `skipped_temporal` 记录。
+`emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR` JSON artifact。输出包含函数、局部变量、基本块、语句、终结指令、源范围，以及无法优化的时序原子 `skipped_temporal` 记录。
 
 示例：
 
 ```bash
 # 输出未运行 Opt IR passes 的 Opt IR
-ahflc emit opt-ir tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+ahflc emit opt-ir examples/refund/audit.ahfl
 
 # 先运行 AHFL-IR passes，再输出 Opt IR passes 后的结果
-ahflc emit opt-ir -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+ahflc emit opt-ir -O examples/refund/audit.ahfl
 
 # 输出未运行 Opt IR passes 的 Opt IR JSON
-ahflc emit opt-ir-json tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+ahflc emit opt-ir-json examples/refund/audit.ahfl
 
 # 先运行 AHFL-IR passes，再输出 Opt IR passes 后的 Opt IR JSON
-ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+ahflc emit opt-ir-json -O examples/refund/audit.ahfl
 ```
 
-当前边界：
+使用限制：
 
-1. `emit opt-ir` 是 artifact dump，不是 core backend contract。
-2. 普通 `emit-ir`、`emit-ir-json`、SMV、native / execution / assurance 输出仍以 `ir::Program` 为输入。
-3. `-O` 在普通 backend 路径中会先运行 AHFL-IR pass pipeline，因此普通 backend 输出可以变化；当前回归测试已覆盖 `emit ir` 和 `emit smv` 的 before/after 差异。
-4. `-O` 不会把 Opt IR 回降到 AHFL-IR，也不会改变 backend 消费类型。
-5. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
-6. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 AHFL-IR 时，仍应使用 `emit-ir-json`。
+1. Opt IR 是 artifact-only 诊断输出。读取稳定的验证与编排结构时，使用 `emit ir-json`。
+2. `-O` 会优化 AHFL-IR，因此普通导出产物也可能变化；导出 Opt IR 时还会优化其函数与基本块。
+3. Opt IR 文本适合人工比较。脚本使用 `AHFL_OPT_IR` JSON，并检查 `skipped_temporal` 中的未优化原因。
 
 ## SMT Contract Artifact 与数据谓词验证
 
-`emit smt` 把 `contract` 的**数据谓词**子句(`requires` / `ensures` / `invariant` /
-`forbid` 的表达式分支)编码为 SMT-LIB 2 文档输出到 stdout,与 `emit smv` 对称。它是
-[RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md) 定义的可验证子集(见
-`docs/spec/core-language.zh.md` §5.6)的可检查快照,**不需要求解器在场**,遵守确定性
-边界(无 wall clock / pid / host path / 随机),同一程序多次输出字节一致。
+`emit smt` 将可编码的数据合同发射为确定性 SMT-LIB artifact，不启动 solver；对子集外条款写明拒绝原因。artifact 的 check-sat 只是断言一致性检查，不能代替逐目标的证明请求。
 
 ```bash
-# 输出合同数据谓词的 SMT-LIB 2 编码
-ahflc emit smt tests/golden/formal/ok_smt_encoding.ahfl
-
-# 编码器产物可直接喂给外部 SMT 求解器
-ahflc emit smt path/to/program.ahfl | z3 -in
+# 仅查看编码
+ahflc emit smt --manifest examples/refund-rules/ahfl.toml
+# 默认控制验证 + 显式数据目标
+ahflc check --manifest examples/refund-rules/ahfl.toml --verify-data-contracts
 ```
 
-文档结构:`(set-logic QF_NIA)`(支持非线性算术,如 `qty * price`)、按首次出现顺序
-的 `declare-const`(bounded int 附加范围约束)、每个可编码子句一条断言(`forbid` 取
-否定)、除法/取模的 `divisor != 0` 义务、结尾 `(check-sat)`。离开子集的子句渲染为结构化
-注释而非断言。
+默认数据 requires 是环境前提，数据 ensures/invariant/forbid 为 not_requested；不启动 Z3、不发未请求的子集警告。`--verify-data-contracts` 请求现有 package 数据目标，不能与 `--verify=off` 同用。
 
-`ahflc verify` 在 SMV 时序路径之外**同时**运行 SMT-BMC 数据路径,报告块以 `smt_bmc_`
-前缀呈现:
+当前范围为 **contract_implication**：类型边界与 requires 一致性成立后，检查 requires 是否蕴含 goal。invariant 不能被循环用作假设；前提矛盾、unsupported 目标/必要前提、solver_unavailable、unknown、timeout、公式反例均导致非零退出。Z3 发现顺序为 AHFL_Z3_PATH → ahflc 同目录 bundled Z3 → PATH。
 
-```text
-smt_bmc_status: unsafe          # safe / bounded_safe / unsafe / unknown / unsupported / solver_unavailable
-smt_bmc_goals: 1
-smt_bmc_proven: 0
-smt_bmc_refuted: contract pkg::Agent ensures[0]
-  counterexample: input__x = 0
-```
+SMT 反例给出合同变量赋值，不是 flow 执行轨迹。flow 赋值和 capability 结果没有编码，成功不能表示执行实现满足后置条件。数据目标结果与生成控制义务、用户时序目标/条件证明分开报告；runtime contract checks 当前 not_implemented。
 
-判定与 skip 语义:
-
-1. 真正的反驳(`unsafe`)使 `verify` 失败(退出码非零),即使 SMV 路径通过。
-2. 求解器缺失(`solver_unavailable`)、无可编码目标(`unsupported`)、`unknown` 都是
-   skip,**绝不**把通过变成失败,也**绝不**伪造通过。
-3. 求解器解析:`AHFL_Z3_PATH` 环境变量 → **ahflc 同目录下的 bundled Z3**（默认安装即有）→ `PATH` 中的 `z3`(当前 `verify` 使用默认
-   求解器选项,不接受显式路径标志)。
-4. 离开可验证子集的子句发 `formal.NOT_IN_VERIFIED_SUBSET` 告警(见
-   `docs/reference/error-codes.zh.md`),被抽象而非证明。
+退款审核示例的三条宿主 predicate requires 是环境声明，non_empty ensures 默认未请求；显式请求会因这些无规则定义的 predicate 不支持而失败并定位条款。可证明规则见 [退款规则示例](../../examples/refund-rules/README.md)，规范见 [Assurance Spec](../spec/assurance.zh.md) 与 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md)。
 
 ## Public API Artifact
 
 `emit public-api` 和 `emit public-api-docs` 是 package-level artifact。它们读取
-`ahfl.toml` / `ahfl.workspace.toml` 的 `[exports].modules`，在 parse、resolve、
-typecheck、validate 之后、IR lowering 之前，从 resolver 的 visibility、`AliasDefId`
-和 API-reachability facts 生成 public surface。它们不需要 `--target`，也不会从
+`ahfl.toml` / `ahfl.workspace.toml` 的 `[exports].modules`，根据导出的公开声明与别名生成 API 列表。它们不需要 `--target`，也不会从
 handoff target metadata 推导 API 面。
 
 ```bash
-# JSON snapshot，schema 为 ahfl.public_api.v1
+# JSON snapshot，schema 为 ahfl.public_api
 ahflc emit public-api \
   --manifest tests/integration/package_graph_manifest/ahfl.toml \
   --sysroot .
@@ -544,9 +446,9 @@ ahflc emit public-api-diff \
 1. Snapshot 只包含选中 root package 的 API-reachable `pub` symbol 和 `pub use` alias；依赖 package 的 public symbol 不会冒充本包 API。
 2. Entry identity 使用 `symbol:<namespace>:<canonical>` 或 `alias:<namespace>:<canonical>`；entry 内保留当前编译会话的 `symbol_id` / `alias_id` / `target_symbol_id` 作为结构化语义来源。
 3. `signature` 字段携带结构化参数、字段、variant、effect、where 等 facts；`signature_text` 只用于展示和 diff 摘要。
-4. `public-api-diff` 只读取两个 `ahfl.public_api.v1` JSON snapshot，不接受 `--manifest`、`--workspace`、`--target` 或 `--sysroot`。
+4. `public-api-diff` 只读取两个 `ahfl.public_api` JSON snapshot，不接受 `--manifest`、`--workspace`、`--target` 或 `--sysroot`。
 5. `public-api-diff --semver-gate --from <old> --to <new>` 会基于 diff severity 执行 fail-closed SemVer gate：removed/changed API 需要 major bump，added API 需要 minor bump，无 public API diff 至少需要 patch bump；`0.x` breaking diff 在仍保持 `0.x` 时按 minor bump gate。
-6. `package publish` 已把 source archive、public API snapshot、SemVer gate 和 registry upload 串成同一条 fail-closed 发布路径；独立 `public-api-diff` 仍保留为低层审计命令。
+6. 发布时可用 `package publish --semver-gate --from <old>` 检查版本兼容性；只比较两个已有 snapshot 时使用 `public-api-diff`。
 
 ## Runtime Output Contract
 
@@ -564,13 +466,13 @@ ahflc run --manifest examples/execution-demo/ahfl.toml \
 | Output format | 数据来源 | 合同 |
 | --- | --- | --- |
 | `human` | `ExecutionReport` | 默认业务摘要、节点状态、关键诊断 |
-| `json` | `ExecutionReport` | 版本化单对象机器报告 |
+| `json` | `ExecutionReport` | 当前格式的单对象机器报告 |
 | `jsonl` | `ExecutionEventStore` | 按 `ExecutionEventId` 输出完整事件流 |
 | `quiet` | terminal status | 只保留退出码与必要错误 |
 
 replay、audit、scheduler、checkpoint 和 recovery 都是同一 event store 的 library
-projection，不是额外的公开 `emit` artifact。需要接入审查系统时，应消费 JSON/JSONL
-输出或直接使用 `include/ahfl/runtime/` 下的 projection API，禁止解析 human output。
+projection。需要接入审查系统时，应消费 JSON/JSONL
+输出或直接使用 `include/ahfl/runtime/` 下的 projection API，human output 仅供阅读，不适合作为脚本接口。
 
 ## 退出码
 
@@ -581,35 +483,8 @@ projection，不是额外的公开 `emit` artifact。需要接入审查系统时
 | `2` | 命令行参数非法 |
 | `3` | 内部错误 (不变式违反) |
 
-## 架构变更 (面向贡献者)
+## 结果字段
 
-### 声明式选项表
+控制报告使用 `verification_scope: control_model`、`control_status`，并分别列出 `generated_control_proven` / `generated_control_bounded` 与 `user_temporal_proven` / `user_temporal_bounded` / `user_temporal_conditional` / `user_temporal_unsupported`。无目标时报告 no_targets/not_run，不能声称证明通过。
 
-所有 CLI 选项在 `src/tooling/cli/option_table.cpp` 中通过 `OptionSpec` 结构声明：
-
-```cpp
-struct OptionSpec {
-    std::string_view long_name;     // "--manifest"
-    std::string_view short_name;    // "" or "-O"
-    OptionArgKind arg_kind;         // Flag / RequiredValue / RepeatableValue
-    OptionSetter setter;            // void (*)(CommandLineOptions&, optional<string_view>)
-    std::string_view help_text;
-    std::string_view metavar;
-};
-```
-
-添加新选项只需：
-1. 在 `CommandLineOptions` 中添加字段
-2. 写一个 setter 函数
-3. 在 `kOptionSpecs[]` 表中添加一行
-
-## 最小验证建议
-
-```bash
-# 全量测试
-ctest --preset test-dev --output-on-failure
-
-# CLI routing、runtime projections 与 recovery
-ctest --preset test-dev --output-on-failure \
-  -R "ahfl\\.cli\\.command_routing_all|ahfl\\.runtime\\.(execution_|workflow_recovery)"
-```
+数据报告使用 `data_contract_status`（not_requested、proved、bounded、refuted、inconsistent_assumptions、unknown、unsupported、solver_unavailable、no_targets）、`data_contract_scope: contract_implication`、`data_contract_assumptions` 和 `data_contract_goals`；逐条目标保留来源。`runtime_contract_checks: not_implemented` 表示当前没有自动 runtime 合同检查。

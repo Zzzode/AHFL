@@ -1,168 +1,67 @@
-# AHFL Docs
+# AHFL Documentation
 
-This directory uses a typed document taxonomy. The goal is to make document intent obvious from the path alone and to stop ad-hoc names from accumulating in `docs/`.
+Start with the [user guide](./tutorials/README.md), or choose the task you want
+to complete below. The guides include commands, expected results, and limits
+that matter when running your own workflows.
 
-## Taxonomy
+## Build and run a workflow
 
-- `docs/spec/`
-  - Normative documents.
-  - Use this for grammar, type system, static semantics, and any source-of-truth language contract.
-- `docs/design/`
-  - Non-normative engineering design documents.
-  - Use this for architecture, boundaries, repository layout, backend design, and implementation constraints.
-- `docs/plans/`
-  - Execution-facing planning documents.
-  - Use this for roadmap, milestones, backlog, rollout plans, and issue breakdowns.
-- `docs/reference/`
-  - Evergreen reference material.
-  - Use this for how-to, operational reference, glossary, and command/reference sheets.
+| Task | Guide |
+| --- | --- |
+| Install the compiler and check your first program | [Getting started](./tutorials/getting-started.zh.md) |
+| Understand agents, capabilities, states, and workflows | [AHFL concepts](./tutorials/overview.zh.md) |
+| Write types, agents, contracts, and workflow nodes | [Authoring workflows](./tutorials/authoring.zh.md) |
+| Choose compiler commands and output formats | [Using the CLI](./tutorials/cli.zh.md) |
+| Configure an LLM provider and run a workflow | [Execution](./tutorials/execution.zh.md) |
+| Check safety, liveness, and data contracts | [Assurance](./tutorials/assurance.zh.md) |
+| Diagnose errors and inspect a running workflow | [Debugging](./tutorials/debugging.zh.md) |
+| Organize modules, dependencies, and workspace packages | [Packages and workspaces](./tutorials/packages.zh.md) |
+| Reuse compilation results and inspect the cache | [Incremental compilation](./tutorials/incremental-compilation.zh.md) |
+| Export a workflow for a host application | [Native handoff](./tutorials/native-handoff.zh.md) |
+| Use standard library types and functions | [Standard library](./tutorials/standard-library.zh.md) |
 
-## Naming Convention
+## Try an example
 
-Except for this index, documentation files live under a typed directory and use one current filename per topic:
+- [Incident triage](../examples/execution-demo/README.md): connect multiple
+  agents and call an LLM through an OpenAI-compatible endpoint.
+- [Durable resume](../examples/durable-resume/README.md): suspend a capability
+  call, save a recovery record, and resume in a separate process.
+- [Loan origination](../examples/loan-origination/README.md): model parallel
+  screening, decision routing, and financial-effect policies.
+- [Refund rules](../examples/refund-rules/README.md): prove a bounded amount
+  rule and inspect a counterexample.
 
-```text
-docs/<class>/<topic>.<lang>.md
-```
+## Look up details
 
-Rules:
+| Need | Reference |
+| --- | --- |
+| Command syntax and flags | [CLI commands](./reference/cli-commands.zh.md) |
+| Diagnostic codes and suggested fixes | [Error codes](./reference/error-codes.zh.md) |
+| Available backend outputs and their limits | [Backend capabilities](./reference/backend-capability-matrix.zh.md) |
+| Language rules | [Core language specification](./spec/core-language.zh.md) |
+| Verification and effect-policy rules | [Assurance specification](./spec/assurance.zh.md) |
+| Single-file compilation options | [Single-file mode](./reference/single-file-mode.zh.md) |
+| VS Code installation and configuration | [VS Code extension](./reference/lsp-vscode-extension.zh.md) |
+| Execution reports, recovery records, and audit data | [Runtime artifacts](./reference/native-runtime-artifacts.zh.md) |
+| Host callbacks and capability results | [Host ABI](./reference/host-abi.zh.md) |
+| Compiler intermediate-representation fields | [IR format](./reference/ir-format.zh.md) |
 
-1. `<class>` must be one of `spec`, `design`, `plans`, or `reference`.
-2. `<topic>` must be a short kebab-case noun phrase.
-3. `<topic>` must not repeat the document class word.
-4. Do not add document-version suffixes to filenames.
-5. If a topic accumulates multiple historical docs, merge the useful content into the current topic file and delete the redundant files.
-6. `<lang>` uses a short language code such as `en` or `zh` and must reflect the dominant prose language.
-7. Internal document links should use relative Markdown links, not machine-local absolute paths.
-8. New docs should not be added directly under `docs/` unless they are index files like this `README.md`.
+## Work on AHFL itself
 
-Examples:
+These documents are for compiler contributors and maintainers:
 
-- `docs/spec/core-language.zh.md`
-- `docs/design/compiler-phase-boundaries.zh.md`
-- `docs/plans/project-status.zh.md`
-
-Avoid:
-
-- `docs/spec/<topic>-version.zh.md`
-- `docs/design/<topic>-dated-draft.zh.md`
-- `docs/final-roadmap.md`
-- `docs/misc.md`
-
-## Current Map
-
-### Spec
-
-- [assurance.zh.md](./spec/assurance.zh.md)
-- [core-language.zh.md](./spec/core-language.zh.md)
-
-### Design
-
-- [architecture-overview.zh.md](./design/architecture-overview.zh.md)
-- [assurance-architecture.zh.md](./design/assurance-architecture.zh.md)
-- [ast-model-architecture.zh.md](./design/ast-model-architecture.zh.md)
-- [backend-extension-guide.zh.md](./design/backend-extension-guide.zh.md)
-- [cli-pipeline-architecture.zh.md](./design/cli-pipeline-architecture.zh.md)
-- [compiler-architecture.zh.md](./design/compiler-architecture.zh.md)
-- [compiler-evolution.zh.md](./design/compiler-evolution.zh.md)
-- [compiler-phase-boundaries.zh.md](./design/compiler-phase-boundaries.zh.md)
-- [corelib-container-migration.zh.md](./design/corelib-container-migration.zh.md)
-- [corelib-effect-system.zh.md](./design/corelib-effect-system.zh.md)
-- [corelib-stdlib-api.zh.md](./design/corelib-stdlib-api.zh.md)
-- [corelib-type-system.zh.md](./design/corelib-type-system.zh.md)
-- [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
-- [formal-backend.zh.md](./design/formal-backend.zh.md)
-- [frontend-lowering-architecture.zh.md](./design/frontend-lowering-architecture.zh.md)
-- [ir-backend-architecture.zh.md](./design/ir-backend-architecture.zh.md)
-- [lsp-hover-architecture.zh.md](./design/lsp-hover-architecture.zh.md)
-- [module-loading.zh.md](./design/module-loading.zh.md)
-- [module-resolution-rules.zh.md](./design/module-resolution-rules.zh.md)
-- [native-runtime-architecture.zh.md](./design/native-runtime-architecture.zh.md)
-- [release-evidence-archive.zh.md](./design/release-evidence-archive.zh.md)
-- [repository-layout.zh.md](./design/repository-layout.zh.md)
-- [semantics-architecture.zh.md](./design/semantics-architecture.zh.md)
-- [source-graph.zh.md](./design/source-graph.zh.md)
-- [spec-restructure.zh.md](./design/spec-restructure.zh.md)
-- [testing-strategy.zh.md](./design/testing-strategy.zh.md)
-
-### Plan
-
-- [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
-- [native-grpc-decision-evidence.json](./plans/native-grpc-decision-evidence.json)
-- [native-grpc-decision-gate.zh.md](./plans/native-grpc-decision-gate.zh.md)
-- [project-status.zh.md](./plans/project-status.zh.md)
-
-### Reference
-
-- [backend-capability-matrix.zh.md](./reference/backend-capability-matrix.zh.md)
-- [cli-commands.zh.md](./reference/cli-commands.zh.md)
-- [contributor-guide.zh.md](./reference/contributor-guide.zh.md)
-- [error-codes.zh.md](./reference/error-codes.zh.md)
-- [fuzz-corpus-location.zh.md](./reference/fuzz-corpus-location.zh.md)
-- [getting-started.zh.md](./reference/getting-started.zh.md)
-- [host-abi.zh.md](./reference/host-abi.zh.md)
-- [ir-format.zh.md](./reference/ir-format.zh.md)
-- [lsp-vscode-extension.zh.md](./reference/lsp-vscode-extension.zh.md)
-- [migration-policy.zh.md](./reference/migration-policy.zh.md)
-- [native-handoff-usage.zh.md](./reference/native-handoff-usage.zh.md)
-- [native-runtime-artifacts.zh.md](./reference/native-runtime-artifacts.zh.md)
-- [project-usage.zh.md](./reference/project-usage.zh.md)
-- [rfc-process.zh.md](./reference/rfc-process.zh.md)
-- [single-file-mode.zh.md](./reference/single-file-mode.zh.md)
-- [stdlib-cookbook.zh.md](./reference/stdlib-cookbook.zh.md)
-- [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md)
-- [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md)
-- [user-guide-cli.zh.md](./reference/user-guide-cli.zh.md)
-- [user-guide-execution.zh.md](./reference/user-guide-execution.zh.md)
-- [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md)
-
-### User Guide Route
-
-The Chinese user-guide series is one progressive path, rather than five
-independent command references:
-
-0. [getting-started.zh.md](./reference/getting-started.zh.md) — hands-on tutorial:
-   build the compiler and walk the bundled examples from a single file to
-   multi-agent orchestration, formal verification, real LLM runs, and durable
-   cross-process resume.
-1. [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md) — product boundary,
-   readiness vocabulary, and the shortest path through the toolchain.
-2. [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md) — model data,
-   capabilities, agents, contracts, flows, and workflows.
-3. [user-guide-cli.zh.md](./reference/user-guide-cli.zh.md) — choose the correct CLI
-   action, input mode, artifact, and diagnostic workflow.
-4. [user-guide-execution.zh.md](./reference/user-guide-execution.zh.md) — configure a
-   package run, validate JSON boundaries, use providers safely, and consume canonical events.
-5. [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md) — validate
-   effects, verify finite control models, and distinguish local checks from CI-only release
-   evidence.
-
-### RFC Registry
-
-- [README.md](./rfcs/README.md)
-- [index.yml](./rfcs/index.yml)
-- [0000-template.zh.md](./rfcs/0000-template.zh.md)
-- [0001-enum-variant-payload.zh.md](./rfcs/0001-enum-variant-payload.zh.md)
-- [0002-optional-narrowing.zh.md](./rfcs/0002-optional-narrowing.zh.md)
-- [0003-match-exhaustiveness-diagnostics.zh.md](./rfcs/0003-match-exhaustiveness-diagnostics.zh.md)
-- [0004-native-grpc-transport.zh.md](./rfcs/0004-native-grpc-transport.zh.md)
-- [0005-package-configuration-system.zh.md](./rfcs/0005-package-configuration-system.zh.md)
-- [0006-corelib-development-sysroot.zh.md](./rfcs/0006-corelib-development-sysroot.zh.md)
-- [0007-lsp-workspace-navigation-index.zh.md](./rfcs/0007-lsp-workspace-navigation-index.zh.md)
-- [0008-single-file-std-primitive-semantics.zh.md](./rfcs/0008-single-file-std-primitive-semantics.zh.md)
-- [0009-symbol-visibility.zh.md](./rfcs/0009-symbol-visibility.zh.md)
-- [0010-registry-publishing-semver.zh.md](./rfcs/0010-registry-publishing-semver.zh.md)
-- [0011-pattern-usefulness-matrix.zh.md](./rfcs/0011-pattern-usefulness-matrix.zh.md)
-- [0012-structured-workflow-execution-ux.zh.md](./rfcs/0012-structured-workflow-execution-ux.zh.md)
-- [0013-corelib-type-system-evolution.zh.md](./rfcs/0013-corelib-type-system-evolution.zh.md)
-- [0014-try-operator.zh.md](./rfcs/0014-try-operator.zh.md)
-
-## Governance
-
-When adding or renaming docs:
-
-1. Classify the document before writing it.
-2. Use the typed directory and current topic filename immediately.
-3. Merge same-topic historical material instead of creating another versioned file.
-4. Update inbound and outbound links in the same change.
-5. Keep this index current.
+- [Contributor guide](./reference/contributor-guide.zh.md): development,
+  testing, and contribution workflow.
+- [Architecture overview](./design/architecture-overview.zh.md) and
+  [repository layout](./design/repository-layout.zh.md): subsystem boundaries
+  and source organization.
+- [IR and backend architecture](./design/ir-backend-architecture.zh.md):
+  compiler representations and backend responsibilities.
+- [Design documents](./design/): engineering decisions and implementation
+  constraints.
+- [Project status](./plans/project-status.zh.md) and
+  [backlog](./plans/issue-backlog-global-gaps.zh.md): progress and planned work.
+- [RFC process](./reference/rfc-process.zh.md) and
+  [RFC registry](./rfcs/README.md): proposals and decision records.
+- [Migration policy](./reference/migration-policy.zh.md): compatibility and
+  release policy for maintainers.

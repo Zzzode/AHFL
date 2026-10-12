@@ -352,7 +352,7 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                 if (e.callee != nullptr) {
                     // P2 (RFC §3.2.2): a fn call carries its parameter names on
                     // the FnTypeInfo. Check it first, then fall back to the
-                    // legacy capability/predicate call targets.
+                    // capability/predicate call targets.
                     if (const auto fn_reference = resolve_result.find_reference(
                             ReferenceKind::FnCallTarget, e.callee->range, source_id);
                         fn_reference.has_value()) {
@@ -681,7 +681,7 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
             [&](const ast::CallExpr &e) -> std::optional<SymbolId> {
                 if (e.callee != nullptr) {
                     // P2 (RFC §3.2.2): prefer the FnCallTarget reference for a
-                    // fn call; fall back to the legacy capability/predicate
+                    // fn call; fall back to the capability/predicate
                     // CallTarget reference otherwise.
                     if (const auto fn_reference = resolve_result.find_reference(
                             ReferenceKind::FnCallTarget, e.callee->range, source_id);
@@ -2118,7 +2118,7 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
         local_name = trait_name.substr(separator + 2);
     }
     // C-2 (Wave-24): traits live in their own namespace. Check Traits first,
-    // then fall back to Types (legacy path for pre-C-2 code / cross-module).
+    // then fall back to Types (cross-module type namespace).
     auto trait_symbol = find_local_here(SymbolNamespace::Traits, local_name);
     if (!trait_symbol.has_value()) {
         trait_symbol = find_local_here(SymbolNamespace::Types, local_name);
@@ -2293,7 +2293,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     if (auto *typed_expr = result_.typed_program.find_expr(expr.node_id, current_source_id_);
         typed_expr != nullptr) {
         // Update in place when both the AST identity and the source agree.
-        typed_expr->type = typed.type ? typed.type->clone() : make_error_type();
+        typed_expr->type = typed.type ? typed.type : make_error_type();
         typed_expr->effect = typed.effect;
         typed_expr->is_pure = typed.is_pure;
         typed_expr->resolved_symbol =
@@ -2332,6 +2332,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         typed_expr->enum_variant_name = typed.enum_variant_name;
         typed_expr->enum_variant_payload_kind = typed.enum_variant_payload_kind;
         typed_expr->match_arm_pattern_indexes = typed.match_arm_pattern_indexes;
+        typed_expr->try_info = typed.try_info;
         return;
     }
 
@@ -2341,7 +2342,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         if (auto *typed_expr =
                 result_.typed_program.find_expr_by_range(expr.range, current_source_id_);
             typed_expr != nullptr) {
-            typed_expr->type = typed.type ? typed.type->clone() : make_error_type();
+            typed_expr->type = typed.type ? typed.type : make_error_type();
             typed_expr->effect = typed.effect;
             typed_expr->is_pure = typed.is_pure;
             typed_expr->bool_value = expr_bool_value(expr);
@@ -2366,6 +2367,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->enum_variant_name = typed.enum_variant_name;
             typed_expr->enum_variant_payload_kind = typed.enum_variant_payload_kind;
             typed_expr->match_arm_pattern_indexes = typed.match_arm_pattern_indexes;
+            typed_expr->try_info = typed.try_info;
             return;
         }
     }
@@ -2375,7 +2377,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .range = expr.range,
         .source_id = current_source_id_,
         .node_id = expr.node_id,
-        .type = typed.type ? typed.type->clone() : make_error_type(),
+        .type = typed.type ? typed.type : make_error_type(),
         .effect = typed.effect,
         .is_pure = typed.is_pure,
         .resolved_symbol = resolved_symbol_for(expr, resolve_result_, current_source_id_),
@@ -2405,6 +2407,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .enum_variant_name = typed.enum_variant_name,
         .enum_variant_payload_kind = typed.enum_variant_payload_kind,
         .match_arm_pattern_indexes = typed.match_arm_pattern_indexes,
+        .try_info = typed.try_info,
     });
     if (expr.node_id != 0) {
         const auto index = static_cast<std::uint32_t>(result_.typed_program.expressions.size() - 1);
@@ -2437,7 +2440,7 @@ bool TypeCheckPass::check_assignable(const Type &source,
                                 range,
                                 context_label,
                                 TypeExpectation{
-                                    .expected = target.clone(),
+                                    .expected = &target,
                                     .origin_kind = TypeExpectationOriginKind::Annotation,
                                     .origin_range = *expected_origin,
                                     .description = std::string(context_label),
@@ -2617,7 +2620,7 @@ bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
             boundary,
             range,
             TypeExpectation{
-                .expected = target.clone(),
+                .expected = &target,
                 .origin_kind = TypeExpectationOriginKind::SchemaBoundary,
                 .origin_range = *expected_origin,
                 .description = std::string(to_string(boundary)),
@@ -2751,14 +2754,14 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
         // the full top-level surface model without re-entering the AST.
         TypedDecl typed_decl{
             .kind = ast::NodeKind::ContractDecl,
-            .symbol = target->get().target,
+            .symbol = std::nullopt,
             .range = ast::decl_range(declaration),
             .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
             .type = nullptr,
             .payload = {},
         };
-        if (const auto contract_info = driver_->environment().get_contract(target->get().target);
+        if (const auto contract_info = driver_->environment().find_contract(driver_->current_source_id_, decl.range);
             contract_info.has_value()) {
             typed_decl.payload = contract_info->get();
         }
@@ -2768,7 +2771,7 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
             if (!clause->expr && clause->temporal_expr) {
                 ValueContext context;
                 context.bindings.emplace(
-                    "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                    "input", driver_->type_or_any(std::cref(*agent_info->get().input_type)));
                 // P4a: temporal formulas in contracts live in the verified
                 // subset. Invariant clauses get the stricter
                 // InvariantSafetyLiveness context (Nondet is disallowed).
@@ -2786,7 +2789,7 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
             // encoding. Container membership is tested via SemanticType
             // holds() against ListT / SetT / MapT (R-05: no string
             // matching against type names).
-            TypePtr global_self = driver_->clone_or_any(std::cref(*agent_info->get().context_type));
+            TypePtr global_self = driver_->type_or_any(std::cref(*agent_info->get().context_type));
             if (global_self == nullptr || is_error_type(*global_self)) {
                 global_self = driver_->make_type(TypeKind::Any);
             }
@@ -2810,7 +2813,7 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
                                              base_path.path->root_name == "self" &&
                                              base_path.path->members.empty();
                             if (is_self_length) {
-                                bound_self = driver_->clone_or_any(
+                                bound_self = driver_->type_or_any(
                                     std::cref(*agent_info->get().context_type));
                             }
                         }
@@ -2822,7 +2825,7 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
                                          path_expr->path->members.front() == "length";
                         if (is_self_length) {
                             bound_self =
-                                driver_->clone_or_any(std::cref(*agent_info->get().context_type));
+                                driver_->type_or_any(std::cref(*agent_info->get().context_type));
                         }
                     }
                 }
@@ -2864,9 +2867,9 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
                 const auto int_type = driver_->make_type(TypeKind::Int);
                 ValueContext decreases_context;
                 decreases_context.bindings.emplace(
-                    "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                    "input", driver_->type_or_any(std::cref(*agent_info->get().input_type)));
                 decreases_context.bindings.emplace(
-                    "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+                    "ctx", driver_->type_or_any(std::cref(*agent_info->get().context_type)));
                 TypePtr self_type = pre_bound_self;
                 if (self_type == nullptr || is_error_type(*self_type)) {
                     self_type = global_self;
@@ -2922,10 +2925,10 @@ void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
             const auto bool_type = driver_->make_type(TypeKind::Bool);
             ValueContext context;
             context.bindings.emplace(
-                "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                "input", driver_->type_or_any(std::cref(*agent_info->get().input_type)));
             if (clause->kind == ast::ContractClauseKind::Ensures) {
                 context.bindings.emplace(
-                    "output", driver_->clone_or_any(std::cref(*agent_info->get().output_type)));
+                    "output", driver_->type_or_any(std::cref(*agent_info->get().output_type)));
             }
             // P4a: all contract clauses live in the verified subset.
             // Invariant clauses additionally disallow Nondet (RFC §4.2).
@@ -3116,7 +3119,7 @@ void FlowWorkflowSema::check_flows_in_program(const ast::Program &program) {
         // constructs without walking the AST.
         TypedDecl typed_decl{
             .kind = ast::NodeKind::FlowDecl,
-            .symbol = target->get().target,
+            .symbol = std::nullopt,
             .range = ast::decl_range(declaration),
             .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
@@ -3134,9 +3137,9 @@ void FlowWorkflowSema::check_flows_in_program(const ast::Program &program) {
             context.call_context = CallContext::Flow;
             context.current_agent = target->get().target;
             context.bindings.emplace(
-                "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                "input", driver_->type_or_any(std::cref(*agent_info->get().input_type)));
             context.bindings.emplace(
-                "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+                "ctx", driver_->type_or_any(std::cref(*agent_info->get().context_type)));
             // When a flow handler introduces a `let self = ...` binding that
             // shadows the conceptual agent receiver, remember the shadowing
             // type so any associated `decreases: self.length` contract can
@@ -3276,7 +3279,7 @@ void FlowWorkflowSema::check_workflows_in_program(const ast::Program &program) {
             }
 
             all_node_outputs.emplace(
-                node->name, driver_->clone_or_any(std::cref(*agent_info->get().output_type)));
+                node->name, driver_->type_or_any(std::cref(*agent_info->get().output_type)));
         }
 
         for (const auto &node : decl.nodes) {
@@ -3294,12 +3297,12 @@ void FlowWorkflowSema::check_workflows_in_program(const ast::Program &program) {
             ValueContext context;
             context.call_context = CallContext::Workflow;
             context.bindings.emplace(
-                "input", driver_->clone_or_any(std::cref(*workflow_info->get().input_type)));
+                "input", driver_->type_or_any(std::cref(*workflow_info->get().input_type)));
 
             for (const auto &dependency : node->after) {
                 const auto dependency_type = find_binding(all_node_outputs, dependency);
                 if (dependency_type.has_value()) {
-                    context.bindings.emplace(dependency, dependency_type->get().clone());
+                    context.bindings.emplace(dependency, &dependency_type->get());
                 }
             }
 
@@ -3315,10 +3318,10 @@ void FlowWorkflowSema::check_workflows_in_program(const ast::Program &program) {
         ValueContext return_context;
         return_context.call_context = CallContext::Workflow;
         return_context.bindings.emplace(
-            "input", driver_->clone_or_any(std::cref(*workflow_info->get().input_type)));
+            "input", driver_->type_or_any(std::cref(*workflow_info->get().input_type)));
         for (const auto &[name, type] : all_node_outputs) {
             return_context.bindings.emplace(name,
-                                            type ? type->clone() : driver_->make_error_type());
+                                            type ? type : driver_->make_error_type());
         }
 
         for (const auto &formula : decl.safety) {
@@ -3505,7 +3508,7 @@ void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl
 
     for (const auto &param : info.params) {
         context.bindings.emplace(
-            param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
+            param.name, param.type != nullptr ? param.type : driver_->make_error_type());
     }
 
     // D-3 (Wave-24): validate effect-clause decreases measure expression
@@ -3710,7 +3713,7 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     }
     for (const auto &param : method_info.params) {
         context.bindings.emplace(
-            param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
+            param.name, param.type != nullptr ? param.type : driver_->make_error_type());
     }
 
     // D-3 (Wave-24): validate effect-clause decreases measure expression
@@ -3928,7 +3931,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         std::optional<TypedAdjustmentPlan> let_adjustment;
         if (expected.has_value() && statement.let_stmt->type) {
             const auto expectation = TypeExpectation{
-                .expected = expected->get().clone(),
+                .expected = &expected->get(),
                 .origin_kind = TypeExpectationOriginKind::Annotation,
                 .origin_range = statement.let_stmt->type->range,
                 .description = "declared type '" + statement.let_stmt->type->spelling() +
@@ -3979,10 +3982,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
 
             if (expected.has_value()) {
                 context.bindings[statement.let_stmt->name] =
-                    annotated_type ? annotated_type->clone() : make_error_type();
+                    annotated_type ? annotated_type : make_error_type();
             } else {
                 context.bindings[statement.let_stmt->name] =
-                    initializer.type ? initializer.type->clone() : make_error_type();
+                    initializer.type ? initializer.type : make_error_type();
             }
         }
 
@@ -3993,13 +3996,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         TypePtr let_type;
         if (statement.let_stmt->type) {
             let_strategy = LetTypeRefStrategy::FromSyntax;
-            let_type = annotated_type ? annotated_type->clone() : make_error_type();
+            let_type = annotated_type ? annotated_type : make_error_type();
         } else if (!initializer.type) {
             let_strategy = LetTypeRefStrategy::MissingType;
             let_type = make_error_type();
         } else {
             let_strategy = LetTypeRefStrategy::FromInitializerType;
-            let_type = initializer.type->clone();
+            let_type = initializer.type;
         }
 
         last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
@@ -4030,7 +4033,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                 .members = statement.assign_stmt->target->members});
             const auto target = check_path(*statement.assign_stmt->target, context);
             const auto expectation = TypeExpectation{
-                .expected = target.type ? target.type->clone() : make_error_type(),
+                .expected = target.type ? target.type : make_error_type(),
                 .origin_kind = TypeExpectationOriginKind::AssignmentTarget,
                 .origin_range = statement.assign_stmt->target->range,
                 .description =
@@ -4349,7 +4352,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                         }
                     }
                     then_context.bindings[name] =
-                        type != nullptr ? type->clone() : make_error_type();
+                        type != nullptr ? type : make_error_type();
                 }
                 check_block(*ifl->then_block,
                             then_context,
@@ -4425,7 +4428,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 if (expected_return_origin.has_value()) {
                     // Agent / workflow return: enforce exact schema boundary.
                     const auto expectation = TypeExpectation{
-                        .expected = expected_return_type->get().clone(),
+                        .expected = &expected_return_type->get(),
                         .origin_kind = TypeExpectationOriginKind::ReturnType,
                         .origin_range = *expected_return_origin,
                         .description = "flow return",

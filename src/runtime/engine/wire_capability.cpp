@@ -36,7 +36,7 @@ ConnectionPool &global_connection_pool() {
 // RFC 0026 C2b G4a: decode a wire response body into a native Value.
 //
 // When `binding` is engaged the body is decoded EXACTLY under the projected wire
-// schema (no schema-free value_from_json / no legacy TypeRef validator):
+// schema:
 //   - Json format:     the body is parsed to a raw JSON DOM and fed to
 //                      decode_json(dom, binding); an empty or malformed body is a
 //                      hard error (never a silent None).
@@ -45,7 +45,7 @@ ConnectionPool &global_connection_pool() {
 //                      verified root is guaranteed to be String/BoundedString by
 //                      the admission gate, so String length_bounds are enforced.
 //
-// When `binding` is absent the historical schema-free behavior is preserved exactly
+// Without a binding, dynamically typed capabilities use schema-free decoding
 // (TextPlain: empty -> None, else StringValue; Json: value_from_json, empty -> None,
 // else "invalid wire JSON response body"). Diagnostics are schema-only and never
 // echo the response body.
@@ -103,7 +103,7 @@ value_from_wire_response_body(std::string body,
         };
     }
 
-    // No binding: preserve the historical schema-free behavior verbatim.
+    // Dynamically typed capability: decode without a projected schema.
     if (response_format == CapabilityResponseFormat::TextPlain) {
         if (body.empty()) {
             return CapabilityCallResult{
@@ -428,17 +428,15 @@ CapabilityBinding make_http_capability(const std::string &name,
                                        HTTPCapabilityConfig config,
                                        CapabilityTransportAdapterPtr transport) {
     // RFC 0026 C2b G4a: resolve the response schema authority at construction. On a
-    // four-state conflict / non-projectable legacy schema / TextPlain non-String
-    // root, mint a poison binding that fails closed BEFORE any transport (no pool
+    // TextPlain non-String root, mint a poison binding that fails closed BEFORE any transport (no pool
     // lease, no auth, no request), and never becomes RetryExhausted.
-    auto admission = prepare_wire_response_schema(
-        config.response_format, config.response_schema, config.response_wire_binding);
+    auto admission =
+        prepare_wire_response_schema(config.response_format, config.response_wire_binding);
     if (!admission.has_value()) {
         return poison_capability_binding(name,
                                          "response schema admission failed: " + admission.error());
     }
     config.response_wire_binding = std::move(*admission);
-    config.response_schema.reset(); // the resolved binding is the sole authority now
 
     CapabilityBinding binding;
     binding.name = name;
@@ -471,14 +469,13 @@ CapabilityBinding make_grpc_json_transcoding_capability(const std::string &name,
                                                         GrpcJsonTranscodingCapabilityConfig config,
                                                         CapabilityTransportAdapterPtr transport) {
     // RFC 0026 C2b G4a: same construction-time admission + poison as HTTP.
-    auto admission = prepare_wire_response_schema(
-        config.response_format, config.response_schema, config.response_wire_binding);
+    auto admission =
+        prepare_wire_response_schema(config.response_format, config.response_wire_binding);
     if (!admission.has_value()) {
         return poison_capability_binding(name,
                                          "response schema admission failed: " + admission.error());
     }
     config.response_wire_binding = std::move(*admission);
-    config.response_schema.reset();
 
     CapabilityBinding binding;
     binding.name = name;
@@ -503,43 +500,10 @@ CapabilityBinding make_grpc_json_transcoding_capability(const std::string &name,
 
 WireResponseAdmissionResult prepare_wire_response_schema(
     CapabilityResponseFormat format,
-    const std::shared_ptr<const ir::TypeRef> &legacy_schema,
     const std::optional<ir::core::VerifiedWireSchemaBinding> &response_wire_binding) {
-    const bool has_legacy = legacy_schema != nullptr;
-    const bool has_binding = response_wire_binding.has_value();
-
-    // State 4: both present -> conflict, fail closed (no silent precedence).
-    if (has_legacy && has_binding) {
-        return std::unexpected(std::string(
-            "both a legacy response_schema and a projected response_wire_binding are set"));
-    }
-
-    std::optional<ir::core::VerifiedWireSchemaBinding> resolved;
-    if (has_binding) {
-        // State 2: the projected authority is used verbatim.
-        resolved = response_wire_binding;
-    } else if (has_legacy) {
-        // State 3: migrate the legacy TypeRef through an EMPTY-Program environment.
-        // Only declaration-free / closed / fully-parameterized shapes project; any
-        // user nominal / open shape / non-projectable type fails closed here.
-        ir::Program empty_program;
-        auto migration = ir::core::migrate_type_ref_to_wire_binding(*legacy_schema, empty_program);
-        if (!migration.ok() || !migration.binding.has_value()) {
-            std::string message = "legacy response schema is not projectable";
-            for (const auto &d : migration.diagnostics) {
-                if (d.severity == ir::core::CoreDiagnosticSeverity::Error) {
-                    message += ": " + d.message;
-                    break;
-                }
-            }
-            return std::unexpected(std::move(message));
-        }
-        resolved = std::move(*migration.binding);
-    }
-    // State 1: neither -> engaged nullopt (caller keeps no-schema behavior).
-    if (!resolved.has_value()) {
-        return std::optional<ir::core::VerifiedWireSchemaBinding>{std::nullopt};
-    }
+    if (!response_wire_binding)
+        return std::optional<ir::core::VerifiedWireSchemaBinding>{};
+    const auto &resolved = response_wire_binding;
 
     // TextPlain gate: a text body can only decode under a String / BoundedString
     // verified root.

@@ -500,10 +500,6 @@ void collect_pattern_tokens(const ast::PatternSyntax &pattern,
                 add_token_for_name(tokens, source, pattern.range, "_", SemanticTokenType::Variable);
             },
             [&](const ast::BindingPattern &p) {
-                if (p.is_mut) {
-                    add_token_for_name(
-                        tokens, source, pattern.range, "mut", SemanticTokenType::Modifier);
-                }
                 add_token_for_name(
                     tokens, source, pattern.range, p.name, SemanticTokenType::Variable);
                 if (p.nested != nullptr) {

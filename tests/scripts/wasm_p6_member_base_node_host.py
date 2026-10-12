@@ -66,8 +66,7 @@ const module_ = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module_).length !== 0)
   throw new Error("member-base agent expanded import authority");
 const {exports: c} = await WebAssembly.instantiate(module_, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 // Done=0 High=1 Low=2 Decide=3. Every arbitrary-base field read must select
 // its field (px==1, cy==60, fy==105, my==70); any missed/lowered-wrong read

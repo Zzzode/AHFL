@@ -1,7 +1,7 @@
 #pragma once
 
 // RFC 0026 KR6.5 E4-B2-A2: verified Core-Wasm schema MODULE context + execution
-// manifest (`ahfl.wasm-exec-manifest.v1`, raw payload magic "AHFLXM") decoder.
+// manifest (`ahfl.execution-manifest`, raw payload magic "AHFLXM") decoder.
 //
 // This is the runtime CALL-SITE AUTHORITY for a capability-bearing workflow module.
 // It frames the module ONCE, admits BOTH custom sections (the exec-manifest
@@ -33,8 +33,8 @@
 #include <utility>
 #include <vector>
 
-#include "ahfl/compiler/ir/core_ir.hpp"            // CoreWorkflowId/NodeId, CoreCapabilityId
-#include "ahfl/compiler/ir/core_wire_migration.hpp" // VerifiedWireSchemaBinding
+#include "ahfl/compiler/ir/core_ir.hpp"               // CoreWorkflowId/NodeId, CoreCapabilityId
+#include "ahfl/compiler/ir/core_wire_projection.hpp"   // VerifiedWireSchemaBinding
 #include "runtime/engine/core_wasm_resume_record.hpp" // InvocationOrdinal (A1 strong type)
 
 namespace ahfl::runtime::core_wasm_schema_module {
@@ -73,7 +73,7 @@ struct ManifestNodeIndex {
     [[nodiscard]] friend bool operator==(ManifestNodeIndex, ManifestNodeIndex) noexcept = default;
 };
 
-// WH-5b.2 (manifest v2): one decoded in-runner bridge call site. A P6 bridge
+// WH-5b.2 : one decoded in-runner bridge call site. A P6 bridge
 // node's scheduler-boundary cap_call_count is 0 (its completion is a tag-0
 // identity event); its in-handler bridge imports are accounted here. The
 // ordinal is the dense per-node bridge-call ordinal (0-based, execution order,
@@ -111,7 +111,7 @@ class VerifiedCoreWasmNode {
     [[nodiscard]] ir::core::CoreWorkflowNodeId workflow_node_id() const noexcept;
     [[nodiscard]] ManifestNodeIndex schedule_pos() const noexcept;
     [[nodiscard]] std::uint8_t cap_call_count() const noexcept;
-    // WH-5b.2: the node's in-runner bridge call sites (manifest v2). Empty for
+    // WH-5b.2: the node's in-runner bridge call sites . Empty for
     // an opaque cap site or a pure identity node; non-empty for a P6 bridge
     // node (whose cap_call_count is 0). The host cross-checks this table
     // against the frame section's bridge_call_sites.
@@ -166,7 +166,9 @@ struct VerifiedCoreWasmNodeResult {
     std::vector<ir::core::CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return node.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return node.has_value() && !has_errors();
+    }
 };
 
 struct VerifiedCoreWasmCallSiteResult {
@@ -174,7 +176,9 @@ struct VerifiedCoreWasmCallSiteResult {
     std::vector<ir::core::CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return call_site.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return call_site.has_value() && !has_errors();
+    }
 };
 
 // RFC 0026 KR6.5 E4-B2-D2a-F3: the linear-memory capacity the admitted artifact
@@ -268,7 +272,9 @@ struct VerifiedCoreWasmSchemaModuleResult {
     std::vector<ir::core::CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return module.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return module.has_value() && !has_errors();
+    }
 };
 
 // Admit a capability module (workflow OR agent, WH-4 fix-forward D-C): frame

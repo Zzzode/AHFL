@@ -15,8 +15,8 @@ struct Program;
 
 namespace ahfl::handoff {
 
-inline constexpr std::string_view kFormatVersion = "ahfl.native-package.v1";
-inline constexpr std::string_view kExecutionPlanFormatVersion = "ahfl.execution-plan.v1";
+inline constexpr std::string_view kFormat = "ahfl.native-package";
+inline constexpr std::string_view kExecutionPlanFormat = "ahfl.execution-plan";
 
 enum class ExecutableKind {
     Agent,
@@ -51,7 +51,7 @@ struct ExecutableRef {
 };
 
 struct PackageIdentity {
-    std::string format_version{std::string(kFormatVersion)};
+    std::string format{std::string(kFormat)};
     std::string name;
     std::string version;
 };
@@ -92,6 +92,7 @@ enum class FormalObservationScopeKind {
 struct FormalObservationScope {
     FormalObservationScopeKind kind{FormalObservationScopeKind::ContractClause};
     std::string owner;
+    // Contract clauses use Agent-wide ordinals across blocks; workflow clauses are local.
     std::size_t clause_index{0};
     std::size_t atom_index{0};
 };
@@ -174,6 +175,7 @@ struct CapabilityBindingSlot {
 struct PolicyObligation {
     ExecutableRef owner_target;
     PolicyObligationKind kind{PolicyObligationKind::Requires};
+    // Contract clauses use Agent-wide ordinals across blocks; workflow clauses are local.
     std::size_t clause_index{0};
     std::vector<std::string> observation_symbols;
 };
@@ -193,7 +195,7 @@ struct PackageReaderObservationSummary {
 };
 
 struct PackageReaderSummary {
-    std::string format_version{std::string(kFormatVersion)};
+    std::string format{std::string(kFormat)};
     std::optional<PackageIdentity> identity;
     std::optional<ExecutableRef> entry_target;
     std::vector<ExecutableRef> export_targets;
@@ -248,7 +250,7 @@ struct WorkflowPlan {
 };
 
 struct ExecutionPlan {
-    std::string format_version{std::string(kExecutionPlanFormatVersion)};
+    std::string format{std::string(kExecutionPlanFormat)};
     std::optional<PackageIdentity> source_package_identity;
     std::optional<std::string> entry_workflow_canonical_name;
     std::vector<WorkflowPlan> workflows;

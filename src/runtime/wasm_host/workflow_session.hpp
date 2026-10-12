@@ -8,7 +8,7 @@
 //   * At EACH import boundary: decode the trace-ring PREFIX from whole_memory
 //     and fire state_entered_hook per new record (import-boundary live), then
 //     capability_invoked_hook PRE-call.
-//   * After run2 returns: decode the FULL trace + node-event buffer, fire
+//   * After run_workflow returns: decode the FULL trace + node-event buffer, fire
 //     state_entered_hook for the remaining records, and fire
 //     node_completed_hook per node in schedule order.
 //   * agent_input_hook is NOT fired for workflow nodes (in-guest materialized
@@ -63,17 +63,20 @@ struct WorkflowSessionConfig {
     std::function<void(AgentId, std::string_view node_name, const Value &)>
         node_completed_hook;
 
-    // WH-5c.5 test seam: invoked AFTER run2 returns and its outcome is
+    // WH-5c.5 test seam: invoked AFTER run_workflow returns and its outcome is
     // classified, BEFORE the post-run per-node output join (section 10).
     // Receives a mutable span of the whole linear memory so a fail-closed
     // mutation pin can corrupt the per-node output stash table or the output
     // JSON bytes and assert the host decodes the corruption as
     // kOutputDecodeFailed (never a silent NoneValue). Production code never
     // sets this.
-    std::function<void(std::span<std::uint8_t>)> post_run2_memory_mutator;
+    std::function<void(std::span<std::uint8_t>)> post_run_workflow_memory_mutator;
 
     // The contextual capability invoker (production host capability dispatch).
     ContextualCapabilityInvoker invoker;
+    PendingCapabilityResolver pending_capability_resolver;
+    PendingInjectionGuard pending_injection_guard;
+    CompletedCapabilityMetadataReader completed_capability_metadata_reader;
 
     // Resolves a capability's source_symbol to its canonical name.
     std::function<std::optional<std::string>(std::uint64_t)> name_resolver;
@@ -94,9 +97,9 @@ struct WorkflowSessionConfig {
     // WH-4b: recovery snapshot for a resume run. When set, the session loads
     // the snapshot's memo + pending frontier into its recorder and replays:
     // memo-supply calls before the frontier, inject the pending result at the
-    // frontier, and go live after it (ReadyForLive). The invoker is never
-    // called for a memo hit or the frontier, so a resumed run has zero live
-    // side effects before the pending call.
+    // frontier (manual result or a prepared provider resolver), and go live
+    // after it. Memo hits never dispatch; every subsequent success is recorded
+    // for a later suspension.
     std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
 
     // WH-4b: the store to persist the recovery snapshot on suspend. Null means

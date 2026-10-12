@@ -221,17 +221,42 @@ void append_counterexample_mapping(
 
 void parse_checker_output(FormalVerificationResult &result,
                           const std::unordered_map<std::string, std::string> &symbol_mappings) {
-    for (const auto &specification :
-         parse_smv_specification_results(result.output).specifications) {
+    std::vector<const SmvSpecification *> emitted;
+    for (const auto &target : result.specifications) {
+        if (target.emitted) emitted.push_back(&target);
+    }
+    const auto verdicts = parse_smv_specification_results(result.output);
+    for (std::size_t index = 0; index < verdicts.specifications.size(); ++index) {
+        const auto &specification = verdicts.specifications[index];
+        const auto *target = index < emitted.size() ? emitted[index] : nullptr;
+        if (target != nullptr) {
+            result.specification_results.push_back({target->id, specification.kind});
+        }
+        const bool conditional = target != nullptr &&
+            target->coverage == SmvSpecificationCoverage::Conditional;
+        const bool generated = target == nullptr ||
+            target->origin == SmvSpecificationOrigin::GeneratedControl;
         switch (specification.kind) {
         case SmvSpecificationVerdictKind::Proven:
-            result.proven_specifications.push_back(specification.summary);
+            if (conditional) {
+                result.conditional_specifications.push_back(specification.summary);
+            } else {
+                result.proven_specifications.push_back(specification.summary);
+                if (generated) ++result.generated_control_proven_count;
+                else ++result.user_temporal_proven_count;
+            }
             break;
         case SmvSpecificationVerdictKind::Refuted:
             result.failing_specifications.push_back(specification.summary);
             break;
         case SmvSpecificationVerdictKind::BoundedPass:
-            result.bounded_specifications.push_back(specification.summary);
+            if (conditional) {
+                result.conditional_specifications.push_back(specification.summary);
+            } else {
+                result.bounded_specifications.push_back(specification.summary);
+                if (generated) ++result.generated_control_bounded_count;
+                else ++result.user_temporal_bounded_count;
+            }
             break;
         case SmvSpecificationVerdictKind::Inconclusive:
             result.inconclusive_specifications.push_back(specification.summary);
@@ -253,19 +278,6 @@ void parse_checker_output(FormalVerificationResult &result,
             append_counterexample_mapping(result, line, symbol_mappings);
         }
     }
-}
-
-[[nodiscard]] std::size_t count_expected_specifications(std::string_view model) {
-    std::size_t count = 0;
-    for (const auto &line : split_smv_lines(model)) {
-        if (smv_contains(smv_lower_copy(line), "ltlspec")) {
-            ++count;
-        }
-        if (smv_contains(smv_lower_copy(line), "invarspec")) {
-            ++count;
-        }
-    }
-    return count;
 }
 
 // Best-effort post-processing of a generated SMV model to inject
@@ -478,29 +490,50 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     return result;
 #else
     result.checker_timeout = options.checker_timeout;
+    result.verify_data_contracts = options.verify_data_contracts;
+    result.backend_kind = options.backend_kind;
 
     // RFC 0028: generate the SMV model text BEFORE resolving the checker so the
     // zero-spec fast path can skip both checker resolution and the external
     // process launch. A program with no LTLSPEC/INVARSPEC has nothing to check.
     std::unordered_map<std::string, std::string> symbol_mappings;
     {
-        std::ostringstream model_content;
-        print_program_smv(program, model_content);
-        std::string model_text = model_content.str();
+        auto model = generate_program_smv(program);
+        result.specifications = std::move(model.specifications);
+        result.environment_assumption_count = model.environment_assumption_count;
+        std::string model_text = std::move(model.text);
         if (options.bmc_boundary_invariants) {
             auto [rewritten, added] =
                 maybe_add_boundary_invariants(model_text, options.bmc_depth);
-            (void)added;
+            for (std::size_t index = 0; index < added; ++index) {
+                result.specifications.push_back({result.specifications.size(),
+                    SmvSpecificationOrigin::GeneratedControl, SmvSpecificationCoverage::Complete,
+                    true, "bounded control invariant"});
+            }
             model_text = std::move(rewritten);
         }
         symbol_mappings = parse_symbol_mappings(model_text);
-        result.expected_specification_count = count_expected_specifications(model_text);
+        for (const auto &target : result.specifications) {
+            if (target.emitted) ++result.expected_specification_count;
+            if (target.coverage == SmvSpecificationCoverage::Conditional)
+                ++result.user_temporal_conditional_count;
+            if (target.coverage == SmvSpecificationCoverage::Unsupported)
+                ++result.user_temporal_unsupported_count;
+            if (target.assumption == SmvSpecificationAssumption::DataObservation)
+                ++result.user_temporal_data_dependent_count;
+        }
         result.model_content = std::move(model_text);
     }
 
+    if (options.verify_data_contracts &&
+        (result.user_temporal_data_dependent_count != 0 || result.user_temporal_unsupported_count != 0)) {
+        result.status = FormalVerificationStatus::VerificationUnsupported;
+        result.error_message = "requested user temporal targets depend on unmodeled data or "
+            "data observation assumptions; these are conditional or outside the SMV subset";
+        return result;
+    }
     if (result.expected_specification_count == 0) {
         result.status = FormalVerificationStatus::Passed;
-        result.availability_status = ModelCheckerAvailabilityStatus::Available;
         return result;
     }
 
@@ -548,6 +581,7 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
         model << result.model_content;
     }
 
+    result.checker_invoked = true;
     const auto process =
         run_checker(result.checker_path, result.model_path, options);
     result.exit_code = process.exit_code;
@@ -599,18 +633,19 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
 
     const auto observed_specification_count =
         result.proven_specifications.size() + result.failing_specifications.size() +
-        result.bounded_specifications.size() + result.inconclusive_specifications.size();
+        result.bounded_specifications.size() + result.inconclusive_specifications.size() +
+        result.conditional_specifications.size();
     if (result.expected_specification_count > 0 && observed_specification_count == 0) {
         result.status = FormalVerificationStatus::CheckerError;
         result.availability_status = ModelCheckerAvailabilityStatus::Available;
         result.error_message = "formal checker did not emit any specification result";
         return result;
     }
-    if (observed_specification_count < result.expected_specification_count) {
+    if (observed_specification_count != result.expected_specification_count) {
         result.status = FormalVerificationStatus::CheckerError;
         result.availability_status = ModelCheckerAvailabilityStatus::Available;
         result.error_message =
-            "formal checker emitted fewer specification results than the generated SMV model";
+            "formal checker emitted a different specification result count than the generated SMV model";
         return result;
     }
     // A bounded invariant search that exhausted the bound without a proof or
@@ -633,16 +668,42 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
 }
 
 void print_formal_verification_report(const FormalVerificationResult &result, std::ostream &out) {
+    out << "verification_scope: control_model\n";
+    out << "generated_control_proven: " << result.generated_control_proven_count << '\n';
+    out << "generated_control_bounded: " << result.generated_control_bounded_count << '\n';
+    out << "user_temporal_proven: " << result.user_temporal_proven_count << '\n';
+    out << "user_temporal_bounded: " << result.user_temporal_bounded_count << '\n';
+    out << "user_temporal_conditional: " << result.user_temporal_conditional_count << '\n';
+    out << "user_temporal_unsupported: " << result.user_temporal_unsupported_count << '\n';
+    out << "environment_assumptions: " << result.environment_assumption_count << '\n';
+    for (const auto &target : result.specifications) {
+        if (target.coverage != SmvSpecificationCoverage::Complete) {
+            out << (target.coverage == SmvSpecificationCoverage::Conditional ? "conditional: " : "unsupported: ")
+                << target.description;
+            if (target.assumption == SmvSpecificationAssumption::DataObservation)
+                out << " (unmodeled data observation)";
+            if (target.assumption == SmvSpecificationAssumption::ControlEnvironment)
+                out << " (no-failure control environment assumption)";
+            out << '\n';
+        }
+    }
     switch (result.status) {
     case FormalVerificationStatus::Passed:
+        if (!result.checker_invoked) {
+            out << "control_status: " << (result.user_temporal_unsupported_count == 0 ? "no_targets" : "incomplete") << '\n';
+            out << "checker_status: not_run\n";
+            return;
+        }
+        out << "control_status: " << (result.bounded_model_checking &&
+            !result.bounded_specifications.empty() ? "bounded" : "passed") << '\n';
         if (result.bounded_model_checking && !result.bounded_specifications.empty()) {
-            out << "ok: formal verification passed with "
+            out << "ok: control-model verification passed with "
                 << result.bounded_specifications.size()
                 << " bounded specification(s) (no counterexample within bound "
                 << result.bmc_depth << ") and " << result.proven_specifications.size()
                 << " proven specification(s); bounded passes are not full proofs\n";
         } else {
-            out << "ok: formal verification passed with "
+            out << "ok: control-model verification passed with "
                 << result.proven_specifications.size() << " proven specification(s)\n";
         }
         out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
@@ -661,7 +722,8 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
         }
         return;
     case FormalVerificationStatus::Failed:
-        out << "error: formal verification failed with " << result.failing_specifications.size()
+        out << "control_status: failed\n";
+        out << "error: control-model verification failed with " << result.failing_specifications.size()
             << " failing specification(s)\n";
         out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
         out << "checker_status: available\n";
@@ -695,6 +757,7 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
         }
         return;
     case FormalVerificationStatus::CheckerUnavailable:
+        out << "control_status: unavailable\n";
         out << "error: formal checker unavailable";
         if (!result.error_message.empty()) {
             out << ": " << result.error_message;
@@ -708,6 +771,7 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
         }
         return;
     case FormalVerificationStatus::VerificationUnsupported:
+        out << "control_status: unsupported\n";
         out << "error: formal verification unsupported";
         if (!result.error_message.empty()) {
             out << ": " << result.error_message;
@@ -721,6 +785,7 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
         }
         return;
     case FormalVerificationStatus::CheckerError:
+        out << "control_status: error\n";
         out << "error: formal checker failed";
         if (!result.error_message.empty()) {
             out << ": " << result.error_message;

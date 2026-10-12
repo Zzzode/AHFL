@@ -184,6 +184,7 @@ ctest --preset test-asan -j$(nproc) --output-on-failure
 | `docs/spec/` | Language specifications |
 | `docs/design/` | Architecture & design documents |
 | `docs/plans/` | Project status, roadmaps, implementation plans |
+| `docs/tutorials/` | User tutorials, getting started, task-oriented guides and recipes |
 | `docs/reference/` | CLI, IR format, contributor guides |
 | `examples/` | Example `.ahfl` programs |
 | `third_party/` | Vendored dependencies |

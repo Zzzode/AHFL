@@ -48,17 +48,14 @@ wire_payload_kind(CoreTypeDecl::VariantPayload::Kind kind) {
 
 class SchemaBuilder {
   public:
-    SchemaBuilder(const CoreProgram &program,
-                  const std::vector<CoreCapabilityId> &selected_capabilities,
-                  std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary =
-                      std::nullopt,
-                  std::optional<std::pair<std::vector<CoreValueTypeId>,
-                                         std::vector<CoreValueTypeId>>> node_boundaries =
-                      std::nullopt)
-        : program_(program),
-          selected_(selected_capabilities),
-          frame_boundary_(std::move(frame_boundary)),
-          node_boundaries_(std::move(node_boundaries)),
+    SchemaBuilder(
+        const CoreProgram &program,
+        const std::vector<CoreCapabilityId> &selected_capabilities,
+        std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary = std::nullopt,
+        std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+            node_boundaries = std::nullopt)
+        : program_(program), selected_(selected_capabilities),
+          frame_boundary_(std::move(frame_boundary)), node_boundaries_(std::move(node_boundaries)),
           scratch_types_(program.value_types) {
         schema_ids_.resize(scratch_types_.size());
     }
@@ -82,7 +79,8 @@ class SchemaBuilder {
                 // capability declaration's owning module.
                 fail(wire_schema::kInvalidCore,
                      "selected capability has no resolved SymbolId",
-                     capability.source_range, capability.source_module);
+                     capability.source_range,
+                     capability.source_module);
                 return std::nullopt;
             }
             CoreWireCapabilitySchema projected;
@@ -127,7 +125,8 @@ class SchemaBuilder {
             node_output_nodes_.reserve(outputs.size());
             for (const CoreValueTypeId input : inputs) {
                 if (input.value >= scratch_types_.size()) {
-                    fail(wire_schema::kInvalid, "workflow node input root value type is out of range");
+                    fail(wire_schema::kInvalid,
+                         "workflow node input root value type is out of range");
                     return std::nullopt;
                 }
                 const auto root = project_type(input, std::nullopt);
@@ -138,7 +137,8 @@ class SchemaBuilder {
             }
             for (const CoreValueTypeId output : outputs) {
                 if (output.value >= scratch_types_.size()) {
-                    fail(wire_schema::kInvalid, "workflow node output root value type is out of range");
+                    fail(wire_schema::kInvalid,
+                         "workflow node output root value type is out of range");
                     return std::nullopt;
                 }
                 const auto root = project_type(output, std::nullopt);
@@ -169,8 +169,7 @@ class SchemaBuilder {
         std::optional<std::uint32_t> previous;
         for (const CoreCapabilityId id : selected_) {
             if (id.value >= program_.capabilities.size()) {
-                fail(wire_schema::kInvalidSelection,
-                     "selected capability id is out of range");
+                fail(wire_schema::kInvalidSelection, "selected capability id is out of range");
                 return false;
             }
             if (previous.has_value() && id.value <= *previous) {
@@ -183,7 +182,9 @@ class SchemaBuilder {
         return true;
     }
 
-    void fail(std::string_view code, std::string message, SourceRangeOpt range = std::nullopt,
+    void fail(std::string_view code,
+              std::string message,
+              SourceRangeOpt range = std::nullopt,
               std::string_view module = {}) {
         if (diagnostics_.empty()) {
             diagnostics_.push_back(diagnostic(code, std::move(message), std::move(range), module));
@@ -196,8 +197,8 @@ class SchemaBuilder {
         }
     }
 
-    [[nodiscard]] std::optional<CoreWireSchemaNodeId>
-    reserve_node(CoreValueTypeId type, SourceRangeOpt range) {
+    [[nodiscard]] std::optional<CoreWireSchemaNodeId> reserve_node(CoreValueTypeId type,
+                                                                   SourceRangeOpt range) {
         if (table_.nodes.size() >= CoreWireSchemaNodeId::kInvalid) {
             fail(wire_schema::kOverflow,
                  "wire-schema arena exceeded its 32-bit id space",
@@ -211,8 +212,8 @@ class SchemaBuilder {
         return id;
     }
 
-    [[nodiscard]] std::optional<CoreWireSchemaNodeId>
-    project_type(CoreValueTypeId type, SourceRangeOpt range) {
+    [[nodiscard]] std::optional<CoreWireSchemaNodeId> project_type(CoreValueTypeId type,
+                                                                   SourceRangeOpt range) {
         sync_schema_ids();
         if (type.value >= scratch_types_.size()) {
             fail(wire_schema::kInvalid,
@@ -235,8 +236,8 @@ class SchemaBuilder {
         return id;
     }
 
-    [[nodiscard]] std::optional<CoreWireSchemaShape>
-    build_shape(CoreValueTypeId type, SourceRangeOpt range) {
+    [[nodiscard]] std::optional<CoreWireSchemaShape> build_shape(CoreValueTypeId type,
+                                                                 SourceRangeOpt range) {
         // Snapshot the scratch value-type node BY VALUE. The visitor below
         // descends through `project_type` (which reserves nodes) and `instantiate`
         // (P4-C member instantiation), and the latter hash-conses into
@@ -269,26 +270,25 @@ class SchemaBuilder {
         const auto ws_Float = [](const CoreVtFloat &) -> std::optional<CoreWireSchemaShape> {
             return CoreWireSchemaFloat{};
         };
-        const auto ws_String = [](const CoreVtString &value)
-            -> std::optional<CoreWireSchemaShape> {
+        const auto ws_String = [](const CoreVtString &value) -> std::optional<CoreWireSchemaShape> {
             return CoreWireSchemaString{value.length_bounds};
         };
-        const auto ws_Decimal = [](const CoreVtDecimal &value)
-            -> std::optional<CoreWireSchemaShape> {
+        const auto ws_Decimal =
+            [](const CoreVtDecimal &value) -> std::optional<CoreWireSchemaShape> {
             return CoreWireSchemaDecimal{value.scale};
         };
         const auto ws_Duration = [](const CoreVtDuration &) -> std::optional<CoreWireSchemaShape> {
             return CoreWireSchemaDuration{};
         };
-        const auto ws_Timestamp = [](const CoreVtTimestamp &)
-            -> std::optional<CoreWireSchemaShape> {
+        const auto ws_Timestamp =
+            [](const CoreVtTimestamp &) -> std::optional<CoreWireSchemaShape> {
             return CoreWireSchemaTimestamp{};
         };
         const auto ws_Uuid = [](const CoreVtUuid &) -> std::optional<CoreWireSchemaShape> {
             return CoreWireSchemaUuid{};
         };
-        const auto ws_Nominal = [&](const CoreVtNominal &value)
-            -> std::optional<CoreWireSchemaShape> {
+        const auto ws_Nominal =
+            [&](const CoreVtNominal &value) -> std::optional<CoreWireSchemaShape> {
             return build_nominal(value, range);
         };
         const auto ws_Tuple = [&](const CoreVtTuple &value) -> std::optional<CoreWireSchemaShape> {
@@ -309,8 +309,7 @@ class SchemaBuilder {
                  std::move(range));
             return std::nullopt;
         };
-        const auto ws_Closure = [&](const CoreVtClosure &)
-            -> std::optional<CoreWireSchemaShape> {
+        const auto ws_Closure = [&](const CoreVtClosure &) -> std::optional<CoreWireSchemaShape> {
             // RFC 0026 P6-8a: closures are first-class P6 values. The wire
             // schema carries a marker so the frame-layout consistency
             // verifier can match it against CoreLayoutClosure; an embedded
@@ -327,8 +326,8 @@ class SchemaBuilder {
 #undef HANDLE_CORE_VT
     }
 
-    [[nodiscard]] std::optional<CoreWireSchemaShape>
-    build_nominal(const CoreVtNominal &value, SourceRangeOpt range) {
+    [[nodiscard]] std::optional<CoreWireSchemaShape> build_nominal(const CoreVtNominal &value,
+                                                                   SourceRangeOpt range) {
         if (value.base.value >= program_.types.size()) {
             fail(wire_schema::kInvalid,
                  "wire-schema nominal base is out of range",
@@ -368,11 +367,11 @@ class SchemaBuilder {
             if (!child.has_value()) {
                 return std::nullopt;
             }
-            return CoreWireSchemaSequence{
-                decl.role == CoreNominalRole::List ? CoreWireSequenceKind::List
-                                                   : CoreWireSequenceKind::Set,
-                *child,
-                value.capacity};
+            return CoreWireSchemaSequence{decl.role == CoreNominalRole::List
+                                              ? CoreWireSequenceKind::List
+                                              : CoreWireSequenceKind::Set,
+                                          *child,
+                                          value.capacity};
         }
         case CoreNominalRole::Map: {
             if (decl.kind != CoreTypeDecl::Kind::Struct || value.args.size() != 2) {
@@ -409,17 +408,12 @@ class SchemaBuilder {
         return std::nullopt;
     }
 
-    [[nodiscard]] std::optional<CoreValueTypeId>
-    instantiate(const CoreVtNominal &owner,
-                CoreMemberTypeTemplateNodeId root,
-                SourceRangeOpt range) {
+    [[nodiscard]] std::optional<CoreValueTypeId> instantiate(const CoreVtNominal &owner,
+                                                             CoreMemberTypeTemplateNodeId root,
+                                                             SourceRangeOpt range) {
         std::string reason;
-        auto result = instantiate_member_template_into(scratch_types_,
-                                                       program_.types,
-                                                       owner.base,
-                                                       root,
-                                                       owner.args,
-                                                       &reason);
+        auto result = instantiate_member_template_into(
+            scratch_types_, program_.types, owner.base, root, owner.args, &reason);
         if (!result.has_value()) {
             fail(wire_schema::kInvalid,
                  "wire-schema member template is invalid: " + reason,
@@ -430,8 +424,8 @@ class SchemaBuilder {
         return result;
     }
 
-    [[nodiscard]] std::optional<CoreWireSchemaShape>
-    build_struct(const CoreVtNominal &owner, const CoreTypeDecl &decl) {
+    [[nodiscard]] std::optional<CoreWireSchemaShape> build_struct(const CoreVtNominal &owner,
+                                                                  const CoreTypeDecl &decl) {
         if (decl.fields.size() != decl.field_type_template_roots.size()) {
             fail(wire_schema::kInvalid,
                  "wire-schema struct fields and template roots are not parallel",
@@ -456,8 +450,8 @@ class SchemaBuilder {
         return result;
     }
 
-    [[nodiscard]] std::optional<CoreWireSchemaShape>
-    build_enum(const CoreVtNominal &owner, const CoreTypeDecl &decl) {
+    [[nodiscard]] std::optional<CoreWireSchemaShape> build_enum(const CoreVtNominal &owner,
+                                                                const CoreTypeDecl &decl) {
         if (decl.variants.size() != decl.variant_payloads.size()) {
             fail(wire_schema::kInvalid,
                  "wire-schema enum variants and payload metadata are not parallel",
@@ -488,8 +482,8 @@ class SchemaBuilder {
             variant.payload_kind = *kind;
             variant.slots.reserve(payload.slot_type_template_roots.size());
             for (std::size_t slot = 0; slot < payload.slot_type_template_roots.size(); ++slot) {
-                const auto slot_type = instantiate(
-                    owner, payload.slot_type_template_roots[slot], decl.source_range);
+                const auto slot_type =
+                    instantiate(owner, payload.slot_type_template_roots[slot], decl.source_range);
                 if (!slot_type.has_value()) {
                     return std::nullopt;
                 }
@@ -497,10 +491,10 @@ class SchemaBuilder {
                 if (!child.has_value()) {
                     return std::nullopt;
                 }
-                variant.slots.push_back(CoreWireSchemaField{
-                    *kind == CoreWirePayloadKind::Struct ? payload.field_names[slot]
-                                                        : std::string{},
-                    *child});
+                variant.slots.push_back(CoreWireSchemaField{*kind == CoreWirePayloadKind::Struct
+                                                                ? payload.field_names[slot]
+                                                                : std::string{},
+                                                            *child});
             }
             result.variants.push_back(std::move(variant));
         }
@@ -510,7 +504,9 @@ class SchemaBuilder {
     // Rewrite every CoreWireSchemaNodeId inside one shape through `remap`.
     static void remap_shape(CoreWireSchemaShape &shape,
                             const std::vector<CoreWireSchemaNodeId> &remap) {
-        const auto fix = [&](CoreWireSchemaNodeId &id) { id = remap[id.value]; };
+        const auto fix = [&](CoreWireSchemaNodeId &id) {
+            id = remap[id.value];
+        };
         std::visit(Overloaded{
                        [](CoreWireSchemaUnit &) {},
                        [](CoreWireSchemaBool &) {},
@@ -597,8 +593,8 @@ class SchemaBuilder {
     const CoreProgram &program_;
     const std::vector<CoreCapabilityId> &selected_;
     std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary_;
-    std::optional<std::pair<std::vector<CoreValueTypeId>,
-                           std::vector<CoreValueTypeId>>> node_boundaries_;
+    std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+        node_boundaries_;
     std::vector<CoreWireSchemaNodeId> node_input_nodes_;
     std::vector<CoreWireSchemaNodeId> node_output_nodes_;
     std::optional<CoreWireSchemaNodeId> frame_input_node_;
@@ -618,11 +614,9 @@ build_raw(const CoreProgram &program,
           const std::vector<CoreCapabilityId> &selected,
           std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary,
           std::vector<CoreLowerDiagnostic> &diagnostics,
-          std::optional<std::pair<std::vector<CoreValueTypeId>,
-                                 std::vector<CoreValueTypeId>>> node_boundaries =
-              std::nullopt) {
-    SchemaBuilder builder(program, selected, std::move(frame_boundary),
-                          std::move(node_boundaries));
+          std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+              node_boundaries = std::nullopt) {
+    SchemaBuilder builder(program, selected, std::move(frame_boundary), std::move(node_boundaries));
     auto table = builder.run();
     diagnostics = builder.take_diagnostics();
     return table;
@@ -633,10 +627,6 @@ class LocalSchemaVerifier {
     explicit LocalSchemaVerifier(const CoreWireSchemaTable &table) : table_(table) {}
 
     [[nodiscard]] std::vector<CoreLowerDiagnostic> run() {
-        if (table_.format_version != 1) {
-            fail("wire-schema table has an unsupported format version");
-            return std::move(diagnostics_);
-        }
         if (table_.nodes.size() >= CoreWireSchemaNodeId::kInvalid) {
             fail("wire-schema arena exceeds its 32-bit id space");
             return std::move(diagnostics_);
@@ -673,11 +663,9 @@ class LocalSchemaVerifier {
             // Agent boundary roots are kInvalid on a P6 workflow table (its
             // roots are the per-node arrays); mark them only when real.
             const CoreWireFrameRoots &roots = *table_.frame_roots;
-            const bool has_agent_roots =
-                roots.input.value != CoreWireSchemaNodeId::kInvalid ||
-                roots.output.value != CoreWireSchemaNodeId::kInvalid;
-            if (has_agent_roots &&
-                (!mark(roots.input) || !mark(roots.output))) {
+            const bool has_agent_roots = roots.input.value != CoreWireSchemaNodeId::kInvalid ||
+                                         roots.output.value != CoreWireSchemaNodeId::kInvalid;
+            if (has_agent_roots && (!mark(roots.input) || !mark(roots.output))) {
                 return std::move(diagnostics_);
             }
             for (const CoreWireSchemaNodeId node : roots.node_inputs) {
@@ -924,8 +912,9 @@ class LocalSchemaVerifier {
                     // its structural error first.
                     for (const auto &field : value.fields) {
                         if (field.wire_name == "_type") {
-                            fail_code(wire_schema::kUnsupported,
-                                      "wire-schema struct field uses the reserved wire name '_type'");
+                            fail_code(
+                                wire_schema::kUnsupported,
+                                "wire-schema struct field uses the reserved wire name '_type'");
                             return false;
                         }
                     }
@@ -990,7 +979,8 @@ class LocalSchemaVerifier {
                     return true;
                 },
                 [&](const CoreWireSchemaTuple &value) {
-                    return std::all_of(value.elements.begin(), value.elements.end(),
+                    return std::all_of(value.elements.begin(),
+                                       value.elements.end(),
                                        [&](CoreWireSchemaNodeId child) { return valid_id(child); });
                 },
             },
@@ -1002,8 +992,7 @@ class LocalSchemaVerifier {
     std::vector<CoreLowerDiagnostic> diagnostics_;
 };
 
-[[nodiscard]] std::vector<CoreLowerDiagnostic>
-verify_local(const CoreWireSchemaTable &table) {
+[[nodiscard]] std::vector<CoreLowerDiagnostic> verify_local(const CoreWireSchemaTable &table) {
     return LocalSchemaVerifier(table).run();
 }
 
@@ -1016,7 +1005,6 @@ class SchemaEncoder {
             return std::nullopt;
         }
         bytes_ = {'A', 'H', 'F', 'L', 'W', 'S'};
-        u32(table.format_version);
         u32_size(table.nodes.size());
         if (failed()) {
             return std::nullopt;
@@ -1040,36 +1028,25 @@ class SchemaEncoder {
                 return std::nullopt;
             }
         }
-        // RFC 0026 P6-7: the frame-root block is a trailing, presence-gated
-        // extension, so a capability-only section keeps its pre-P6-7 bytes.
-        // V2-D: when non-empty, the agent input/output roots are followed by
-        // the per-packaged-node root pairs (presence-gated by a node count),
-        // so an agent frame table keeps its V2-C bytes exactly.
+        // The presence tag and node count are mandatory, including when empty.
+        byte(table.frame_roots.has_value() ? 1u : 0u);
         if (table.frame_roots.has_value()) {
-            byte(1);
-            u32(table.frame_roots->input.value);
-            u32(table.frame_roots->output.value);
-            if (!table.frame_roots->node_inputs.empty()) {
-                if (table.frame_roots->node_inputs.size() !=
-                    table.frame_roots->node_outputs.size()) {
-                    fail("workflow frame node roots have mismatched input/output arity");
-                    return std::nullopt;
-                }
-                // One dense node count, then the input roots and the output
-                // roots as raw ids (mirror of the decoder's single-count read).
-                u32_size(table.frame_roots->node_inputs.size());
-                if (failed()) {
-                    return std::nullopt;
-                }
-                for (const auto value : table.frame_roots->node_inputs) {
-                    u32(value.value);
-                }
-                for (const auto value : table.frame_roots->node_outputs) {
-                    u32(value.value);
-                }
-                if (failed()) {
-                    return std::nullopt;
-                }
+            const auto &roots = *table.frame_roots;
+            u32(roots.input.value);
+            u32(roots.output.value);
+            if (roots.node_inputs.size() != roots.node_outputs.size()) {
+                fail("workflow frame node roots have mismatched input/output arity");
+                return std::nullopt;
+            }
+            u32_size(roots.node_inputs.size());
+            for (const auto value : roots.node_inputs) {
+                u32(value.value);
+            }
+            for (const auto value : roots.node_outputs) {
+                u32(value.value);
+            }
+            if (failed()) {
+                return std::nullopt;
             }
         }
         return std::move(bytes_);
@@ -1080,18 +1057,23 @@ class SchemaEncoder {
     }
 
   private:
-    [[nodiscard]] bool failed() const noexcept { return !diagnostics_.empty(); }
+    [[nodiscard]] bool failed() const noexcept {
+        return !diagnostics_.empty();
+    }
 
     void fail(std::string message) {
         if (!failed()) {
-            diagnostics_.push_back(
-                diagnostic(wire_schema::kOverflow, std::move(message)));
+            diagnostics_.push_back(diagnostic(wire_schema::kOverflow, std::move(message)));
         }
     }
 
-    void byte(std::uint8_t value) { bytes_.push_back(value); }
+    void byte(std::uint8_t value) {
+        bytes_.push_back(value);
+    }
 
-    void u32(std::uint32_t value) { u64(value); }
+    void u32(std::uint32_t value) {
+        u64(value);
+    }
 
     void u64(std::uint64_t value) {
         do {
@@ -1140,8 +1122,7 @@ class SchemaEncoder {
         }
     }
 
-    void optional_bounds(
-        const std::optional<std::pair<std::int64_t, std::int64_t>> &value) {
+    void optional_bounds(const std::optional<std::pair<std::int64_t, std::int64_t>> &value) {
         byte(value.has_value() ? 1U : 0U);
         if (value.has_value()) {
             s64(value->first);
@@ -1174,70 +1155,69 @@ class SchemaEncoder {
     }
 
     void encode_node(const CoreWireSchemaNode &node) {
-        std::visit(
-            Overloaded{
-                [&](const CoreWireSchemaUnit &) { byte(0); },
-                [&](const CoreWireSchemaBool &) { byte(1); },
-                [&](const CoreWireSchemaInt &value) {
-                    byte(2);
-                    optional_bounds(value.bounds);
-                },
-                [&](const CoreWireSchemaFloat &) { byte(3); },
-                [&](const CoreWireSchemaString &value) {
-                    byte(4);
-                    optional_bounds(value.length_bounds);
-                },
-                [&](const CoreWireSchemaDecimal &value) {
-                    byte(5);
-                    s64(value.scale);
-                },
-                [&](const CoreWireSchemaDuration &) { byte(6); },
-                [&](const CoreWireSchemaTimestamp &) { byte(7); },
-                [&](const CoreWireSchemaUuid &) { byte(8); },
-                [&](const CoreWireSchemaClosure &) { byte(15); },
-                [&](const CoreWireSchemaOption &value) {
-                    byte(9);
-                    u32(value.value.value);
-                },
-                [&](const CoreWireSchemaSequence &value) {
-                    byte(10);
-                    byte(value.kind == CoreWireSequenceKind::List ? 0U : 1U);
-                    u32(value.element.value);
-                    optional_u64(value.capacity);
-                },
-                [&](const CoreWireSchemaMap &value) {
-                    byte(11);
-                    u32(value.key.value);
-                    u32(value.value.value);
-                    optional_u64(value.capacity);
-                },
-                [&](const CoreWireSchemaStruct &value) {
-                    byte(12);
-                    string(value.wire_name);
-                    fields(value.fields);
-                },
-                [&](const CoreWireSchemaEnum &value) {
-                    byte(13);
-                    string(value.wire_name);
-                    u32_size(value.variants.size());
-                    if (failed()) {
-                        return;
-                    }
-                    for (const auto &variant : value.variants) {
-                        string(variant.wire_name);
-                        byte(static_cast<std::uint8_t>(variant.payload_kind));
-                        fields(variant.slots);
-                        if (failed()) {
-                            return;
-                        }
-                    }
-                },
-                [&](const CoreWireSchemaTuple &value) {
-                    byte(14);
-                    ids(value.elements);
-                },
-            },
-            node.shape);
+        std::visit(Overloaded{
+                       [&](const CoreWireSchemaUnit &) { byte(0); },
+                       [&](const CoreWireSchemaBool &) { byte(1); },
+                       [&](const CoreWireSchemaInt &value) {
+                           byte(2);
+                           optional_bounds(value.bounds);
+                       },
+                       [&](const CoreWireSchemaFloat &) { byte(3); },
+                       [&](const CoreWireSchemaString &value) {
+                           byte(4);
+                           optional_bounds(value.length_bounds);
+                       },
+                       [&](const CoreWireSchemaDecimal &value) {
+                           byte(5);
+                           s64(value.scale);
+                       },
+                       [&](const CoreWireSchemaDuration &) { byte(6); },
+                       [&](const CoreWireSchemaTimestamp &) { byte(7); },
+                       [&](const CoreWireSchemaUuid &) { byte(8); },
+                       [&](const CoreWireSchemaClosure &) { byte(15); },
+                       [&](const CoreWireSchemaOption &value) {
+                           byte(9);
+                           u32(value.value.value);
+                       },
+                       [&](const CoreWireSchemaSequence &value) {
+                           byte(10);
+                           byte(value.kind == CoreWireSequenceKind::List ? 0U : 1U);
+                           u32(value.element.value);
+                           optional_u64(value.capacity);
+                       },
+                       [&](const CoreWireSchemaMap &value) {
+                           byte(11);
+                           u32(value.key.value);
+                           u32(value.value.value);
+                           optional_u64(value.capacity);
+                       },
+                       [&](const CoreWireSchemaStruct &value) {
+                           byte(12);
+                           string(value.wire_name);
+                           fields(value.fields);
+                       },
+                       [&](const CoreWireSchemaEnum &value) {
+                           byte(13);
+                           string(value.wire_name);
+                           u32_size(value.variants.size());
+                           if (failed()) {
+                               return;
+                           }
+                           for (const auto &variant : value.variants) {
+                               string(variant.wire_name);
+                               byte(static_cast<std::uint8_t>(variant.payload_kind));
+                               fields(variant.slots);
+                               if (failed()) {
+                                   return;
+                               }
+                           }
+                       },
+                       [&](const CoreWireSchemaTuple &value) {
+                           byte(14);
+                           ids(value.elements);
+                       },
+                   },
+                   node.shape);
     }
 
     std::vector<std::uint8_t> bytes_;
@@ -1253,8 +1233,7 @@ class SchemaEncoder {
 // name echo) and stops. A successful parse must consume EXACTLY the whole payload.
 class SchemaDecoder {
   public:
-    [[nodiscard]] std::optional<CoreWireSchemaTable>
-    run(std::span<const std::uint8_t> bytes) {
+    [[nodiscard]] std::optional<CoreWireSchemaTable> run(std::span<const std::uint8_t> bytes) {
         data_ = bytes;
         pos_ = 0;
         static constexpr std::array<std::uint8_t, 6> kMagic = {'A', 'H', 'F', 'L', 'W', 'S'};
@@ -1266,14 +1245,6 @@ class SchemaDecoder {
             ++pos_;
         }
         CoreWireSchemaTable table;
-        table.format_version = u32();
-        if (failed()) {
-            return std::nullopt;
-        }
-        if (table.format_version != 1) {
-            fail("wire-schema payload has an unsupported format version");
-            return std::nullopt;
-        }
         const std::uint32_t node_count = u32();
         if (failed() || !bounded_count(node_count)) {
             return std::nullopt;
@@ -1302,10 +1273,7 @@ class SchemaDecoder {
             }
             table.capabilities.push_back(std::move(capability));
         }
-        // RFC 0026 P6-7: optional trailing frame-root block.
-        if (pos_ == data_.size()) {
-            return table;
-        }
+        // An absent frame is encoded by an explicit zero presence tag.
         const std::uint8_t frame_present = byte();
         if (failed()) {
             return std::nullopt;
@@ -1329,29 +1297,25 @@ class SchemaDecoder {
         CoreWireFrameRoots roots;
         roots.input = CoreWireSchemaNodeId{frame_input};
         roots.output = CoreWireSchemaNodeId{frame_output};
-        // V2-D: an optional trailing per-node root block (node count + inputs
-        // + outputs). Absent on an agent frame table.
-        if (pos_ != data_.size()) {
-            const std::uint32_t node_count = u32();
-            if (failed() || !bounded_count(node_count)) {
-                return std::nullopt;
+        const std::uint32_t frame_node_count = u32();
+        if (failed() || !bounded_count(frame_node_count)) {
+            return std::nullopt;
+        }
+        const auto read_ids = [&]() {
+            std::vector<CoreWireSchemaNodeId> values;
+            values.reserve(frame_node_count);
+            for (std::uint32_t i = 0; i < frame_node_count; ++i) {
+                values.push_back(CoreWireSchemaNodeId{u32()});
             }
-            const auto read_ids = [&]() {
-                std::vector<CoreWireSchemaNodeId> values;
-                values.reserve(node_count);
-                for (std::uint32_t i = 0; i < node_count; ++i) {
-                    values.push_back(CoreWireSchemaNodeId{u32()});
-                }
-                return values;
-            };
-            roots.node_inputs = read_ids();
-            if (failed()) {
-                return std::nullopt;
-            }
-            roots.node_outputs = read_ids();
-            if (failed()) {
-                return std::nullopt;
-            }
+            return values;
+        };
+        roots.node_inputs = read_ids();
+        if (failed()) {
+            return std::nullopt;
+        }
+        roots.node_outputs = read_ids();
+        if (failed()) {
+            return std::nullopt;
         }
         table.frame_roots = roots;
         if (failed()) {
@@ -1369,7 +1333,9 @@ class SchemaDecoder {
     }
 
   private:
-    [[nodiscard]] bool failed() const noexcept { return !diagnostics_.empty(); }
+    [[nodiscard]] bool failed() const noexcept {
+        return !diagnostics_.empty();
+    }
 
     void fail(std::string message) {
         if (!failed()) {
@@ -1377,7 +1343,9 @@ class SchemaDecoder {
         }
     }
 
-    [[nodiscard]] std::size_t remaining() const noexcept { return data_.size() - pos_; }
+    [[nodiscard]] std::size_t remaining() const noexcept {
+        return data_.size() - pos_;
+    }
 
     // A count/length can never exceed the bytes left to read (each element costs
     // at least one byte), and a legal node/id count is strictly below the reserved
@@ -1743,17 +1711,18 @@ bool CoreWireSchemaDecodeResult::has_errors() const noexcept {
     });
 }
 
-CoreWireSchemaBuildResult
-project_core_wire_schema(const CoreProgram &program,
-                         const std::vector<CoreCapabilityId> &selected_capabilities,
-                         std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                             frame_boundary,
-                         std::optional<std::pair<std::vector<CoreValueTypeId>,
-                                                std::vector<CoreValueTypeId>>>
-                             node_boundaries) {
+CoreWireSchemaBuildResult project_core_wire_schema(
+    const CoreProgram &program,
+    const std::vector<CoreCapabilityId> &selected_capabilities,
+    std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary,
+    std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+        node_boundaries) {
     CoreWireSchemaBuildResult result;
-    result.table = build_raw(program, selected_capabilities, std::move(frame_boundary),
-                             result.diagnostics, std::move(node_boundaries));
+    result.table = build_raw(program,
+                             selected_capabilities,
+                             std::move(frame_boundary),
+                             result.diagnostics,
+                             std::move(node_boundaries));
     if (!result.table.has_value()) {
         return result;
     }
@@ -1772,23 +1741,23 @@ verify_core_wire_schema_table_local(const CoreWireSchemaTable &table) {
     return verify_local(table);
 }
 
-std::vector<CoreLowerDiagnostic>
-verify_core_wire_schema_table(const CoreProgram &program,
-                              const std::vector<CoreCapabilityId> &selected_capabilities,
-                              const CoreWireSchemaTable &table,
-                              std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                                  frame_boundary,
-                              std::optional<std::pair<std::vector<CoreValueTypeId>,
-                                                     std::vector<CoreValueTypeId>>>
-                                  node_boundaries) {
+std::vector<CoreLowerDiagnostic> verify_core_wire_schema_table(
+    const CoreProgram &program,
+    const std::vector<CoreCapabilityId> &selected_capabilities,
+    const CoreWireSchemaTable &table,
+    std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary,
+    std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+        node_boundaries) {
     auto local = verify_local(table);
     if (!local.empty()) {
         return local;
     }
     std::vector<CoreLowerDiagnostic> projection_diagnostics;
-    const auto expected =
-        build_raw(program, selected_capabilities, std::move(frame_boundary), projection_diagnostics,
-                  std::move(node_boundaries));
+    const auto expected = build_raw(program,
+                                    selected_capabilities,
+                                    std::move(frame_boundary),
+                                    projection_diagnostics,
+                                    std::move(node_boundaries));
     if (!expected.has_value()) {
         return projection_diagnostics;
     }
@@ -1799,8 +1768,7 @@ verify_core_wire_schema_table(const CoreProgram &program,
     return {};
 }
 
-CoreWireSchemaEncodeResult
-encode_core_wire_schema_table(const CoreWireSchemaTable &table) {
+CoreWireSchemaEncodeResult encode_core_wire_schema_table(const CoreWireSchemaTable &table) {
     SchemaEncoder encoder;
     CoreWireSchemaEncodeResult result;
     result.bytes = encoder.run(table);
@@ -1808,8 +1776,7 @@ encode_core_wire_schema_table(const CoreWireSchemaTable &table) {
     return result;
 }
 
-CoreWireSchemaDecodeResult
-decode_core_wire_schema_table(std::span<const std::uint8_t> bytes) {
+CoreWireSchemaDecodeResult decode_core_wire_schema_table(std::span<const std::uint8_t> bytes) {
     CoreWireSchemaDecodeResult result;
     SchemaDecoder decoder;
     auto table = decoder.run(bytes);
@@ -1846,8 +1813,8 @@ decode_core_wire_schema_table(std::span<const std::uint8_t> bytes) {
     const auto &canonical = *reencoded.bytes;
     if (canonical.size() != bytes.size() ||
         !std::equal(canonical.begin(), canonical.end(), bytes.begin())) {
-        result.diagnostics.push_back(diagnostic(
-            wire_schema::kInvalid, "wire-schema payload is not canonical"));
+        result.diagnostics.push_back(
+            diagnostic(wire_schema::kInvalid, "wire-schema payload is not canonical"));
         return result;
     }
     result.table = std::move(*table);

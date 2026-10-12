@@ -13,26 +13,26 @@ namespace ahfl::runtime::core_wasm_idempotency_token {
 
 namespace {
 
-// ASCII domain separator, exactly 19 bytes, no trailing NUL.
-constexpr std::string_view kDomain{"AHFL-IDEMPOTENCY-v1"};
+// ASCII domain separator, exactly 16 bytes, no trailing NUL.
+constexpr std::string_view kDomain{"AHFL-IDEMPOTENCY"};
 
 // Fixed-width field sizes.
-constexpr std::size_t kDomainSize = 19;
+constexpr std::size_t kDomainSize = 16;
 constexpr std::size_t kAuthoritySize = 16;
 constexpr std::size_t kU32Size = 4;
 constexpr std::size_t kU64Size = 8;
 constexpr std::size_t kDigestSize = 32;
 
 // Field offsets in the canonical preimage (documented in the seam doc order).
-constexpr std::size_t kOffAuthority = kDomainSize;                   // 19
-constexpr std::size_t kOffWorkflow = kOffAuthority + kAuthoritySize; // 35
-constexpr std::size_t kOffCheckpoint = kOffWorkflow + kU32Size;      // 39
-constexpr std::size_t kOffNode = kOffCheckpoint + kU64Size;          // 47
-constexpr std::size_t kOffOrdinal = kOffNode + kU32Size;             // 51
-constexpr std::size_t kOffCapability = kOffOrdinal + kU64Size;       // 59
-constexpr std::size_t kOffSourceSymbol = kOffCapability + kU32Size;  // 63
-constexpr std::size_t kOffParamDigest = kOffSourceSymbol + kU64Size; // 71
-constexpr std::size_t kPreimageSize = kOffParamDigest + kDigestSize; // 103
+constexpr std::size_t kOffAuthority = kDomainSize;
+constexpr std::size_t kOffWorkflow = kOffAuthority + kAuthoritySize;
+constexpr std::size_t kOffCheckpoint = kOffWorkflow + kU32Size;
+constexpr std::size_t kOffNode = kOffCheckpoint + kU64Size;
+constexpr std::size_t kOffOrdinal = kOffNode + kU32Size;
+constexpr std::size_t kOffCapability = kOffOrdinal + kU64Size;
+constexpr std::size_t kOffSourceSymbol = kOffCapability + kU32Size;
+constexpr std::size_t kOffParamDigest = kOffSourceSymbol + kU64Size;
+constexpr std::size_t kPreimageSize = kOffParamDigest + kDigestSize; // 100
 
 void write_u32_le(std::span<std::uint8_t> dst, std::size_t offset, std::uint32_t value) noexcept {
     dst[offset + 0] = static_cast<std::uint8_t>(value & 0xFFu);
@@ -47,8 +47,8 @@ void write_u64_le(std::span<std::uint8_t> dst, std::size_t offset, std::uint64_t
     }
 }
 
-static_assert(kDomain.size() == kDomainSize, "idempotency domain must be exactly 19 ASCII bytes");
-static_assert(kPreimageSize == 103, "idempotency preimage must be exactly 103 fixed bytes");
+static_assert(kDomain.size() == kDomainSize, "idempotency domain must be exactly 16 ASCII bytes");
+static_assert(kPreimageSize == 100, "idempotency preimage must be exactly 100 fixed bytes");
 
 } // namespace
 
@@ -74,7 +74,7 @@ IdempotencyToken compute_idempotency_token(const IdempotencyCoordinate &coordina
         out[kOffParamDigest + i] = coordinate.param_digest[i];
     }
 
-    // 103 bytes is far inside SHA-256's length domain; the span overload is
+    // 100 bytes is far inside SHA-256's length domain; the span overload is
     // noexcept here in practice (it only throws for astronomically large
     // inputs).
     IdempotencyToken token;

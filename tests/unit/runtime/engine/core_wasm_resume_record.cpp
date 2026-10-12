@@ -13,10 +13,10 @@
 #include <vector>
 
 // RFC 0026 KR6.5 E4-B2-A1 permanent regression for the durable-resume control
-// record codec (`ahfl.wasm-resume.v1`). Hand-rolled check()/main() to match the
+// record codec (`ahfl.wasm-resume`). Hand-rolled check()/main() to match the
 // runtime-engine test style. Coverage:
 //   * golden round-trip (encode -> decode equals model) + a fixed HMAC KAT;
-//   * per-field / per-tag tamper (magic, version, alg, key_id, tag, digest,
+//   * per-field / per-tag tamper (magic, guarantees, alg, key_id, tag, digest,
 //     trailing, node/memo bytes) all fail closed;
 //   * wrong key + wrong key_id rejected;
 //   * non-shortest LEB + trailing bytes rejected;
@@ -24,8 +24,6 @@
 //   * full Suspended/Injected + dense/unique/frontier/sentinel invariants;
 //   * encoder-reject / decoder-reject symmetry for out-of-set enums + bad digests;
 //   * diagnostics never echo a payload byte, key, or digest (no-echo).
-// First production caller of this codec remains the future B2-D host; this test is
-// the only caller today.
 
 namespace {
 
@@ -44,7 +42,9 @@ void check(bool ok, std::string_view name) {
 }
 
 // A fixed 32-byte test key. Not a production key; only exercises the HMAC path.
-std::vector<std::uint8_t> test_key() { return std::vector<std::uint8_t>(32, 0x2b); }
+std::vector<std::uint8_t> test_key() {
+    return std::vector<std::uint8_t>(32, 0x2b);
+}
 
 std::array<std::uint8_t, 16> test_key_id() {
     std::array<std::uint8_t, 16> id{};
@@ -64,7 +64,6 @@ DigestHex hex_of(char fill) {
 // frontier #1 with one committed memo + a pending on the next ordinal).
 CoreWasmResumeRecord make_suspended() {
     CoreWasmResumeRecord r;
-    r.format_version = 1;
     r.guarantees = 0;
     r.module_sha256 = hex_of('a');
     r.wire_schema_sha256 = hex_of('b');
@@ -87,7 +86,7 @@ CoreWasmResumeRecord make_suspended() {
     ResumeMemoEntry m0;
     m0.invocation_ordinal = InvocationOrdinal{0};
     m0.capability = CoreCapabilityId{0}; // 0 is legal
-    m0.source_symbol = 0;                 // 0 is legal
+    m0.source_symbol = 0;                // 0 is legal
     m0.arg_hash = 0x1122334455667788ULL;
     m0.result_slot = PayloadSlotId{5};
     n1.memo.push_back(m0);
@@ -100,7 +99,7 @@ CoreWasmResumeRecord make_suspended() {
 
     r.nodes.push_back(n0);
     r.nodes.push_back(n1);
-    r.auth_header.alg_version = 1;
+    r.auth_header.alg_id = 1;
     r.auth_header.key_id = test_key_id();
     r.auth_header.generation = 12345;
     return r;
@@ -132,8 +131,8 @@ CoreWasmResumeRecord make_injected() {
 
 bool decode_ok(const std::vector<std::uint8_t> &bytes) {
     const auto key_id = test_key_id();
-    auto dec = decode_and_authenticate(bytes, std::span<const std::uint8_t, 16>(key_id),
-                                       test_key());
+    auto dec =
+        decode_and_authenticate(bytes, std::span<const std::uint8_t, 16>(key_id), test_key());
     return dec.ok();
 }
 
@@ -143,8 +142,8 @@ bool decode_ok(const std::vector<std::uint8_t> &bytes) {
 // (no per-call catalogue drift, no source-range fabrication).
 bool decode_fails(const std::vector<std::uint8_t> &bytes) {
     const auto key_id = test_key_id();
-    auto dec = decode_and_authenticate(bytes, std::span<const std::uint8_t, 16>(key_id),
-                                       test_key());
+    auto dec =
+        decode_and_authenticate(bytes, std::span<const std::uint8_t, 16>(key_id), test_key());
     if (dec.ok() || dec.record.has_value() || !dec.has_errors()) {
         return false;
     }
@@ -182,27 +181,27 @@ std::vector<std::uint8_t> forged_inflated_node_count(std::uint32_t node_count) {
     for (char c : magic) {
         body.push_back(static_cast<std::uint8_t>(c));
     }
-    body.push_back(1);       // format_version
-    put_uleb(body, 0);       // guarantees
+
+    put_uleb(body, 0); // guarantees
     for (int d = 0; d < 3; ++d) {
         for (int i = 0; i < 64; ++i) {
             body.push_back(static_cast<std::uint8_t>('a')); // valid lowercase-hex digest
         }
     }
-    body.push_back(0);       // entry_kind = Workflow
-    put_uleb(body, 7);       // entry_id
-    put_uleb(body, 9);       // entry_input_slot
-    put_uleb(body, 41);      // suspended_node_id
-    body.push_back(0);       // resume_state = Suspended
+    body.push_back(0);          // entry_kind = Workflow
+    put_uleb(body, 7);          // entry_id
+    put_uleb(body, 9);          // entry_input_slot
+    put_uleb(body, 41);         // suspended_node_id
+    body.push_back(0);          // resume_state = Suspended
     put_uleb(body, node_count); // attacker-inflated count; body then STOPS
     // auth_header
-    body.push_back(1);       // alg_version
+    body.push_back(1); // alg_id
     const auto key_id = test_key_id();
     for (std::uint8_t b : key_id) {
         body.push_back(b);
     }
     for (int i = 0; i < 8; ++i) {
-        body.push_back(0);   // generation = 0
+        body.push_back(0); // generation = 0
     }
     // sign the exact prefix [0,tag)
     const auto tag = ahfl::support::hmac_sha256(test_key(), body);
@@ -216,7 +215,7 @@ std::vector<std::uint8_t> forged_inflated_node_count(std::uint32_t node_count) {
 // non-hex digest, trailing byte, ...) into an otherwise HMAC-VALID record, so the
 // decoder's pass-2 gates are genuinely exercised (not just the encoder).
 std::vector<std::uint8_t> sign_body_core(std::vector<std::uint8_t> core) {
-    core.push_back(1); // alg_version
+    core.push_back(1); // alg_id
     const auto key_id = test_key_id();
     for (std::uint8_t b : key_id) {
         core.push_back(b);
@@ -241,29 +240,29 @@ std::vector<std::uint8_t> injected_single_node_core(char digest_fill = 'a',
     for (char c : magic) {
         b.push_back(static_cast<std::uint8_t>(c));
     }
-    b.push_back(1);              // format_version
-    put_uleb(b, guarantees);     // guarantees
+
+    put_uleb(b, guarantees); // guarantees
     for (int d = 0; d < 3; ++d) {
         for (int i = 0; i < 64; ++i) {
             b.push_back(static_cast<std::uint8_t>(digest_fill));
         }
     }
-    b.push_back(entry_kind);     // entry_kind
-    put_uleb(b, 7);              // entry_id
-    put_uleb(b, 9);              // entry_input_slot (distinct from memo result_slot 6)
-    put_uleb(b, 41);             // suspended_node_id
-    b.push_back(resume_state);   // resume_state
-    put_uleb(b, 1);              // node_count = 1
+    b.push_back(entry_kind);   // entry_kind
+    put_uleb(b, 7);            // entry_id
+    put_uleb(b, 9);            // entry_input_slot (distinct from memo result_slot 6)
+    put_uleb(b, 41);           // suspended_node_id
+    b.push_back(resume_state); // resume_state
+    put_uleb(b, 1);            // node_count = 1
     // node 0 (== frontier)
-    put_uleb(b, 41);             // workflow_node_id (== suspended)
-    put_uleb(b, 0);              // schedule_pos == index 0
-    b.push_back(node_kind);      // node_kind
-    put_uleb(b, 1);              // memo_count = 1
-    put_uleb(b, 0);              // memo[0].invocation_ordinal
-    put_uleb(b, 3);              // memo[0].capability
-    put_uleb(b, 900);            // memo[0].source_symbol
-    put_uleb(b, 0xdead);         // memo[0].arg_hash
-    put_uleb(b, 6);              // memo[0].result_slot
+    put_uleb(b, 41);        // workflow_node_id (== suspended)
+    put_uleb(b, 0);         // schedule_pos == index 0
+    b.push_back(node_kind); // node_kind
+    put_uleb(b, 1);         // memo_count = 1
+    put_uleb(b, 0);         // memo[0].invocation_ordinal
+    put_uleb(b, 3);         // memo[0].capability
+    put_uleb(b, 900);       // memo[0].source_symbol
+    put_uleb(b, 0xdead);    // memo[0].arg_hash
+    put_uleb(b, 6);         // memo[0].result_slot
     return b;
 }
 
@@ -277,8 +276,8 @@ int main() {
         check(bytes.has_value(), "suspended.encode_ok");
         if (bytes) {
             const auto key_id = test_key_id();
-            auto dec = decode_and_authenticate(*bytes, std::span<const std::uint8_t, 16>(key_id),
-                                               test_key());
+            auto dec = decode_and_authenticate(
+                *bytes, std::span<const std::uint8_t, 16>(key_id), test_key());
             check(dec.ok(), "suspended.decode_ok");
             check(dec.record.has_value() && *dec.record == r, "suspended.round_trip_equal");
         }
@@ -289,33 +288,27 @@ int main() {
         check(bytes.has_value(), "injected.encode_ok");
         if (bytes) {
             const auto key_id = test_key_id();
-            auto dec = decode_and_authenticate(*bytes, std::span<const std::uint8_t, 16>(key_id),
-                                               test_key());
+            auto dec = decode_and_authenticate(
+                *bytes, std::span<const std::uint8_t, 16>(key_id), test_key());
             check(dec.ok() && dec.record.has_value() && *dec.record == r,
                   "injected.round_trip_equal");
         }
     }
 
-    // ---- external HMAC KAT: the golden record bytes for make_suspended() are
-    //      fixed and independently cross-checked. The 293-byte record and its
-    //      32-byte tail tag were verified with BOTH python hmac.new(key, prefix,
-    //      sha256) AND `openssl dgst -sha256 -mac HMAC -macopt hexkey:<2b*32>` over
-    //      the exact 261-byte prefix; both produced the tag 76fd6bf6...4e4e97bf.
-    //      Reproduce: encode make_suspended() with a 32-byte 0x2b key, then
-    //      `openssl dgst -sha256 -mac HMAC -macopt hexkey:$(python3 -c "print('2b'*32)")`
-    //      over bytes [0, len-32). This golden is the D1a `entry_input_slot`-bearing
-    //      grammar; the pre-D1a golden is permanently rejected below. ----
+    // ---- External HMAC KAT: fixed 292-byte current record independently checked
+    // with Python hmac and openssl dgst -sha256 -mac HMAC over its exact prefix. ----
     {
         static constexpr std::string_view kGoldenHex =
-            "4148464c5752010061616161616161616161616161616161616161616161616161616161"
-            "616161616161616161616161616161616161616161616161616161616161616161616161"
+
+            "4148464c5752006161616161616161616161616161616161616161616161616161616161"
+            "616161616161616161616161616161616161616161616161616161616161616161616162"
             "626262626262626262626262626262626262626262626262626262626262626262626262"
-            "626262626262626262626262626262626262626262626262626262626363636363636363"
+            "626262626262626262626262626262626262626262626262626262636363636363636363"
             "636363636363636363636363636363636363636363636363636363636363636363636363"
-            "63636363636363636363636363636363636363630007092900022800000029010101"
-            "00000088ef99abc5e88c91110501038407effdb6f50d010102030405060708090a0b0c0d"
-            "0e0f10393000000000000076fd6bf6607c78762b26a4cd4ad946cafd99826ae2b2c296b1"
-            "9237694e4e97bf";
+            "636363636363636363636363636363636363630007092900022800000029010101000000"
+            "88ef99abc5e88c91110501038407effdb6f50d010102030405060708090a0b0c0d0e0f10"
+            "39300000000000007a9b36b6dbce58498923002e63220044e3e04388989ea68827525117"
+            "bb53e399";
         std::vector<std::uint8_t> golden;
         for (std::size_t i = 0; i + 1 < kGoldenHex.size(); i += 2) {
             const auto hi = kGoldenHex[i];
@@ -331,41 +324,7 @@ int main() {
         // Decoder admits the externally-verified golden bytes.
         check(decode_ok(golden), "kat.decoder_admits_golden_bytes");
         // The last 32 bytes are the externally-cross-checked tag.
-        check(golden.size() == 293, "kat.golden_length");
-    }
-
-    // ---- permanent pre-D1a golden REJECT: the ORIGINAL frozen 292-byte,
-    //      HMAC-VALID pre-D1a make_suspended() record (no `entry_input_slot` field)
-    //      must be rejected by the D1a decoder. This is a lineage gate proving the
-    //      new decoder's fixed field order is the admission authority: the frozen
-    //      bytes below were a VALID record under the pre-D1a grammar (entry_id 7
-    //      immediately followed by suspended_node_id 41), and are kept verbatim as a
-    //      hardcoded constant -- NOT re-signed here -- so the tested HMAC path never
-    //      participates in this evidence. Because the D1a decoder reads a ULEB
-    //      `entry_input_slot` where this stream has `suspended_node_id`, the
-    //      downstream fields desynchronize and admission fails closed. ----
-    {
-        static constexpr std::string_view kPreD1aGoldenHex =
-            "4148464c5752010061616161616161616161616161616161616161616161616161616161"
-            "616161616161616161616161616161616161616161616161616161616161616161616161"
-            "626262626262626262626262626262626262626262626262626262626262626262626262"
-            "626262626262626262626262626262626262626262626262626262626363636363636363"
-            "636363636363636363636363636363636363636363636363636363636363636363636363"
-            "636363636363636363636363636363636363636300072900022800000029010101000000"
-            "88ef99abc5e88c91110501038407effdb6f50d010102030405060708090a0b0c0d0e0f10"
-            "3930000000000000ded6367ee4494cfef20304310671abd158f0ddfd9abf8255d929a15c"
-            "fb041068";
-        std::vector<std::uint8_t> pre_d1a;
-        for (std::size_t i = 0; i + 1 < kPreD1aGoldenHex.size(); i += 2) {
-            const auto hi = kPreD1aGoldenHex[i];
-            const auto lo = kPreD1aGoldenHex[i + 1];
-            auto nib = [](char c) -> int {
-                return (c >= '0' && c <= '9') ? c - '0' : (c - 'a') + 10;
-            };
-            pre_d1a.push_back(static_cast<std::uint8_t>((nib(hi) << 4) | nib(lo)));
-        }
-        check(pre_d1a.size() == 292, "lineage.pre_d1a_golden_length");
-        check(!decode_ok(pre_d1a), "lineage.pre_d1a_golden_is_rejected");
+        check(golden.size() == 292, "kat.golden_length");
     }
 
     // ---- wrong key / wrong key_id ----
@@ -375,19 +334,19 @@ int main() {
         if (bytes) {
             const auto key_id = test_key_id();
             std::vector<std::uint8_t> bad_key(32, 0x2c); // one bit off
-            auto dec = decode_and_authenticate(*bytes, std::span<const std::uint8_t, 16>(key_id),
-                                               bad_key);
+            auto dec =
+                decode_and_authenticate(*bytes, std::span<const std::uint8_t, 16>(key_id), bad_key);
             check(!dec.ok() && dec.has_errors(), "wrongkey.rejected");
 
             std::array<std::uint8_t, 16> bad_id = test_key_id();
             bad_id[0] ^= 0xff;
-            auto dec2 = decode_and_authenticate(*bytes, std::span<const std::uint8_t, 16>(bad_id),
-                                                test_key());
+            auto dec2 = decode_and_authenticate(
+                *bytes, std::span<const std::uint8_t, 16>(bad_id), test_key());
             check(!dec2.ok() && dec2.has_errors(), "wrongkeyid.rejected");
         }
     }
 
-    // ---- single-byte tamper across framing + tail fields (magic, version, a body
+    // ---- single-byte tamper across framing + tail fields (magic, guarantees, a body
     //      digest byte, alg, key_id, generation, every tag byte, trailing,
     //      truncated) all fail closed ----
     {
@@ -400,32 +359,32 @@ int main() {
                 b[0] ^= 0xff;
                 check(decode_fails(b), "tamper.magic");
             }
-            // format_version
+            // guarantees
             {
                 auto b = *bytes;
                 b[6] = 2;
-                check(decode_fails(b), "tamper.version");
+                check(decode_fails(b), "tamper.guarantees");
             }
             // a digest byte (in body -> breaks HMAC)
             {
                 auto b = *bytes;
-                b[10] ^= 0x20; // flip a hex-region byte
+                b[9] ^= 0x20; // flip a hex-region byte
                 check(decode_fails(b), "tamper.digest_byte");
             }
             // entry_input_slot wire byte (in body -> breaks HMAC). Offset:
-            // magic(6)+fmt(1)+guarantees(1)+3*64 digests(192)+entry_kind(1)+
-            // entry_id(1,=7) = 202, so byte[202] is the entry_input_slot ULEB (value
+            // magic(6)+guarantees(1)+3*64 digests(192)+entry_kind(1)+
+            // entry_id(1,=7) = 201, so byte[201] is the entry_input_slot ULEB (value
             // 9, single byte). Assert the position first so fixture drift cannot
             // silently flip the wrong byte, then tamper it.
             {
                 auto b = *bytes;
-                check(b.size() > 202 && b[202] == 0x09, "tamper.entry_input_slot_offset");
-                if (b.size() > 202 && b[202] == 0x09) {
-                    b[202] = 0x0a; // change entry_input_slot 9 -> 10 (still 1 ULEB byte)
+                check(b.size() > 201 && b[201] == 0x09, "tamper.entry_input_slot_offset");
+                if (b.size() > 201 && b[201] == 0x09) {
+                    b[201] = 0x0a; // change entry_input_slot 9 -> 10 (still 1 ULEB byte)
                     check(decode_fails(b), "tamper.entry_input_slot");
                 }
             }
-            // alg_version in the tail
+            // alg_id in the tail
             {
                 auto b = *bytes;
                 b[b.size() - 57] = 0xff;
@@ -494,7 +453,7 @@ int main() {
 
     // ---- non-shortest (overlong) LEB rejected by the canonical re-encode gate.
     //      Take a fully-valid record, drop its tag, turn the canonical single-byte
-    //      guarantees `0x00` at body offset 7 into an overlong-zero ULEB
+    //      guarantees `0x00` at body offset 6 into an overlong-zero ULEB
     //      `0x80 0x00`, re-HMAC the new prefix, and append the tag. The record now
     //      authenticates and PARSES (value 0), passes every invariant, and is
     //      rejected ONLY by the canonical body byte-equality gate (the reader is
@@ -506,10 +465,10 @@ int main() {
         if (bytes) {
             auto b = *bytes;
             b.resize(b.size() - 32); // strip the old tag; tail is now the auth_header
-            // body offset 6 = format_version, offset 7 = guarantees (canonical 0x00).
-            check(b[7] == 0x00, "noncanon.guarantees_is_canonical_zero");
-            b[7] = 0x80;                       // continuation bit set...
-            b.insert(b.begin() + 8, 0x00);     // ...followed by a redundant 0x00 group
+            // body offset 6 = guarantees (canonical 0x00).
+            check(b[6] == 0x00, "noncanon.guarantees_is_canonical_zero");
+            b[6] = 0x80;                   // continuation bit set...
+            b.insert(b.begin() + 7, 0x00); // ...followed by a redundant 0x00 group
             const auto tag = ahfl::support::hmac_sha256(test_key(), b);
             b.insert(b.end(), tag.begin(), tag.end());
             check(decode_fails(b), "noncanon.overlong_guarantees_rejected");
@@ -540,21 +499,21 @@ int main() {
             for (char c : magic) {
                 b.push_back(static_cast<std::uint8_t>(c));
             }
-            b.push_back(1);
             put_uleb(b, 0);
             for (int d = 0; d < 3; ++d) {
                 for (int i = 0; i < 64; ++i) {
                     b.push_back(static_cast<std::uint8_t>('a'));
                 }
             }
-            b.push_back(0);   // entry_kind
+            b.push_back(0); // entry_kind
             put_uleb(b, 7);
+            put_uleb(b, 9); // entry_input_slot
             put_uleb(b, 41);
-            b.push_back(1);   // resume_state = Injected
-            put_uleb(b, 1);   // node_count
-            put_uleb(b, 41);  // node id
-            put_uleb(b, 0);   // schedule_pos
-            b.push_back(1);   // node_kind = capability
+            b.push_back(1);           // resume_state = Injected
+            put_uleb(b, 1);           // node_count
+            put_uleb(b, 41);          // node id
+            put_uleb(b, 0);           // schedule_pos
+            b.push_back(1);           // node_kind = capability
             put_uleb(b, 0xFFFFFFF0U); // memo_count inflated; body STOPS
             check(decode_fails(sign_body_core(b)), "forge.inflated_memo_count_rejected");
         }
@@ -691,8 +650,7 @@ int main() {
         auto r = make_suspended();
         r.nodes[0].node_kind = NodeKind::Identity;
         r.nodes[0].memo.push_back(r.nodes[1].memo[0]);
-        check(encode_and_authenticate(r, test_key()).ok(),
-              "encoder.allows_identity_with_memo");
+        check(encode_and_authenticate(r, test_key()).ok(), "encoder.allows_identity_with_memo");
     }
     {
         // Suspended pending ordinal not following memo
@@ -718,8 +676,7 @@ int main() {
         p.capability = CoreCapabilityId{1};
         r.nodes[0].pending = p; // node 0 is not the frontier
         r.nodes[0].node_kind = NodeKind::Capability;
-        check(!encode_and_authenticate(r, test_key()).ok(),
-              "encoder.rejects_non_frontier_pending");
+        check(!encode_and_authenticate(r, test_key()).ok(), "encoder.rejects_non_frontier_pending");
     }
 
     // ---- extra structural invariants (encoder-side, P1) ----
@@ -768,8 +725,8 @@ int main() {
             std::vector<std::uint8_t> marked_key(kMarker.begin(), kMarker.end());
             marked_key.resize(32, 0x00);
             const auto key_id = test_key_id();
-            auto dec = decode_and_authenticate(*bytes, std::span<const std::uint8_t, 16>(key_id),
-                                               marked_key);
+            auto dec = decode_and_authenticate(
+                *bytes, std::span<const std::uint8_t, 16>(key_id), marked_key);
             check(!dec.ok() && !dec.record.has_value(), "noecho.record_absent_on_fail");
             check(dec.has_errors(), "noecho.has_error");
             bool all_fixed = true;

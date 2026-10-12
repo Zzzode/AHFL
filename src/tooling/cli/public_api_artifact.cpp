@@ -24,8 +24,8 @@ namespace {
 
 using Json = ahfl::json::JsonValue;
 
-constexpr std::string_view kPublicApiSchema = "ahfl.public_api.v1";
-constexpr std::string_view kPublicApiDiffSchema = "ahfl.public_api.diff.v1";
+constexpr std::string_view kPublicApiSchema = "ahfl.public_api";
+constexpr std::string_view kPublicApiDiffSchema = "ahfl.public_api.diff";
 
 struct ApiEntry {
     std::string api_id;
@@ -973,7 +973,7 @@ collect_public_api_entries(const ahfl::SourceGraph &graph,
 [[nodiscard]] std::unique_ptr<Json> snapshot_json(std::vector<ApiEntry> entries,
                                                   const PublicApiPackageContext &package) {
     auto root = Json::make_object();
-    root->set("schema", Json::make_string(std::string{kPublicApiSchema}));
+    root->set("format", Json::make_string(std::string{kPublicApiSchema}));
 
     auto package_json = Json::make_object();
     package_json->set("name", Json::make_string(package.name));
@@ -1118,7 +1118,7 @@ read_snapshot_entries_from_content(std::string_view content,
     }
 
     const auto &root = **parsed;
-    const auto schema = string_field(root, "schema");
+    const auto schema = string_field(root, "format");
     if (!schema.has_value() || *schema != kPublicApiSchema) {
         err << "error: public API snapshot has unsupported schema: " << label << "\n";
         return std::nullopt;

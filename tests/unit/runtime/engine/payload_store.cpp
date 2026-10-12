@@ -90,7 +90,6 @@ DigestHex hex_of(char fill) {
 
 CoreWasmResumeRecord make_record(CoreWorkflowId wf) {
     CoreWasmResumeRecord r;
-    r.format_version = 1;
     r.guarantees = 0;
     r.module_sha256 = hex_of('a');
     r.wire_schema_sha256 = hex_of('b');
@@ -125,7 +124,7 @@ CoreWasmResumeRecord make_record(CoreWorkflowId wf) {
 
     r.nodes.push_back(n0);
     r.nodes.push_back(n1);
-    r.auth_header.alg_version = 1;
+    r.auth_header.alg_id = 1;
     r.auth_header.key_id = test_key_id();
     return r;
 }
@@ -204,7 +203,7 @@ DigestHex digest_of(std::span<const std::uint8_t> bytes) {
 
 AuthHeader auth(std::uint64_t gen) {
     AuthHeader h;
-    h.alg_version = 1;
+    h.alg_id = 1;
     h.key_id = test_key_id();
     h.generation = gen;
     return h;

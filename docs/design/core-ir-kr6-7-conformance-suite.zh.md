@@ -14,7 +14,7 @@
 > 69 agreed / 4 skipped (documented Node-port gaps).
 >
 > Scope: define the engine-neutral conformance case manifest format
-> (`ahfl.conformance-case.v1`), the committed `tests/conformance/cases/`
+> (`ahfl.conformance-case`), the committed `tests/conformance/cases/`
 > catalogue, and the fail-closed schema validator that every later conformance
 > runner consumes. This slice touches NO engine code: it neither lowers
 > expressions nor executes a program. It is buildable and fully tested
@@ -43,9 +43,9 @@ an already-validated `ConformanceCase` and maps it onto its own invocation
 mechanism.
 
 Following the accepted versioned-sidecar precedent of
-`ahfl.capability-mocks.v0.6` (parsed in
+`ahfl.capability-mocks` (parsed in
 `src/pipeline/execution/dry_run/runner.hpp`), a case is a JSON document with
-an explicit `format_version`. Unknown schema revisions and unknown fields are
+an explicit `format`. Unknown schema revisions and unknown fields are
 rejected rather than ignored, so a case cannot overclaim semantics the
 validator does not understand.
 
@@ -67,11 +67,11 @@ already-frozen fixtures rather than duplicating them. `load_conformance_case`
 resolves that path against an explicit repository root and fails closed when
 the referenced `.ahfl` file is absent.
 
-## 3. Manifest schema (`ahfl.conformance-case.v1`)
+## 3. Manifest schema (`ahfl.conformance-case`)
 
 ```json
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
@@ -112,7 +112,7 @@ internal matter and stays in the runner adapters.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `format_version` | yes | Must equal `ahfl.conformance-case.v1`. |
+| `format` | yes | Must equal `ahfl.conformance-case`. |
 | `source` | yes | Repo-relative POSIX path to an existing `.ahfl` file; absolute paths and `..` components are rejected. |
 | `kind` | yes | `agent` or `workflow`. |
 | `entry` | yes | Non-empty canonical entry target. |
@@ -178,7 +178,7 @@ The exact *workflow runtime node-order* observation is not part of this
 manifest. It is the named E4-B gate: the P5 wasm artifact currently exposes
 completion/transition counters, not an exact node event stream, and relabelling
 a counter as an order log would repeat the exact mistake the E4 design
-forbids. A future schema revision (`v2` or a sibling manifest) will add a
+forbids. A future synchronized current-contract change may add a
 structured node-order contract once an engine can truthfully observe it.
 
 Likewise, this slice defines no runner, no cross-engine differential driver,
@@ -213,7 +213,7 @@ source name and, when the offender is a JSON value, a `SourceRange` over the
 manifest bytes. The validator rejects at least:
 
 * malformed JSON / non-object root;
-* wrong or missing `format_version`;
+* wrong or missing `format`;
 * missing required fields (`entry`, `expect`, `engines`, ...);
 * bad enum spellings (`kind`, capability `status`, `run_status`,
   `wasm.eligible`);

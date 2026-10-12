@@ -57,7 +57,7 @@ def main() -> int:
     args = parse_args()
     root = args.root.resolve()
     contract = load_json(root / "config/readme-capabilities.json")
-    if contract.get("schema") != "ahfl.readme-capabilities.v1":
+    if contract.get("format") != "ahfl.readme-capabilities":
         fail("unexpected capability contract schema")
     gate = load_json(root / "config/beta-gate.json")
     criteria = {
@@ -99,12 +99,12 @@ def main() -> int:
         if not isinstance(evidence_entries, list) or len(evidence_entries) != 1:
             fail(f"{criterion} must have exactly one evidence entry")
         evidence_entry = evidence_entries[0]
-        if evidence_entry.get("schema") != schema:
+        if evidence_entry.get("format") != schema:
             fail(f"{criterion} evidence schema disagrees with beta gate")
         evidence_path = root / evidence_entry["path"]
         evidence = load_json(evidence_path)
         if (
-            evidence.get("schema") != schema
+            evidence.get("format") != schema
             or evidence.get("criterion") != criterion
             or evidence.get("status") != "passed"
         ):
@@ -140,7 +140,7 @@ def main() -> int:
     if args.out is not None:
         output = args.out.resolve()
         value: dict[str, object] = {
-            "schema": "ahfl.beta-evidence.readme-capabilities.v1",
+            "format": "ahfl.beta-evidence.readme-capabilities",
             "status": "passed",
             "criterion": "BETA-09",
             "source_revision": args.source_revision or compute_source_revision(root),

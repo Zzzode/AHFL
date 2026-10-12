@@ -169,7 +169,7 @@ Pipeline 阶段：
 
 ### Index scope rules
 
-`LspWorkspaceIndex` 的 scope 是一个显式数据结构，不能由 LSP handler 临时拼文件列表。v1 采用以下 scope 矩阵：
+`LspWorkspaceIndex` 的 scope 是一个显式数据结构，不能由 LSP handler 临时拼文件列表。采用以下 scope 矩阵：
 
 | Scope | Index policy | Required facts | Semantic visibility |
 | --- | --- | --- | --- |
@@ -324,8 +324,7 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 4. active sysroot identity/checksum
 5. package graph revision
 6. open document overlay revision set
-7. compiler schema / index schema version
-8. index identity schema version
+7. 实际 compiler producer 与 index 输入的内容身份（不使用 schema 计数器）
 
 失效规则：
 
@@ -337,13 +336,13 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 
 ### Transitional compatibility
 
-这些过渡行为只能作为未完成阶段的历史描述，不构成兼容性承诺。RFC 0007 v1 落地阶段已经删除这些路径，后续不得恢复：
+这些过渡行为只能作为未完成阶段的历史描述，不构成兼容性承诺。RFC 0007 落地阶段已经删除这些路径，后续不得恢复：
 
 1. `definition` 对 primitive 返回 canonical home + impl candidates，满足 VS Code 默认 Cmd-click UX。
 2. `implementation` 返回语义层已有 `TypeEnvironment::impls()` 里的 impl locations。
 3. source-sysroot 打开 std 文件时临时加载 std exported modules。
 
-这些行为必须被标记为临时实现细节。v1 最终架构中：
+这些行为必须被标记为临时实现细节。最终架构中：
 
 1. std exported modules 属于 `LspWorkspaceIndex` scope，不属于 SemanticSourceGraph entries。
 2. primitive identity 不再使用 string normalized key。
@@ -382,7 +381,7 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 7. Primitive model：把 primitive type syntax、TypeEnvironment normalize key、LSP primitive fallback 统一改成 `PrimitiveKind` / `TypeKey`。
 8. Handler migration：让 `definition`、`typeDefinition`、`implementation`、`references`、`workspace/symbol` 查询 `LspWorkspaceIndex`，再按请求语义回退到 current semantic snapshot。
 9. Source-sysroot cleanup：删除 LSP 层把 std exported modules 加进 semantic entry files 的过渡路径。
-10. Incrementality：把 index cache key 接入 `workspace_revision`、toolchain cache key、open document revision、manifest watcher 和 index identity schema version。
+10. Incrementality：把 index cache key 接入 `workspace_revision`、toolchain cache key、open document revision、manifest watcher 和当前 index 输入身份。
 11. Diagnostics guard：增加测试证明 index-only module 不影响 resolver/typechecker 的可见性，index diagnostics 不覆盖当前 semantic diagnostics。
 12. Documentation：更新 LSP/VS Code reference、developer docs 和 RFC 0006 decision history。
 
@@ -410,7 +409,7 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 5. `implemented`：LSP handler 不再通过扩大 semantic entry files 获得 package-wide navigation candidates。
 6. `stabilized`：release evidence 覆盖 ordinary user package、source-sysroot std development、multi-root workspace 和 VS Code extension bundled sysroot。
 
-当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 ordinary user package、source-sysroot std development、VSIX bundled sysroot contract 和 multi-root toolchain profile contract。RFC 0007 v1 的稳定范围是语义图与导航索引分离、primitive home、implementation/reference/CodeLens facts、rename v1、open overlay invalidation、multi-root profile isolation、进程内 previous-index fact remap 和 stale completeness reuse guard。后续只保留 UX / performance polish；磁盘持久索引、remote index server、daemon 共享索引和跨 checkout cache 仍是 non-goal。
+当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 ordinary user package、source-sysroot std development、VSIX bundled sysroot contract 和 multi-root toolchain profile contract。RFC 0007 的稳定范围是语义图与导航索引分离、primitive home、implementation/reference/CodeLens facts、rename、open overlay invalidation、multi-root profile isolation、进程内 previous-index fact remap 和 stale completeness reuse guard。后续只保留 UX / performance polish；磁盘持久索引、remote index server、daemon 共享索引和跨 checkout cache 仍是 non-goal。
 
 ## Alternatives
 
@@ -423,16 +422,16 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 
 ## Open Questions
 
-v1 稳定范围已收口以下决策：
+稳定范围已收口以下决策：
 
 1. `typeDefinition` 第一阶段公开 provider，并通过 handler tests 覆盖 primitive、nominal type 和 expression result type 三类入口。
-2. `LspWorkspaceIndex` v1 只做进程内 cache；磁盘缓存、remote index server 和跨 checkout cache 保持 non-goal。
+2. `LspWorkspaceIndex` 只做进程内 cache；磁盘缓存、remote index server 和跨 checkout cache 保持 non-goal。
 3. Trait impl 语法落地前，`ImplFact` 保留 `trait_def`、`trait_range` 和 `trait_location` 字段；未来 `impl Trait for Target` 直接填充同一模型，不新增并行 fact 类型。
-4. RFC 0005 暂不补充完整文件系统枚举；current package private modules 只有在 target/import graph 可证明归属，或作为 open overlay 出现时进入 v1 index。
-5. `DefId` v1 使用 source-order flat-store ordinal；`SymbolFact` 已记录由 `PackageId`、`SourceUnitId`、namespace、kind 和 source ranges 组成的 numeric fingerprint，用于重建 drift detection。2026-07-07 已把 open-document overlay revision key 收敛为 snapshot/index 实际引用 source units，而不是所有打开文件；2026-07-08 已落地进程内 previous-index remap：同一 index scope 内未变 `SourceUnitId` 的 symbol/reference/impl facts 会通过 fingerprint 映射到当前 `DefId` flat store 后复用。磁盘持久索引、remote index server、daemon 共享索引和跨 checkout cache 仍保持 non-goal。
+4. RFC 0005 暂不补充完整文件系统枚举；current package private modules 只有在 target/import graph 可证明归属，或作为 open overlay 出现时进入 index。
+5. `DefId` 使用 source-order flat-store ordinal；`SymbolFact` 已记录由 `PackageId`、`SourceUnitId`、namespace、kind 和 source ranges 组成的 numeric fingerprint，用于重建 drift detection。2026-07-07 已把 open-document overlay revision key 收敛为 snapshot/index 实际引用 source units，而不是所有打开文件；2026-07-08 已落地进程内 previous-index remap：同一 index scope 内未变 `SourceUnitId` 的 symbol/reference/impl facts 会通过 fingerprint 映射到当前 `DefId` flat store 后复用。磁盘持久索引、remote index server、daemon 共享索引和跨 checkout cache 仍保持 non-goal。
 6. primitive `definition` 多候选 fallback 已移除：`definition` / `typeDefinition` 返回 canonical primitive home，impl 列表通过 `textDocument/implementation` 暴露；VS Code extension 不需要非标准 payload。
-7. Rename v1 已提供 `prepareRename`、`textDocument/rename`、本 snapshot 内声明和 reference 的 `WorkspaceEdit`，并拒绝 keyword / same-module conflict。跨 package public API compatibility guard 不放在 rename handler 内硬编码，后续由 public API diff / registry publish gate RFC 承接。
-8. CodeLens、references、implementation v1 已迁移到 workspace index facts，并覆盖 unopened project source、lazy sysroot index、path dependency exports、open overlay、partial facts 和 stable ordering。剩余工作是 UX/product polish，不再作为 RFC0007 semantic blocker。
+7. Rename 已提供 `prepareRename`、`textDocument/rename`、本 snapshot 内声明和 reference 的 `WorkspaceEdit`，并拒绝 keyword / same-module conflict。跨 package public API compatibility guard 不放在 rename handler 内硬编码，后续由 public API diff / registry publish gate RFC 承接。
+8. CodeLens、references、implementation 已迁移到 workspace index facts，并覆盖 unopened project source、lazy sysroot index、path dependency exports、open overlay、partial facts 和 stable ordering。剩余工作是 UX/product polish，不再作为 RFC0007 semantic blocker。
 
 ## Decision History
 
@@ -440,9 +439,9 @@ v1 稳定范围已收口以下决策：
 - 2026-07-05: Implemented PackageGraph-derived `SourceUnitId` identity, opaque source-unit lookup, structured `PrimitiveKind` / `TypeKey` primitive homes, and index-owned `DefId` / `WorkspaceImplId` / `ReferenceFactId` flat stores.
 - 2026-07-05: Migrated `definition`, `typeDefinition`, `implementation`, `references`, `workspace/symbol`, and CodeLens to consume `LspWorkspaceIndex` / lazy sysroot index facts without injecting exported std modules into `SemanticSourceGraph`.
 - 2026-07-05: Added tests for source-sysroot primitive impl candidates, ordinary user lazy sysroot indexing, path dependency exports, open overlays, partial parse/resolve/typecheck facts, stable ordering, cache invalidation, and multi-root toolchain profile isolation.
-- 2026-07-07: Marked stabilized after the release evidence archive covered ordinary user package, source-sysroot std development, VSIX bundled sysroot, and multi-root toolchain profile contracts; fact-level incremental remap was still outside the stable v1 scope at that time.
+- 2026-07-07: Marked stabilized after the release evidence archive covered ordinary user package, source-sysroot std development, VSIX bundled sysroot, and multi-root toolchain profile contracts; fact-level incremental remap was still outside the stable scope at that time.
 - 2026-07-07: Added `SymbolFact::fingerprint` numeric drift-detection identity and handler coverage proving stable fingerprints across index rebuilds.
-- 2026-07-07: Reclassified rename, references, CodeLens, and implementation candidate display as implemented v1 index consumers; kept fact-level incremental remap and public API publish compatibility guards as separate follow-up work at that point.
+- 2026-07-07: Reclassified rename, references, CodeLens, and implementation candidate display as implemented index consumers; kept fact-level incremental remap and public API publish compatibility guards as separate follow-up work at that point.
 - 2026-07-07: Scoped LSP snapshot and root/sysroot index overlay revision keys to actually referenced source units, so unrelated open document edits no longer force current package snapshot/index rebuilds.
 - 2026-07-08: Implemented in-process previous-index remap for unchanged `SourceUnitId` facts. `LspWorkspaceIndexInput::previous_index` now lets snapshot, workspace-root, and sysroot indexes reuse unchanged symbol/reference/impl facts after remapping old `DefId` references through `SymbolFact::fingerprint`; handler tests cover one-source edits preserving unchanged-source facts and remapped reference/implementation queries.
 - 2026-07-09: Hardened previous-index remap against stale completeness reuse. Symbol/reference facts are reused only when their `FactCompleteness` matches the current fact, so an unchanged source that previously emitted only parsed skeleton facts can upgrade to resolved facts after another source's resolver error is fixed.

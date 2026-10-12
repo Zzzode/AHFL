@@ -1,5 +1,5 @@
 {
-  "schema": "ahfl.beta-gate.v1",
+  "format": "ahfl.beta-gate",
   "rfc": "0012",
   "tracking_issue": "https://github.com/Zzzode/AHFL/issues/16",
   "criteria": [
@@ -9,7 +9,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/run-profiles.json",
-          "schema": "ahfl.beta-evidence.run-profiles.v1"
+          "format": "ahfl.beta-evidence.run-profiles"
         }
       ]
     },
@@ -19,7 +19,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/runtime-identity.json",
-          "schema": "ahfl.beta-evidence.runtime-identity.v1"
+          "format": "ahfl.beta-evidence.runtime-identity"
         }
       ]
     },
@@ -29,7 +29,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/event-projections.json",
-          "schema": "ahfl.beta-evidence.event-projections.v1"
+          "format": "ahfl.beta-evidence.event-projections"
         }
       ]
     },
@@ -39,7 +39,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/lifecycle-matrix.json",
-          "schema": "ahfl.beta-evidence.lifecycle-matrix.v1"
+          "format": "ahfl.beta-evidence.lifecycle-matrix"
         }
       ]
     },
@@ -49,7 +49,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/formatter-idempotence.json",
-          "schema": "ahfl.beta-evidence.formatter-idempotence.v1"
+          "format": "ahfl.beta-evidence.formatter-idempotence"
         }
       ]
     },
@@ -59,7 +59,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/stdlib-container-migration.json",
-          "schema": "ahfl.beta-evidence.stdlib-container-migration.v1"
+          "format": "ahfl.beta-evidence.stdlib-container-migration"
         }
       ]
     },
@@ -69,7 +69,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/install-smoke.json",
-          "schema": "ahfl.beta-evidence.install-smoke.v1"
+          "format": "ahfl.beta-evidence.install-smoke"
         }
       ]
     },
@@ -79,7 +79,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/readme-capabilities.json",
-          "schema": "ahfl.beta-evidence.readme-capabilities.v1"
+          "format": "ahfl.beta-evidence.readme-capabilities"
         }
       ]
     },
@@ -89,7 +89,7 @@
       "evidence": [
         {
           "path": "build/release-evidence/beta/product-scope-freeze.json",
-          "schema": "ahfl.beta-evidence.product-scope-freeze.v1"
+          "format": "ahfl.beta-evidence.product-scope-freeze"
         }
       ]
     }

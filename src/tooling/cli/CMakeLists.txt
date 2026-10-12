@@ -26,6 +26,7 @@ add_executable(ahflc
     visualize_html.cpp
     visualize_layout.cpp
     workflow_run.cpp
+    llm_run_lease.cpp
 )
 
 target_link_libraries(ahflc

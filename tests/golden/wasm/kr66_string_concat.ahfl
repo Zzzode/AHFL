@@ -6,7 +6,7 @@
 // with memory.copy; the result PtrLen (heap ptr, total byte len) is copied
 // verbatim into the output frame. The host authorizes the construct-heap
 // region for output String reads (frame-layout section v4 presence-gated
-// extension), so runv returns canonical bytes agreeing with the evaluator.
+// extension), so run_frame returns canonical bytes agreeing with the evaluator.
 module wasm::kr66::string_concat;
 
 pub struct In {

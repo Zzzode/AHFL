@@ -8,7 +8,7 @@
 // 7 and section 5.3 L0-L5) splits the replay into a host-INDEPENDENT decision
 // authority (the landed D1b controller) and an engine-facing adapter. THIS is
 // that adapter's port: every action the controller only DECIDES -- fresh
-// instantiation, linear-memory allocation/write, the run2 invocation, reading
+// instantiation, linear-memory allocation/write, the run_workflow invocation, reading
 // the whole 64 KiB page, the synchronous capability import callback -- crosses
 // this interface. The production driver is therefore engine-agnostic: the
 // first port is the in-test synchronous FakeResumeEngine (same hand-built
@@ -28,11 +28,11 @@
 //   * alloc_then_write(bytes) bumps one instance-lifetime, never-reclaimed
 //     L0/L3/L4 frame allocation (seam 5.3: instance-lifetime ownership, no
 //     GC) and returns the guest pointer it wrote the exact bytes at.
-//   * invoke_run2(ptr,len) invokes the module entry with the L0 entry frame
-//     and blocks until run2 returns; a module-issued ahfl_cap import is
+//   * invoke_run_workflow(ptr,len) invokes the module entry with the L0 entry frame
+//     and blocks until run_workflow returns; a module-issued ahfl_cap import is
 //     delivered SYNCHRONOUSLY to the host callback set at fresh_instance, so
-//     the callback always runs nested inside invoke_run2 on the same call
-//     stack. The raw run2 result is the guest multivalue tuple
+//     the callback always runs nested inside invoke_run_workflow on the same call
+//     stack. The raw run_workflow result is the guest multivalue tuple
 //     (status,ptr,len); a Wasm trap is its own arm.
 // The engine MUST NOT classify OK / ERROR / PENDING and MUST NOT invent a
 // status: the raw u32 word is classified solely by the D1b controller
@@ -59,26 +59,26 @@ struct GuestPointer {
     [[nodiscard]] friend bool operator==(GuestPointer, GuestPointer) noexcept = default;
 };
 
-// The exact multivalue run2 returns: the raw AHFL_CAP_* status word plus the
+// The exact multivalue run_workflow returns: the raw AHFL_CAP_* status word plus the
 // output (ptr,len) the module forwarded. The driver/controller, not the
 // engine, classifies `status`.
-struct Run2ResultTuple {
+struct WorkflowRunResultTuple {
     std::uint32_t raw_status{0};
     GuestPointer output_ptr{};
     std::uint32_t output_len{0};
 };
 
-// run2 raised a Wasm trap rather than returning a tuple.
-struct Run2Trapped {};
+// run_workflow raised a Wasm trap rather than returning a tuple.
+struct WorkflowRunTrapped {};
 
-// run2 unwound because the host import callback returned ImportAbort: the
+// run_workflow unwound because the host import callback returned ImportAbort: the
 // host's decision failed closed and the engine never resumed module execution
 // (distinct from an unrelated Wasm trap -- the host, not the module, aborted).
-struct Run2HostAborted {};
+struct WorkflowRunHostAborted {};
 
-using Run2Outcome = std::variant<Run2ResultTuple, Run2Trapped, Run2HostAborted>;
+using WorkflowRunOutcome = std::variant<WorkflowRunResultTuple, WorkflowRunTrapped, WorkflowRunHostAborted>;
 
-// One synchronous module import, observed by the engine inside run2 and
+// One synchronous module import, observed by the engine inside run_workflow and
 // handed to the host callback. `import_ordinal` is the position in the
 // module's ahfl_cap import table (the A2 call-site cursor is joined from it);
 // `param_frame` is the L2 module-owned Param view (read-only borrow of guest
@@ -102,7 +102,7 @@ struct ImportObservation {
 // The host's synchronous answer to one import is EITHER the frame to return
 // (its bytes already written into guest memory by the host via
 // alloc_then_write) OR an explicit abort: the host decision failed closed, no
-// result frame may be returned, and the engine must unwind run2 WITHOUT
+// result frame may be returned, and the engine must unwind run_workflow WITHOUT
 // resuming module execution (a real embedded engine realizes the unwind by
 // throwing out of the JS import callback, which traps the Wasm call). The host
 // records the precise reason in its own state; the abort tag itself carries no
@@ -113,7 +113,7 @@ struct ImportObservation {
 // AHFL_CAP_PENDING=2). The engine writes it verbatim into the import's first
 // result slot and NEVER classifies it -- the guest's compiled code is the
 // classifier (the bridge lane traps on any non-zero status), exactly as
-// run2's raw_status is carried verbatim and classified by the D1b controller.
+// run_workflow's raw_status is carried verbatim and classified by the D1b controller.
 // ImportAbort stays HOST-DECISION-failure-only (store/CAS/engine fault): a
 // capability that executed but failed/pending is a raw non-OK reply, never an
 // abort.
@@ -126,7 +126,7 @@ struct ImportReply {
     // The bridge result extent (bytes packed at result_ptr). The capability
     // callback sets it; production engines do not read it (the sole accepted
     // bridge functype (i32)->(i32,i32) has no third result slot, and the
-    // module's run2 return carries the workflow output length). The in-test
+    // module's run_workflow return carries the workflow output length). The in-test
     // Fake engine and the capability-import tests consume it as the
     // authoritative result extent.
     std::uint32_t result_len{0};
@@ -134,7 +134,7 @@ struct ImportReply {
 struct ImportAbort {};
 using ImportCallbackResult = std::variant<ImportReply, ImportAbort>;
 
-// The engine invokes this synchronously, nested in invoke_run2, and blocks on
+// The engine invokes this synchronously, nested in invoke_run_workflow, and blocks on
 // its return before resuming module execution. It receives the observation by
 // const ref (valid only for the call).
 using ImportCallback = std::function<ImportCallbackResult(const ImportObservation &)>;
@@ -142,7 +142,7 @@ using ImportCallback = std::function<ImportCallbackResult(const ImportObservatio
 // The typed, fail-closed reasons an engine-port OPERATION (instantiate /
 // read / alloc / invoke plumbing) can fail with. A host DECISION failing
 // inside the import callback is NOT reported here: it returns ImportAbort and
-// run2 unwinds with Run2HostAborted, carrying the host's own typed reason.
+// run_workflow unwinds with WorkflowRunHostAborted, carrying the host's own typed reason.
 enum class EngineError : std::uint8_t {
     InvalidSequence,  // an operation ran before fresh_instance / out of order
     MemoryCapacityExceeded, // a write/alloc does not fit the fixed page
@@ -163,7 +163,7 @@ class CoreWasmResumeEngine {
     fresh_instance(std::span<const std::uint8_t> module_bytes, ImportCallback import_callback) = 0;
 
     // The WHOLE fixed 64 KiB linear-memory page as a read-only span. The
-    // returned view is valid until the next alloc_then_write / invoke_run2
+    // returned view is valid until the next alloc_then_write / invoke_run_workflow
     // call (a real engine may detach/re-grow the buffer), so the driver hands
     // it to the controller and finishes that decision BEFORE mutating memory.
     [[nodiscard]] virtual std::expected<std::span<const std::uint8_t>, EngineError>
@@ -185,11 +185,11 @@ class CoreWasmResumeEngine {
     [[nodiscard]] virtual std::expected<GuestPointer, EngineError>
     alloc_then_write(std::span<const std::uint8_t> bytes) = 0;
 
-    // Invoke run2(entry_ptr, entry_len) with the L0 entry frame and block
+    // Invoke run_workflow(entry_ptr, entry_len) with the L0 entry frame and block
     // until it returns or traps, delivering every ahfl_cap import
     // synchronously to the fresh_instance callback on the same stack.
-    [[nodiscard]] virtual std::expected<Run2Outcome, EngineError>
-    invoke_run2(GuestPointer entry_ptr, std::uint32_t entry_len) = 0;
+    [[nodiscard]] virtual std::expected<WorkflowRunOutcome, EngineError>
+    invoke_run_workflow(GuestPointer entry_ptr, std::uint32_t entry_len) = 0;
 };
 
 } // namespace ahfl::runtime::core_wasm_resume_engine

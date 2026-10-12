@@ -6,8 +6,8 @@
 // ir::ContractClause::value behind requires/ensures/invariant/forbid) and
 // classifies each as SMT-encodable or not, using the slice-2 encoder
 // (smt_encode.hpp). Clauses that leave the verifiable subset are reported so
-// the caller can emit formal.NOT_IN_VERIFIED_SUBSET rather than silently
-// abstracting them (the current SMV-backend behaviour, smv_formula.cpp).
+// an explicit data-verification request can reject unsupported premises or
+// goals. The default SMV control model excludes ordinary data predicates.
 //
 // This is a pure analysis: it inspects the program and returns a value; it
 // mutates nothing and invokes no solver.
@@ -28,7 +28,7 @@ namespace ahfl::formal {
 struct SubsetIneligibleClause {
     ir::ContractClauseKind kind{ir::ContractClauseKind::Requires};
     std::string target_name;               // Contract target (agent) canonical name
-    std::size_t clause_index{0};            // Position within the contract's clause list
+    std::size_t clause_index{0};            // Cumulative clause ordinal for the target Agent
     SmtEncodeRejection rejection{SmtEncodeRejection::UnsupportedNode};
     std::optional<SourceRange> source_range; // Clause range, for diagnostics
 };

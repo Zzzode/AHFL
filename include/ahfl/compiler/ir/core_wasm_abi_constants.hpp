@@ -57,9 +57,9 @@ inline constexpr std::uint32_t kP6AggregateScratchBase = 7168;
 // RFC 0026 P6-7 (D5): the computed OUTPUT frame splits the old scratch window:
 // [7168,12288) stays constructor scratch (capacity 9216 -> 5120) and
 // [12288,16384) is the fixed output frame a computed final materializes into
-// (capacity 4096). A pure identity/capability module never emits runv and never
+// (capacity 4096). A pure identity/capability module never emits run_frame and never
 // names the output base, so these constants change no module byte on those
-// lanes; they are gates and the runv root authority only.
+// lanes; they are gates and the run_frame root authority only.
 inline constexpr std::uint32_t kP6AggregateOutputBase = 12288;
 
 // RFC 0026 P6-5 (KR6.6): the element BACKING STORE region — a fourth reserved
@@ -124,7 +124,7 @@ static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0 &
                   kP6AggregateScratchCapacity > 0 && kP6AggregateOutputCapacity > 0,
               "each P6 aggregate frame region reserves at least one byte");
 
-// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the READ-ONLY literal pool
+// RFC 0026 P6-7 frame bridge D1 (rung string-frame): the READ-ONLY literal pool
 // region. A module that constructs at least one String literal emits ONE
 // additive active Data section (wasm section id 11) that initializes
 // [kP6RodataBase, +extent) with the hash-consed, byte-sorted UTF-8 literal
@@ -140,7 +140,7 @@ inline constexpr std::uint32_t kP6RodataCapacity =
 static_assert(kP6RodataBase % 8 == 0, "the rodata region is 8-byte aligned");
 static_assert(kP6RodataCapacity == 768, "the rodata region is exactly 768 bytes");
 
-// RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the compile-time fallback
+// RFC 0026 P6-7 frame bridge D6 (rung string-frame): the compile-time fallback
 // pool budget for UNBOUNDED String payloads packed into a frame's payload
 // arena. Bounded String slots are metered exactly from their schema upper
 // bound and are never double-counted with this pool; the pool is one fixed

@@ -21,9 +21,7 @@ namespace {
 } // namespace
 
 TEST_CASE("TOML parser accepts package-shaped TOML with source ranges") {
-    constexpr std::string_view input = R"TOML(manifest_version = 1
-
-[package]
+    constexpr std::string_view input = R"TOML([package]
 name = "refund-audit"
 version = "0.1.0"
 edition = "2026"

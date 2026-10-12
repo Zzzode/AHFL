@@ -124,8 +124,7 @@ const module = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module).length !== 0)
   throw new Error("collection agent expanded import authority");
 const {exports} = await WebAssembly.instantiate(module, {});
-if (exports.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 const view = new DataView(exports.memory.buffer);
 

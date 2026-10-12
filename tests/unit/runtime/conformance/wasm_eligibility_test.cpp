@@ -16,7 +16,7 @@
 //       runnable_orchestration via a real lower+layout+emit with a non-empty
 //       artifact and an empty diagnostic code;
 //   (c) e2e_multi_agent, enum_variant_e2e and if_let_e2e all classify
-//       runnable (V2-D computed-runner workflow packaging, including the
+//       runnable (workflow-frame computed-runner workflow packaging, including the
 //       half-2 in-handler bridge / constructed SummaryInput lane), proven by
 //       actually invoking lower_ahfl_to_core + compute_core_layouts +
 //       emit_core_wasm;
@@ -173,7 +173,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
     // a restatement of the manifest.
     const std::vector<CaseVerdict> runnable = {
         {"e1_identity_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        // Capability-final-only agent: runv has a capability-final arm that
+        // Capability-final-only agent: run_frame has a capability-final arm that
         // calls the bridge.
         {"e2_capability_agent.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
@@ -233,55 +233,55 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"p6_nested_projection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_nested_taken_high.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_unwrap_some.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        // KR6.7 corpus widening (FB-5): the V2-A computed-final fixtures
+        // KR6.7 corpus widening (FB-5): the computed-final computed-final fixtures
         // (scalar / nested-aggregate / tag-only-enum / if-let-return /
         // payload-bearing-enum materialization) now run as manifest-driven
         // p6-frame cases with real differential agreement, so each descriptor
         // MUST carry P6Frame.
-        {"v2a_computed_aggregate.case.json",
+        {"computed_aggregate.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2a_computed_enum.case.json",
+        {"computed_enum.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2a_computed_if_let_return.case.json",
+        {"computed_if_let_return.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2a_computed_payload_enum.case.json",
+        {"computed_payload_enum.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2a_computed_scalar.case.json",
+        {"computed_scalar.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // KR6.7 corpus widening (FB-5): the V2-B String/computed-final and
+        // KR6.7 corpus widening (FB-5): the string-frame String/computed-final and
         // bounded-arena fixtures now run as manifest-driven p6-frame cases
         // (String PtrLen projection / rodata literals / bounded list packing).
-        // v2b_enum_string stays OUT of the catalogue: the retired evaluator
+        // enum_string stays OUT of the catalogue: the retired evaluator
         // misrouted its String tuple-variant construction through the
         // capability invoker while the wasm run is correct; the fixture can
         // be re-added when a blessing is captured.
-        {"v2b_bounded_string.case.json",
+        {"bounded_string.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2b_computed_string.case.json",
+        {"computed_string.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2b_list_nested_string_arena.case.json",
+        {"list_nested_string_arena.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2b_list_string_arena.case.json",
+        {"list_string_arena.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        {"v2b_string_passthrough.case.json",
+        {"string_passthrough.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
@@ -323,8 +323,8 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          ""},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
-        // boundary wire-schema sections and export runv, so their canonical
-        // output is observed by packing input, running runv, and encoding the
+        // boundary wire-schema sections and export run_frame, so their canonical
+        // output is observed by packing input, running run_frame, and encoding the
         // frame. Their descriptor MUST carry P6Frame -- this exact-set pin means
         // a codegen change that drops (or adds) the frame sections is caught
         // here even without Node installed.
@@ -336,31 +336,31 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // Frame-bridge v2 rung V2-C: a direct agent invokes a multi-argument
+        // Frame-bridge v2 rung capability-bridge: a direct agent invokes a multi-argument
         // capability from a non-final handler through the additive
         // (i32)->(i32,i32) control-block bridge, then materializes a computed
         // final carrying the capability-produced String. It emits as a
         // P6Frame module (dense control blocks + disjoint result placements).
-        {"v2c_multi_arg_bridge.case.json",
+        {"multi_arg_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // V2-C fix-forward: two computed non-final handlers each invoke the same
+        // capability-bridge fix-forward: two computed non-final handlers each invoke the same
         // capability (two dense sites sharing one import ordinal); reachability
         // must keep both handlers and the module stays P6Frame.
-        {"v2c_bridge_chain.case.json",
+        {"bridge_chain.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // V2-C fix-forward: a producing pattern-arena match followed by an
+        // capability-bridge fix-forward: a producing pattern-arena match followed by an
         // ordered bridge statement outside the arms (route then call).
-        {"v2c_route_then_bridge.case.json",
+        {"route_then_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // V2-C fix-forward: one tag-only-enum bridge argument; still a P6Frame
+        // capability-bridge fix-forward: one tag-only-enum bridge argument; still a P6Frame
         // bridge module, with a single non-Struct argument wrapped {"value":..}.
-        {"v2c_single_enum_bridge.case.json",
+        {"single_enum_bridge.case.json",
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
@@ -370,7 +370,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // cross-checked separately by the Node runner against the manifest's
         // blessed expectation.
         {"fb3_higher_order.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        // V2-D emission half 1: a workflow packaging a computed-final node now
+        // workflow-frame emission half 1: a workflow packaging a computed-final node now
         // emits as a P6-frame module: the relocated frame handlers run on the
         // node blocks, the in-module scheduler materializes the projected
         // node input, and the projected/constructed workflow return is copied
@@ -383,7 +383,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
-        // V2-D emission half 2: a multi-agent DAG whose packaged runners carry
+        // workflow-frame emission half 2: a multi-agent DAG whose packaged runners carry
         // computed-goto routing, scalar/tag-enum capability-result -> context
         // stores, in-handler bridges and a constructed SummaryInput now emits
         // and runs on the P6 frame lane.
@@ -456,7 +456,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
     }
 
     // No committed case is blocked on this lane: the last one
-    // (e2e_multi_agent) moved to RunnableOrchestration with V2-D emission half
+    // (e2e_multi_agent) moved to RunnableOrchestration with workflow-frame emission half
     // 2. The catalogue-coverage loop below still runs with an empty table.
     const std::vector<CaseVerdict> blocked = {};
     for (const auto &expectation : blocked) {
@@ -533,7 +533,7 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
 
     // Tampering: a manifest claiming the KR6.6 computation lane for a case the
     // compiler RUNS on the orchestration lane is an overclaim the classifier
-    // rejects. e2e_multi_agent now emits on the P6 workflow lane (V2-D
+    // rejects. e2e_multi_agent now emits on the P6 workflow lane (workflow-frame
     // emission half 2), so flipping its manifest back to "computation" (the
     // stale blocked shape) must diverge.
     const auto now_runnable_manifest = load_manifest(repo_root, "e2e_multi_agent.case.json");
@@ -570,7 +570,7 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
 
     // The lanes are NOT interchangeable: a `none` (permanently host-side)
     // claim on a case the compiler RUNS on the orchestration lane is a lie.
-    // e2e_multi_agent now emits on the P6 workflow lane (V2-D emission half 2),
+    // e2e_multi_agent now emits on the P6 workflow lane (workflow-frame emission half 2),
     // so it is the runnable case this lane-projection probe uses.
     const auto runnable_manifest_none = load_manifest(repo_root, "e2e_multi_agent.case.json");
     check(runnable_manifest_none.has_value(),

@@ -78,7 +78,10 @@ struct CoreWireSchemaOption {
                                          const CoreWireSchemaOption &) noexcept = default;
 };
 
-enum class CoreWireSequenceKind { List, Set };
+enum class CoreWireSequenceKind {
+    List,
+    Set
+};
 struct CoreWireSchemaSequence {
     CoreWireSequenceKind kind{CoreWireSequenceKind::List};
     CoreWireSchemaNodeId element{};
@@ -109,7 +112,11 @@ struct CoreWireSchemaStruct {
                                          const CoreWireSchemaStruct &) noexcept = default;
 };
 
-enum class CoreWirePayloadKind { Unit, Tuple, Struct };
+enum class CoreWirePayloadKind {
+    Unit,
+    Tuple,
+    Struct
+};
 struct CoreWireSchemaVariant {
     std::string wire_name;
     CoreWirePayloadKind payload_kind{CoreWirePayloadKind::Unit};
@@ -130,13 +137,22 @@ struct CoreWireSchemaTuple {
                                          const CoreWireSchemaTuple &) noexcept = default;
 };
 
-using CoreWireSchemaShape =
-    std::variant<CoreWireSchemaUnit, CoreWireSchemaBool, CoreWireSchemaInt,
-                 CoreWireSchemaFloat, CoreWireSchemaString, CoreWireSchemaDecimal,
-                 CoreWireSchemaDuration, CoreWireSchemaTimestamp, CoreWireSchemaUuid,
-                 CoreWireSchemaClosure, CoreWireSchemaOption, CoreWireSchemaSequence,
-                 CoreWireSchemaMap, CoreWireSchemaStruct, CoreWireSchemaEnum,
-                 CoreWireSchemaTuple>;
+using CoreWireSchemaShape = std::variant<CoreWireSchemaUnit,
+                                         CoreWireSchemaBool,
+                                         CoreWireSchemaInt,
+                                         CoreWireSchemaFloat,
+                                         CoreWireSchemaString,
+                                         CoreWireSchemaDecimal,
+                                         CoreWireSchemaDuration,
+                                         CoreWireSchemaTimestamp,
+                                         CoreWireSchemaUuid,
+                                         CoreWireSchemaClosure,
+                                         CoreWireSchemaOption,
+                                         CoreWireSchemaSequence,
+                                         CoreWireSchemaMap,
+                                         CoreWireSchemaStruct,
+                                         CoreWireSchemaEnum,
+                                         CoreWireSchemaTuple>;
 
 struct CoreWireSchemaNode {
     CoreWireSchemaShape shape{CoreWireSchemaUnit{}};
@@ -162,7 +178,7 @@ struct CoreWireCapabilitySchema {
 struct CoreWireFrameRoots {
     CoreWireSchemaNodeId input{};
     CoreWireSchemaNodeId output{};
-    /// RFC 0026 P6-7 frame-bridge v2 D5 (rung V2-D): per-P6-node node
+    /// Per-P6-node node
     /// boundary roots of a P6 workflow module (parallel to the workflow's
     /// P6-node table, matching node_blocks). Empty on an agent module and on an
     /// all-opaque workflow.
@@ -173,12 +189,11 @@ struct CoreWireFrameRoots {
 };
 
 struct CoreWireSchemaTable {
-    std::uint32_t format_version{1};
     std::vector<CoreWireSchemaNode> nodes;
     std::vector<CoreWireCapabilitySchema> capabilities;
     /// Present iff the table projects a P6-frame agent's boundary roots. The
-    /// encoded section carries a trailing frame-root block exactly in that case,
-    /// so a capability-only section stays byte-identical to the pre-P6-7 format.
+    /// encoded section always carries a presence tag. A present frame-root
+    /// block always includes its node count, including zero.
     std::optional<CoreWireFrameRoots> frame_roots;
     [[nodiscard]] friend bool operator==(const CoreWireSchemaTable &,
                                          const CoreWireSchemaTable &) noexcept = default;
@@ -197,7 +212,9 @@ struct CoreWireSchemaBuildResult {
     std::vector<CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return table.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return table.has_value() && !has_errors();
+    }
 };
 
 struct CoreWireSchemaEncodeResult {
@@ -205,7 +222,9 @@ struct CoreWireSchemaEncodeResult {
     std::vector<CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return bytes.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return bytes.has_value() && !has_errors();
+    }
 };
 
 struct CoreWireSchemaDecodeResult {
@@ -213,7 +232,9 @@ struct CoreWireSchemaDecodeResult {
     std::vector<CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return table.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return table.has_value() && !has_errors();
+    }
 };
 
 /// Project the transitive wire-schema closure of exactly `selected_capabilities`.
@@ -227,34 +248,30 @@ struct CoreWireSchemaDecodeResult {
 /// roots of the local verifier, so a capability-free P6-frame agent gets a
 /// schema section covering its boundary nominals. The capability selection may
 /// be empty in that case.
-[[nodiscard]] CoreWireSchemaBuildResult
-project_core_wire_schema(const CoreProgram &program,
-                         const std::vector<CoreCapabilityId> &selected_capabilities,
-                         std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                             frame_boundary = std::nullopt,
-                         std::optional<std::pair<std::vector<CoreValueTypeId>,
-                                                std::vector<CoreValueTypeId>>>
-                             node_boundaries = std::nullopt);
+[[nodiscard]] CoreWireSchemaBuildResult project_core_wire_schema(
+    const CoreProgram &program,
+    const std::vector<CoreCapabilityId> &selected_capabilities,
+    std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary = std::nullopt,
+    std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+        node_boundaries = std::nullopt);
 
 /// Verify both local graph invariants and exact deterministic reprojection from
 /// the selected Core capability signatures. When `frame_boundary` is given the
 /// reprojection includes the P6-frame agent boundary roots. When
-/// `node_boundaries` is given the reprojection also includes the V2-D workflow
+/// `node_boundaries` is given the reprojection also includes the workflow
 /// per-node input/output root tables; a caller verifying a transported
 /// workflow frame table must pass the same pair `project_core_wire_schema`
 /// received or the per-node roots cannot match the canonical projection.
-[[nodiscard]] std::vector<CoreLowerDiagnostic>
-verify_core_wire_schema_table(const CoreProgram &program,
-                              const std::vector<CoreCapabilityId> &selected_capabilities,
-                              const CoreWireSchemaTable &table,
-                              std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                                  frame_boundary = std::nullopt,
-                              std::optional<std::pair<std::vector<CoreValueTypeId>,
-                                                     std::vector<CoreValueTypeId>>>
-                                  node_boundaries = std::nullopt);
+[[nodiscard]] std::vector<CoreLowerDiagnostic> verify_core_wire_schema_table(
+    const CoreProgram &program,
+    const std::vector<CoreCapabilityId> &selected_capabilities,
+    const CoreWireSchemaTable &table,
+    std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary = std::nullopt,
+    std::optional<std::pair<std::vector<CoreValueTypeId>, std::vector<CoreValueTypeId>>>
+        node_boundaries = std::nullopt);
 
-/// Verify ONLY the local graph invariants of a wire-schema table (format version,
-/// 32-bit id space, strictly-ordered/unique capability roots, per-node structural
+/// Verify ONLY the local graph invariants of a wire-schema table (32-bit id
+/// space, strictly-ordered/unique capability roots, per-node structural
 /// legality, and cycle-SAFE reachability with no orphan node). This is the gate a
 /// generic host (E4-B1 transport, or the E4-B0-C2 codec) applies to a table it
 /// did not itself project: it accepts a legal root-reachable CYCLIC graph

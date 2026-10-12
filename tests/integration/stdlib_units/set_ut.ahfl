@@ -10,41 +10,41 @@ fn set_ut() -> Int effect Pure decreases 0 {
     let e: collections::Set<Int> = collections::set_empty<Int>();
 
     // empty / non-empty
-    assert(collections::set_is_empty<Int>(e));
-    assert(not collections::set_is_empty<Int>(s));
-    assert(collections::set_is_empty<Int>(collections::set_empty<Int>()) == true);
-    assert(collections::set_is_empty<Int>(collections::set_singleton<Int>(0)) == false);
+    assert(e.is_empty());
+    assert(not s.is_empty());
+    assert((collections::set_empty<Int>()).is_empty() == true);
+    assert((collections::set_singleton<Int>(0)).is_empty() == false);
 
     // contains (positive)
-    assert(collections::contains<Int>(s, 1));
-    assert(collections::contains<Int>(collections::set_singleton<Int>(5), 5));
-    assert(collections::contains<Int>(collections::set_singleton<Int>(0), 0));
+    assert(s.contains(1));
+    assert((collections::set_singleton<Int>(5)).contains(5));
+    assert((collections::set_singleton<Int>(0)).contains(0));
 
     // contains (negative)
-    assert(not collections::contains<Int>(s, 99));
-    assert(not collections::contains<Int>(collections::set_singleton<Int>(5), 6));
-    assert(not collections::contains<Int>(collections::set_singleton<Int>(0), 1));
-    assert(not collections::contains<Int>(e, 1));
-    assert(not collections::contains<Int>(e, 0));
+    assert(not s.contains(99));
+    assert(not (collections::set_singleton<Int>(5)).contains(6));
+    assert(not (collections::set_singleton<Int>(0)).contains(1));
+    assert(not e.contains(1));
+    assert(not e.contains(0));
 
     // distinct singletons are distinct
-    assert(collections::contains<Int>(collections::set_singleton<Int>(42), 42));
-    assert(not collections::contains<Int>(collections::set_singleton<Int>(42), 7));
+    assert((collections::set_singleton<Int>(42)).contains(42));
+    assert(not (collections::set_singleton<Int>(42)).contains(7));
 
     // set algebra (M2-2): union / intersection / difference / is_subset
     let s12: collections::Set<Int> = collections::set_union<Int>(collections::set_singleton<Int>(1), collections::set_singleton<Int>(2));
     let s23: collections::Set<Int> = collections::set_union<Int>(collections::set_singleton<Int>(2), collections::set_singleton<Int>(3));
     // union
-    assert(collections::contains<Int>(s12, 1));
-    assert(collections::contains<Int>(s12, 2));
-    assert(not collections::contains<Int>(s12, 3));
+    assert(s12.contains(1));
+    assert(s12.contains(2));
+    assert(not s12.contains(3));
     // intersection {1,2} ∩ {2,3} = {2}
-    assert(collections::contains<Int>(collections::set_intersection<Int>(s12, s23), 2));
-    assert(not collections::contains<Int>(collections::set_intersection<Int>(s12, s23), 1));
-    assert(not collections::contains<Int>(collections::set_intersection<Int>(s12, s23), 3));
+    assert((collections::set_intersection<Int>(s12, s23)).contains(2));
+    assert(not (collections::set_intersection<Int>(s12, s23)).contains(1));
+    assert(not (collections::set_intersection<Int>(s12, s23)).contains(3));
     // difference {1,2} - {2,3} = {1}
-    assert(collections::contains<Int>(collections::set_difference<Int>(s12, s23), 1));
-    assert(not collections::contains<Int>(collections::set_difference<Int>(s12, s23), 2));
+    assert((collections::set_difference<Int>(s12, s23)).contains(1));
+    assert(not (collections::set_difference<Int>(s12, s23)).contains(2));
     // is_subset
     assert(collections::set_is_subset<Int>(s, s12));
     assert(not collections::set_is_subset<Int>(s12, s));

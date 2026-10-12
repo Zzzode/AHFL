@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/runtime/float_output_e2e.ahfl",
   "kind": "workflow",
   "entry": "runtime::float_output_e2e::FloatPipeline",

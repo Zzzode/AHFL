@@ -35,7 +35,7 @@ fs::path cache_directory() {
 }
 
 std::string default_registry_base_url(std::string base_url) {
-    if (base_url != "https://registry.ahfl.io/v1") {
+    if (base_url != "https://registry.ahfl.io") {
         return base_url;
     }
     const char *env = std::getenv("AHFL_REGISTRY_URL");
@@ -497,8 +497,8 @@ serialize_publish_request_envelope(const RegistryPublishPackageRequest &request,
     }
 
     auto root = ahfl::json::JsonValue::make_object();
-    root->set("format_version",
-              ahfl::json::JsonValue::make_string("ahfl.registry.publish_request.v1"));
+    root->set("format",
+              ahfl::json::JsonValue::make_string("ahfl.registry.publish_request"));
     root->set("registry_index", std::move(*registry_json));
     root->set("source_archive", std::move(*archive_json));
     root->set("source_archive_payload",
@@ -513,8 +513,8 @@ serialize_publish_request_envelope(const RegistryPublishPackageRequest &request,
                                                           std::string_view registry_id,
                                                           std::string_view reason) {
     auto root = ahfl::json::JsonValue::make_object();
-    root->set("format_version",
-              ahfl::json::JsonValue::make_string("ahfl.registry.yank_request.v1"));
+    root->set("format",
+              ahfl::json::JsonValue::make_string("ahfl.registry.yank_request"));
     root->set("registry_id", ahfl::json::JsonValue::make_string(std::string{registry_id}));
     root->set("package", ahfl::json::JsonValue::make_string(std::string{package_name}));
     root->set("version", ahfl::json::JsonValue::make_string(std::string{version}));
@@ -589,9 +589,9 @@ validate_public_api_snapshot(std::string_view snapshot, std::string_view expecte
         diagnostics.push_back("public API snapshot must be a JSON object");
         return diagnostics;
     }
-    const auto schema = object_string(**parsed, "schema");
-    if (!schema.has_value() || *schema != "ahfl.public_api.v1") {
-        diagnostics.push_back("public API snapshot schema must be 'ahfl.public_api.v1'");
+    const auto schema = object_string(**parsed, "format");
+    if (!schema.has_value() || *schema != "ahfl.public_api") {
+        diagnostics.push_back("public API snapshot schema must be 'ahfl.public_api'");
     }
     return diagnostics;
 }
@@ -747,7 +747,7 @@ RegistryIndexParseResult parse_registry_index_entry(std::string_view input) {
 
     const auto &root = **parsed;
     reject_unknown_fields(root,
-                          {"format_version",
+                          {"format",
                            "registry_id",
                            "package",
                            "version",
@@ -760,12 +760,12 @@ RegistryIndexParseResult parse_registry_index_entry(std::string_view input) {
                           result.diagnostics);
 
     RegistryIndexEntry entry;
-    if (auto format = required_string(root, "format_version", "", result.diagnostics);
+    if (auto format = required_string(root, "format", "", result.diagnostics);
         format.has_value()) {
-        entry.format_version = std::move(*format);
-        if (entry.format_version != "ahfl.registry.index.v1") {
-            result.diagnostics.push_back("registry index field 'format_version' must be "
-                                         "'ahfl.registry.index.v1'");
+        entry.format = std::move(*format);
+        if (entry.format != "ahfl.registry.index") {
+            result.diagnostics.push_back("registry index field 'format' must be "
+                                         "'ahfl.registry.index'");
         }
     }
     if (auto registry_id = required_string(root, "registry_id", "", result.diagnostics);
@@ -824,15 +824,15 @@ RegistryIndexParseResult parse_registry_index_entry(std::string_view input) {
 
     const auto &root = **parsed;
     std::vector<std::string> diagnostics;
-    reject_unknown_fields(root, {"format_version", "package", "versions"}, "", diagnostics);
+    reject_unknown_fields(root, {"format", "package", "versions"}, "", diagnostics);
 
     RegistryPackageIndex index;
-    if (auto format = required_string(root, "format_version", "", diagnostics);
+    if (auto format = required_string(root, "format", "", diagnostics);
         format.has_value()) {
-        index.format_version = std::move(*format);
-        if (index.format_version != "ahfl.registry.package_index.v1") {
-            diagnostics.push_back("registry package index field 'format_version' must be "
-                                  "'ahfl.registry.package_index.v1'");
+        index.format = std::move(*format);
+        if (index.format != "ahfl.registry.package_index") {
+            diagnostics.push_back("registry package index field 'format' must be "
+                                  "'ahfl.registry.package_index'");
         }
     }
     if (auto package = required_string(root, "package", "", diagnostics); package.has_value()) {
@@ -885,7 +885,7 @@ RegistryIndexParseResult parse_registry_index_entry(std::string_view input) {
 
 std::string serialize_registry_index_entry(const RegistryIndexEntry &entry) {
     auto root = ahfl::json::JsonValue::make_object();
-    root->set("format_version", ahfl::json::JsonValue::make_string(entry.format_version));
+    root->set("format", ahfl::json::JsonValue::make_string(entry.format));
     root->set("registry_id", ahfl::json::JsonValue::make_string(entry.registry_id));
     root->set("package", ahfl::json::JsonValue::make_string(entry.package));
     root->set("version", ahfl::json::JsonValue::make_string(entry.version));

@@ -34,12 +34,12 @@ int main() {
         CacheKey a;
         a.project_root_hash = "abc123";
         a.source_path = "src/main.ahfl";
-        a.content_hash = 42;
-        a.toolchain_fingerprint = "tc-v1";
+        a.content_digest = "source-42";
+        a.producer_digest = "producer-a";
 
         CacheKey b = a;
         CacheKey c = a;
-        c.content_hash = 99;
+        c.content_digest = "source-99";
         CacheKey d = a;
         d.source_path = "src/other.ahfl";
 
@@ -52,18 +52,6 @@ int main() {
 
         check(equal_keys && equal_hash && different_content && different_path && hash_differs,
               "cache_core: CacheKey equality and hashing");
-    }
-
-    // Test 6: cache_core: fnv1a64 consistency
-    {
-        using ahfl::cache::fnv1a64;
-        const auto h1 = fnv1a64("hello");
-        const auto h2 = fnv1a64("hello");
-        const auto h3 = fnv1a64("world");
-        // FNV-1a 64-bit of "hello" is a well-known constant.
-        constexpr std::uint64_t kExpectedHello = 0xa430d84680aabd0bULL;
-        bool valid = (h1 == h2) && (h1 != h3) && (h1 == kExpectedHello);
-        check(valid, "cache_core: fnv1a64 deterministic and matches known vector");
     }
 
     // Test 7: persistent_cache: store, lookup, invalidate, clear
@@ -83,8 +71,8 @@ int main() {
             ahfl::cache::CacheKey key;
             key.project_root_hash = "deadbeef";
             key.source_path = "src/main.ahfl";
-            key.content_hash = 12345;
-            key.toolchain_fingerprint = "tc-v1";
+            key.content_digest = "source-12345";
+            key.producer_digest = "producer-a";
 
             // Miss on empty cache.
             auto miss = cache.lookup(key);
@@ -93,8 +81,8 @@ int main() {
             // Store and hit.
             ahfl::cache::PersistentCacheEntry entry;
             entry.key = key;
-            entry.source_graph_revision = "graph-v1";
-            entry.resolver_snapshot_version = "resolver-v1";
+            entry.source_graph_digest = "graph-a";
+            entry.resolver_snapshot_digest = "resolver-a";
             entry.signature_fingerprint = 777;
             entry.serialized_typed_hir = R"({"typed_hir":{}})";
             entry.cached_at = std::chrono::system_clock::now();
@@ -105,15 +93,15 @@ int main() {
                     hit.entry.has_value();
             if (hit.entry.has_value()) {
                 valid = valid && (hit.entry->key == key) &&
-                        (hit.entry->source_graph_revision == "graph-v1") &&
+                        (hit.entry->source_graph_digest == "graph-a") &&
                         (hit.entry->signature_fingerprint == 777) &&
                         (hit.entry->serialized_typed_hir == R"({"typed_hir":{}})");
             }
             valid = valid && (cache.entry_count() == 1);
 
-            // Miss with different content hash.
+            // Miss with different content digest.
             auto stale_key = key;
-            stale_key.content_hash = 99999;
+            stale_key.content_digest = "source-99999";
             auto stale = cache.lookup(stale_key);
             valid = valid && (stale.kind == ahfl::cache::PersistentCacheHitKind::Miss);
 
@@ -162,8 +150,8 @@ int main() {
             ahfl::cache::PersistentCacheEntry entry;
             entry.key.project_root_hash = "persist";
             entry.key.source_path = "mod.ahfl";
-            entry.key.content_hash = 555;
-            entry.key.toolchain_fingerprint = "tc";
+            entry.key.content_digest = "source-555";
+            entry.key.producer_digest = "tc";
             entry.signature_fingerprint = 111;
             entry.serialized_typed_hir = R"({"ir":1})";
             entry.cached_at = std::chrono::system_clock::now();
@@ -174,8 +162,8 @@ int main() {
             ahfl::cache::CacheKey key;
             key.project_root_hash = "persist";
             key.source_path = "mod.ahfl";
-            key.content_hash = 555;
-            key.toolchain_fingerprint = "tc";
+            key.content_digest = "source-555";
+            key.producer_digest = "tc";
             auto hit = reopened.lookup(key);
             valid = (hit.kind == ahfl::cache::PersistentCacheHitKind::Hit) &&
                     hit.entry.has_value() &&
@@ -203,8 +191,8 @@ int main() {
             ahfl::cache::PersistentCacheEntry entry;
             entry.key.project_root_hash = "corrupt";
             entry.key.source_path = "x.ahfl";
-            entry.key.content_hash = 1;
-            entry.key.toolchain_fingerprint = "tc";
+            entry.key.content_digest = "source-1";
+            entry.key.producer_digest = "tc";
             entry.serialized_typed_hir = "{}";
             entry.cached_at = std::chrono::system_clock::now();
             cache.store(entry);
@@ -220,8 +208,8 @@ int main() {
             ahfl::cache::CacheKey key;
             key.project_root_hash = "corrupt";
             key.source_path = "x.ahfl";
-            key.content_hash = 1;
-            key.toolchain_fingerprint = "tc";
+            key.content_digest = "source-1";
+            key.producer_digest = "tc";
             auto result = cache.lookup(key);
             valid = (result.kind == ahfl::cache::PersistentCacheHitKind::Miss);
         }
@@ -249,8 +237,8 @@ int main() {
                 ahfl::cache::PersistentCacheEntry entry;
                 entry.key.project_root_hash = "ttl";
                 entry.key.source_path = std::string{path};
-                entry.key.content_hash = 1;
-                entry.key.toolchain_fingerprint = "tc";
+                entry.key.content_digest = "source-1";
+                entry.key.producer_digest = "tc";
                 entry.serialized_typed_hir = "{}";
                 entry.cached_at = std::chrono::system_clock::now();
                 return entry;
@@ -259,8 +247,8 @@ int main() {
                 ahfl::cache::CacheKey key;
                 key.project_root_hash = "ttl";
                 key.source_path = std::string{path};
-                key.content_hash = 1;
-                key.toolchain_fingerprint = "tc";
+                key.content_digest = "source-1";
+                key.producer_digest = "tc";
                 return key;
             };
 
@@ -312,8 +300,8 @@ int main() {
                 ahfl::cache::PersistentCacheEntry entry;
                 entry.key.project_root_hash = "lru";
                 entry.key.source_path = std::string{path};
-                entry.key.content_hash = 7;
-                entry.key.toolchain_fingerprint = "tc";
+                entry.key.content_digest = "source-7";
+                entry.key.producer_digest = "tc";
                 entry.serialized_typed_hir = R"({"hir":{}})";
                 entry.cached_at = std::chrono::system_clock::now();
                 return entry;
@@ -322,8 +310,8 @@ int main() {
                 ahfl::cache::CacheKey key;
                 key.project_root_hash = "lru";
                 key.source_path = std::string{path};
-                key.content_hash = 7;
-                key.toolchain_fingerprint = "tc";
+                key.content_digest = "source-7";
+                key.producer_digest = "tc";
                 return key;
             };
 
@@ -375,8 +363,8 @@ int main() {
             ahfl::cache::PersistentCacheEntry entry;
             entry.key.project_root_hash = "access";
             entry.key.source_path = "m.ahfl";
-            entry.key.content_hash = 1;
-            entry.key.toolchain_fingerprint = "tc";
+            entry.key.content_digest = "source-1";
+            entry.key.producer_digest = "tc";
             entry.serialized_typed_hir = "{}";
             entry.cached_at = std::chrono::system_clock::now();
             cache.store(entry);
@@ -388,8 +376,8 @@ int main() {
             ahfl::cache::CacheKey key;
             key.project_root_hash = "access";
             key.source_path = "m.ahfl";
-            key.content_hash = 1;
-            key.toolchain_fingerprint = "tc";
+            key.content_digest = "source-1";
+            key.producer_digest = "tc";
             const auto hit = cache.lookup(key);
             valid = valid &&
                     (hit.kind == ahfl::cache::PersistentCacheHitKind::Hit);
@@ -419,8 +407,8 @@ int main() {
                 ahfl::cache::PersistentCacheEntry entry;
                 entry.key.project_root_hash = "clear";
                 entry.key.source_path = std::string{path};
-                entry.key.content_hash = 1;
-                entry.key.toolchain_fingerprint = "tc";
+                entry.key.content_digest = "source-1";
+                entry.key.producer_digest = "tc";
                 entry.serialized_typed_hir = "{}";
                 entry.cached_at = std::chrono::system_clock::now();
                 cache.store(entry);
@@ -449,59 +437,53 @@ int main() {
         check(valid, "persistent_cache: clear removes entry files and index from disk");
     }
 
-    // Test 21: persistent_cache: legacy index defaults last_accessed to cached_at.
-    // Index files written by older builds lack the last_accessed field; loading
-    // must treat cached_at as the last access time so old caches age out under
-    // the TTL policy.
+    // Current indexes never infer an absent last_accessed timestamp.
     {
         namespace fs = std::filesystem;
-        const auto test_dir =
-            fs::temp_directory_path() /
-            ("ahfl_inc_legacy_index_test_" +
-             std::to_string(static_cast<long long>(
-                 std::chrono::steady_clock::now().time_since_epoch().count())));
-        fs::create_directories(test_dir);
+        const auto dir = fs::temp_directory_path() /
+            ("ahfl_cache_current_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(dir);
+        std::ofstream(dir / "index.json") << R"({"format":"ahfl.typed-hir-cache-index","entries":{"x.ahfl":{"file":"record.json","cached_at":0}}})";
+        ahfl::cache::PersistentCache malformed(dir);
+        check(malformed.entry_count() == 0, "persistent cache rejects incomplete index records");
 
-        const auto now = std::chrono::system_clock::now();
-        const auto epoch_seconds = [](std::chrono::system_clock::time_point t) {
-            return std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch())
-                .count();
-        };
-        const auto write_legacy_index = [&](std::string_view path,
-                                            std::int64_t cached_at) {
-            std::ofstream index(test_dir / "index.json", std::ios::trunc);
-            index << "{\n"
-                  << "  \"schema_version\": \"AHFL_TYPED_HIR_CACHE_INDEX_V1\",\n"
-                  << "  \"entries\": {\n"
-                  << "    \"" << path << "\": {\"file\": \"legacy.json\", \"cached_at\": "
-                  << cached_at << "}\n"
-                  << "  }\n"
-                  << "}\n";
-        };
+        const auto producer = dir / "producer";
+        std::ofstream(producer) << "build-a";
+        const auto first = ahfl::cache::producer_digest(producer);
+        std::ofstream(producer) << "build-b";
+        const auto second = ahfl::cache::producer_digest(producer);
+        check(first.size() == 64 && second.size() == 64 && first != second &&
+              ahfl::cache::default_producer_digest().size() == 64,
+              "producer identity hashes actual executable content");
 
-        bool valid = true;
-        {
-            // Stale legacy index: cached_at 8 days ago, no last_accessed. The
-            // entry must load and then be evicted by the 7-day TTL.
-            write_legacy_index("old.ahfl",
-                               epoch_seconds(now - std::chrono::days(8)));
-            ahfl::cache::PersistentCache cache(test_dir);
-            valid = valid && (cache.entry_count() == 1);
-            cache.evict_expired(std::chrono::days(7));
-            valid = valid && (cache.entry_count() == 0);
+        ahfl::cache::PersistentCacheEntry entry;
+        entry.key = {.project_root_hash = "project", .source_path = "x.ahfl", .content_digest = "source-7",
+                     .producer_digest = first, .configuration_digest = "config", .dependency_digest = "dependency"};
+        entry.serialized_typed_hir = "{}";
+        entry.cached_at = std::chrono::system_clock::now();
+        malformed.store(entry);
+        auto key = entry.key;
+        key.producer_digest = second;
+        check(malformed.lookup(key).kind == ahfl::cache::PersistentCacheHitKind::Miss,
+              "changed producer misses current cache");
+        key = entry.key; key.configuration_digest = "other";
+        check(malformed.lookup(key).kind == ahfl::cache::PersistentCacheHitKind::Miss,
+              "changed configuration misses current cache");
+        key = entry.key; key.dependency_digest = "other";
+        check(malformed.lookup(key).kind == ahfl::cache::PersistentCacheHitKind::Miss,
+              "changed dependency misses current cache");
+        for (const auto &file : fs::directory_iterator(dir)) {
+            if (file.path().extension() != ".json" || file.path().filename() == "index.json") continue;
+            std::ifstream stream(file.path());
+            std::string text{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+            const auto start = text.find("\"signature_fingerprint\":");
+            const auto end = text.find(',', start);
+            text.erase(start, end - start + 1);
+            std::ofstream(file.path()) << text;
         }
-        {
-            // Recent legacy index: cached_at 1 second ago. The entry must
-            // survive the 7-day TTL.
-            write_legacy_index("new.ahfl",
-                               epoch_seconds(now - std::chrono::seconds(1)));
-            ahfl::cache::PersistentCache cache(test_dir);
-            valid = valid && (cache.entry_count() == 1);
-            cache.evict_expired(std::chrono::days(7));
-            valid = valid && (cache.entry_count() == 1);
-        }
-        fs::remove_all(test_dir);
-        check(valid, "persistent_cache: legacy index defaults last_accessed to cached_at");
+        check(malformed.lookup(entry.key).kind == ahfl::cache::PersistentCacheHitKind::Miss,
+              "missing current entry metadata is rejected");
+        fs::remove_all(dir);
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

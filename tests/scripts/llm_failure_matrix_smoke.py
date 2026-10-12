@@ -400,7 +400,7 @@ def write_mock_tools(path):
     path.write_text(
         json.dumps(
             {
-                "format_version": "ahfl.capability-mocks.v0.6",
+                "format": "ahfl.capability-mocks",
                 "mocks": [
                     {
                         "capability_name": "smoke::Echo",
@@ -431,7 +431,7 @@ def write_tool_catalog(path, tools=None):
     path.write_text(
         json.dumps(
             {
-                "schema": "ahfl.llm_tool_catalog.v0",
+                "format": "ahfl.llm_tool_catalog",
                 "tools": tools,
             }
         ),
@@ -443,7 +443,7 @@ def write_invalid_tool_catalog(path):
     path.write_text(
         json.dumps(
             {
-                "schema": "ahfl.llm_tool_catalog.invalid",
+                "format": "ahfl.llm_tool_catalog.invalid",
                 "tools": [],
             }
         ),
@@ -499,7 +499,7 @@ def load_events(path):
     if "failure-matrix-secret" in text:
         raise AssertionError("secret value leaked into canonical execution events")
     events = [json.loads(line) for line in text.splitlines() if line]
-    if any(event.get("schema") != "ahfl.run-event" for event in events):
+    if any(event.get("format") != "ahfl.run-event" for event in events):
         raise AssertionError(f"unexpected execution event schema: {events!r}")
     if [event.get("event_id") for event in events] != list(range(len(events))):
         raise AssertionError(f"execution event ids are not contiguous: {events!r}")
@@ -945,7 +945,7 @@ def run_tool_catalog_ambiguous_number(ahflc, work_dir, source_path):
             # numeric literal (json.dumps would emit the same token, but writing it
             # verbatim documents the exact byte under test).
             tool_catalog_path.write_text(
-                '{"schema":"ahfl.llm_tool_catalog.v0","tools":[{'
+                '{"format":"ahfl.llm_tool_catalog","tools":[{'
                 '"name":"lookup_context",'
                 '"description":"Return deterministic smoke-test context",'
                 '"parameters":{"type":"object",'
@@ -1097,6 +1097,9 @@ def main():
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir()
+    home = run_dir / "home"
+    home.mkdir(mode=0o700)
+    os.environ["HOME"] = str(home.resolve())
 
     source_path = run_dir / "smoke.ahfl"
     write_smoke_source(source_path)

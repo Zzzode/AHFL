@@ -66,9 +66,8 @@ struct SmtSolverOptions {
     SmtSolverKind kind{SmtSolverKind::Z3};
     std::optional<std::string> solver_path; // explicit override; else env/PATH
     std::chrono::seconds timeout{60};
-    // When true, append `(get-model)` after `(check-sat)` and parse the model
-    // into SmtSolverResult::model on a Sat verdict. Off by default: a plain
-    // sat/unsat query needs no model.
+    // When true, obtain a verdict first and replay Sat queries with get-model.
+    // Unsat/Unknown queries never request a model. Off by default.
     bool request_model{false};
 };
 
@@ -77,7 +76,7 @@ struct SmtSolverOptions {
 
 // Parse a solver's stdout into a status. Pure: the first non-empty
 // `sat`/`unsat`/`unknown` token wins; `timed_out` and a non-zero `exit_code`
-// map to Timeout / SolverError. Exposed for unit tests.
+// map to Timeout / SolverError; any SMT-LIB error rejects the verdict.
 [[nodiscard]] SmtSolverResult
 parse_solver_output(std::string_view output, int exit_code, bool timed_out);
 

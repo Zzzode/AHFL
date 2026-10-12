@@ -1,30 +1,12 @@
 # AHFL Error-Code Reference
 
-| 字段 | 值 |
-| --- | --- |
-| Doc type | 错误码速查（Diagnostic Catalogue） |
-| Status | 草稿 · 可审查 |
-| SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::*` + `messages::*` 命名空间） |
-| Created | 2026-06-28 |
-| Updated | 2026-08-26 |
-| Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
+按诊断中的 code 查找触发条件和修复方法。先修复最早出现的错误，再重新运行 `ahflc check`；后续诊断可能由同一个错误引起。源文件位置和 related notes 通常能指出冲突声明或缺失约束。
 
-## 分组分布
+示例片段用于说明错误所在的表达式或声明；使用标准库、import 或多文件模块的示例需要带 `ahfl.toml` 的 package。单文件规则见[单文件模式参考](./single-file-mode.zh.md)。
 
-```mermaid
-pie title Stable Error-Code 分组分布
-    "Type System" : 27
-    "Callable & Arity" : 9
-    "Effects & Contracts + Trait/Impl" : 17
-    "Struct/Enum Literals" : 19
-    "Backend SMV/BMC" : 3
-    "Linting & Migration" : 1
-    "TBD" : 0
-```
+若诊断指出缺失语义元数据或一致性失败，保留完整诊断、编译器版本和最小输入并报告问题；无需修改编译器内部结构。验证结果的范围见[保证与验证指南](../tutorials/assurance.zh.md)。
 
----
-
-## 1. Type System（27）
+## 1. Type System
 
 类型等价、符号解析、成员访问、trait/impl 解析等核心类型系统错误。
 
@@ -33,12 +15,11 @@ pie title Stable Error-Code 分组分布
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.TYPE_MISMATCH` |
-| SoT | `diagnostics.hpp:158` + template line `395` |
-| MessageTemplate | `type mismatch in {}: expected {}, got {}` |
+| 消息形式 | `type mismatch in {}: expected {}, got {}` |
 
 **触发条件**：表达式的推断类型与期望类型不兼容，出现在赋值、return、实参对形参、分支合并等所有需要类型统一的位置。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 const g_bad: Bool = 1;
@@ -57,23 +38,13 @@ const g_bad: Bool = 1;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.SEMANTIC_ERROR` |
-| SoT | `diagnostics.hpp:159`（无模板，has_template=false） |
-| MessageTemplate | 无；各发射点由 `description` 参数拼接 |
+| 消息形式 | 无；各发射点由 `description` 参数拼接 |
 
-**触发条件**：无法归入专用 code 的兜底语义错误，多见于跨 pass 的通用一致性检查。
-
-**最小复现**：
-```ahfl
-module repro;
-// SEMANTIC_ERROR 是 typecheck 内部兜底码。
-// 正常源文件一般不会触发；以下是能通过解析/消解的占位示例，
-// 在内部 pass 发现一致性冲突时才会抛该码。
-const k: Int = 0;
-```
+**触发条件**：源码违反语义约束，但诊断未使用更具体的错误码。具体原因以消息和源范围为准。
 
 **常见修复**：
-- 查看具体诊断原文与 span，一般是某约束被未识别的语法触发，建议改用同语义的规范写法。
-- 新功能原型经常用该码占位；如可稳定复现，可向 typecheck 团队申请拆分专用错误码。
+- 按具体消息检查对应表达式、声明或约束。
+- 消息无法解释原因或合法源码稳定触发时，附上最小输入报告问题。
 
 **Related codes**：`NOT_IN_VERIFIED_SUBSET`、`INVALID_OPERATION`。
 
@@ -84,21 +55,9 @@ const k: Int = 0;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.EXACT_SCHEMA_MISMATCH` |
-| SoT | `diagnostics.hpp:160` + template line `398` |
-| MessageTemplate | `exact schema mismatch in {}: expected {}, got {}` |
+| 消息形式 | `exact schema mismatch in {}: expected {}, got {}` |
 
 **触发条件**：需要"精确 schema 匹配"的上下文（schema boundary、断言、严格等价）里结构/字段集合/顺序不完全一致。
-
-**最小复现**：
-```ahfl
-module repro;
-struct S { a: Int; b: Int; }
-fn f(s: S) -> Bool effect Pure decreases 0 {
-    // exact schema 边界场景：精确匹配失败时触发；
-    // 若结构字段集合不同则走 TYPE_MISMATCH，严格等价上下文才走本码。
-    return true;
-}
-```
 
 **常见修复**：
 - 将 schema 侧的字段与目标 struct 字段一一对齐，不允许多余字段也不允许缺失字段。
@@ -113,12 +72,11 @@ fn f(s: S) -> Bool effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_TYPE` |
-| SoT | `diagnostics.hpp:162` + template line `402` |
-| MessageTemplate | `unknown type '{}'` |
+| 消息形式 | `unknown type '{}'` |
 
 **触发条件**：类型位置引用了未定义或未导入的类型名。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f(x: NoSuchType) -> Int effect Pure decreases 0 { return 1; }
@@ -137,12 +95,11 @@ fn f(x: NoSuchType) -> Int effect Pure decreases 0 { return 1; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_VALUE` |
-| SoT | `diagnostics.hpp:163` + template line `403` |
-| MessageTemplate | `unknown value '{}'` |
+| 消息形式 | `unknown value '{}'` |
 
 **触发条件**：表达式位置引用了未定义或未导入的常量/谓词/变量名。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f() -> Int effect Pure decreases 0 { return unknown_value; }
@@ -161,12 +118,11 @@ fn f() -> Int effect Pure decreases 0 { return unknown_value; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_QUALIFIED_VALUE` |
-| SoT | `diagnostics.hpp:164` + template line `404` |
-| MessageTemplate | `unknown qualified value '{}'` |
+| 消息形式 | `unknown qualified value '{}'` |
 
 **触发条件**：`Prefix.Name` 形式中，`Prefix` 能解析到 module/枚举，但 `Name` 在该域下不存在。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Color { Red, Green }
@@ -186,12 +142,11 @@ const c: Color = Color.Magenta;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_CALLABLE` |
-| SoT | `diagnostics.hpp:166` + template line `405` |
-| MessageTemplate | `unknown callable '{}'` |
+| 消息形式 | `unknown callable '{}'` |
 
 **触发条件**：调用位置的 callee 解析不到任何 predicate / capability / builtin hook。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f() -> Int effect Pure decreases 0 { return no_such_fn(); }
@@ -210,12 +165,11 @@ fn f() -> Int effect Pure decreases 0 { return no_such_fn(); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_TYPE_REFERENCE` |
-| SoT | `diagnostics.hpp:167`（无模板） |
-| MessageTemplate | 无；由调用点拼接语义说明 |
+| 消息形式 | 无；由调用点拼接语义说明 |
 
 **触发条件**：符号解析成功，但该符号语义上不能作为类型（例如引用的是常量而非 struct/enum/alias）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 // INVALID_TYPE_REFERENCE：符号解析到非类型实体时的内部专用码；
@@ -236,12 +190,11 @@ const k: Int = 1;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_CALLABLE_REFERENCE` |
-| SoT | `diagnostics.hpp:169`（无模板） |
-| MessageTemplate | 无；由调用点拼接语义说明 |
+| 消息形式 | 无；由调用点拼接语义说明 |
 
 **触发条件**：callee 解析成功但本身不具备 callable 语义（例如 callee 是常量/类型名）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 const k: Int = 42;
@@ -264,22 +217,12 @@ fn f() -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_CALLABLE_METADATA` |
-| SoT | `diagnostics.hpp:171`（无模板） |
-| MessageTemplate | 无；对应内部错误模板 `PredicateTypeInfoMissing` / `CapabilityTypeInfoMissing` |
+| 消息形式 | 按具体消息指出缺失的能力或谓词信息 |
 
-**触发条件**：符号解析到 callable，但符号表缺失谓词/能力所需的类型元数据，一般是前置 pass 的一致性 bug。
-
-**最小复现**：
-```ahfl
-module repro;
-// MISSING_CALLABLE_METADATA：符号表注册 callable 时类型元数据缺失的内部错误；
-// 正常源码路径一般不会触发，以下为语法正确的占位。
-fn ok() -> Int effect Pure decreases 0 { return 0; }
-```
+**触发条件**：符号解析到 callable，但符号表缺失谓词/能力所需的类型元数据，通常表示编译器一致性问题。
 
 **常见修复**：
-- 若出现在自定义前端/插件，确保注册 symbol 时写入 `Predicate`/`Capability` 语义数据。
-- 对正常 AHFL 源代码而言属于编译器内部错误，请附带最小 repro 提交 issue。
+- 保存完整诊断、编译器版本和最小源码，提交问题报告。
 
 **Related codes**：`MISSING_CONST_METADATA`、`MISSING_TYPE_METADATA`、`INVALID_CALLABLE_REFERENCE`。
 
@@ -290,22 +233,12 @@ fn ok() -> Int effect Pure decreases 0 { return 0; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_CONST_METADATA` |
-| SoT | `diagnostics.hpp:173`（无模板） |
-| MessageTemplate | 无；对应内部模板 `ConstTypeInfoMissing` |
+| 消息形式 | 按具体消息指出缺失的常量信息 |
 
-**触发条件**：常量符号已登记但缺少类型/编译期值元数据，通常由手写 AST 或增量重建时 symbol 不同步引起。
-
-**最小复现**：
-```ahfl
-module repro;
-// MISSING_CONST_METADATA：常量符号缺少类型/编译期值元数据（编译器内部错误）；
-// 正常源码路径不会触发，以下为占位。
-const k: Int = 0;
-```
+**触发条件**：常量符号已登记但缺少类型/编译期值元数据，通常表示编译器一致性问题。
 
 **常见修复**：
-- 前端补全 `ConstSymbol` 注册字段。
-- 正常源码路径出现时，按编译器 bug 处理，附带 repro 文件。
+- 保存完整诊断、编译器版本和最小源码，提交问题报告。
 
 **Related codes**：`MISSING_CALLABLE_METADATA`、`MISSING_TYPE_METADATA`、`CONST_EXPR_REQUIRED`。
 
@@ -316,22 +249,12 @@ const k: Int = 0;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_TYPE_METADATA` |
-| SoT | `diagnostics.hpp:175`（无模板） |
-| MessageTemplate | 无；对应内部模板 `StructTypeInfoMissing` / `EnumTypeInfoMissing` 等 |
+| 消息形式 | 按具体消息指出缺失的类型信息 |
 
-**触发条件**：struct/enum 符号存在但字段/variant 元数据缺失，常见于增量或插件构造 AST。
-
-**最小复现**：
-```ahfl
-module repro;
-// MISSING_TYPE_METADATA：struct/enum 符号存在但字段/variant 元数据缺失（内部 bug）；
-// 正常源码路径不会触发，以下为占位。
-struct S { a: Int; }
-```
+**触发条件**：struct/enum 符号存在但字段/variant 元数据缺失，通常表示编译器一致性问题。
 
 **常见修复**：
-- 对 struct/enum 显式写入字段或 variant；空类型请用零字段 struct 或零 variant enum 语法。
-- 正常源码路径触发时归为编译器 bug。
+- 保存完整诊断、编译器版本和最小源码，提交问题报告。
 
 **Related codes**：`INVALID_TYPE_REFERENCE`、`UNKNOWN_TYPE`、`INVALID_STRUCT_LITERAL_TARGET`。
 
@@ -342,12 +265,11 @@ struct S { a: Int; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_STRUCT_LITERAL_TARGET` |
-| SoT | `diagnostics.hpp:177` + template line `422` |
-| MessageTemplate | `struct literal target '{}' does not resolve to a struct type` |
+| 消息形式 | `struct literal target '{}' does not resolve to a struct type` |
 
 **触发条件**：`Name{...}` 构造中，`Name` 解析到 enum、常量、谓词等非 struct 类型。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A, B }
@@ -367,25 +289,9 @@ const e: E = E{x: 1};
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_QUALIFIED_VALUE` |
-| SoT | `diagnostics.hpp:179` + template line `424` |
-| MessageTemplate | `qualified value '{}' must refer to a constant or enum variant` |
+| 消息形式 | `qualified value '{}' must refer to a constant or enum variant` |
 
 **触发条件**：`A.B` 语法中 `B` 解析到谓词、成员函数、类型等不允许作为值引用的对象。
-
-**最小复现**：
-```ahfl
-module repro;
-// INVALID_QUALIFIED_VALUE：跨模块引用谓词名（不带 ()）出现在值位置。
-// 单文件 repro 先用 trait/impl 形式演示；两文件模块场景下会稳定触发。
-trait Show {
-    fn show(self: Int) -> String;
-}
-fn use() -> String effect Pure decreases 0 {
-    // 此处尝试将方法名作为独立值引用（若语法允许则触发本码）；
-    // 真实触发需要跨模块限定名。
-    return 0.show();
-}
-```
 
 **常见修复**：
 - 需要调用谓词时添加参数列表 `M.g()`。
@@ -400,12 +306,11 @@ fn use() -> String effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_ENUM_VARIANT` |
-| SoT | `diagnostics.hpp:181` + template line `426` |
-| MessageTemplate | `unknown enum variant '{}'` |
+| 消息形式 | `unknown enum variant '{}'` |
 
 **触发条件**：枚举构造或匹配引用了目标 enum 中不存在的 variant。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Light { On, Off }
@@ -425,12 +330,11 @@ const k: Light = Light.Blinking;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_OPERATION` |
-| SoT | `diagnostics.hpp:183`（无模板） |
-| MessageTemplate | 无；对应一组操作符级专用模板：`InvalidOperator`、`LogicalNotRequiresBool` 等 |
+| 消息形式 | 无；对应一组操作符级专用模板：`InvalidOperator`、`LogicalNotRequiresBool` 等 |
 
 **触发条件**：二元/一元操作符对参与类型不成立，或者操作符语义在特定上下文中被禁用（纯上下文中副作用操作等）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f() -> Int effect Pure decreases 0 { return 1 + true; }
@@ -449,12 +353,11 @@ fn f() -> Int effect Pure decreases 0 { return 1 + true; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.NON_PURE_EXPRESSION` |
-| SoT | `diagnostics.hpp:184` + template line `500` |
-| MessageTemplate | `{} must be a pure expression` |
+| 消息形式 | `{} must be a pure expression` |
 
 **触发条件**：要求纯表达式的位置（const 初始化、不变式、安全/活性公式、纯形参）出现了有副作用或可能不确定的表达式。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 capability C() -> Int;
@@ -476,12 +379,11 @@ const k: Int = C();
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.CONST_EXPR_REQUIRED` |
-| SoT | `diagnostics.hpp:185` + template line `501` |
-| MessageTemplate | `const expression required in {}: {}` |
+| 消息形式 | `const expression required in {}: {}` |
 
 **触发条件**：编译期常量位置（数组长度、enum discriminant、DECREASES 上限、switch 标签）出现了非编译期可求值的表达式。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f(n: Int) -> Int effect Pure decreases 0 { return n; }
@@ -501,12 +403,11 @@ const k: Int = f(5);
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.CONST_DEPENDENCY_CYCLE` |
-| SoT | `diagnostics.hpp:186` + template line `502` |
-| MessageTemplate | `const dependency cycle detected involving '{}'` |
+| 消息形式 | `const dependency cycle detected involving '{}'` |
 
 **触发条件**：常量之间存在循环依赖（例如 `a = b + 1` 而 `b = a * 2`），求值图存在环。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 const a: Int = b + 1;
@@ -526,12 +427,11 @@ const b: Int = a * 2;
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_MEMBER_ACCESS` |
-| SoT | `diagnostics.hpp:188` + template line `400` |
-| MessageTemplate | `member access requires a struct value, got {}` |
+| 消息形式 | `member access requires a struct value, got {}` |
 
 **触发条件**：点号左操作数不是 struct、非结构体类型被当作 struct 访问字段。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f() -> Int effect Pure decreases 0 { return 1.len; }
@@ -550,12 +450,11 @@ fn f() -> Int effect Pure decreases 0 { return 1.len; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_FIELD` |
-| SoT | `diagnostics.hpp:190` + template line `427` |
-| MessageTemplate | `unknown field '{}' on struct '{}'` |
+| 消息形式 | `unknown field '{}' on struct '{}'` |
 
 **触发条件**：结构体字面量/点号访问中字段名不存在。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 struct S { a: Int; }
@@ -575,12 +474,11 @@ fn f(s: S) -> Int effect Pure decreases 0 { return s.b; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_FIELD` |
-| SoT | `diagnostics.hpp:191` + template line `428` |
-| MessageTemplate | `missing field '{}' in struct literal` |
+| 消息形式 | `missing field '{}' in struct literal` |
 
 **触发条件**：结构体字面量未提供某必填字段；没有默认值的字段必须列出。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 struct Pt { x: Int; y: Int; }
@@ -600,12 +498,11 @@ const p: Pt = Pt{x: 0};
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.DUPLICATE_FIELD` |
-| SoT | `diagnostics.hpp:192` + template line `429` |
-| MessageTemplate | `duplicate field '{}' in struct literal` |
+| 消息形式 | `duplicate field '{}' in struct literal` |
 
 **触发条件**：同一 struct literal 中某字段被赋值两次。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 struct S { a: Int; b: Int; }
@@ -614,7 +511,7 @@ const s: S = S{a: 0, a: 1, b: 2};
 
 **常见修复**：
 - 删除重复字段，保留真正想使用的一次赋值。
-- 如需合并两个 struct，考虑添加 `merge`/`with` 语法或使用显式构造。
+- 如需合并两个值，显式构造目标 struct 并为每个字段选择唯一来源。
 
 **Related codes**：`MISSING_FIELD`、`UNKNOWN_FIELD`、`DUPLICATE_VARIANT`。
 
@@ -625,12 +522,11 @@ const s: S = S{a: 0, a: 1, b: 2};
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.DUPLICATE_VARIANT` |
-| SoT | `diagnostics.hpp:193` + template line `431` |
-| MessageTemplate | `duplicate enum variant '{}'` |
+| 消息形式 | `duplicate enum variant '{}'` |
 
 **触发条件**：enum 声明中同一 variant 名出现多次。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A, B, A }
@@ -649,8 +545,7 @@ enum E { A, B, A }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.DUPLICATE_VARIANT_FIELD` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `duplicate field '{}' in enum variant '{}'` |
+| 消息形式 | `duplicate field '{}' in enum variant '{}'` |
 
 **触发条件**：struct-form enum variant 声明、struct variant pattern 或 struct-form variant constructor 中，同一字段名出现多次。
 
@@ -659,7 +554,7 @@ enum E { A, B, A }
 - `duplicate_field`：重复字段名。LSP quick fix 只消费该结构化字段名，不反解析 diagnostic message。
 - `variant_field_context`：字段出现位置，当前取值为 `declaration`、`pattern` 或 `constructor`。LSP 自动删除 quick fix 只在 `pattern` 上启用；declaration / constructor 场景需要用户确认保留哪一个字段语义。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Packet {
@@ -681,12 +576,11 @@ enum Packet {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `resolve.VARIANT_NAME_SHADOWS_TYPE` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `enum variant '{}' in enum '{}' conflicts with type '{}' in the same module` |
+| 消息形式 | `enum variant '{}' in enum '{}' conflicts with type '{}' in the same module` |
 
 **触发条件**：同一 module 内，enum variant 名与 `struct` / `enum` / `type alias` 的类型名冲突。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 struct Data { code: Int; }
@@ -708,12 +602,11 @@ enum Packet {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_INDEX_ACCESS` |
-| SoT | `diagnostics.hpp:194` + template line `480` |
-| MessageTemplate | `index access requires a List or Map value, got {}` |
+| 消息形式 | `index access requires a List or Map value, got {}` |
 
 **触发条件**：下标表达式左操作数并非 List/Map，或索引类型不匹配（非 Int 对 List、非 key-type 对 Map）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f() -> Int effect Pure decreases 0 { return 42[0]; }
@@ -727,7 +620,7 @@ fn f() -> Int effect Pure decreases 0 { return 42[0]; }
 
 ---
 
-## 2. Callable & Arity（9）
+## 2. Callable & Arity
 
 调用解析、形参个数、agent capability 相关的错误。
 
@@ -736,12 +629,11 @@ fn f() -> Int effect Pure decreases 0 { return 42[0]; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_AGENT_TYPE` |
-| SoT | `diagnostics.hpp:200`（无模板） |
-| MessageTemplate | 无；由 agent 声明检查点拼接具体说明 |
+| 消息形式 | 无；由 agent 声明检查点拼接具体说明 |
 
 **触发条件**：`agent` 块内字段类型、capability 类型或上下文对象类型不符合 agent 语义（例如 input/output 非 struct、stateful context 既不是 struct 也不是 `Unit`、不可构造）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 struct Ctx { x: Int = 0; }
@@ -771,12 +663,11 @@ agent A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_CAPABILITY` |
-| SoT | `diagnostics.hpp:201` + template line `491` |
-| MessageTemplate | `unknown capability '{}' in agent capability list` |
+| 消息形式 | `unknown capability '{}' in agent capability list` |
 
 **触发条件**：agent 声明的 capability 列表里引用了未定义或未导入的 capability。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 struct R { v: Int; }
@@ -802,12 +693,11 @@ agent A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.CAPABILITY_NOT_ALLOWED` |
-| SoT | `diagnostics.hpp:202` + template line `493` |
-| MessageTemplate | `capability call '{}' is not allowed in this context` |
+| 消息形式 | `capability call '{}' is not allowed in this context` |
 
 **触发条件**：调用的 capability 不在当前 agent 的 capability 列表中，或在纯上下文中使用了有效果的 capability。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 capability ReadLog() -> Int;
@@ -840,12 +730,11 @@ flow for A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.WRONG_ARITY` |
-| SoT | `diagnostics.hpp:204` + template line `497` |
-| MessageTemplate | `{} '{}' expects {} argument(s), got {}` |
+| 消息形式 | `{} '{}' expects {} argument(s), got {}` |
 
 **触发条件**：谓词 / capability / builtin 调用传入的参数个数与签名不符。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn add(a: Int, b: Int) -> Int effect Pure decreases 0 { return a + b; }
@@ -865,12 +754,11 @@ fn use() -> Int effect Pure decreases 0 { return add(1); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.SHADOWED_BINDING` |
-| SoT | `diagnostics.hpp:205` + template line `486` |
-| MessageTemplate | `let binding '{}' shadows an existing binding of type '{}'` |
+| 消息形式 | `let binding '{}' shadows an existing binding of type '{}'` |
 
 **触发条件**：`let` 绑定名与外层作用域已存在的同名绑定冲突，会遮蔽原有定义。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f(x: Int) -> Int effect Pure decreases 0 {
@@ -892,12 +780,11 @@ fn f(x: Int) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_BUILTIN_ATTRIBUTE` |
-| SoT | `diagnostics.hpp:232` + template line `472` |
-| MessageTemplate | `@builtin is only allowed in std modules` |
+| 消息形式 | `@builtin is only allowed in std modules` |
 
 **触发条件**：非标准库 module 中使用了 `@builtin` 标注（该属性用于将 AHFL 谓词绑定到编译器内部 hook）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 @builtin("len")
@@ -905,8 +792,8 @@ fn my_len() -> Int effect Pure decreases 0 { return 0; }
 ```
 
 **常见修复**：
-- 删除 `@builtin` 标记，使用普通实现；如确实要接入编译器，请放到 `src/std/` 下的 std module。
-- 非 std module 如需 hook 行为，改用 capability + backend handler。
+- 用户代码删除 `@builtin` 标记，使用普通函数实现。
+- 如需外部功能，声明 capability 并由宿主绑定。
 
 **Related codes**：`UNKNOWN_BUILTIN_HOOK`、`MISSING_BUILTIN_EFFECT`。
 
@@ -917,12 +804,11 @@ fn my_len() -> Int effect Pure decreases 0 { return 0; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNKNOWN_BUILTIN_HOOK` |
-| SoT | `diagnostics.hpp:234` + template line `473` |
-| MessageTemplate | `unknown @builtin hook '{}'` |
+| 消息形式 | `unknown @builtin hook '{}'` |
 
 **触发条件**：`@builtin("xxx")` 参数字符串不是编译器已登记的内置 hook 名。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 @builtin("does_not_exist")
@@ -930,8 +816,8 @@ fn f() -> Int effect Pure decreases 0 { return 0; }
 ```
 
 **常见修复**：
-- 对照 `std/builtin_hooks.hpp` 中登记的 hook 名改拼写。
-- 新增 hook 时请在编译器端同时注册并在此处通过新签名。
+- 用户代码不要声明 `@builtin`；使用标准库提供的函数或宿主 capability。
+- 标准库自带代码触发时，检查编译器与标准库是否来自同一工具链。
 
 **Related codes**：`INVALID_BUILTIN_ATTRIBUTE`、`MISSING_BUILTIN_EFFECT`。
 
@@ -942,12 +828,11 @@ fn f() -> Int effect Pure decreases 0 { return 0; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_BUILTIN_EFFECT` |
-| SoT | `diagnostics.hpp:236` + template line `474` |
-| MessageTemplate | `@builtin functions must declare an explicit effect clause` |
+| 消息形式 | `@builtin functions must declare an explicit effect clause` |
 
 **触发条件**：被 `@builtin` 标记的谓词没有显式声明 effect 子句（builtin 的 effect 必须由作者精确指定，禁止依赖类型推断）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 @builtin("len")
@@ -967,12 +852,11 @@ fn builtin_len(xs: Object) -> Int decreases 0 { return 0; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_RANGE_PATTERN` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `invalid range pattern: lower bound {} exceeds upper bound {}` |
+| 消息形式 | `invalid range pattern: lower bound {} exceeds upper bound {}` |
 
 **触发条件**：整数 range pattern 的下界大于上界。当前 AHFL range pattern 语法为 `-?INT_LITERAL..-?INT_LITERAL`，语义为闭区间匹配。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { Some(Int), None }
@@ -994,7 +878,7 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 
 ---
 
-## 3. Effects & Contracts + Trait/Impl（17）
+## 3. Effects & Contracts + Trait/Impl
 
 Pure/Nondet/Capability 效应判定、decreases 终止度量、不变式纯度检查、trait/impl 解析与一致性等。
 
@@ -1003,12 +887,11 @@ Pure/Nondet/Capability 效应判定、decreases 终止度量、不变式纯度�
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.EFFECT_NOT_PURE` |
-| SoT | `diagnostics.hpp:288` + template line `563` |
-| MessageTemplate | `function call '{}' in a verified-subset context must be effect Pure, but its declared effect is {}` |
+| 消息形式 | `function call '{}' in a verified-subset context must be effect Pure, but its declared effect is {}` |
 
 **触发条件**：verified subset 上下文（不变式主体、safety/liveness、pure contract）调用了非 Pure 的函数/capability。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 capability C() -> Int;
@@ -1044,12 +927,11 @@ flow for A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.NO_DECREASES` |
-| SoT | `diagnostics.hpp:289` + template line `566` |
-| MessageTemplate | `effect Pure function '{}' must declare a decreases termination measure` |
+| 消息形式 | `effect Pure function '{}' must declare a decreases termination measure` |
 
 **触发条件**：效应为 Pure 的谓词/函数在 verifier 可判定子集中缺少 `decreases` 终止度量，无法证明终止。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f(n: Int) -> Bool effect Pure { return f(n - 1); }
@@ -1066,12 +948,11 @@ fn f(n: Int) -> Bool effect Pure { return f(n - 1); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.NOT_IN_VERIFIED_SUBSET` |
-| SoT | `diagnostics.hpp:290` + template line `568` |
-| MessageTemplate | `call to '{}' is not in the verifiable subset: {}` |
+| 消息形式 | `call to '{}' is not in the verifiable subset: {}` |
 
 **触发条件**：被验证模块调用的某 callee 超出已验证子集边界（递归形态、效应、参数类型等不允许），作为 umbrella code 通常伴随更具体的 code。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 // NOT_IN_VERIFIED_SUBSET：verified-subset 上下文中出现了边界外的调用。
@@ -1096,7 +977,7 @@ flow for A {
 
 **常见修复**：
 - 查阅伴随诊断给出的具体原因，针对根因（如终止/纯度/类型复杂度）修正。
-- 新语法被标为超出子集时，请在 typecheck 团队登记扩展申请。
+- 不能改写到可验证子集时，明确该目标无法得到所请求的证明。
 
 **Related codes**：`EFFECT_NOT_PURE`、`SEMANTIC_ERROR`。
 
@@ -1107,12 +988,11 @@ flow for A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.EFFECT_UNDERDECLARED` |
-| SoT | `diagnostics.hpp:292` + template line `570` |
-| MessageTemplate | `function '{}' declares effect {} but its body infers effect {}; declared effect must be an upper bound of the body effect` |
+| 消息形式 | `function '{}' declares effect {} but its body infers effect {}; declared effect must be an upper bound of the body effect` |
 
 **触发条件**：用户显式声明的 effect 子句"小于"body 推断出来的实际 effect（例如声明 `Pure`，内部却调用有 IO capability）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 capability C() -> Int;
@@ -1132,12 +1012,11 @@ fn g() -> Int effect Pure decreases 0 { return C(); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.EFFECT_INCOMPATIBLE` |
-| SoT | `diagnostics.hpp:294` + template line `573` |
-| MessageTemplate | `incompatible effects: Nondet and capability effects cannot be combined in the same judgement` |
+| 消息形式 | `incompatible effects: Nondet and capability effects cannot be combined in the same judgement` |
 
 **触发条件**：同一推断中同时出现 `Nondet` 与具体 capability effects（AHFL 效应格禁止该组合以保持可判定性）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 capability C() -> Int;
@@ -1157,20 +1036,9 @@ fn f() -> Int effect {Nondet, C} decreases 0 { return C(); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.EFFECT_ON_PREDICATE` |
-| SoT | `diagnostics.hpp:295` + template line `575` |
-| MessageTemplate | `predicate declarations may not carry an explicit effect clause; predicates are implicitly effect Pure` |
+| 消息形式 | `predicate declarations may not carry an explicit effect clause; predicates are implicitly effect Pure` |
 
 **触发条件**：`predicate`（spec-side 谓词）被错误地手动加了 effect 子句；spec predicate 始终隐式 Pure。
-
-**最小复现**：
-```ahfl
-module repro;
-// EFFECT_ON_PREDICATE：spec 侧 predicate 声明不能带 effect 子句。
-// 目前语法直接禁止该声明，用户源码无法触发，保留占位。
-contract Trivial {
-    predicate p(n: Int) { n > 0 }
-}
-```
 
 **常见修复**：
 - 去掉 spec 谓词上的 effect 子句。
@@ -1185,12 +1053,11 @@ contract Trivial {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.NONDET_IN_INVARIANT` |
-| SoT | `diagnostics.hpp:296` + template line `578` |
-| MessageTemplate | `non-deterministic expression in invariant/safety/liveness formula: {}` |
+| 消息形式 | `non-deterministic expression in invariant/safety/liveness formula: {}` |
 
 **触发条件**：在不变式/安全性/活性公式里出现了非确定子表达式（`Nondet` 效应函数、`now` 的非确定值等）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn flip() -> Bool effect Nondet decreases 0 { return true; }
@@ -1224,22 +1091,13 @@ flow for A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MONOMORPHIZATION_BUDGET_EXCEEDED` |
-| SoT | `diagnostics.hpp:297` + template line `580` |
-| MessageTemplate | `too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: {})` |
+| 消息形式 | `too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: {})` |
 
-**触发条件**：泛型/trait 实例化数量超过用户或默认配置的 budget，为避免后端爆炸而中止。
-
-**最小复现**：
-```ahfl
-module repro;
-// MONOMORPHIZATION_BUDGET_EXCEEDED：泛型实例化数量超 budget 时触发；
-// 需要高度泛型化代码 + 小 budget 才能复现，此处为占位。
-struct R { v: Int; }
-```
+**触发条件**：泛型/trait 实例化数量超过编译器预算，编译停止。
 
 **常见修复**：
 - 将常用泛型参数收敛到少量具体类型；使用 type alias 合并语义相同的类型。
-- 显式提高 budget（`--mono-budget N`）或报告给编译器团队优化 key 归并。
+- 根据诊断列出的最大实例化来源简化泛型组合；若合理规模的代码仍触发，附最小输入报告问题。
 
 **Related codes**：`AMBIGUOUS_TRAIT_IMPL`、`TRAIT_BOUND_NOT_SATISFIED`。
 
@@ -1250,24 +1108,9 @@ struct R { v: Int; }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.ORPHAN_IMPL` |
-| SoT | `diagnostics.hpp:241` + template line `508` |
-| MessageTemplate | `impl '{}' for '{}' is an orphan: neither the type nor the trait is defined in module '{}'` |
+| 消息形式 | `impl '{}' for '{}' is an orphan: neither the type nor the trait is defined in module '{}'` |
 
 **触发条件**：某模块为一个 trait+类型 组合提供 impl，但 trait 与类型都不定义于该模块（孤儿规则），破坏 coherence。
-
-**最小复现**：
-```ahfl
-module repro;
-// ORPHAN_IMPL：trait 与类型均定义于外部 module 时触发；
-// 单文件中两者通常同时定义，以下为定义-impl 结构示意（需跨 module 才触发）。
-trait T {
-    fn m(self: S) -> Int;
-}
-struct S { v: Int; }
-impl T for S {
-    fn m(self: S) -> Int { return self.v; }
-}
-```
 
 **常见修复**：
 - 把 impl 移到定义 trait 或定义类型的 module 中。
@@ -1282,12 +1125,11 @@ impl T for S {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.COHERENCE_CONFLICT` |
-| SoT | `diagnostics.hpp:270` + template line `518` |
-| MessageTemplate | `coherence conflict: multiple impls of trait '{}' for normalized type '{}'` |
+| 消息形式 | `coherence conflict: multiple impls of trait '{}' for normalized type '{}'` |
 
 **触发条件**：两份 impl 在类型归一化后键值相同（例如不同写法的泛型参数经过归一得到同一类型），属于孤儿规则之外更细粒度的 coherence 冲突。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 trait T {
@@ -1315,12 +1157,11 @@ impl T for A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.IMPL_TRAIT_UNKNOWN` |
-| SoT | `diagnostics.hpp:244` + template line `522` |
-| MessageTemplate | `impl references unknown trait '{}'` |
+| 消息形式 | `impl references unknown trait '{}'` |
 
 **触发条件**：`impl Trait for Type` 中的 `Trait` 名称未定义或未导入。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 type NoSuchTrait = TraitDoesNotExist;
@@ -1341,12 +1182,11 @@ impl NoSuchTrait for S { }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.TRAIT_METHOD_NOT_FOUND` |
-| SoT | `diagnostics.hpp:246` + template line `526` |
-| MessageTemplate | `trait '{}' declares method '{}' but impl does not provide it` |
+| 消息形式 | `trait '{}' declares method '{}' but impl does not provide it` |
 
 **触发条件**：impl 未实现 trait 声明的全部方法。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 trait T {
@@ -1372,12 +1212,11 @@ impl T for S {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.TRAIT_METHOD_SIGNATURE_MISMATCH` |
-| SoT | `diagnostics.hpp:248` + template line `530` |
-| MessageTemplate | `method '{}' signature mismatch: trait expects ({}), impl provides ({})` |
+| 消息形式 | `method '{}' signature mismatch: trait expects ({}), impl provides ({})` |
 
 **触发条件**：impl 中某方法的参数列表、返回类型或 effect 与 trait 声明不完全一致。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 trait T {
@@ -1402,24 +1241,9 @@ impl T for S {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.TRAIT_ASSOC_TYPE_NOT_FOUND` |
-| SoT | `diagnostics.hpp:250` + template line `532` |
-| MessageTemplate | `trait '{}' declares associated type '{}' but impl does not provide it` |
+| 消息形式 | `trait '{}' declares associated type '{}' but impl does not provide it` |
 
 **触发条件**：trait 声明了 associated type，但 impl 未给出具体类型定义。
-
-**最小复现**：
-```ahfl
-module repro;
-// TRAIT_ASSOC_TYPE_NOT_FOUND：associated type 未在 impl 中提供；
-// 当前语法表面板未启用 type Item = ... 在 trait/impl 中的写法，占位示意。
-trait T {
-    fn f(self: S) -> Int;
-}
-struct S { }
-impl T for S {
-    fn f(self: S) -> Int { return 0; }
-}
-```
 
 **常见修复**：
 - 在 impl 中写 `type X = Int;` 等具体绑定。
@@ -1434,12 +1258,11 @@ impl T for S {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_SUPER_TRAIT` |
-| SoT | `diagnostics.hpp:252` + template line `534` |
-| MessageTemplate | `trait '{}' requires super-trait '{}' but no impl is found for '{}'` |
+| 消息形式 | `trait '{}' requires super-trait '{}' but no impl is found for '{}'` |
 
 **触发条件**：实现子 trait 前，没有先实现它依赖的 super-trait。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 trait Base {
@@ -1467,24 +1290,9 @@ impl Derived for S {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.AMBIGUOUS_TRAIT_IMPL` |
-| SoT | `diagnostics.hpp:254` + template line `543` |
-| MessageTemplate | `multiple trait implementations match for type '{}' and trait '{}'` |
+| 消息形式 | `multiple trait implementations match for type '{}' and trait '{}'` |
 
 **触发条件**：类型匹配到多份 impl，求解器无法唯一选择最特化方案。
-
-**最小复现**：
-```ahfl
-module repro;
-trait T {
-    fn f(self: S) -> Int;
-}
-struct S { x: Int; }
-impl T for S {
-    fn f(self: S) -> Int { return 1; }
-}
-// 泛型 blanket impl 与具体 impl 同时存在时触发歧义（示意）。
-fn use(s: S) -> Int effect Pure decreases 0 { return s.f(); }
-```
 
 **常见修复**：
 - 移除冲突的 blanket impl；或给 impl 增加 disjoint bound。
@@ -1499,12 +1307,11 @@ fn use(s: S) -> Int effect Pure decreases 0 { return s.f(); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.TRAIT_BOUND_NOT_SATISFIED` |
-| SoT | `diagnostics.hpp:256` + template line `545` |
-| MessageTemplate | `trait bound '{}: {}' is not satisfied by type '{}'` |
+| 消息形式 | `trait bound '{}: {}' is not satisfied by type '{}'` |
 
 **触发条件**：泛型参数声明了 trait bound，但被传入的具体类型缺少对应 impl。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 trait Show {
@@ -1523,7 +1330,7 @@ fn f() -> String effect Pure decreases 0 { return print(S{}); }
 
 ---
 
-## 4. Struct/Enum Literals（19）
+## 4. Struct/Enum Literals
 
 与 struct/enum 字面量、struct/enum 字段/成员操作相关的类型检查错误。
 
@@ -1532,12 +1339,11 @@ fn f() -> String effect Pure decreases 0 { return print(S{}); }
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_SCRUTINEE_REQUIRES_ENUM` |
-| SoT | `diagnostics.hpp:210` + template line `453` |
-| MessageTemplate | `'match' scrutinee must have an enum type, got {}` |
+| 消息形式 | `'match' scrutinee must have an enum type, got {}` |
 
 **触发条件**：`match e` 中 `e` 的类型不是 enum（例如 struct、Int、String）。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 fn f(n: Int) -> Int effect Pure decreases 0 {
@@ -1561,12 +1367,11 @@ fn f(n: Int) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_UNKNOWN_VARIANT` |
-| SoT | `diagnostics.hpp:212` + template line `455` |
-| MessageTemplate | `match arm references unknown variant '{}' of enum '{}'` |
+| 消息形式 | `match arm references unknown variant '{}' of enum '{}'` |
 
 **触发条件**：某 match 分支引用了 scrutinee enum 不存在的 variant。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Dir { Up, Down }
@@ -1592,12 +1397,11 @@ fn f(d: Dir) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_VARIANT_PAYLOAD_ARITY` |
-| SoT | `diagnostics.hpp:214` + template line `457` |
-| MessageTemplate | `variant '{}' of enum '{}' expects {} payload slot(s), got {} in pattern` |
+| 消息形式 | `variant '{}' of enum '{}' expects {} payload slot(s), got {} in pattern` |
 
 **触发条件**：pattern 里 variant 附带的绑定数与实际 payload 槽数不相等。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum T { A(Int, Int), B(String) }
@@ -1622,12 +1426,11 @@ fn f(t: T) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.INVALID_ENUM_VARIANT_SHAPE` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `variant '{}' of enum '{}' is declared as {}, but pattern uses {} syntax` / `... constructor uses ... syntax` |
+| 消息形式 | `variant '{}' of enum '{}' is declared as {}, but pattern uses {} syntax` / `... constructor uses ... syntax` |
 
 **触发条件**：variant 声明为 unit / tuple / struct 中的一种，但 pattern 或构造表达式使用了另一种 payload shape。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Packet {
@@ -1655,8 +1458,7 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_VARIANT_FIELD` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `struct variant pattern for '{}' is missing field '{}'` |
+| 消息形式 | `struct variant pattern for '{}' is missing field '{}'` |
 
 **触发条件**：struct variant pattern 没有使用 `..`，但未列出某个声明字段。
 
@@ -1664,7 +1466,7 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 - `variant_name`：缺字段的 struct-form enum variant 名称。
 - `missing_field`：缺失字段名。LSP quick fix 只消费该结构化字段名，不反解析 diagnostic message。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Packet {
@@ -1691,8 +1493,7 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNEXPECTED_VARIANT_FIELD` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `struct variant '{}' has no field '{}'` |
+| 消息形式 | `struct variant '{}' has no field '{}'` |
 
 **触发条件**：struct variant pattern 或 struct-form variant constructor 使用了未声明字段。
 
@@ -1701,7 +1502,7 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 - `unexpected_field`：多余字段名。LSP quick fix 只消费该结构化字段名，不反解析 diagnostic message。
 - `variant_field_context`：字段出现位置，当前取值为 `pattern` 或 `constructor`。LSP 自动删除 quick fix 只在 `pattern` 上启用；constructor 场景需要用户确认是删除字段还是修改构造数据。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Packet {
@@ -1724,12 +1525,11 @@ const p: Packet = Packet::Data { code: 1, extra: 2 };
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MISSING_VARIANT_FIELD_IN_CONSTRUCTOR` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `struct variant constructor '{}' is missing required field '{}'` |
+| 消息形式 | `struct variant constructor '{}' is missing required field '{}'` |
 
 **触发条件**：构造 struct-form enum variant 时，没有提供某个无默认值的必填字段。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Packet {
@@ -1751,12 +1551,11 @@ const p: Packet = Packet::Data { code: 1 };
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_MISSING_PATTERNS` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `non-exhaustive match: missing patterns [{}]` |
+| 消息形式 | `non-exhaustive match: missing patterns [{}]` |
 
 **触发条件**：enum scrutinee 的 `match` 没有被无 guard arm 覆盖所有 variant。`_` 和 catch-all binding 覆盖所有 variant；带 guard 的 arm 不贡献穷尽性覆盖。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A, B, C }
@@ -1782,12 +1581,11 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_UNREACHABLE_ARM` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `this match arm is unreachable` |
+| 消息形式 | `this match arm is unreachable` |
 
 **触发条件**：当前 match arm 的 pattern 已经被前序无 guard arm 完全覆盖，因此该 arm 永远不会执行。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A, B }
@@ -1812,12 +1610,11 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_OVERLAP` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `pattern overlaps with arm #{}` |
+| 消息形式 | `pattern overlaps with arm #{}` |
 
 **触发条件**：当前 match arm 与某个前序 arm 在结构上有非空交集。带 guard 的前序 arm 仍可产生 overlap warning，但不会让后序 arm 自动不可达。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A, B }
@@ -1844,12 +1641,11 @@ fn f(e: E, cond: Bool) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_REDUNDANT_PATTERN` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `redundant pattern branch #{} in match arm #{}` |
+| 消息形式 | `redundant pattern branch #{} in match arm #{}` |
 
 **触发条件**：同一个 `match` arm 的 or-pattern 中，某个分支不再覆盖任何新 witness。典型情况是 `A | A`、`Some(true | true)`，或该分支已被同一 arm 内更早的分支覆盖。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A(Bool), B }
@@ -1875,12 +1671,11 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.UNREACHABLE_IF_LET_ELSE` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `this if-let else branch is unreachable` |
+| 消息形式 | `this if-let else branch is unreachable` |
 
-**触发条件**：`if let` 的 pattern 已经覆盖 scrutinee enum 的所有 constructor，并且用户仍然写了 `else` 分支。当前实现通过 RFC 0011 typed pattern HIR 和 usefulness matrix 判断覆盖关系。
+**触发条件**：`if let` 的 pattern 已经覆盖 scrutinee enum 的所有 constructor，并且用户仍然写了 `else` 分支。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum Only { Some(Int) }
@@ -1906,12 +1701,11 @@ fn f(value: Only) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_ARM_TYPE_MISMATCH` |
-| SoT | `diagnostics.hpp:218` + template line `461` |
-| MessageTemplate | `match arm body type mismatch: expected {}, got {}` |
+| 消息形式 | `match arm body type mismatch: expected {}, got {}` |
 
 **触发条件**：各 match 分支结果类型不一致，无法合并成 match 表达式的整体类型。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum E { A, B }
@@ -1936,12 +1730,11 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_DUPLICATE_BINDING` |
-| SoT | `diagnostics.hpp:220` + template line `462` |
-| MessageTemplate | `duplicate binding '{}' in match pattern` |
+| 消息形式 | `duplicate binding '{}' in match pattern` |
 
 **触发条件**：同一 match pattern 中同一名字被绑定了两次。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum P { P(Int, Int) }
@@ -1965,12 +1758,11 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.MATCH_OR_PATTERN_BINDING_MISMATCH` |
-| SoT | `diagnostics.hpp` |
-| MessageTemplate | `or-pattern binding '{}' must appear with equivalent types in every branch` |
+| 消息形式 | `or-pattern binding '{}' must appear with equivalent types in every branch` |
 
 **触发条件**：同一个 or-pattern 中，各分支没有绑定同一组名字，或同名 binding 在不同分支推导出不等价的类型。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 module repro;
 enum P { A(Int), B(String) }
@@ -1995,12 +1787,11 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.QUANTIFIER_REQUIRES_COLLECTION` |
-| SoT | `diagnostics.hpp:392` + template line `763` |
-| MessageTemplate | `quantifier operand after 'in' must be a List, Set, or Map, but got {}` |
+| 消息形式 | `quantifier operand after 'in' must be a List, Set, or Map, but got {}` |
 | Severity | Error |
 
 **触发条件**：`forall x in coll: …` / `exists (k, v) in coll: …` 的集合操作数
-`coll` 解析后不是名义 `List<T>` / `Set<T>` / `Map<K,V>`（[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)）。
+`coll` 解析后不是名义 `List<T>` / `Set<T>` / `Map<K,V>`。
 
 **常见修复**：把 `in` 后面的操作数改为集合类型的值；标量/结构体不可被量化遍历。
 
@@ -2013,8 +1804,7 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.QUANTIFIER_BODY_REQUIRES_BOOL` |
-| SoT | `diagnostics.hpp:394` + template line `765` |
-| MessageTemplate | `the body of a '{}' quantifier must have type Bool, but got {}` |
+| 消息形式 | `the body of a '{}' quantifier must have type Bool, but got {}` |
 | Severity | Error |
 
 **触发条件**：量化 body 谓词类型不是 `Bool`。binder 在 body 作用域内绑定为元素类型
@@ -2031,12 +1821,11 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.COLLECTION_CAPACITY_NOT_ALLOWED` |
-| SoT | `diagnostics.hpp:401` + template line `769` |
-| MessageTemplate | `a capacity suffix '(N)' is only allowed on List, Set, or Map, not on '{}'` |
+| 消息形式 | `a capacity suffix '(N)' is only allowed on List, Set, or Map, not on '{}'` |
 | Severity | Error |
 
 **触发条件**：把 `(N)` capacity 精化后缀写在了非集合类型上
-（[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md) 只允许 `List<T>(N)` /
+（只允许 `List<T>(N)` /
 `Set<T>(N)` / `Map<K,V>(N)`），如 `MyStruct(4)` 或无类型参数的裸名。
 
 **常见修复**：capacity 仅用于 List/Set/Map；其它类型删除 `(N)` 后缀。
@@ -2050,15 +1839,14 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.COLLECTION_CAPACITY_EXCEEDED` |
-| SoT | `diagnostics.hpp:403` + template line `772` |
-| MessageTemplate | `collection capacity {} exceeds the target capacity {}` |
+| 消息形式 | `collection capacity {} exceeds the target capacity {}` |
 | Severity | Error |
 
 **触发条件**：把更宽/无界的集合赋给更窄的有界集合槽位——违反 capacity 子类型格
 （`List<T>(N) <: List<T>(M)` 当且仅当 `N <= M`；无界 **不** <: 有界）。当且仅当
 capacity 是赋值失败的**唯一**原因（源/目标同为 List/Set/Map,元素/键/值类型互相可赋值,
 仅 `源 capacity > 目标 capacity`）时发射此专用码;元素类型不符或无界源等其它失败形态
-仍走通用 `TYPE_MISMATCH`。参见 `docs/spec/core-language.zh.md` §5.5。
+仍走通用 `TYPE_MISMATCH`。参见[核心语言规范](../spec/core-language.zh.md) §5.5。
 
 **常见修复**：收紧源集合的 capacity 到 `<= 目标`，或把目标槽位放宽/改为无界。
 
@@ -2066,45 +1854,28 @@ capacity 是赋值失败的**唯一**原因（源/目标同为 List/Set/Map,元�
 
 ---
 
-## 5. Backend SMV/BMC（3）
+## 5. Backend SMV/BMC
 
 传给后端之前最后一道检查，涉及后端可处理规模预算与单形态化预算，以及形式化验证阶段的可验证子集判定。
 
-### MONOMORPHIZATION_BUDGET_EXCEEDED
-
-已在 3.Effects & Contracts 给出完整条目（该码由 typecheck 阶段发射，语义上属于实例化预算检查）。本分组作为 backend 分类的入口锚点保留，详情请跳转该条。
+泛型实例化超预算时，参阅前文 `typecheck.MONOMORPHIZATION_BUDGET_EXCEEDED`。
 
 ### NOT_IN_VERIFIED_SUBSET
 
 | 字段 | 值 |
 | --- | --- |
 | Error code | `formal.NOT_IN_VERIFIED_SUBSET` |
-| SoT | `diagnostics.hpp:457` + template line `817` |
-| MessageTemplate | `contract {} clause for '{}' is not in the verifiable subset: {}; it will be abstracted and not proven by the BMC/SMT engine` |
-| Severity | Warning（建议性；子句被抽象而非拒绝） |
+| 消息形式 | `requested contract {} {}[{}] cannot be proven: {}` |
+| Severity | Error（所请求的条款无法证明，数据验证请求会失败） |
 
-**触发条件**：`ahflc verify` 时，某个 `contract` 数据谓词子句（`requires` / `ensures` /
-`invariant` / `forbid` 的表达式分支）离开 SMT 可验证子集，无法被 SMT-BMC 引擎编码证明，
-因而被形式化后端抽象为观测假设。由 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md)
-定义（可验证子集边界见 `docs/spec/core-language.zh.md` §5.6）。
+**触发条件**：请求数据合同验证时，条款没有可用的 SMT 编码规则，例如无规则定义的宿主 predicate 或不支持的数据运算。
 
-**与 `typecheck.NOT_IN_VERIFIED_SUBSET` 的区别**：同名但不同分类。`typecheck` 版在类型
-检查阶段拦截"调用进入可验证子集上下文却违反 effect 子集条件"；`formal` 版在验证阶段
-标注"数据谓词无 SMT 编码规则"（如 `String` 内容判定、capability 结果、非纯表达式）。
-注：有界集合上的 `forall`/`exists` 量化**在子集内**（[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)
-经有限展开编码）；仅当集合无静态上界时按 `formal.UNBOUNDED_QUANTIFIER` 拒绝（见下）。
-
-**最小复现**：
-```ahfl
-contract for A {
-    requires: input.name == "alice";   // String 内容谓词，离开子集 -> 告警
-    ensures: 1 + 1 == 2;               // 算术谓词，在子集内 -> 不告警
-}
-```
+**与 `typecheck.NOT_IN_VERIFIED_SUBSET` 的区别**：`typecheck` 诊断在检查源码的类型和效果约束时产生；`formal` 诊断说明所请求数据目标或必要前提不能编码为证明问题。
 
 **常见修复**：
-- 把可验证性依赖的谓词改写为整数/布尔关系（子集内）。
-- 或接受该子句作为观测假设——它仍在 SMV 时序路径中生效，只是不被 SMT-BMC 精确证明。
+- 根据诊断中的条款位置和拒绝原因，将谓词改写到支持的整数、布尔或有界集合子集。
+- 使用 `ahflc check --manifest path/to/ahfl.toml --verify-data-contracts` 显式请求数据合同验证。未请求的数据目标不代表已证明；不支持的目标或必要前提会使该请求失败，不能把抽象观测当作数据证明。
+- 范围与反例解释见[保证与验证指南](../tutorials/assurance.zh.md)。
 
 **Related codes**：`typecheck.NOT_IN_VERIFIED_SUBSET`、`typecheck.EFFECT_NOT_PURE`。
 
@@ -2115,20 +1886,12 @@ contract for A {
 | 字段 | 值 |
 | --- | --- |
 | Error code | `formal.UNBOUNDED_QUANTIFIER` |
-| SoT | `diagnostics.hpp:481` |
-| MessageTemplate | `quantified collection has no static capacity bound; give it a bounded collection type (e.g. List<T>(N)) to verify a quantified property over it` |
+| 消息形式 | `quantified collection has no static capacity bound; give it a bounded collection type (e.g. List<T>(N)) to verify a quantified property over it` |
 | Severity | Warning（子集边界；子句被 fail-closed 拒绝，不抽象） |
 
-**触发条件**：`ahflc verify` 时，`contract` 数据谓词中的有界量化子句
-（`forall x in coll: P` / `exists (k, v) in coll: P`）的集合 `coll` 没有静态长度上界
-——即其类型是无界的 `List<T>` / `Set<T>` / `Map<K,V>`，而非有界的 `List<T>(N)`
-（[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md) capacity 精化）。SMT-BMC 引擎
-只能对有界集合做有限展开，故 **fail-closed 拒绝**该子句（区别于 `NOT_IN_VERIFIED_SUBSET`
-的"抽象为假设"）：绝不猜测边界、也不验证 vacuous 实例。由
-[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md) 定义（语义见
-`docs/spec/core-language.zh.md` §5.6）。
+**触发条件**：请求数据合同验证时，量化集合没有静态容量上界，即类型为无界 `List<T>` / `Set<T>` / `Map<K,V>`。验证器需要静态容量才能有限展开；没有上界时拒绝该条款，不猜测边界。
 
-**最小复现**：
+**示例片段**：
 ```ahfl
 struct Req { xs: collections::List<Int>; }        // 无界 -> 量化被拒
 contract for A {
@@ -2138,37 +1901,25 @@ contract for A {
 
 **常见修复**：
 - 给集合一个有界类型：`xs: collections::List<Int>(8)` —— capacity `N` 作为展开上界。
-- 展开后每个元素谓词复用标量子集编码；元素越界即超出 `N` 的部分不在验证范围内。
+- 使用有界集合时，实际输入也必须满足容量限制；不能通过忽略超出容量的元素获得证明。
 
 **Related codes**：`formal.NOT_IN_VERIFIED_SUBSET`、`typecheck.COLLECTION_CAPACITY_NOT_ALLOWED`、
 `typecheck.QUANTIFIER_REQUIRES_COLLECTION`。
 
 ---
 
-## 6. Linting & Migration（1）
+## 6. 语义警告
 
-不影响正确性的语义告警，主要服务于代码整洁度、升级迁移与终止精度提示。
+这些警告提示遮蔽或终止度量的精度变化。检查警告描述，再决定是否修改命名或度量。
 
 ### DECREASES_SHADOWED_RECEIVER
 
 | 字段 | 值 |
 | --- | --- |
 | Error code | `typecheck.DECREASES_SHADOWED_RECEIVER` |
-| SoT | `diagnostics.hpp:311` + template line `488` |
-| MessageTemplate | `decreases clause receiver 'self' is shadowed by a local binding of type '{}'; the termination measure is degraded to an abstract observation` |
+| 消息形式 | `decreases clause receiver 'self' is shadowed by a local binding of type '{}'; the termination measure is degraded to an abstract observation` |
 
 **触发条件**：`decreases` 子句显式使用了 `self`，而该 `self` 在作用域内被同名 let 遮蔽。
-
-**最小复现**：
-```ahfl
-module repro;
-struct Wrap { n: Int; }
-fn f(self: Wrap) -> Bool effect Pure decreases self.n {
-    // 遮蔽 decreases 所引用的 receiver/字段时触发（示意）。
-    let n: Int = 0;
-    return n > 0;
-}
-```
 
 **常见修复**：
 - 遮蔽场景下使用独立变量名，例如 `next`。
@@ -2180,20 +1931,20 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 ## 7. Visibility Diagnostics
 
-这些 code 来自 RFC 0009 的 symbol visibility 与 public API surface 语义。
+跨 package 使用符号、导出 API 或 handoff target 时，检查 `pub`、`[exports].modules` 和 import。
 
 | Code | Severity | Source | 触发条件 |
 | --- | --- | --- | --- |
-| `visibility.PRIVATE_SYMBOL` | error | Resolver | 跨 package 引用 package-internal symbol。 |
-| `visibility.PRIVATE_MODULE` | error | Project loader / Resolver | 跨 package import/reference 进入 non-exported module，且没有 API-reachable facade。 |
-| `visibility.MISSING_IMPORT` | error | Resolver | 目标 public API 存在，但当前 source 没有 import 暴露它的 module/facade。 |
-| `visibility.PRIVATE_IN_PUBLIC` | error | Resolver public-surface pass | `pub` declaration 的 public signature 泄漏 package-internal 或 non-API-reachable symbol。 |
-| `visibility.UNREACHABLE_PUBLIC` | warning | Resolver effective-visibility pass | `pub` symbol 既不是 API-reachable，也不是 artifact-reachable。 |
-| `visibility.REEXPORT_MISSING_DEPENDENCY` | error | Resolver `pub use` pass | `pub use` 尝试 re-export 当前 package 未依赖的外部 package symbol。 |
-| `visibility.REEXPORT_PRIVATE_SYMBOL` | error | Resolver `pub use` pass | `pub use` 尝试暴露非 `pub` target symbol。 |
-| `visibility.HANDOFF_EXPORT_PRIVATE_SYMBOL` | error | Resolver artifact-reachability pass | handoff target export 引用非 `pub` source symbol。 |
-| `visibility.PUBLIC_IMPL_PRIVATE_RECEIVER` | error | Resolver impl-visibility pass | public inherent impl item 暴露对依赖方不可见的 receiver type。 |
-| `visibility.DUPLICATE_VISIBILITY_MODIFIER` | error | Resolver syntax-surface validation | declaration 同时携带多于一个 `pub` marker，例如 `pub pub fn`。 |
+| `visibility.PRIVATE_SYMBOL` | error | 编译器 | 跨 package 引用 package-internal symbol。 |
+| `visibility.PRIVATE_MODULE` | error | 编译器 | 跨 package import/reference 进入 non-exported module，且没有 API-reachable facade。 |
+| `visibility.MISSING_IMPORT` | error | 编译器 | 目标 public API 存在，但当前 source 没有 import 暴露它的 module/facade。 |
+| `visibility.PRIVATE_IN_PUBLIC` | error | 编译器 | `pub` declaration 的 public signature 泄漏 package-internal 或 non-API-reachable symbol。 |
+| `visibility.UNREACHABLE_PUBLIC` | warning | 编译器 | `pub` symbol 既不是 API-reachable，也不是 artifact-reachable。 |
+| `visibility.REEXPORT_MISSING_DEPENDENCY` | error | 编译器 | `pub use` 尝试 re-export 当前 package 未依赖的外部 package symbol。 |
+| `visibility.REEXPORT_PRIVATE_SYMBOL` | error | 编译器 | `pub use` 尝试暴露非 `pub` target symbol。 |
+| `visibility.HANDOFF_EXPORT_PRIVATE_SYMBOL` | error | 编译器 | handoff target export 引用非 `pub` source symbol。 |
+| `visibility.PUBLIC_IMPL_PRIVATE_RECEIVER` | error | 编译器 | public inherent impl item 暴露对依赖方不可见的 receiver type。 |
+| `visibility.DUPLICATE_VISIBILITY_MODIFIER` | error | 编译器 | declaration 同时携带多于一个 `pub` marker，例如 `pub pub fn`。 |
 
 **常见修复**：
 - 对稳定 API 加 `pub`，并确保其所在 module 被 `[exports].modules` 导出，或通过 exported module 中的 `pub use` facade 暴露。
@@ -2202,8 +1953,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 ## 8. Project / Tooling Diagnostics
 
-这些 code 来自 project discovery、CLI 和 LSP 层，不一定对应
-`messages::typecheck` 模板。
+这些诊断用于定位工程发现、依赖配置和编辑器单文件分析问题。
 
 ### N::detached_source_unit
 
@@ -2218,7 +1968,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 **常见修复**：
 - 对真实工程创建 `ahfl.toml`。
-- 对 scratch / formatter fixture 接受 detached 限制。
+- 只编辑独立草稿时可保留单文件模式。
 
 ### E::detached_import
 
@@ -2232,7 +1982,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 **常见修复**：
 - 为文件创建 package manifest，或通过 `--manifest` 运行。
-- 若只是 formatter fixture，移除 import。
+- 只需要格式化时使用 `ahflc fmt`；格式化本身不要求 manifest。
 
 ### E::detached_unknown_nominal_type
 
@@ -2247,7 +1997,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 **常见修复**：
 - 在当前文件声明该类型。
-- 或迁移到 manifest-backed package，并显式 import 对应 std/user module。
+- 或用 `ahflc init --single-file` 创建 package，再显式 import 对应模块。
 
 ### E::package_dependency_missing
 
@@ -2268,7 +2018,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 | --- | --- |
 | Diagnostic code | `E::primitive_shadowing_forbidden` |
 | Severity | error |
-| Source | Resolver |
+| Source | 编译器 |
 
 **触发条件**：用户顶层声明试图覆盖 language primitive prelude 名称，例如
 `struct String {}`。
@@ -2281,32 +2031,11 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 | --- | --- |
 | Diagnostic code | `W::primitive_home_unavailable` |
 | Severity | warning / LSP warning |
-| Source | LSP `SysrootPrimitiveIndex` |
+| Source | LSP 标准库导航 |
 
 **触发条件**：detached 文件使用 primitive type，但 active sysroot 缺少该 primitive
-canonical home，或没有可用 default ToolchainProfile。
+定义源文件，或没有可用 sysroot。
 
 **常见修复**：
 - 配置 `ahfl.toolchain.sysroot` 或 LSP default sysroot。
 - 修复 sysroot，使 `std/string.ahfl`、`std/bool.ahfl` 等 primitive home 文件存在。
-
-## 9. TBD
-
-暂无"已登记但尚未归类"的稳定错误码。
-
-下一波拟加入：解析/消解稳定码（`parse::*` 与 `resolve::*`），以及 validation、backend 分类下的稳定码。
-参见未来工作：`g-4`（validation / backend error-code 盘点与对齐）。
-
----
-
-## Unmapped diagnostics
-
-当前 `include/ahfl/base/support/diagnostics.hpp` 中存在 **38 条** 已定义 message template 尚未与公开稳定错误码一一对应（多为类型检查内部辅助模板、cross-category 复用模板、或已计划在 g-4 工作中拆分的专用模板）。包括但不限于：
-
-- 类型解析辅助模板（`ResolvedTypeSymbolMissing`、`SymbolDoesNotNameType`、`TypeAliasCycleDuringResolution`、`TypeAliasDeclarationMissing`、`StdContainerTypeUnavailable` 等）；
-- 操作符专用模板（`InvalidOperator`、`LogicalNotRequiresBool`、`NumericUnaryRequiresNumeric`、`NoneComparisonRequiresOptional`、`LogicalOperatorRequiresBool`、`ComparisonOperandsIncompatible`、`ArithmeticOperatorInvalid`、`ModuloRequiresInt`、`BoolExpressionRequired`、`IntExpressionRequired` 等）；
-- Struct/Enum 声明侧重复字段检查（`DuplicateStructField`、`MissingAgentContextDefault`）；
-- Symbol/metadata 缺失专用分支（`CallTargetSymbolMissing`、`SymbolDoesNotNameCallable`、`CapabilityTypeInfoMissing`、`PredicateTypeInfoMissing`、`ConstTypeInfoMissing`、`StructTypeInfoMissing`、`EnumTypeInfoMissing`）；
-- 其它内部诊断（`PredicateArgsNotPure`、`ListIndexRequiresInt`、`AssignmentTargetRequiresContext`、`SchemaBoundaryTypeRequiresStruct`、`ConstDependencyCycleParticipant`、`CapabilityNotDeclared`、`OrphanImplHint`、`CoherenceConflictPrevious`、`TraitMethodNotInTrait`、`ImplTargetMustBeNominal`、`TraitSelfNotYetSupported` 等）。
-
-将这些模板升级为"公开稳定错误码 + 可翻译文案"属于 `g-4`（待创建）的后续任务，预期对齐后 Coverage 将提升至 100 条以上 codes。

@@ -48,7 +48,6 @@ add_subdirectory(tooling/repl)
 add_subdirectory(tooling/dap)
 add_subdirectory(tooling/telemetry)
 add_subdirectory(tooling/profiling)
-add_subdirectory(tooling/abi)
 add_subdirectory(tooling/cache)
 add_subdirectory(tooling/testing)
 add_subdirectory(tooling/package)
@@ -95,7 +94,6 @@ target_link_libraries(ahfl_tooling_bundle
         ahfl_tooling_dap
         ahfl_tooling_telemetry
         ahfl_tooling_profiling
-        ahfl_tooling_abi
         ahfl_tooling_cache
         ahfl_tooling_testing
         ahfl_tooling_package

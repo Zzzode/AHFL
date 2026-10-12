@@ -92,7 +92,7 @@ fn map_raw_insert<K, V>(m: Map<K, V>, k: K, v: V) -> Map<K, V> effect Pure;
 // Module-level constructors. These remain at module level because AHFL's
 // current dispatch path is receiver-first: impl methods must have a self
 // expression. Users call these as `collections::empty<T>()` or through
-// prelude aliases (`List::empty<T>()` once prelude P6 is populated).
+// the explicit prelude (`empty<T>()`).
 // ===========================================================================
 
 fn list_empty<T>() -> List<T> effect Pure decreases 0 {
@@ -386,11 +386,8 @@ impl<T> List<T> {
     pub fn flat_map<U>(self, f: Fn(T) -> List<U>) -> List<U> effect Pure
         decreases list_raw_length<T>(self) {
         // Lambda body is expression-only per RFC §6 closure grammar.
-        // We invoke the List::append UFCS wrapper in positional style because
-        // P3 impl-method dispatch does not reliably resolve impl methods on
-        // lambda-captured generic receivers from within nested closure bodies.
         return self.fold<List<U>>(list_empty<U>(),
-            \ (acc, item) -> append<U>(acc, f(item)));
+            \ (acc, item) -> acc.append(f(item)));
     }
 
     pub fn reverse(self) -> List<T> effect Pure decreases list_raw_length<T>(self) {
@@ -451,85 +448,21 @@ impl<K, V> Map<K, V> {
 }
 
 // ===========================================================================
-// Deprecated UFCS wrappers (P5 → P6, one release cycle). Keep these so
-// `collections::map(xs, f)` / `set_is_empty(...)` still compile.
+// Collection constructors. Receiver operations live in the inherent impls.
 // ===========================================================================
 
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer the inherent-impl / prelude form.
 pub fn empty<T>() -> List<T> effect Pure decreases 0 {
     return list_empty<T>();
 }
 
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer the inherent-impl / prelude form.
 pub fn singleton<T>(x: T) -> List<T> effect Pure decreases 0 {
     return list_singleton<T>(x);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.is_empty()` via the inherent impl on `List<T>`.
-pub fn is_empty<T>(self: List<T>) -> Bool effect Pure decreases 0 {
-    return self.is_empty();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.length()` via the inherent impl on `List<T>`.
-pub fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
-    return self.length();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.get(i)` via the inherent impl on `List<T>`.
-pub fn list_get<T>(self: List<T>, i: Int) -> option::Option<T> effect Pure decreases 0 {
-    return self.get(i);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.first()` via the inherent impl on `List<T>`.
-pub fn first<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
-    return self.first();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.last()` via the inherent impl on `List<T>`.
-pub fn last<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
-    return self.last();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.append(other)` via the inherent impl on `List<T>`.
-pub fn append<T>(self: List<T>, other: List<T>) -> List<T> effect Pure
-    decreases list_raw_length<T>(self) + list_raw_length<T>(other) {
-    return self.append(other);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.map(f)` via the inherent impl on `List<T>`.
-pub fn map<T, U>(self: List<T>, f: Fn(T) -> U) -> List<U> effect Pure
-    decreases list_raw_length<T>(self) {
-    return self.map<U>(f);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.filter(p)` via the inherent impl on `List<T>`.
-pub fn filter<T>(self: List<T>, p: Fn(T) -> Bool) -> List<T> effect Pure
-    decreases list_raw_length<T>(self) {
-    return self.filter(p);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.fold(init, f)` via the inherent impl on `List<T>`.
-pub fn fold<T, U>(self: List<T>, init: U, f: Fn(U, T) -> U) -> U effect Pure
-    decreases list_raw_length<T>(self) {
-    return self.fold<U>(init, f);
 }
 
 // List algorithms (M2-1): sort / dedup. UFCS surface over the @builtin hooks
 // above. sort is stable ascending over primitive T (Int/Float/Bool/String via
 // the cmp cascade); dedup drops consecutive equals (pair with sort for full
-// uniqueness). slice already exists (inherent + UFCS list_slice, bounds-
-// checked -> Option<List<T>>).
+// uniqueness). List::slice is bounds-checked and returns Option<List<T>>.
 pub fn sort<T>(self: List<T>) -> List<T> effect Pure decreases 0 {
     return list_sort<T>(self);
 }
@@ -538,151 +471,20 @@ pub fn dedup<T>(self: List<T>) -> List<T> effect Pure decreases 0 {
     return list_dedup<T>(self);
 }
 
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer the inherent-impl / prelude form.
 pub fn set_empty<T>() -> Set<T> effect Pure decreases 0 {
     return set_empty_ctor<T>();
 }
 
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer the inherent-impl / prelude form.
 pub fn set_singleton<T>(x: T) -> Set<T> effect Pure decreases 0 {
     return set_singleton_ctor<T>(x);
 }
 
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `s.is_empty()` via the inherent impl on `Set<T>`.
-pub fn set_is_empty<T>(self: Set<T>) -> Bool effect Pure decreases 0 {
-    return self.is_empty();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `s.contains(x)` via the inherent impl on `Set<T>`.
-pub fn contains<T>(self: Set<T>, x: T) -> Bool effect Pure decreases 0 {
-    return self.contains(x);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer the inherent-impl / prelude form.
 pub fn map_empty<K, V>() -> Map<K, V> effect Pure decreases 0 {
     return map_empty_ctor<K, V>();
 }
 
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer the inherent-impl / prelude form.
 pub fn map_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure decreases 0 {
     return map_singleton_ctor<K, V>(key, value);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `m.is_empty()` via the inherent impl on `Map<K, V>`.
-pub fn map_is_empty<K, V>(self: Map<K, V>) -> Bool effect Pure decreases 0 {
-    return self.is_empty();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `m.contains_key(key)` via the inherent impl on `Map<K, V>`.
-pub fn contains_key<K, V>(self: Map<K, V>, key: K) -> Bool effect Pure decreases 0 {
-    return self.contains_key(key);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `m.get(key)` via the inherent impl on `Map<K, V>`.
-pub fn map_get<K, V>(self: Map<K, V>, key: K) -> option::Option<V> effect Pure decreases 0 {
-    return self.get(key);
-}
-
-// ===========================================================================
-// P6 new UFCS wrappers (RFC §4.2–4.4). Thin forwards to the inherent impl
-// methods above; retained for one release cycle so existing callers are not
-// forced to migrate to the dot-call surface immediately.
-// ===========================================================================
-
-// ---- List<T> (RFC §4.2) ---------------------------------------------------
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.contains(x)` via the inherent impl on `List<T>`.
-pub fn list_contains<T>(self: List<T>, x: T) -> Bool effect Pure decreases list_raw_length<T>(self) {
-    return self.contains(x);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.tail()` via the inherent impl on `List<T>`.
-pub fn list_tail<T>(self: List<T>) -> option::Option<List<T>> effect Pure decreases 0 {
-    return self.tail();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.concat(others)` via the inherent impl on `List<T>`.
-pub fn list_concat<T>(self: List<T>, others: List<List<T>>) -> List<T> effect Pure
-    decreases list_raw_length<List<T>>(others) {
-    return self.concat(others);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.slice(start, end)` via the inherent impl on `List<T>`.
-pub fn list_slice<T>(self: List<T>, start: Int, end: Int) -> option::Option<List<T>> effect Pure decreases 0 {
-    return self.slice(start, end);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.insert(idx, x)` via the inherent impl on `List<T>`.
-pub fn list_insert<T>(self: List<T>, idx: Int, x: T) -> option::Option<List<T>> effect Pure decreases 0 {
-    return self.insert(idx, x);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.remove(x)` via the inherent impl on `List<T>`.
-pub fn list_remove<T>(self: List<T>, x: T) -> List<T> effect Pure decreases list_raw_length<T>(self) {
-    return self.remove(x);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.remove_at(idx)` via the inherent impl on `List<T>`.
-pub fn list_remove_at<T>(self: List<T>, idx: Int) -> option::Option<List<T>> effect Pure decreases 0 {
-    return self.remove_at(idx);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.fold_right(init, f)` via the inherent impl on `List<T>`.
-pub fn list_fold_right<T, U>(self: List<T>, init: U, f: Fn(T, U) -> U) -> U effect Pure
-    decreases list_raw_length<T>(self) {
-    return self.fold_right<U>(init, f);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.flat_map(f)` via the inherent impl on `List<T>`.
-pub fn list_flat_map<T, U>(self: List<T>, f: Fn(T) -> List<U>) -> List<U> effect Pure
-    decreases list_raw_length<T>(self) {
-    return self.flat_map<U>(f);
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `xs.reverse()` via the inherent impl on `List<T>`.
-pub fn list_reverse<T>(self: List<T>) -> List<T> effect Pure decreases list_raw_length<T>(self) {
-    return self.reverse();
-}
-
-// ---- Set<T> (RFC §4.3) ----------------------------------------------------
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `s.length()` via the inherent impl on `Set<T>`.
-pub fn set_length<T>(self: Set<T>) -> Int effect Pure decreases 0 {
-    return self.length();
-}
-
-// ---- Map<K, V> (RFC §4.4) -------------------------------------------------
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `m.length()` via the inherent impl on `Map<K, V>`.
-pub fn map_length<K, V>(self: Map<K, V>) -> Int effect Pure decreases 0 {
-    return self.length();
-}
-
-/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
-/// should prefer `m.get_or(key, default)` via the inherent impl on `Map<K, V>`.
-pub fn map_get_or<K, V>(self: Map<K, V>, key: K, default: V) -> V effect Pure decreases 0 {
-    return self.get_or(key, default);
 }
 
 // ---------------------------------------------------------------------------

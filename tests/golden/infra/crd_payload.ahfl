@@ -1,0 +1,32 @@
+module std::collections;
+
+pub struct List<T> {}
+pub struct Set<T> {}
+pub struct Map<K, V> {}
+
+enum Message {
+    Accepted(String),
+    Rejected { reason: String, code: Int },
+}
+
+enum Flag { Yes, No, Null, }
+
+struct Frame {
+    yes: String;
+    flag: Flag;
+    message: Message;
+    labels: Set<String>(4);
+    attributes: Map<String, Int>(8);
+    values: List<Int>(6);
+}
+
+agent Schema {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [On, Off];
+    initial: On;
+    final: [Off];
+    capabilities: [];
+    transition On -> Off;
+}

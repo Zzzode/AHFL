@@ -22,10 +22,16 @@
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
+#include "ahfl/compiler/ir/typed_hir_lower.hpp"
+#include "ahfl/compiler/ir/verify.hpp"
+#include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_verify.hpp"
+#include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "compiler/syntax/frontend/project.hpp"
+#include "base/json/json_value.hpp"
 #include "runtime/value/value.hpp"
 
 #include "common/project_input_support.hpp"
@@ -98,6 +104,49 @@ struct CompileArtifacts {
     const ahfl::TypeChecker type_checker;
     a.tc = type_checker.check(a.parse.graph, a.resolve, {});
     return a;
+}
+
+void verify_lowered(const ahfl::TypedProgram &typed, const ahfl::SourceGraph &graph,
+                    bool verify_execution) {
+    const auto ir = ahfl::lower_typed_program(typed, graph);
+    const auto verified =
+        ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
+    for (const auto &diagnostic : verified.diagnostics) {
+        INFO(diagnostic.path << ": " << diagnostic.message);
+        CHECK(diagnostic.severity != ahfl::ir::VerificationSeverity::Error);
+    }
+    CHECK_FALSE(verified.has_errors());
+    if (!verify_execution) {
+        // This library still contains abstract generic declarations. Core
+        // requires executable-closure selection before lowering those bodies;
+        // the CLI regression exercises their concrete Int/Bool instantiations.
+        return;
+    }
+    const auto core = ahfl::ir::core::lower_ahfl_to_core(ir);
+    for (const auto &diagnostic : core.diagnostics) {
+        INFO(diagnostic.message);
+        CHECK(diagnostic.severity != ahfl::ir::core::CoreDiagnosticSeverity::Error);
+    }
+    CHECK_FALSE(core.has_errors());
+}
+
+void verify_try_program(std::string_view filename, std::string_view source,
+                        bool verify_execution = true) {
+    const auto a = compile_project_loose(filename, source);
+    REQUIRE_FALSE(a.parse.has_errors());
+    REQUIRE_FALSE(a.resolve.has_errors());
+    for (const auto &diagnostic : a.tc.diagnostics.entries()) {
+        INFO(diagnostic.message);
+        CHECK(diagnostic.severity != ahfl::DiagnosticSeverity::Error);
+    }
+    REQUIRE_FALSE(a.tc.has_errors());
+    verify_lowered(a.tc.typed_program, a.parse.graph, verify_execution);
+    // Persistent Typed HIR must retain the same propagation facts as a fresh
+    // typecheck, including source and target types in coercion witnesses.
+    const auto restored = ahfl::deserialize_typed_program_json(
+        ahfl::serialize_typed_program_json(a.tc.typed_program));
+    REQUIRE(restored.has_value());
+    verify_lowered(*restored, a.parse.graph, verify_execution);
 }
 
 } // anonymous namespace
@@ -262,4 +311,132 @@ fn try_bare_t<T>(o: Option<T>) -> T {
     CHECK(a.tc.has_errors());
     CHECK(diagnostic_count_with_code(a.tc.diagnostics,
                                      "typecheck.TRY_INCOMPATIBLE_RETURN_TYPE") == 1);
+}
+
+// Success and failure paths must survive the production verifier, not merely
+// typechecking: every generated path, pattern and constructor is fully typed.
+TEST_CASE("try_option_and_result_pass_backend_ready_and_core_verifiers") {
+    verify_try_program("try_verified", R"AHFL(module app::main;
+fn option_value(value: Option<Int>) -> Option<String> effect Pure decreases 0 {
+    let number = value?;
+    return std::option::Option::Some("present");
+}
+fn result_value(value: Result<Int, String>) -> Result<String, String> effect Pure decreases 0 {
+    let number = value?;
+    return std::result::Result::Ok("present");
+}
+fn option_constructor_to_text() -> Option<String> effect Pure decreases 0 {
+    let number: Int = (std::option::Option::Some(7))?;
+    return std::option::Option::Some("present");
+}
+fn result_constructor_to_text() -> Result<String, String> effect Pure decreases 0 {
+    let number: Int = std::result::Result::Ok(7)?;
+    return std::result::Result::Ok("present");
+}
+fn option_constructors() -> Option<Int> effect Pure decreases 0 {
+    let first: Int = std::option::Option::Some(7)?;
+    let second: Int = std::option::Option::None?;
+    return std::option::Option::Some(first + second);
+}
+fn result_constructors() -> Result<Int, String> effect Pure decreases 0 {
+    let first: Int = std::result::Result::Ok(7)?;
+    let second: Int = std::result::Result::Err("stop")?;
+    return std::result::Result::Ok(first + second);
+}
+)AHFL");
+}
+
+TEST_CASE("try_preserves_success_and_failure_adjustment_witnesses") {
+    verify_try_program("try_adjustments", R"AHFL(module app::main;
+fn widen_success(value: Option<Int(0, 10)>) -> Option<Int> effect Pure decreases 0 {
+    let number: Int = value?;
+    return std::option::Option::Some(number);
+}
+fn widen_error_constructor(error: Int(0, 10)) -> Result<String, Int> effect Pure decreases 0 {
+    let number: Int = std::result::Result::Err(error)?;
+    return std::result::Result::Ok("present");
+}
+fn widen_error(value: Result<Int, Int(0, 10)>) -> Result<String, Int> effect Pure decreases 0 {
+    let number = value?;
+    return std::result::Result::Ok("present");
+}
+)AHFL");
+}
+
+TEST_CASE("try_generic_instantiation_and_user_names_pass_verifiers") {
+    verify_try_program("try_generic_verified", R"AHFL(module app::main;
+fn generic_option<T>(value: std::option::Option<T>) -> std::option::Option<T> effect Pure decreases 0 {
+    let item: T = value?;
+    return std::option::Option::Some(item);
+}
+fn generic_result<T, E>(value: std::result::Result<T, E>) -> std::result::Result<T, E> effect Pure decreases 0 {
+    let item: T = value?;
+    return std::result::Result::Ok(item);
+}
+fn concrete() -> std::option::Option<Int> effect Pure decreases 0 {
+    return generic_option<Int>(std::option::Option::Some(7));
+}
+fn concrete_result() -> std::result::Result<Int, String> effect Pure decreases 0 {
+    return generic_result<Int, String>(std::result::Result::Ok(7));
+}
+fn names(value: std::result::Result<Int, String>, try_tmp_0: Int, err: Int) -> std::result::Result<Int, String> effect Pure decreases 0 {
+    let number = value?;
+    return std::result::Result::Ok(number + try_tmp_0 + err);
+}
+)AHFL", false);
+}
+
+TEST_CASE("try_rejects_incompatible_result_error_type") {
+    const auto a = compile_project_loose("try_incompatible_error", R"AHFL(module app::main;
+fn reject_error(value: Result<Int, String>) -> Result<Int, Int> effect Pure decreases 0 {
+    let number = value?;
+    return std::result::Result::Ok(number);
+}
+)AHFL");
+    CHECK(a.tc.has_errors());
+    CHECK(diagnostic_count_with_code(a.tc.diagnostics, "typecheck.TRY_INCOMPATIBLE_RETURN_TYPE") ==
+          1);
+}
+
+TEST_CASE("try_rejects_unconstrained_generic_error_conversion") {
+    const auto a = compile_project_loose("try_generic_error", R"AHFL(module app::main;
+fn incompatible<T, E, F>(value: Result<T, E>) -> Result<T, F> effect Pure decreases 0 {
+    let item: T = value?;
+    return std::result::Result::Ok(item);
+}
+)AHFL");
+    CHECK(a.tc.has_errors());
+    CHECK(diagnostic_count_with_code(a.tc.diagnostics, "typecheck.TRY_INCOMPATIBLE_RETURN_TYPE") ==
+          1);
+}
+
+TEST_CASE("try_cache_rejects_missing_or_null_propagation_facts") {
+    const auto a = compile_project_loose("try_cache_facts", R"AHFL(module app::main;
+fn cache_value(value: Option<Int>) -> Option<Int> effect Pure decreases 0 {
+    let item = value?;
+    return std::option::Option::Some(item);
+}
+)AHFL");
+    REQUIRE_FALSE(a.tc.has_errors());
+    const auto serialized = ahfl::serialize_typed_program_json(a.tc.typed_program);
+    auto json = ahfl::json::parse_json(serialized);
+    REQUIRE(json.has_value());
+    auto *expressions = (*json)->get_mut("expressions");
+    REQUIRE(expressions != nullptr);
+    auto entry = std::find_if(
+        expressions->array_items.begin(), expressions->array_items.end(), [](const auto &expr) {
+            const auto *info = expr->get("try_info");
+            return info != nullptr && info->is_object();
+        });
+    REQUIRE(entry != expressions->array_items.end());
+    (*entry)->set("try_info", ahfl::json::JsonValue::make_null());
+    CHECK_FALSE(
+        ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**json)).has_value());
+    auto &fields = (*entry)->object_fields;
+    fields.erase(std::remove_if(fields.begin(),
+                                fields.end(),
+                                [](const auto &field) { return field.first == "try_info"; }),
+                 fields.end());
+    CHECK_FALSE(
+        ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**json)).has_value());
 }

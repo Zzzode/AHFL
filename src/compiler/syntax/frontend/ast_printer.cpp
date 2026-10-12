@@ -996,7 +996,7 @@ class AstPrinter final {
                 [&](const ast::WildcardPattern &) { line(indent_level, "pattern_wildcard"); },
                 [&](const ast::BindingPattern &p) {
                     line(indent_level,
-                         std::string("pattern_binding ") + (p.is_mut ? "mut " : "") + p.name);
+                         std::string("pattern_binding ") + p.name);
                     if (p.nested) {
                         line(indent_level + 1, "nested");
                         print_pattern(*p.nested, indent_level + 2);

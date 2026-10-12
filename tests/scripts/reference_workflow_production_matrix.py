@@ -105,7 +105,7 @@ def run_worker(worker: Path, repo: Path, work: Path, endpoint: str) -> subproces
 def validate_completed_run(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
     require(result.returncode == 0, f"normal run failed:\n{result.stdout}\n{result.stderr}")
     report = json.loads(result.stdout)
-    require(report["schema"] == "ahfl.run-report", "normal run report schema mismatch")
+    require(report["format"] == "ahfl.run-report", "normal run report schema mismatch")
     require(report["run"]["status"] == "completed", "normal run did not complete")
     require(report["audit"]["terminal_invariant_holds"], "normal run terminal invariant failed")
     return report
@@ -213,7 +213,7 @@ def main() -> int:
     evidence.write_text(
         json.dumps(
             {
-                "schema": "ahfl.controlled-pilot-evidence.v1",
+                "format": "ahfl.controlled-pilot-evidence",
                 "status": "passed",
                 "source_revision": compute_source_revision(repo),
                 "reference_workflow": "examples/execution-demo",

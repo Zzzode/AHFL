@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/e3_capability_workflow_resume.ahfl",
   "kind": "workflow",
   "entry": "wasm::e3_capability_workflow_resume::CapabilityPipeline",

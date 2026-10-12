@@ -16,7 +16,7 @@
 E1, E2, and E3 now emit executable wasm for three P5 orchestration slices:
 
 1. an agent state machine with an opaque identity return;
-2. one terminal `ahfl_cap` call with `run2` status/ownership propagation; and
+2. one terminal `ahfl_cap` call with `run_workflow` status/ownership propagation; and
 3. one deterministic identity-only workflow DAG packaged with multiple agent
    instances.
 
@@ -81,7 +81,7 @@ The Wasmtime CLI is sufficient for:
 
 - E1 `step` invocation;
 - E2 import linkage plus ERROR/PENDING results through `--preload`; and
-- E3 legacy `run` pointer passthrough.
+- exact current entry signatures and absence of removed exports.
 
 It is insufficient for:
 
@@ -141,12 +141,12 @@ status scenario.
 For conforming OK:
 
 1. the host calls the target module's exported `alloc` for input and result
-   frames before `run2`;
+   frames before `run_workflow`;
 2. the imported callback, using Wasmtime caller access, reads the exact input
    bytes from the target memory, writes the deterministic result bytes into the
    target-allocated result frame, and returns `(OK, ptr, len)`;
 3. the harness records the exact imported field/SymbolId sequence;
-4. `run2` must return the same result pointer and length;
+4. `run_workflow` must return the same result pointer and length;
 5. result bytes must equal the native capability mock's `value_json` bytes; and
 6. the outer caller invokes target `dealloc` exactly once for the returned
    result and once for its still-owned input.
@@ -174,12 +174,12 @@ empty capability sequence, and identity output.
 The embedded Wasmtime host instantiates the no-import workflow once and:
 
 1. verifies `workflow_node_count` before execution;
-2. calls `run2` with target-allocated input bytes;
+2. calls `run_workflow` with target-allocated input bytes;
 3. checks OK plus exact pointer/length alias and unchanged bytes;
 4. checks `workflow_completed_count` and `transition_count`;
 5. proves `step` and `current_state` trap without changing counters;
-6. calls `run2` again and proves counters reset rather than accumulate;
-7. invokes legacy `run` and checks the same identity result; and
+6. calls `run_workflow` again and proves counters reset rather than accumulate;
+7. checks that the removed pointer-only export is absent; and
 8. deallocates the outer input exactly once.
 
 The exact node order is still composite evidence in E4-A: native
@@ -226,7 +226,7 @@ installed by the default configure/build/test path.
 
 A design-time feasibility audit (not release evidence) loaded the existing E1,
 E2, and E3 binaries with the official 28.0.0 binding. It executed E1 `step`, E3
-`run2` plus persistent globals, and an E2 caller-aware import that read/wrote
+`run_workflow` plus persistent globals, and an E2 caller-aware import that read/wrote
 the target memory and returned a target-allocated OK frame. This only proves
 the proposed host API can express the required test; the committed required CI
 lane remains the evidence source.
@@ -288,7 +288,7 @@ post-test gate rejects any missing/skipped required test.
 
 The conformance job writes a generated, uncommitted JSON artifact under
 `build/release-evidence/wasm/`, with a versioned schema such as
-`ahfl.wasm-conformance.v1`. It contains only deterministic identities and
+`ahfl.wasm-conformance`. It contains only deterministic identities and
 observations:
 
 - source commit SHA;
@@ -321,8 +321,7 @@ rejects:
 - inconsistent native/Wasmtime observations;
 - `execution_proven: true` while either durable resume or exact runtime
   workflow order is false; and
-- unknown manifest fields that would alter claim semantics without a schema
-  bump.
+- unknown manifest fields that would alter claim semantics without an explicit current-contract update.
 
 The E4-A producer must set `implemented_subset_execution_evidenced: true` and
 `kr6_5_execution_proven: false`. Only E4-B may change the latter after all five
@@ -353,7 +352,7 @@ semantics or ABI:
 1. accept a canonical opaque capability chain without evaluating Core
    expressions, assign per-node ordinals in Core order, and preserve the exact
    RFC 0022 memo key;
-2. define one append-only resume entry and a versioned index-based resume
+2. define one current resume entry and an index-based authenticated resume
    control record that can be rehydrated into a fresh module instance;
 3. cross-check `(node_id, cap_id, ordinal, arg_hash)` without confusing opaque
    wire bytes with P4-D layout or inventing a second `Value` type checker;
@@ -399,7 +398,7 @@ Required real-Wasmtime CI/release tests after owner approval:
 5. E4 embedded E1 complete state sequence plus identity output;
 6. E4 embedded E2 OK/ERROR/PENDING/unknown/latch matrix, exact SymbolId sequence,
    conforming output bytes, and deallocation counts;
-7. E4 embedded E3 persistent counts, traps, reset, legacy run, and identity
+7. E4 embedded E3 persistent counts, traps, reset, removed-export rejection, and identity
    output; and
 8. final evidence gate proving all seven preceding test identities passed
    without SKIP.

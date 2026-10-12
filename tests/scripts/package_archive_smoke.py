@@ -72,7 +72,7 @@ def main():
         raise AssertionError(f"missing archive payload: {payload_artifact}")
 
     archive = json.loads(manifest_artifact.read_text(encoding="utf-8"))
-    if archive.get("format_version") != "ahfl.source_archive.v1":
+    if archive.get("format") != "ahfl.source_archive":
         raise AssertionError(f"unexpected archive schema: {archive}")
     if archive.get("package") != "no-deps-app":
         raise AssertionError(f"unexpected archive package: {archive}")
@@ -90,7 +90,7 @@ def main():
         assert_sha256(entry["sha256"], f"{path}.sha256")
 
     payload = payload_artifact.read_bytes()
-    if not payload.startswith(b"ahfl.source_archive.v1\x00no-deps-app\x00"):
+    if not payload.startswith(b"ahfl.source_archive\x00no-deps-app\x00"):
         raise AssertionError(f"unexpected archive payload prefix: {payload[:80]!r}")
     if b"\r" in payload:
         raise AssertionError("archive payload contains non-normalized CR bytes")

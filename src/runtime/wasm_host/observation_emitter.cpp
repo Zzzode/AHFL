@@ -124,7 +124,7 @@ std::string emit_observation(const ObservationData &data) {
         fields.push_back({R"("output_json")", *data.output_json});
     }
     fields.push_back({R"("scenario")", json_escape(data.scenario_name)});
-    fields.push_back({R"("schema")", json_escape("ahfl.node-observation.v1")});
+    fields.push_back({R"("format")", json_escape("ahfl.node-observation")});
     fields.push_back({R"("state_sequence")", emit_state_sequence(data.states)});
     fields.push_back({R"("status")", json_escape(data.status)});
     fields.push_back({R"("transition_count")", std::to_string(data.transition_count)});

@@ -1,5 +1,3 @@
-manifest_version = 1
-
 [package]
 name = "duplicate-owner-app"
 version = "0.1.0"

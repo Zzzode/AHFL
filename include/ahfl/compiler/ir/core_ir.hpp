@@ -56,9 +56,9 @@
 namespace ahfl::ir::core {
 
 /// Core-IR interchange/format version. Distinct from the `AhflIr`
-/// `kFormatVersion` so a layered IR-JSON projection (RFC 0026 P9) can tell the
+/// `kFormat` so a layered IR-JSON projection (RFC 0026 P9) can tell the
 /// layers apart. Bumped independently of the verification-layer version.
-inline constexpr std::string_view kCoreFormatVersion = "ahfl.core.v1";
+inline constexpr std::string_view kCoreFormat = "ahfl.core";
 
 // ----------------------------------------------------------------------------
 // Typed identities (Principle 2: index-based, never strings). Defined up front
@@ -1939,7 +1939,7 @@ struct CoreTypeDecl {
 /// types are addressed by `CoreTypeId`, capabilities by `CoreCapabilityId`,
 /// agents by `CoreAgentId`; flows keep source order for determinism.
 struct CoreProgram {
-    std::string format_version{std::string(kCoreFormatVersion)};
+    std::string format{std::string(kCoreFormat)};
     std::vector<CoreTypeDecl> types;              // index == CoreTypeId
     std::vector<CoreValueType> value_types;       // index == CoreValueTypeId (interned, P4)
     std::vector<CoreCapabilityDecl> capabilities; // index == CoreCapabilityId

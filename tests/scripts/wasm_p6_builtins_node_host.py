@@ -69,8 +69,7 @@ const module_ = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module_).length !== 0)
   throw new Error("builtins agent expanded import authority");
 const {exports: c} = await WebAssembly.instantiate(module_, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 const expected = process.argv[3].split(",").map(Number);
 const initial = Number(process.argv[4]);
 if (c.current_state() !== initial)

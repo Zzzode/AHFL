@@ -1,19 +1,19 @@
 # AHFL Assurance Spec
 
-本文档是 AHFL assurance profile、validation gate 和 assurance bundle 的规范来源。`docs/design/assurance-architecture.zh.md` 解释工程设计；本文定义编译器必须遵守的可验证控制系统契约。
+本文定义 capability 副作用声明、生产就绪检查（validation gate）、形式化验证边界，以及验证证据包（assurance bundle）的字段与判定规则。
 
 ## 命令名约定
 
-本文档涉及的三个 CLI 命令同时支持**长名**与**短别名**，二者等价：
+以下 CLI 命令支持**长名**与**短别名**，二者等价：
 
 | 长名（本文统一采用） | 短别名 |
 | --- | --- |
 | `ahflc validate-assurance <input>` | `ahflc validate <input>` |
 | `ahflc emit-assurance-json <input>` | `ahflc emit assurance-json <input>` |
 
-两套写法在 CLI 命令注册表中映射到同一 `CommandKind`（`command_registry.cpp`、`command_help.cpp`），行为完全一致。本文统一使用长名以保证可被全文检索与正则匹配；任何使用短别名的示例代码同样合法。
+本文使用长名；使用短别名时，参数和行为相同。
 
-> RFC 0028: 形式化验证已从独立命令 `verify-formal` 迁移到默认编译管线中的 `--verify` 阶段。`check`/`run` 默认 `--verify=on`(fail-closed：缺 solver、超时、反例均阻塞编译)；`--verify=off` 可关闭。
+`check`/`build`/`run` 默认 `--verify=on`，检查通用控制模型及用户时序目标；数据合同需要 `--verify-data-contracts` 显式请求。请求的检查无法完成或发现问题时，命令返回非零退出码；`--verify=off` 可关闭验证。
 
 ## 目标
 
@@ -84,66 +84,51 @@ ok: assurance validation ready
 
 ## Formal Verification Gate
 
-`ahflc check --verify=on <file.ahfl>` 必须先通过 parse、resolve、typecheck 和基础 validator，再降低到 IR、生成 SMV 模型、调用 SMV 兼容 model checker。
+`check`、`build`、`run` 默认 `--verify=on`：前端与 IR 结构检查之后，验证有限的 Agent/workflow 控制模型。`--verify=off` 关闭此阶段；其他命令默认关闭，但可以显式开启。验证结果必须区分以下类别：
 
-`--formal-backend <name>` 可选择 checker backend。当前 `nuxmv` 与 `nusmv` 进入 AHFL SMV 外部验证路径；`spin` 与 `tlaplus` 只承诺模型 emission，不承诺 `--verify=on` 外部验证，命令必须以 `checker_status: verification_unsupported` 失败。
+| 类别 | 请求方式 | 结论范围 |
+|---|---|---|
+| 编译器生成的控制义务 | 默认开启 | Agent 初始状态、合法转移、final 吸收性；workflow lifecycle/final/DAG 依赖及模型中的 call/effect/recovery 义务 |
+| 用户控制时序目标 | 声明 temporal clause | 在当前控制模型及明确环境假设下检查 `invariant`、`forbid`、workflow `safety`/`liveness` |
+| 环境前提 | 数据 `requires` | 可信前提，不作为独立已证明目标 |
+| 用户数据目标 | `--verify-data-contracts` | 显式请求 package 中的数据合同蕴含检查；默认 `not_requested` |
+| 运行时合同检查 | 无 | 当前 `not_implemented`，不得报告成已执行 |
 
-NuSMV/nuXmv checker 选择顺序：
+所有 Agent（包括未被 workflow 引用的 Agent）必须具有生成的基础控制义务。默认义务不自动承诺终止、公平调度或 provider 最终返回；用户声明的完成性目标应列明相应模型假设。控制模型不是完整 statement executor：赋值、返回值和外部 capability 实现尚无完整执行关系证明。
 
-1. `--model-checker <path>` 显式指定的可执行文件。
-2. `AHFL_SMV_CHECKER` 环境变量。
-3. backend-specific 环境变量，例如 `AHFL_NUXMV_PATH` 或 `AHFL_NUSMV_PATH`。
-4. `PATH` 中的 `NuSMV`、`nuXmv`、`nuxmv` 或 `nusmv`。
+用户时序目标若包含未编码的数据 observation，必须报告为依赖假设的 `conditional` 或 `unsupported`，不得计入无条件已证明的用户目标。`--bmc-depth` 的结论必须保留有界范围，不能冒充无界证明。
 
-> **Process seam 是唯一模式。** Library-mode（dlopen 嵌入同一进程）经 [RFC 0018](../rfcs/0018-nusmv-library-mode.zh.md) 评估后决策为 no-go：进程边界的成本（启动开销、文本往返）不足以驱动 dlopen 可选后端的维护成本。NuSMV 2.6.0 与 Z3 4.8.12 已 vendor 进 `third_party/` 并随 AHFL 构建/安装（RFC 0028），默认安装必定自带可用 solver，"缺 solver"失败模式在默认安装中不复存在。
+### 控制模型检查
 
-命令必须把生成的 SMV 文件作为 checker 的第一个参数。
-如果传入 `--formal-model-out <model.smv>`，命令必须把同一个 SMV 模型写入该路径，并使用该路径调用 checker，便于 CI 归档和本地复现。
+`--formal-backend nuxmv|nusmv` 调用 SMV checker。`spin` / `tlaplus` 不支持此验证路径，必须以 `checker_status: verification_unsupported` 失败。checker 选择顺序为：显式 `--model-checker` → `AHFL_SMV_CHECKER` → backend-specific 环境变量 → ahflc 同目录 bundled checker → `PATH`。
 
-Checker 输出解析规则：
+SMV checker 以独立进程运行（见 [NuSMV 调用约定](../rfcs/0018-nusmv-library-mode.zh.md)）。NuSMV 与 Z3 随默认构建/安装提供；损坏安装或显式覆盖仍可能导致求解器缺失，此时验证必须失败。
 
-- 包含 `is true` 的 specification 行计为 proven specification。
-- 包含 `is false` 的 specification 行计为 failing specification。
-- 如果存在 failing specification，命令必须返回非零退出码。
-- 如果 checker 进程返回非零退出码且没有 failing specification，命令必须返回 checker error。
-- 如果生成的 SMV 模型包含 `LTLSPEC`，但 checker 没有输出对应 specification 结果，命令必须返回 checker error。
-- 如果输出包含 `counterexample`、`Trace Description` 或 `Trace Type`，命令失败报告必须保留 counterexample 摘要。
-- 命令报告必须包含稳定的 `checker_status` 字段。`missing_binary` 表示没有找到可用 checker；`verification_unsupported` 表示所选 backend 不支持 AHFL property 外部验证；`checker_error` 表示 checker 进程或输出解析失败。
+模型以文件参数传给 checker；`--formal-model-out` 保留同一模型便于复现。`is true` / `is false` 分别记录对应模型 specification 成立/失败。反例、缺 checker、超时、未知、进程错误以及specification 结果不匹配必须失败。报告保留 `checker_status`、状态空间估计与可识别的源位置反例映射；估计不等于实际可达状态数。
 
-命令成功时必须输出：
+成功文案必须限定为控制模型验证，不得输出不分范围的“全部形式化验证通过”。生成义务、用户时序目标、条件证明和未支持目标必须分别计数；单独一项计数不能表示全部业务合同已证明。
 
-```text
-ok: formal verification passed
+### 用户按需请求数据验证
+
+```bash
+ahflc check --manifest examples/refund-rules/ahfl.toml --verify-data-contracts
 ```
 
-`--verify=on` 只证明当前 SMV backend 中被编码的有限控制模型。Provider 实现、无限数据域、外部系统状态、provider failure 注入和 runtime policy 执行仍属于 assurance profile 的抽象或运行时监控边界。
+该选项要求 `--verify=on`，否则为参数错误。普通数据 `requires` 作为环境前提；数据 `ensures`、`invariant`、`forbid` 是选择后的目标。未请求时不启动 SMT 求解器，也不因未请求的数据条款不支持而发出子集告警。
 
-SMV backend 必须把 workflow node 编码为有限 lifecycle 控制模型：
+当前 SMT（可满足性模理论）路径的证明范围是 `contract_implication`：在类型边界及所有可编码 `requires` 下，检查目标是否成立。它不编码 flow 的赋值、状态更新或 capability 返回，因此不证明执行实现满足后置条件。`SAT` 反例是合同公式的变量赋值，不是执行轨迹；`UNSAT` 只证明该合同蕴含。
 
-- 每个 node 有目标 agent state 和 lifecycle phase。
-- phase 至少区分 idle、running、completed。
-- phase 可以额外保留 failed、recovering、recovered、compensating、compensated、terminal_failed 等 recovery lifecycle hook。
-- `started(node)`、`running(node)`、`completed(node)`、`failed(node)`、`recovering(node)`、`recovered(node)` 必须是从 lifecycle phase 和目标 agent final-state membership 派生出的控制谓词。
-- 每个 node 可以有 generic `failure_requested` environment input，用于在有限模型里触发 failure/recovery lifecycle；用户 workflow safety/liveness 条款应在 no-fault assumption 下证明，recovery lifecycle 由 compiler-generated obligation 单独证明。
-- `completed(node)` 必须蕴含 node 当前状态属于目标 agent final state。
-- 带 `after` 依赖的 node 在 `running` 或 `completed` 时，必须蕴含所有依赖 node 已经 `completed`。
+必须先检查前提一致性。矛盾前提不能导致所有目标真空通过；未证明的 invariant 不能作为假设循环证明自身或其他目标。所选目标或其必要前提超出子集、求解器缺失、超时、unknown、前提不一致或反例，均须返回非零退出码并定位相关条款。详细语义见 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md)。
 
-上述 lifecycle/final/dependency 规则必须作为生成的 `LTLSPEC` 控制义务进入 SMV 模型，使真实 checker 能同时证明用户声明的 workflow temporal 条款和 compiler 自动合成的基础控制不变量。
+### 控制模型与环境边界
 
-SMV backend 必须把 `called(k)` 绑定到 flow call event，而不能把它作为自由输入观察量：
+workflow node 模型至少区分 idle、running、completed；恢复模型可以增加 failed、recovering、recovered、compensating、compensated、terminal_failed。`completed(node)` 蕴含目标 Agent final-state membership；带 `after` 的 node 启动/完成时要求依赖完成。
 
-- call event 来自 `flow.state_handlers[].summary.called_targets`。
-- call event 在 workflow node `running` 且 node state 等于包含该 call 的 handler state 时成立。
-- `called(k)` 是目标 agent 上相关 call event 的派生谓词。
-- 每个 call/effect event 必须派生 `committed` / `failed` 子事件；二者互斥，且都必须蕴含原始 event。
+call event 从 `flow.state_handlers[].summary.called_targets` 和 active handler 派生；`called(k)` 不得作为任意自由输入。call/effect 的 committed、failed 子事件互斥并蕴含原事件。effect profile 可以合成 audit/receipt/idempotency/approval/compensation 控制义务，未声明或 unknown effect 仍由 `validate-assurance` 阻止 production readiness。
 
-SMV backend 可以把已声明 capability effect profile 降成 effect event 和有限控制 obligation：
+generic failure input 仅表示模型中的故障触发。用户 workflow 目标与生成恢复义务须保留各自的 no-fault 等环境假设。provider 实现、订单真实性、LLM 输出与真实 receipt 没有因此获证。
 
-- external side effect、durable write、financial write 可以生成 audit / receipt / idempotency / approval / compensation 相关 `LTLSPEC`。
-- 未声明 effect profile、`unknown` effect 或无法解析的 call target 仍由 `validate-assurance` 作为 production gate 处理。
-- bounded boolean/integer expression 可以直接 lower 成 SMV 公式；包含 path、provider return、predicate/capability call、集合/结构体等未界定数据语义的 embedded data predicate 必须保持为 environment observation assumption，不得伪装成已证明的 guarantee。
-
-`--verify=on` 失败时应尽量输出 counterexample 摘要，并把可识别的 SMV symbol 映射回 AHFL 的 workflow node、agent state、call event、effect event 或 observation owner；若 IR 保留了 source range，mapping 应携带 source offset 范围。
+宿主 `predicate` 声明不会自动执行；flow 的 `assert` / `requires` statement 也没有运行时支持。业务系统需要实际验证外部数据和计算结果，不能用静态报告替代这些检查。
 
 ## Obligation Synthesis
 
@@ -171,7 +156,7 @@ ahfl.assurance-bundle
 
 Bundle 顶层字段：
 
-- `format_version`
+- `format`
 - `status`
 - `capabilities`
 - `flow_effects`
@@ -197,7 +182,7 @@ Included:
 - workflow node lifecycle phase
 - compiler-generated lifecycle/final/dependency obligations
 - temporal control observations
-- bounded boolean/integer data predicates
+- 可编码的控制时序公式中的 bounded boolean/integer 常量表达式
 - unbounded data observation assumptions
 - counterexample source mapping
 - flow call events、capability effect events、call/effect commit/failure events（当 bundle 含 effect event）
@@ -212,7 +197,7 @@ Abstracted:
 - external system state
 - provider failure injection semantics
 
-Runtime monitored:
+运行时 evidence（不代表合同 predicate 已执行）：
 
 - provider receipts
 - checkpoint records
@@ -226,4 +211,10 @@ Unsupported:
 - unbounded data domain model checking
 - distributed fairness proof
 
-这意味着当前版本证明和检查的是编排控制面与 effect contract，不是任意外部系统的完整数学模型。
+这意味着默认验证提供有限编排控制面的证据；用户可以另外请求数据合同蕴含证明。两者都不表示完整执行实现或任意外部系统已获证明。
+
+## 结果字段
+
+控制报告使用 `verification_scope: control_model`、`control_status`，并分别列出 `generated_control_proven` / `generated_control_bounded` 与 `user_temporal_proven` / `user_temporal_bounded` / `user_temporal_conditional` / `user_temporal_unsupported`。无目标时报告 no_targets/not_run，不能声称证明通过。
+
+数据报告使用 `data_contract_status`（not_requested、proved、bounded、refuted、inconsistent_assumptions、unknown、unsupported、solver_unavailable、no_targets）、`data_contract_scope: contract_implication`、`data_contract_assumptions` 和 `data_contract_goals`；逐条目标保留来源。`runtime_contract_checks: not_implemented` 表示当前没有自动 runtime 合同检查。

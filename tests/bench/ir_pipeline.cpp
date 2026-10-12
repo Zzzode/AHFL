@@ -105,11 +105,15 @@ class CountingVisitor final : public ahfl::ir::ProgramVisitor {
     std::size_t statement_count{0};
 
   private:
-    void on_expr(const ahfl::ir::Expr & /*expr*/) override {
+    ahfl::ir::VisitAction visit_expr_pre(const ahfl::ir::Expr & /*expr*/) override {
         ++expr_count;
+
+        return ahfl::ir::VisitAction::Continue;
     }
-    void on_statement(const ahfl::ir::Statement & /*statement*/) override {
+    ahfl::ir::VisitAction visit_statement_pre(const ahfl::ir::Statement & /*statement*/) override {
         ++statement_count;
+
+        return ahfl::ir::VisitAction::Continue;
     }
 };
 

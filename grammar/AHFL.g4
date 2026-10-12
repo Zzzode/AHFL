@@ -465,15 +465,8 @@ gotoStmt: 'goto' IDENT ';';
 
 returnStmt: 'return' expr ';';
 
-// assert has two legal syntactic forms so legacy user code (`assert cond;`)
-// still parses while the new `assert(cond[, "msg"]);` form supports optional
-// message (arity-2).  Both are normalized to `AssertStmtSyntax` by the
-// frontend so downstream stages see a single shape.  P4-01 emits WrongArity
-// at semantic level for `assert();` (0 args) or `assert(a,b,c,...);` (3+).
-assertStmt
-	: 'assert' '(' exprList? ')' ';'
-	| 'assert' expr ';'
-	;
+// Assertion arity is checked semantically for actionable diagnostics.
+assertStmt: 'assert' '(' exprList? ')' ';';
 
 // unwrap expects exactly one expression (Option<T>).  Variable arity is
 // accepted by the grammar so WrongArity can be reported at the typechecker
@@ -613,10 +606,8 @@ patternField:
 
 wildcardPattern: '_';
 
-// Binding pattern: `mut? name`, optionally `@`-bound to a nested pattern
-// (`name @ Some(x)`). `mut` is accepted syntactically (RFC reserves it for
-// future refinement; first version treats all bindings as immutable).
-bindingPattern: 'mut'? IDENT ('@' concatPattern)?;
+// Immutable binding, optionally bound to a nested pattern (`name @ Some(x)`).
+bindingPattern: IDENT ('@' concatPattern)?;
 
 tuplePattern: '(' patternList? ')';
 

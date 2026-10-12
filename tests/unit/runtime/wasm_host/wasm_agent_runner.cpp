@@ -8,9 +8,9 @@
 //
 // Three lanes (every module is P6-frame after the WireJson lane elimination):
 //   1. P6-frame identity agent (e1_identity_agent): no capabilities; the
-//      step-walk drives Start -> Done and run2 returns the input unchanged.
-//   2. P6-frame computed agent (v2b_computed_string): the input is packed
-//      into the fixed P4-D regions, runv walks the state machine, and the
+//      step-walk drives Start -> Done and run_workflow returns the input unchanged.
+//   2. P6-frame computed agent (computed_string): the input is packed
+//      into the fixed P4-D regions, run_frame walks the state machine, and the
 //      computed output is read from the authorized output base.
 //   3. P6-frame capability agent (e2_capability_agent): the Echo capability
 //      on the bridge lane; capability_invoked_hook and
@@ -208,7 +208,7 @@ void test_p6frame_identity_agent(
 void test_p6frame_computed_agent(
     const std::filesystem::path &repo_root) {
     const auto source =
-        repo_root / "tests/golden/wasm/v2b_computed_string.ahfl";
+        repo_root / "tests/golden/wasm/computed_string.ahfl";
     auto emitted = emit_agent(source);
     check(emitted.has_value(), "p6_computed.emit");
     if (!emitted.has_value()) {

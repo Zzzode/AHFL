@@ -37,8 +37,7 @@ struct LockfileEdge {
 };
 
 struct Lockfile {
-    std::string format_version{"ahfl.lock.v1"};
-    int resolver_version{1};
+    std::string format{"ahfl.lock"};
     std::string root_package;
     std::vector<LockfilePackage> packages;
     std::vector<LockfileEdge> edges;

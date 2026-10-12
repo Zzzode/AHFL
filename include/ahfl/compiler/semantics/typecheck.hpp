@@ -90,7 +90,7 @@ class TypeEnvironment {
         return flows_;
     }
 
-    [[nodiscard]] const std::unordered_map<std::size_t, ContractTypeInfo> &
+    [[nodiscard]] const std::vector<ContractTypeInfo> &
     contracts() const noexcept {
         return contracts_;
     }
@@ -128,7 +128,7 @@ class TypeEnvironment {
     [[nodiscard]] MaybeCRef<AgentTypeInfo> get_agent(SymbolId id) const;
     [[nodiscard]] MaybeCRef<WorkflowTypeInfo> get_workflow(SymbolId id) const;
     [[nodiscard]] MaybeCRef<FlowTypeInfo> get_flow(SymbolId id) const;
-    [[nodiscard]] MaybeCRef<ContractTypeInfo> get_contract(SymbolId id) const;
+    [[nodiscard]] MaybeCRef<ContractTypeInfo> find_contract(std::optional<SourceId> source_id, SourceRange declaration_range) const;
     // P2 (RFC §3.2.2): lookup a fn by its Function symbol id.
     [[nodiscard]] MaybeCRef<FnTypeInfo> get_fn(SymbolId id) const;
     // P3 (RFC §3.2.2 / type-system §1.3): lookup a trait by its Trait symbol id.
@@ -298,7 +298,7 @@ class TypeEnvironment {
     std::unordered_map<std::size_t, AgentTypeInfo> agents_;
     std::unordered_map<std::size_t, WorkflowTypeInfo> workflows_;
     std::unordered_map<std::size_t, FlowTypeInfo> flows_;
-    std::unordered_map<std::size_t, ContractTypeInfo> contracts_;
+    std::vector<ContractTypeInfo> contracts_;
     std::unordered_map<std::size_t, FnTypeInfo> functions_; // P2 (RFC §3.2.2)
     std::unordered_map<std::size_t, TraitTypeInfo> traits_; // P3 (RFC §3.2.2 / type-system §1.3)
     std::unordered_map<std::size_t, ImplTypeInfo> impls_;   // P3 (RFC §3.2.2 / type-system §1.4)

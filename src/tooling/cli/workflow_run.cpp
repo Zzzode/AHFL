@@ -1,24 +1,27 @@
 #include "tooling/cli/workflow_run.hpp"
 
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
-#include "base/json/json_value.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
 #include "ahfl/runtime/execution_renderer.hpp"
+#include "base/json/json_value.hpp"
+#include "base/support/sha256.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/standard_capabilities.hpp"
 #include "runtime/engine/wire_capability_admission.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
-#include "runtime/value/value.hpp"
-#include "runtime/value/value_json.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/providers/llm/tool_calling.hpp"
 #include "runtime/providers/secret/cloud_secret_provider.hpp"
 #include "runtime/providers/secret/secret_provider.hpp"
 #include "runtime/providers/secret/vault_provider.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
+#include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
+#include "tooling/cli/llm_run_lease.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -921,7 +924,7 @@ optional_string_map_field(const ahfl::json::JsonValue &object,
 [[nodiscard]] ahfl::ir::core::WireSchemaMigrationResult
 project_capability_response_binding(const ahfl::ir::CapabilityDecl &capability,
                                     const ahfl::ir::core::VerifiedCoreTypeEnvironment &env) {
-    return ahfl::ir::core::migrate_type_ref_to_wire_binding(capability.return_type_ref, env);
+    return ahfl::ir::core::project_type_ref_to_wire_binding(capability.return_type_ref, env);
 }
 
 // Compose a schema-only migration diagnostic suffix (first Error code:message) for a
@@ -980,11 +983,11 @@ prepare_runtime_capability_bindings(const ahfl::ir::Program &program,
     }
     const auto &root = **parsed;
 
-    auto schema = required_json_string_field(root, "schema", "runtime capability bindings", err);
+    auto schema = required_json_string_field(root, "format", "runtime capability bindings", err);
     if (!schema.has_value()) {
         return std::nullopt;
     }
-    if (*schema != "ahfl.runtime_capability_bindings.v0") {
+    if (*schema != "ahfl.runtime_capability_bindings") {
         err << "error: unsupported runtime capability bindings schema '" << *schema << "'\n";
         return std::nullopt;
     }
@@ -1102,7 +1105,7 @@ prepare_runtime_capability_bindings(const ahfl::ir::Program &program,
             // never a Phase B factory poison after secrets have resolved.
             {
                 auto admission = ahfl::runtime::prepare_wire_response_schema(
-                    config.response_format, config.response_schema, config.response_wire_binding);
+                    config.response_format, config.response_wire_binding);
                 if (!admission.has_value()) {
                     err << "error: " << context << " capability '" << *capability_name
                         << "' response schema admission failed: " << admission.error() << '\n';
@@ -1156,7 +1159,7 @@ prepare_runtime_capability_bindings(const ahfl::ir::Program &program,
             config.response_wire_binding = std::move(*migration.binding);
             {
                 auto admission = ahfl::runtime::prepare_wire_response_schema(
-                    config.response_format, config.response_schema, config.response_wire_binding);
+                    config.response_format, config.response_wire_binding);
                 if (!admission.has_value()) {
                     err << "error: " << context << " capability '" << *capability_name
                         << "' response schema admission failed: " << admission.error() << '\n';
@@ -1331,11 +1334,11 @@ load_tool_catalog_descriptor(const CommandLineOptions &options, std::ostream &er
     }
     const auto &root = **parsed;
 
-    auto schema = required_json_string_field(root, "schema", "LLM tool catalog", err);
+    auto schema = required_json_string_field(root, "format", "LLM tool catalog", err);
     if (!schema.has_value()) {
         return std::nullopt;
     }
-    if (*schema != "ahfl.llm_tool_catalog.v0") {
+    if (*schema != "ahfl.llm_tool_catalog") {
         err << "error: unsupported LLM tool catalog schema '" << *schema << "'\n";
         return std::nullopt;
     }
@@ -1518,8 +1521,10 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
 
     provider.set_tools(
         std::move(runtime_tools.tools),
-        [tool_registry =
-             std::move(runtime_tools.registry)](const ToolCall &tool_call) -> ToolCallResult {
+        [tool_registry = std::move(runtime_tools.registry)](
+            const ToolCall &tool_call,
+            const LLMCapabilityProvider::ToolExecutionContext &execution_context)
+            -> ToolCallResult {
             std::vector<ahfl::runtime::Value> args;
             if (!tool_call.arguments_json.empty()) {
                 auto parsed_args = value_from_json(tool_call.arguments_json);
@@ -1535,7 +1540,9 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
                 args.push_back(std::move(*parsed_args));
             }
 
-            auto result = tool_registry->invoke(tool_call.name, args);
+            auto tool_context = execution_context.outer_context;
+            tool_context.idempotency_key = execution_context.idempotency_key;
+            auto result = tool_registry->invoke_with_context(tool_context, tool_call.name, args);
             if (result.status != CapabilityCallStatus::Success || !result.value.has_value()) {
                 const auto error_message = result.error_message.empty()
                                                ? std::string{"tool execution failed"}
@@ -1553,6 +1560,62 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
                 .content = value_to_json(*result.value),
             };
         });
+}
+
+// Credentials can rotate while a run resumes; public request semantics must match.
+void normalize_public_run_config(ahfl::json::JsonValue &value) {
+    if (value.is_object()) {
+        std::erase_if(value.object_fields, [](const auto &field) {
+            return field.first == "api_key" || field.first == "token" ||
+                   field.first == "password" || field.first == "client_secret";
+        });
+        std::ranges::sort(value.object_fields, {}, [](const auto &field) { return field.first; });
+        for (auto &[name, child] : value.object_fields) {
+            (void)name;
+            normalize_public_run_config(*child);
+        }
+    } else if (value.is_array()) {
+        for (auto &child : value.array_items)
+            normalize_public_run_config(*child);
+    } else if (value.kind == ahfl::json::Kind::String) {
+        value.string_val = ahfl::llm_provider::expand_env_vars(value.string_val);
+    }
+}
+
+[[nodiscard]] std::optional<ahfl::support::Sha256Digest>
+run_binding_digest(const ahfl::ir::Program &program,
+                   const std::string &workflow,
+                   const ahfl::runtime::Value &input,
+                   const std::string &config_content,
+                   const CommandLineOptions &options,
+                   std::ostream &err) {
+    auto public_config = ahfl::json::parse_json(config_content);
+    if (!public_config.has_value() || !*public_config)
+        return std::nullopt;
+    normalize_public_run_config(**public_config);
+    std::ostringstream ir_json;
+    ahfl::print_program_ir_json(program, ir_json);
+    auto binding = ahfl::json::JsonValue::make_array();
+    binding->push(ahfl::json::JsonValue::make_string("ahfl.llm-run-binding"));
+    binding->push(ahfl::json::JsonValue::make_string(ahfl::support::sha256_hex(ir_json.str())));
+    binding->push(ahfl::json::JsonValue::make_string(workflow));
+    binding->push(ahfl::json::JsonValue::make_string(value_to_json(input)));
+    binding->push(std::move(*public_config));
+    for (const auto &path : {options.capability_bindings_descriptor,
+                             options.capability_mocks_descriptor,
+                             options.tool_catalog_descriptor}) {
+        if (!path.has_value()) {
+            binding->push(ahfl::json::JsonValue::make_null());
+            continue;
+        }
+        auto content = read_text_file(std::filesystem::path{*path}, "runtime descriptor", err);
+        if (!content.has_value())
+            return std::nullopt;
+        binding->push(ahfl::json::JsonValue::make_string(ahfl::support::sha256_hex(*content)));
+    }
+    const auto bytes = ahfl::json::serialize_json(*binding);
+    return ahfl::support::sha256(std::span<const std::uint8_t>{
+        reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()});
 }
 
 [[nodiscard]] bool configure_runtime_tools(LLMCapabilityProvider &provider,
@@ -1584,6 +1647,44 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
     return true;
 }
 
+int render_workflow_run_result(const ahfl::runtime::WorkflowResult &result,
+                               const CommandLineOptions &options,
+                               std::ostream &out,
+                               std::ostream &err,
+                               const WorkflowRunSourceContext &source_context) {
+    const auto output_format = execution_output_format_from_options(options);
+    const bool interactive = stdout_is_terminal();
+    const bool color =
+        output_format == ahfl::runtime::ExecutionOutputFormat::Human && human_color_enabled();
+    const auto render_result = ahfl::runtime::render_execution_result(
+        result,
+        ahfl::runtime::ExecutionOutputOptions{
+            .format = output_format,
+            .verbosity = execution_verbosity_from_options(options),
+            .use_color = color,
+            .interactive_terminal = interactive,
+        },
+        out);
+    if (!render_result.has_value()) {
+        err << "error: " << render_result.error() << '\n';
+        return 1;
+    }
+    if (result.diagnostics.has_error() || result.diagnostics.has_warning()) {
+        // kr68 §12.16: pass the primary SourceFile for caret rendering on the
+        // single-file lane; a SourceGraph passes nullopt (renders
+        // (file:line:col) without caret).
+        result.diagnostics.render(err, source_context.primary_source, true);
+    }
+    // A cleanly suspended + persisted run is a successful outcome (the workflow
+    // is durably parked awaiting a capability result), distinct from failure.
+    if (result.status() == ahfl::runtime::WorkflowStatus::Suspended) {
+        return result.has_errors() ? 1 : 0;
+    }
+    return result.status() == ahfl::runtime::WorkflowStatus::Completed && !result.has_errors() &&
+                   result.report.status == ahfl::runtime::RunTerminalStatus::Completed
+               ? 0
+               : 1;
+}
 
 } // namespace
 
@@ -1681,7 +1782,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     std::optional<ahfl::runtime::Value> input_value;
     if (workflow != nullptr) {
         // Resolved workflow: exact-decode the raw DOM under the workflow input's
-        // projected wire binding (a compat tightening vs the old schema-free
+        // projected wire binding (a strict boundary for the schema-free
         // materialization — Decimal/Set/Map/Option/Unit/integral-Float are now
         // decoded exactly). Diagnostics carry schema/coordinate info only, never the
         // payload bytes.
@@ -1691,7 +1792,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
             return 1;
         }
         auto migration =
-            ahfl::ir::core::migrate_type_ref_to_wire_binding(workflow->input_type_ref, *env);
+            ahfl::ir::core::project_type_ref_to_wire_binding(workflow->input_type_ref, *env);
         if (!migration.ok() || !migration.binding.has_value()) {
             err << "error: --input schema for workflow '" << workflow_name
                 << "' is not projectable to a wire schema" << migration_error_suffix(migration)
@@ -1740,6 +1841,81 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         }
     }
 
+    WasmWorkflowRuntimeConfig compile_config;
+    compile_config.diagnostic_source_locator = source_context.locate_compile_diagnostic;
+    WasmWorkflowRuntime runtime(program, std::move(compile_config));
+    const auto *compiled = runtime.descriptor_for(workflow_name);
+    if (compiled == nullptr) {
+        auto failed = runtime.run(workflow_name, ahfl::runtime::clone_value(*input_value));
+        return render_workflow_run_result(failed, options, out, err, source_context);
+    }
+    const bool needs_llm_session = std::ranges::any_of(compiled->imports, [&](const auto &import) {
+        if (ahfl::runtime::is_standard_capability(import.canonical_name))
+            return false;
+        return !prepared_bindings ||
+               !std::ranges::any_of(prepared_bindings->bindings, [&](const auto &binding) {
+                   return binding.capability_name == import.canonical_name;
+               });
+    });
+
+    // PHASE A.4: only an absent recovery record permits a fresh run. Admit
+    // persisted state before secret resolution or capability dispatch so a
+    // corrupt/unreadable record cannot silently repeat an external effect.
+    std::unique_ptr<LLMRunLease> lease;
+    std::shared_ptr<ahfl::llm_provider::LLMSessionStore> session_store;
+    std::optional<ahfl::runtime::WorkflowRecoveryStore> recovery_store;
+    std::optional<ahfl::runtime::WorkflowRecoverySnapshot> recovery_snapshot;
+    if (needs_llm_session) {
+        const auto binding =
+            run_binding_digest(program, workflow_name, *input_value, *config_content, options, err);
+        if (!binding) {
+            err << "error: cannot bind the managed LLM run\n";
+            return 1;
+        }
+        constexpr std::string_view hex = "0123456789abcdef";
+        std::string binding_hex;
+        for (const auto byte : *binding) {
+            binding_hex.push_back(hex[byte >> 4]);
+            binding_hex.push_back(hex[byte & 15]);
+        }
+        auto opened =
+            LLMRunLease::open(binding_hex,
+                              options.recovery_store_path.has_value()
+                                  ? std::optional<std::filesystem::path>{std::filesystem::path{
+                                        *options.recovery_store_path}}
+                                  : std::nullopt);
+        if (!opened) {
+            err << "error: " << opened.error() << "; execution was not started\n";
+            return 1;
+        }
+        lease = std::move(*opened);
+        recovery_store.emplace(lease->recovery_path());
+        auto opened_store =
+            ahfl::llm_provider::LLMSessionStore::open(lease->session_root(), *binding);
+        if (!opened_store) {
+            err << "error: " << opened_store.error() << "; execution was not started\n";
+            return 1;
+        }
+        session_store = *opened_store;
+    } else if (options.recovery_store_path.has_value()) {
+        recovery_store.emplace(std::filesystem::path{*options.recovery_store_path});
+    }
+    if (recovery_store) {
+        auto loaded = recovery_store->load();
+        if (loaded) {
+            recovery_snapshot = std::move(*loaded);
+        } else if (loaded.error() != ahfl::runtime::WorkflowRecoveryError::Missing) {
+            err << "error: "
+                << (loaded.error() == ahfl::runtime::WorkflowRecoveryError::InvalidSnapshot
+                        ? "invalid recovery snapshot"
+                        : "could not read recovery snapshot")
+                << " at recovery path '" << recovery_store->path().string()
+                << "'; execution was not started\n";
+            return 1;
+        }
+    }
+    const bool had_recovery_record = recovery_snapshot.has_value();
+
     // PHASE B: secrets + provider setup are allowed to touch the network now.
     auto secrets = build_llm_secret_manager(llm_config, err);
     if (secrets == nullptr) {
@@ -1756,6 +1932,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     }
 
     LLMCapabilityProvider llm_provider(program, llm_config);
+    llm_provider.set_session_store(session_store);
     if (!configure_runtime_tools(llm_provider, options, err)) {
         return 1;
     }
@@ -1790,17 +1967,46 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     runtime_config.invoker = ahfl::runtime::with_standard_capabilities(
         std::move(runtime_config.invoker));
 
+    runtime_config.pending_capability_resolver =
+        [&llm_provider](const ahfl::runtime::CapabilityInvocationContext &context,
+                        const std::string &name,
+                        const std::vector<ahfl::runtime::Value> &args)
+        -> std::optional<ahfl::runtime::CapabilityCallResult> {
+        auto available = llm_provider.can_resume(context, name, args);
+        if (!available.has_value()) {
+            ahfl::runtime::CapabilityCallResult failure;
+            failure.error_message = available.error();
+            return failure;
+        }
+        if (!*available)
+            return std::nullopt;
+        return llm_provider.resume_pending(context, name, args);
+    };
+    runtime_config.completed_capability_metadata_reader =
+        [&llm_provider](const ahfl::runtime::CapabilityInvocationContext &context,
+                        const std::string &name,
+                        const std::vector<ahfl::runtime::Value> &args) {
+            return llm_provider.replay_completed(context, name, args);
+        };
+    runtime_config.pending_injection_guard =
+        [&llm_provider](
+            const ahfl::runtime::CapabilityInvocationContext &context,
+            const std::string &name,
+            const std::vector<ahfl::runtime::Value> &args) -> std::optional<std::string> {
+        auto active = llm_provider.can_resume(context, name, args);
+        if (!active.has_value())
+            return active.error();
+        if (*active)
+            return "a persisted LLM session owns this pending result; rerun without "
+                   "--resume-pending-result to resume it automatically";
+        return std::nullopt;
+    };
+
     // RFC 0022 durable resume: --recovery-store persists a resume record on
     // suspend and reloads it to resume; --resume-pending-result supplies the
     // awaited capability result. If a snapshot already exists at the store path,
-    // this run resumes from it; otherwise it runs fresh and may suspend.
-    std::optional<ahfl::runtime::WorkflowRecoveryStore> recovery_store;
-    if (options.recovery_store_path.has_value()) {
-        recovery_store.emplace(std::filesystem::path{*options.recovery_store_path});
-        if (auto loaded = recovery_store->load(); loaded.has_value()) {
-            runtime_config.recovery_snapshot = std::move(*loaded);
-        }
-    }
+    // this run resumes from the admitted record; only Missing runs fresh.
+    runtime_config.recovery_snapshot = std::move(recovery_snapshot);
     // WH-4b facade field (§12.7.2 honest subset): the session persists the
     // resume record on suspend through this store (a save failure downgrades
     // Suspended to NodeFailed). The CLI save path below stays as the
@@ -1864,8 +2070,30 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         };
     }
 
-    WasmWorkflowRuntime runtime(program, std::move(runtime_config));
-    auto result = runtime.run(workflow_name, std::move(*input_value));
+    if (auto attached = runtime.attach_execution_config(std::move(runtime_config)); !attached) {
+        err << "error: " << attached.error() << '\n';
+        return 1;
+    }
+    auto result = runtime.run(workflow_name, ahfl::runtime::clone_value(*input_value));
+    std::size_t resumed_frontiers = 0;
+    while (result.status() == ahfl::runtime::WorkflowStatus::Suspended &&
+           result.automatically_resumable_pending && result.suspended.has_value()) {
+        if (++resumed_frontiers > 10000U) {
+            err << "error: automatic LLM recovery made no bounded workflow progress\n";
+            return 1;
+        }
+        runtime.set_recovery_snapshot(std::move(*result.suspended));
+        result = runtime.run(workflow_name, ahfl::runtime::clone_value(*input_value));
+    }
+    if (lease && result.status() == ahfl::runtime::WorkflowStatus::Completed &&
+        !result.has_errors()) {
+        if (auto completed =
+                lease->complete(options.recovery_store_path.has_value() && !had_recovery_record);
+            !completed.has_value()) {
+            err << "error: " << completed.error() << '\n';
+            return 1;
+        }
+    }
 
     // RFC 0022: a suspended run persists its resume record so a later invocation
     // (a fresh process / cold start) can resume it from disk.
@@ -1886,38 +2114,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         }
     }
 
-    const auto output_format = execution_output_format_from_options(options);
-    const bool interactive = stdout_is_terminal();
-    const bool color =
-        output_format == ahfl::runtime::ExecutionOutputFormat::Human && human_color_enabled();
-    const auto render_result = ahfl::runtime::render_execution_result(
-        result,
-        ahfl::runtime::ExecutionOutputOptions{
-            .format = output_format,
-            .verbosity = execution_verbosity_from_options(options),
-            .use_color = color,
-            .interactive_terminal = interactive,
-        },
-        out);
-    if (!render_result.has_value()) {
-        err << "error: " << render_result.error() << '\n';
-        return 1;
-    }
-    if (result.diagnostics.has_error() || result.diagnostics.has_warning()) {
-        // kr68 §12.16: pass the primary SourceFile for caret rendering on the
-        // single-file lane; a SourceGraph passes nullopt (renders
-        // (file:line:col) without caret).
-        result.diagnostics.render(err, source_context.primary_source, true);
-    }
-    // A cleanly suspended + persisted run is a successful outcome (the workflow
-    // is durably parked awaiting a capability result), distinct from failure.
-    if (result.status() == ahfl::runtime::WorkflowStatus::Suspended) {
-        return result.has_errors() ? 1 : 0;
-    }
-    return result.status() == ahfl::runtime::WorkflowStatus::Completed && !result.has_errors() &&
-                   result.report.status == ahfl::runtime::RunTerminalStatus::Completed
-               ? 0
-               : 1;
+    return render_workflow_run_result(result, options, out, err, source_context);
 }
 #else
 // WASM=OFF (kr68 §12.7.1): the run verb refuses with an actionable diagnostic.

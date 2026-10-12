@@ -41,7 +41,7 @@ flowchart TD
     RuntimeArtifacts --> Runtime["Runtime Execution"]
     Runtime --> Events["Flat ExecutionEventStore"]
     Events --> Projections["Report / Human / JSON / JSONL / Replay / Audit / Scheduler / Checkpoint"]
-    Projections --> Recovery["ahfl.workflow-recovery.v2"]
+    Projections --> Recovery["ahfl.workflow-recovery"]
     Runtime --> WasmEngine["vendored wasm3 (wasm32)"]
     Runtime --> WasmRunners["wasm agent runner / workflow session / WasmWorkflowRuntime"]
     Runtime --> Capability["CapabilityBridge / HTTP / gRPC JSON Transcoding"]
@@ -84,7 +84,7 @@ flowchart TD
 | Lifecycle closure | 已实现 | success、skip、retry/fallback、cancel、budget rejection、timeout、interruption、checkpoint/resume |
 | Report/renderers | 已实现 | human、JSON、JSONL、quiet 共享 event/report facts |
 | Runtime projections | 已实现 | replay、audit、scheduler、checkpoint 全部从 `WorkflowResult.events` 构造 |
-| Recovery store | 已实现 | 加载器接受 `ahfl.workflow-recovery.v1`/`v2`,wasm lane 写 `v2`(RFC 0022 durable resume)、atomic replace;快照含 completed nodes(node-event buffer 派生)+ pending 坐标 + 精确 memo |
+| Recovery store | 已实现 | 加载器接受 `ahfl.workflow-recovery`/`v2`,wasm lane 写 `v2`(RFC 0022 durable resume)、atomic replace;快照含 completed nodes(node-event buffer 派生)+ pending 坐标 + 精确 memo |
 | Reference recovery path | wasm 冷启动重放(WH-9) | `durable_resume_capstone`(同进程 Pending 挂起 → 落盘 → 冷启动整模块重放,恢复零 live side effect)+ 小时级 `long_soak_smoke`;旧 `SIGKILL` 节点 checkpoint/approval 路径已随树步评估器退役 |
 | Durable capability resume | 已实现(RFC 0022 `stabilized`) | capability 返回 `AHFL_CAP_PENDING` → 节点挂起 + v2 resume record（node input + per-node ordinal memo）→ 跨进程冷启动从磁盘恢复 → 确定复现；memo 命中不二次调用、cap_id+arg_hash 交叉校验、注入/memo 值 fail-closed 类型校验、`durable_write` 写前 idempotency-key intent。经原生 `ahfl_host.h` ABI 与 shell（`--recovery-store`/`--resume-pending-result`/`--suspend-capability`/`--intent-log`）均可驱动；`examples/durable-resume/` 为可运行 demo |
 
@@ -192,13 +192,13 @@ Runtime 提供单路径真实执行；Formal 提供安全/活性属性验证。�
 
 ## 六、后续工作入口
 
-详见 [issue-backlog-global-gaps.zh.md](./issue-backlog-global-gaps.zh.md)。**P0 已全部闭环**（2026-10-07 验证）：受控生产试点 bounded gate 3/3 通过（hour-scale soak 为 CI-only by design）；TypeCheck/Sema 最终闭环全部 backlog 项 `[x]`（ConstSema/ExpressionSema 零 TypeCheckPass 直接引用，KR3.3 诊断迁移与语义测试矩阵已收口）；ExprEffect 已进入 `ahfl.ir.v2` expression/flow `inferred_effect` 并被 assurance/SMV 消费。当前优先级从 P1 开始：
+详见 [issue-backlog-global-gaps.zh.md](./issue-backlog-global-gaps.zh.md)。**P0 已全部闭环**（2026-10-07 验证）：受控生产试点 bounded gate 3/3 通过（hour-scale soak 为 CI-only by design）；TypeCheck/Sema 最终闭环全部 backlog 项 `[x]`（ConstSema/ExpressionSema 零 TypeCheckPass 直接引用，KR3.3 诊断迁移与语义测试矩阵已收口）；ExprEffect 已进入 `ahfl.ir` expression/flow `inferred_effect` 并被 assurance/SMV 消费。当前优先级从 P1 开始：
 
 | 优先级 | 工作 | 当前分类 | 目标 |
 |--------|------|----------|------|
 | ~~P0~~ | ~~受控生产试点闭环~~ | **已闭环** | bounded fault matrix + CI-only hour-scale harness + RSS/allocator 趋势合同 + GitHub Actions provenance + nightly workflow；本地 `python3 scripts/check-production-confidence-gate.py --require-ready` 只检查已下载 evidence（CI-only by design） |
 | ~~P0~~ | ~~TypeCheck / Sema 最终闭环~~ | **已闭环** | variance、numeric subtyping、SymbolId-first nominal identity、exact schema boundary、const value tree、ConstSema/ExpressionSema/DeclarationSema/FlowWorkflowSema 拆分（零 TypeCheckPass 直接引用）、诊断迁移 KR3.3、语义测试矩阵（53 TEST_CASE + 209 golden negatives + 73 ahflc.fail goldens）全部收口 |
-| ~~P0~~ | ~~ExprEffect 正式输入闭环~~ | **已闭环** | Typed HIR effect 进入 `ahfl.ir.v2` expression 与 flow `inferred_effect`；assurance/SMV 只消费该 fact，并对 capability identity/effect 矛盾 fail closed |
+| ~~P0~~ | ~~ExprEffect 正式输入闭环~~ | **已闭环** | Typed HIR effect 进入 `ahfl.ir` expression 与 flow `inferred_effect`；assurance/SMV 只消费该 fact，并对 capability identity/effect 矛盾 fail closed |
 | P1 | LSP 从 handler 可用到 IDE 可用 | 已落库但未产品化 | project-aware snapshot、Typed HIR 主状态、已打开文档跨文件 diagnostics 刷新、`textDocument/diagnostic` / `workspace/diagnostic` pull report、`workspace/didChangeWatchedFiles` cache invalidation、`workspace/didChangeWorkspaceFolders` descriptor switching、`prepareRename` 协议探测、VS Code client、TextMate grammar、snippet、基础 CodeLens、platform VSIX 打包脚本、CI VSIX artifact workflow、Marketplace package inventory gate、platform VSIX install smoke、hover/completion/rename/watched-files/workspace-folder-lifecycle extension test、Problems diagnostics transcript 与 diagnostics publish/recovery extension test 已落地；source graph 级细粒度增量性能（workspace index reuse）、Typed HIR hover 5 类事实（Effect/Capability/Const value/Dispatch/Variant）、server-side workspace folder add/remove 序列、project-aware 4 步 edit-revert 循环 transitive closure、VS Code extension 侧 workspace folder lifecycle 集成测试（add→hover→remove→liveness）、CI Linux+xvfb extension test job 已落地（2026-10-07）；剩余仅真实 Marketplace 发布演练（需网络/账号） |
 | P1/P2 | 工具链入口补齐 | 已落库但未产品化 | `ahflc fmt/fmt --check`、formatter 文件/目录/project/workspace 批量模式、独立 `ahfl-repl`、REPL `:simulate` 状态机 step simulation、`ahfl-dap`、`--time-passes`(`ahfl-incremental` 已由 RFC 0027 P5/KR6.12 退役,增量并入 QueryEngine)、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 与 `--memory-report` 已落地；剩余是 formatter 语法覆盖/import graph 策略、DAP runtime 深集成、query 持久化层(除 typed HIR 外)和 memory report 的 RSS/allocator 可选观测 |
 | P2 | Formal backend 真实性增强 | 已落库但未产品化 | backend capability/availability matrix、CLI/report `checker_status` 分类、verify state-space estimate、NuSMV/nuXmv parser fixture matrix 与 `--checker-timeout-seconds` 外部进程 timeout 回归已落地；AHFL property semantics 已从标量谓词(RFC 0017)推进到**有界集合量化**(RFC 0024 `forall`/`exists` over List/Set/Map 有限展开 + RFC 0025 `List<T>(N)` capacity 作为静态上界来源,均已 `stabilized`——spec + reference + beta-evidence bundle 全绿),counterexample 已映射量化元素索引(`coll@i`→`coll[i]`)；**RFC 0028 已落地**——形式化验证进入默认编译流程(`check`/`run` 默认 `--verify=on`，fail-closed：缺 solver/超时/反例均阻塞编译，`verify-formal` 命令已删除)；剩余是更强真实工具 CI 证据(真 NuSMV/nuXmv/Z3 在 CI 跑) |
@@ -222,5 +222,5 @@ Runtime 提供单路径真实执行；Formal 提供安全/活性属性验证。�
 | Bounded soak / network matrix / OTel adapter | controlled pilot | 已实现 |
 | Hour-scale soak / RSS trend | production confidence | 仅由 `Production Confidence` GitHub Actions workflow 执行；本地只读取 live gate，不运行 hour-scale，文档不缓存 ready 状态 |
 | 唯一执行路径(wasm3 内嵌) | runtime execution | WH-9 后已实现——Core-IR → wasm codegen + vendored wasm3;树步解释器已删除 |
-| WASM 单 lane 执行(P6 frame) | RFC 0026 dual-track 消除 | 已实现——WireJson lane / `ahfl_xcode` transcode adapter / opaque runner / stash table 已 big-bang 删除(`9e528d85`),bridge `(i32)->(i32,i32)` 为唯一 import functype,每个 agent 都是 P6-frame;agent 入口 `runv`、workflow scheduler 入口 `run2`(保留决策见 RFC 0026 2026-10-11 Decision History);残留 `is_p6_frame` 字段与 stale 注释清理 `9d60302a` |
+| WASM 单 lane 执行(P6 frame) | RFC 0026 dual-track 消除 | 已实现——WireJson lane / `ahfl_xcode` transcode adapter / opaque runner / stash table 已 big-bang 删除(`9e528d85`),bridge `(i32)->(i32,i32)` 为唯一 import functype,每个 agent 都是 P6-frame;agent 入口 `run_frame`、workflow scheduler 入口 `run_workflow`(保留决策见 RFC 0026 2026-10-11 Decision History);残留 `is_p6_frame` 字段与 stale 注释清理 `9d60302a` |
 | LLM Provider、tooling、formal/infra 扩展 | 当前重点 | 已落库但未产品化 |

@@ -139,14 +139,6 @@ namespace {
     return path;
 }
 
-[[nodiscard]] std::string_view last_qualified_segment(std::string_view spelling) noexcept {
-    const auto separator = spelling.rfind("::");
-    if (separator == std::string_view::npos) {
-        return spelling;
-    }
-    return spelling.substr(separator + 2);
-}
-
 [[nodiscard]] ir::CapabilityEffectKind
 lower_capability_effect_kind(ast::CapabilityEffectKind kind) {
     switch (kind) {
@@ -433,8 +425,8 @@ class TypedIrLowerer final {
                 return module->name;
             }
         }
-        if (decl.symbol.value != 0) {
-            if (const auto symbol = typed_program_->find_symbol(decl.symbol); symbol.has_value()) {
+        if (decl.symbol.has_value()) {
+            if (const auto symbol = typed_program_->find_symbol(*decl.symbol); symbol.has_value()) {
                 return symbol->get().module_name;
             }
         }
@@ -455,11 +447,11 @@ class TypedIrLowerer final {
                 }
             }
         }
-        return decl.symbol.value != 0 && typed_program_->find_symbol(decl.symbol)
-                                             .transform([](const Symbol &symbol) {
-                                                 return is_std_module_name(symbol.module_name);
-                                             })
-                                             .value_or(false);
+        return decl.symbol.has_value() && typed_program_->find_symbol(*decl.symbol)
+                                              .transform([](const Symbol &symbol) {
+                                                  return is_std_module_name(symbol.module_name);
+                                              })
+                                              .value_or(false);
     }
 
     // =====================================================================
@@ -518,16 +510,9 @@ class TypedIrLowerer final {
         current_module_name_.clear();
     }
 
-    [[nodiscard]] static bool ranges_equal(SourceRange lhs, SourceRange rhs) noexcept {
-        return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
-    }
-
     [[nodiscard]] static bool expr_matches_typed(const ast::ExprSyntax &expr,
                                                  const TypedExpr &typed) noexcept {
-        if (typed.node_id != 0 && expr.node_id == typed.node_id) {
-            return true;
-        }
-        return ranges_equal(expr.range, typed.range);
+        return typed.node_id != 0 && expr.node_id == typed.node_id;
     }
 
     [[nodiscard]] static const ast::ExprSyntax *find_match_expr_in_expr(const ast::ExprSyntax &expr,
@@ -856,7 +841,7 @@ class TypedIrLowerer final {
     }
 
     [[nodiscard]] static const ast::IfLetStmtSyntax *find_if_let_stmt_in_decl(const ast::Decl &decl,
-                                                                              SourceRange range) {
+                                                                              std::uint64_t scrutinee_id) {
         std::function<const ast::IfLetStmtSyntax *(const ast::StatementSyntax &)> find_statement;
         std::function<const ast::IfLetStmtSyntax *(const ast::BlockSyntax &)> find_block;
 
@@ -874,8 +859,8 @@ class TypedIrLowerer final {
         find_statement =
             [&](const ast::StatementSyntax &statement) -> const ast::IfLetStmtSyntax * {
             if (statement.kind == ast::StatementSyntaxKind::IfLet && statement.if_let_stmt &&
-                (ranges_equal(statement.range, range) ||
-                 ranges_equal(statement.if_let_stmt->range, range))) {
+                statement.if_let_stmt->scrutinee != nullptr && scrutinee_id != 0 &&
+                statement.if_let_stmt->scrutinee->node_id == scrutinee_id) {
                 return statement.if_let_stmt.get();
             }
 
@@ -968,6 +953,14 @@ class TypedIrLowerer final {
 
     [[nodiscard]] const ast::IfLetStmtSyntax *
     find_ast_if_let_stmt(const TypedStatement &typed) const {
+        if (typed.children_expr_index.empty() ||
+            typed.children_expr_index.front() >= typed_program_->expressions.size()) {
+            throw std::logic_error("if-let TypedStatement is missing its scrutinee identity");
+        }
+        const auto scrutinee_id = typed_program_->expressions[typed.children_expr_index.front()].node_id;
+        if (scrutinee_id == 0) {
+            throw std::logic_error("if-let TypedStatement has no canonical scrutinee node identity");
+        }
         const ast::Program *program = ast_program_;
         if (typed.source_id.has_value() && source_graph_ != nullptr) {
             program = nullptr;
@@ -982,7 +975,7 @@ class TypedIrLowerer final {
             return nullptr;
         }
         for (const auto &decl : program->declarations) {
-            if (const auto *found = find_if_let_stmt_in_decl(decl, typed.range);
+            if (const auto *found = find_if_let_stmt_in_decl(decl, scrutinee_id);
                 found != nullptr) {
                 return found;
             }
@@ -1099,7 +1092,11 @@ class TypedIrLowerer final {
         if (!stmt.let_adjustment.has_value()) {
             return std::nullopt;
         }
-        const TypedAdjustmentPlan &plan = *stmt.let_adjustment;
+        return bridge_adjustment(*stmt.let_adjustment);
+    }
+
+    [[nodiscard]] std::optional<ir::AdjustmentPlan>
+    bridge_adjustment(const TypedAdjustmentPlan &plan) const {
         ir::AdjustmentPlan out;
         out.source = plan.source != nullptr ? type_ref_from_type(*plan.source) : ir::TypeRef{};
         out.target = plan.target != nullptr ? type_ref_from_type(*plan.target) : ir::TypeRef{};
@@ -1381,7 +1378,6 @@ class TypedIrLowerer final {
                     }
                     ir::BindingPattern binding{
                         .name = value.name,
-                        .is_mut = value.is_mut,
                         .nested = nullptr,
                     };
                     // RFC 0026 P4-B cross-check: the bridge writes this node's
@@ -1826,8 +1822,9 @@ class TypedIrLowerer final {
 
     [[nodiscard]] const TypedDecl *find_decl_by_symbol(SymbolId id) const noexcept {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol == id)
+            if (decl.symbol.has_value() && *decl.symbol == id) {
                 return &decl;
+            }
         }
         return nullptr;
     }
@@ -1839,122 +1836,37 @@ class TypedIrLowerer final {
     };
 
     [[nodiscard]] std::optional<EnumVariantTarget>
-    find_enum_variant_target(const types::EnumVariantT &variant_type) const noexcept {
-        const auto from_decl =
-            [&variant_type](const TypedDecl &decl) -> std::optional<EnumVariantTarget> {
-            const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
-            if (enum_info == nullptr) {
-                return std::nullopt;
+    find_enum_variant_target(const TypedExpr &expr) const {
+        // Struct-payload constructors persist the canonical owning enum symbol
+        // independently of the result type, which expected-type checking may
+        // converge from EnumVariantT to EnumT.
+        if (!expr.enum_variant_owner.has_value()) {
+            if (!expr.enum_variant_name.empty() ||
+                (expr.type != nullptr &&
+                 (expr.type->holds<types::EnumVariantT>() || expr.type->holds<types::EnumT>()))) {
+                throw std::logic_error("enum variant constructor is missing its resolved owner");
             }
-            if (enum_info->canonical_name != variant_type.canonical_name) {
-                return std::nullopt;
-            }
-            const auto variant = enum_info->find_variant(variant_type.variant_name);
-            if (!variant.has_value()) {
-                return std::nullopt;
-            }
-            return EnumVariantTarget{
-                .owner = enum_info,
-                .variant = &variant->get(),
-                .source_id = decl.source_id,
-            };
-        };
-
-        if (variant_type.symbol.has_value()) {
-            if (const auto *decl = find_decl_by_symbol(*variant_type.symbol); decl != nullptr) {
-                if (auto target = from_decl(*decl); target.has_value()) {
-                    return target;
-                }
-            }
-        }
-
-        for (const auto &decl : typed_program_->declarations) {
-            const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
-            if (enum_info == nullptr || enum_info->canonical_name != variant_type.canonical_name) {
-                continue;
-            }
-            if (auto target = from_decl(decl); target.has_value()) {
-                return target;
-            }
-        }
-        return std::nullopt;
-    }
-
-    [[nodiscard]] std::optional<EnumVariantTarget>
-    find_enum_variant_target(const TypedExpr &expr) const noexcept {
-        // Prefer the explicit enum-variant fact the type checker persisted on the
-        // expr (RFC 0026 KR6.4). It is authoritative: the checker's expected-type
-        // backfill may re-converge `expr.type` from EnumVariantT to the owner
-        // EnumT, so `type`-based recovery (below) can silently lose the variant
-        // for a struct-payload variant LITERAL. Resolving from the owner SymbolId
-        // + variant name avoids re-parsing source spelling.
-        if (expr.enum_variant_owner.has_value() && !expr.enum_variant_name.empty()) {
-            const auto resolve_from = [&](const TypedDecl &decl)
-                -> std::optional<EnumVariantTarget> {
-                const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
-                if (enum_info == nullptr) {
-                    return std::nullopt;
-                }
-                const auto variant = enum_info->find_variant(expr.enum_variant_name);
-                if (!variant.has_value()) {
-                    return std::nullopt;
-                }
-                return EnumVariantTarget{
-                    .owner = enum_info,
-                    .variant = &variant->get(),
-                    .source_id = decl.source_id,
-                };
-            };
-            // Prefer the owning enum's SymbolId; fall back to a canonical-name
-            // scan (the fact's owner symbol is the enum TYPE symbol, which may
-            // not be the same SymbolId as the enum DECL in every build).
-            if (const auto *decl = find_decl_by_symbol(*expr.enum_variant_owner); decl != nullptr) {
-                if (auto target = resolve_from(*decl); target.has_value()) {
-                    return target;
-                }
-            }
-            if (!expr.enum_variant_owner_name.empty()) {
-                for (const auto &decl : typed_program_->declarations) {
-                    const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
-                    if (enum_info == nullptr ||
-                        enum_info->canonical_name != expr.enum_variant_owner_name) {
-                        continue;
-                    }
-                    if (auto target = resolve_from(decl); target.has_value()) {
-                        return target;
-                    }
-                }
-            }
-        }
-
-        if (expr.type != nullptr) {
-            if (const auto *variant_type = expr.type->get_if<types::EnumVariantT>();
-                variant_type != nullptr) {
-                return find_enum_variant_target(*variant_type);
-            }
-        }
-
-        if (!expr.resolved_symbol.has_value() || expr.semantic_name.empty()) {
             return std::nullopt;
         }
-        const auto *decl = find_decl_by_symbol(*expr.resolved_symbol);
+        if (expr.enum_variant_name.empty()) {
+            throw std::logic_error("enum variant constructor is missing its resolved variant");
+        }
+        const auto *decl = find_decl_by_symbol(*expr.enum_variant_owner);
         if (decl == nullptr) {
-            return std::nullopt;
+            throw std::logic_error(
+                "enum variant constructor references a missing owner declaration");
         }
         const auto *enum_info = payload_as<EnumTypeInfo>(decl);
-        if (enum_info == nullptr) {
-            return std::nullopt;
+        if (enum_info == nullptr || enum_info->symbol != *expr.enum_variant_owner) {
+            throw std::logic_error(
+                "enum variant constructor owner is not its canonical enum declaration");
         }
-        if (expr.semantic_name.find("::") == std::string::npos) {
-            return std::nullopt;
-        }
-        const auto variant_name = last_qualified_segment(expr.semantic_name);
-        if (variant_name.empty()) {
-            return std::nullopt;
-        }
-        const auto variant = enum_info->find_variant(variant_name);
+        const auto variant = enum_info->find_variant(expr.enum_variant_name);
         if (!variant.has_value()) {
-            return std::nullopt;
+            throw std::logic_error("enum variant constructor references a missing variant");
+        }
+        if (variant->get().payload_kind != EnumVariantPayloadKind::Struct) {
+            throw std::logic_error("enum struct constructor references a non-struct variant");
         }
         return EnumVariantTarget{
             .owner = enum_info,
@@ -1962,11 +1874,6 @@ class TypedIrLowerer final {
             .source_id = decl->source_id,
         };
     }
-
-    struct MethodTarget {
-        const ImplTypeInfo *impl{nullptr};
-        const ImplMethodInfo *method{nullptr};
-    };
 
     [[nodiscard]] static const ImplMethodInfo *find_impl_method(const ImplTypeInfo &impl,
                                                                 std::string_view name) noexcept {
@@ -1984,68 +1891,6 @@ class TypedIrLowerer final {
         }
         if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
             return enumeration->symbol;
-        }
-        return std::nullopt;
-    }
-
-    [[nodiscard]] std::optional<MethodTarget>
-    resolve_method_target(const TypedExpr &expr) const noexcept {
-        const TypedExpr *receiver = child_by_role(expr, TypedExprChildRole::Base);
-        if (receiver == nullptr || receiver->type == nullptr) {
-            return std::nullopt;
-        }
-        const auto target_symbol = nominal_symbol_of_type(*receiver->type);
-        // For primitive receivers (String, Int, …) there is no nominal SymbolId
-        // (primitives are not struct/enum declarations). Fall back to a
-        // normalize_type_key equality walk so inherent impls declared directly
-        // on primitive types still route through their method metadata — this
-        // is how @builtin facade impl methods (e.g. `impl String { @builtin fn
-        // length(...) -> Int; }`) emit the correct builtin-hook callee name.
-        const bool primitive_target = !target_symbol.has_value();
-        const std::string receiver_key =
-            primitive_target ? TypeEnvironment::normalize_type_key(*receiver->type) : std::string{};
-
-        std::optional<MethodTarget> inherent;
-        std::optional<MethodTarget> trait;
-        std::size_t inherent_count = 0;
-        std::size_t trait_count = 0;
-        for (const auto &decl : typed_program_->declarations) {
-            const auto *impl = payload_as<ImplTypeInfo>(&decl);
-            if (impl == nullptr) {
-                continue;
-            }
-            bool match = false;
-            if (primitive_target) {
-                if (impl->target_type != nullptr &&
-                    TypeEnvironment::normalize_type_key(*impl->target_type) == receiver_key) {
-                    match = true;
-                }
-            } else {
-                if (impl->target_symbol.has_value() && *impl->target_symbol == *target_symbol) {
-                    match = true;
-                }
-            }
-            if (!match) {
-                continue;
-            }
-            const auto *method = find_impl_method(*impl, expr.member_name);
-            if (method == nullptr) {
-                continue;
-            }
-            if (impl->is_inherent) {
-                inherent = MethodTarget{.impl = impl, .method = method};
-                ++inherent_count;
-            } else {
-                trait = MethodTarget{.impl = impl, .method = method};
-                ++trait_count;
-            }
-        }
-
-        if (inherent_count == 1) {
-            return inherent;
-        }
-        if (inherent_count == 0 && trait_count == 1) {
-            return trait;
         }
         return std::nullopt;
     }
@@ -2133,38 +1978,29 @@ class TypedIrLowerer final {
     }
 
     [[nodiscard]] std::string render_method_target(const TypedExpr &expr) const {
-        // C-5 (Wave-24): prefer stored dispatch_target when available.
-        // This avoids re-scanning all impl declarations — the typechecker
-        // already resolved which impl+method was selected.
-        if (expr.dispatch_target.has_value()) {
-            const auto &dt = *expr.dispatch_target;
-            // Find the ImplTypeInfo by index to check for @builtin hooks.
-            const ImplTypeInfo *impl_info = nullptr;
-            for (const auto &decl : typed_program_->declarations) {
-                const auto *impl = payload_as<ImplTypeInfo>(&decl);
-                if (impl != nullptr && impl->index == dt.impl_index) {
-                    impl_info = impl;
-                    break;
-                }
-            }
-            if (impl_info != nullptr) {
-                if (const auto *method = find_impl_method(*impl_info, dt.method_name);
-                    method != nullptr && method->builtin_name.has_value()) {
-                    return *method->builtin_name;
-                }
-            }
-            return "impl#" + std::to_string(dt.impl_index) + "::" + dt.method_name;
+        if (!expr.dispatch_target.has_value()) {
+            throw std::logic_error("method call is missing its resolved dispatch target");
         }
-        // Fallback: re-resolve (for deserialized HIR from older versions or
-        // expressions that didn't go through the new dispatch path).
-        if (const auto target = resolve_method_target(expr);
-            target.has_value() && target->impl != nullptr && target->method != nullptr) {
-            if (target->method->builtin_name.has_value()) {
-                return *target->method->builtin_name;
+        const auto &dispatch = *expr.dispatch_target;
+        const ImplTypeInfo *impl_info = nullptr;
+        for (const auto &decl : typed_program_->declarations) {
+            const auto *impl = payload_as<ImplTypeInfo>(&decl);
+            if (impl != nullptr && impl->index == dispatch.impl_index) {
+                impl_info = impl;
+                break;
             }
-            return "impl#" + std::to_string(target->impl->index) + "::" + target->method->name;
         }
-        return expr.semantic_name.empty() ? expr.member_name : expr.semantic_name;
+        if (impl_info == nullptr) {
+            throw std::logic_error("resolved method dispatch references a missing impl");
+        }
+        const auto *method = find_impl_method(*impl_info, dispatch.method_name);
+        if (method == nullptr) {
+            throw std::logic_error("resolved method dispatch references a missing impl method");
+        }
+        if (method->builtin_name.has_value()) {
+            return *method->builtin_name;
+        }
+        return "impl#" + std::to_string(dispatch.impl_index) + "::" + dispatch.method_name;
     }
 
     [[nodiscard]] std::string render_struct_target(const TypedExpr &expr) const {
@@ -2375,21 +2211,12 @@ class TypedIrLowerer final {
         ir::ExprRef visit_struct_literal(const TypedExpr &e) const {
             ir::StructLiteralExpr literal{.type_name = self.render_struct_target(e), .fields = {}};
             const auto variant_target = self.find_enum_variant_target(e);
-            const auto *variant_type =
-                e.type != nullptr ? e.type->get_if<types::EnumVariantT>() : nullptr;
-            if (variant_target.has_value() && variant_target->owner != nullptr &&
-                variant_target->variant != nullptr) {
+            if (variant_target.has_value()) {
                 literal.is_enum_variant = true;
                 literal.enum_name = variant_target->owner->canonical_name;
                 literal.variant_name = variant_target->variant->name;
                 literal.type_name =
                     variant_target->owner->canonical_name + "::" + variant_target->variant->name;
-            } else if (variant_type != nullptr) {
-                literal.is_enum_variant = true;
-                literal.enum_name = variant_type->canonical_name;
-                literal.variant_name = variant_type->variant_name;
-                literal.type_name =
-                    variant_type->canonical_name + "::" + variant_type->variant_name;
             }
             std::vector<std::pair<std::string, const TypedExpr *>> explicit_fields;
             for (const auto &child : e.children) {
@@ -2402,46 +2229,43 @@ class TypedIrLowerer final {
             }
 
             if (variant_target.has_value()) {
-                if (variant_target->variant != nullptr &&
-                    variant_target->variant->payload_kind == EnumVariantPayloadKind::Struct) {
-                    std::unordered_set<std::string> emitted_names;
-                    for (const auto &field : variant_target->variant->fields) {
-                        const auto explicit_iter = std::find_if(
-                            explicit_fields.begin(),
-                            explicit_fields.end(),
-                            [&field](const auto &item) { return item.first == field.name; });
-                        if (explicit_iter != explicit_fields.end()) {
-                            literal.fields.push_back(ir::StructFieldInit{
-                                .name = explicit_iter->first,
-                                .value = self.lower_typed_expr(*explicit_iter->second),
-                            });
-                            emitted_names.insert(explicit_iter->first);
-                            continue;
-                        }
-                        if (!field.has_default) {
-                            continue;
-                        }
-                        ir::ExprRef default_value = self.lower_expr_range(
-                            field.default_value_range, variant_target->source_id);
-                        if (default_value != nullptr) {
-                            literal.fields.push_back(ir::StructFieldInit{
-                                .name = field.name,
-                                .value = default_value,
-                            });
-                            emitted_names.insert(field.name);
-                        }
-                    }
-                    for (const auto &[field_name, field_value] : explicit_fields) {
-                        if (emitted_names.contains(field_name)) {
-                            continue;
-                        }
-                        literal.fields.push_back(ir::StructFieldInit{
-                            .name = field_name,
-                            .value = self.lower_typed_expr(*field_value),
+                std::unordered_set<std::string> emitted_names;
+                for (const auto &field : variant_target->variant->fields) {
+                    const auto explicit_iter = std::find_if(
+                        explicit_fields.begin(), explicit_fields.end(), [&field](const auto &item) {
+                            return item.first == field.name;
                         });
+                    if (explicit_iter != explicit_fields.end()) {
+                        literal.fields.push_back(ir::StructFieldInit{
+                            .name = explicit_iter->first,
+                            .value = self.lower_typed_expr(*explicit_iter->second),
+                        });
+                        emitted_names.insert(explicit_iter->first);
+                        continue;
                     }
-                    return self.make_expr(std::move(literal), range);
+                    if (!field.has_default) {
+                        continue;
+                    }
+                    ir::ExprRef default_value =
+                        self.lower_expr_range(field.default_value_range, variant_target->source_id);
+                    if (default_value != nullptr) {
+                        literal.fields.push_back(ir::StructFieldInit{
+                            .name = field.name,
+                            .value = default_value,
+                        });
+                        emitted_names.insert(field.name);
+                    }
                 }
+                for (const auto &[field_name, field_value] : explicit_fields) {
+                    if (emitted_names.contains(field_name)) {
+                        continue;
+                    }
+                    literal.fields.push_back(ir::StructFieldInit{
+                        .name = field_name,
+                        .value = self.lower_typed_expr(*field_value),
+                    });
+                }
+                return self.make_expr(std::move(literal), range);
             }
 
             for (const auto &[field_name, field_value] : explicit_fields) {
@@ -2756,9 +2580,10 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::ExprRef lower_expr_range(SourceRange range,
                                                std::optional<SourceId> source_id) const {
         const TypedExpr *typed = typed_program_->find_expr_by_range(range, source_id);
-        if (typed != nullptr)
-            return lower_typed_expr(*typed);
-        return nullptr;
+        if (typed == nullptr) {
+            throw std::logic_error("declaration metadata references a missing typed expression");
+        }
+        return lower_typed_expr(*typed);
     }
 
     [[nodiscard]] ir::ExprRef lower_expr_range(SourceRange range) const {
@@ -2773,7 +2598,7 @@ class TypedIrLowerer final {
         const TypedTemporalExpr *tte =
             typed_program_->find_temporal_by_range(range, current_source_id_);
         if (tte == nullptr) {
-            return nullptr;
+            throw std::logic_error("declaration metadata references a missing typed temporal expression");
         }
         return lower_typed_temporal(*tte);
     }
@@ -2781,7 +2606,7 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::Block lower_block_range(SourceRange range) const {
         const TypedBlock *tb = typed_program_->find_block_by_range(range, current_source_id_);
         if (tb == nullptr) {
-            return ir::Block{.statements = {}, .source_range = range};
+            throw std::logic_error("declaration metadata references a missing typed block");
         }
         return lower_typed_block(*tb);
     }
@@ -3612,7 +3437,10 @@ class TypedIrLowerer final {
 
     [[nodiscard]] ir::SymbolRef symbol_ref_from_decl(const TypedDecl &decl,
                                                      std::string_view label) const {
-        return symbol_ref_from_symbol(typed_program_->find_symbol(decl.symbol), label);
+        if (!decl.symbol.has_value()) {
+            throw std::logic_error(std::string(label) + " is missing its defined symbol");
+        }
+        return symbol_ref_from_symbol(typed_program_->find_symbol(*decl.symbol), label);
     }
 
     [[nodiscard]] ir::ModuleDecl lower_typed_module(const TypedDecl &decl) const {
@@ -3879,7 +3707,9 @@ class TypedIrLowerer final {
         for (const auto &clause : info.clauses) {
             auto lowered_clause = ir::ContractClause{
                 .kind = static_cast<ir::ContractClauseKind>(clause.clause_kind),
-                .value = clause.is_temporal
+                .value = clause.is_wildcard
+                             ? std::variant<ir::ExprRef, ir::TemporalExprPtr>{ir::ExprRef{}}
+                             : clause.is_temporal
                              ? std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_temporal_range(
                                    clause.expr_range)}
                              : std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_expr_range(
@@ -4089,6 +3919,10 @@ class TypedIrLowerer final {
             if (!emitted_instance_keys.insert(instance_key).second) {
                 continue; // another generic-scope instance mangled to this key
             }
+            // Declaration ranges belong to the generic definition's source,
+            // independently of the source of the final declaration visited above.
+            current_source_id_ = decl->source_id;
+            current_module_name_ = module_name_for(*decl);
             ir::FnDecl lowered = with_provenance(
                 ir::FnDecl{
                     .provenance = {},
@@ -4476,15 +4310,14 @@ class TypedIrLowerer final {
             if (workflow == nullptr)
                 continue;
             for (const auto &node : workflow->nodes) {
-                if (node.target_symbol.value == 0)
-                    continue;
-
                 const AgentTypeInfo *agent_info = find_agent_info(node.target_symbol);
+                if (agent_info == nullptr)
+                    continue;
                 std::vector<TypePtr> type_args;
                 type_args.reserve(3);
-                type_args.push_back(agent_info ? agent_info->input_type : nullptr);
-                type_args.push_back(agent_info ? agent_info->context_type : nullptr);
-                type_args.push_back(agent_info ? agent_info->output_type : nullptr);
+                type_args.push_back(agent_info->input_type);
+                type_args.push_back(agent_info->context_type);
+                type_args.push_back(agent_info->output_type);
 
                 InstanceKey key{
                     .symbol_value = static_cast<std::size_t>(node.target_symbol.value),
@@ -4750,152 +4583,139 @@ inline ir::StatementPtr TypedIrLowerer::lower_typed_statement(const TypedStateme
 // (LetStatement / IfLetStatement / ReturnStatement / UnwrapExpr / CallExpr)
 // — no new IR nodes are introduced.
 void TypedIrLowerer::lower_try_let_expansion(ir::Block &ir_block,
-                                              const TypedStatement &stmt,
-                                              const TypedExpr &try_expr) const {
-    // The operand of `e?` (the expression before `?`).
-    const TypedExpr *operand_typed =
-        child_by_role(try_expr, TypedExprChildRole::Operand);
-    if (operand_typed == nullptr) {
-        // Malformed TryExpr — emit a plain let with a null initializer so
-        // downstream verification reports the gap rather than crashing.
-        ir_block.statements.push_back(make_statement(
-            ir::LetStatement{
-                .name = stmt.target_name,
-                .type_ref = ir::TypeRef{},
-                .initializer = nullptr,
-                .adjustment = std::nullopt,
-            },
-            stmt.range));
-        return;
+                                             const TypedStatement &stmt,
+                                             const TypedExpr &try_expr) const {
+    const TypedExpr *operand = child_by_role(try_expr, TypedExprChildRole::Operand);
+    if (operand == nullptr || operand->type == nullptr || try_expr.type == nullptr ||
+        !try_expr.try_info.has_value() || try_expr.try_info->operand_enum_type == nullptr ||
+        try_expr.try_info->return_enum_type == nullptr) {
+        throw std::logic_error("try expression has no complete typed propagation facts");
     }
-
-    // Lower the operand to IR once; the temp binding and the unwrap both
-    // reference it through the temp variable.
-    ir::ExprRef lowered_operand = lower_typed_expr(*operand_typed);
-
-    // Fresh temp name for the operand binding.
-    const std::string temp_name =
-        "__try_tmp_" + std::to_string(try_temp_counter_++);
-
-    // Classify the operand as Result<T, E> (vs Option<T>) so the failure
-    // branch constructs the right early-return value. The typechecker has
-    // already validated that the operand is Option or Result; the else
-    // branch below defaults to the Option (None) expansion. The operand
-    // type may be EnumT (a variable of the enum type) or EnumVariantT
-    // (the result of a variant constructor call like Result::Err(e)).
-    const Type *operand_type = operand_typed->type;
-    bool is_result = false;
-    if (operand_type != nullptr) {
-        if (const auto *enm = operand_type->get_if<types::EnumT>();
-            enm != nullptr &&
-            std::string_view{enm->canonical_name} == stdlib_bridge::kResultType) {
-            is_result = true;
-        } else if (const auto *var = operand_type->get_if<types::EnumVariantT>();
-                   var != nullptr &&
-                   std::string_view{var->canonical_name} == stdlib_bridge::kResultType) {
-            is_result = true;
-        }
+    const auto &info = *try_expr.try_info;
+    const auto operand_ref = type_ref_from_type(*operand->type);
+    const auto return_ref = type_ref_from_type(*info.return_enum_type);
+    if (operand_ref.kind != ir::TypeRefKind::Enum || return_ref.kind != ir::TypeRefKind::Enum ||
+        operand_ref.nominal_ref != return_ref.nominal_ref) {
+        throw std::logic_error("try expression operand and return enum identities disagree");
     }
+    const auto normalized_operand_ref = type_ref_from_type(*info.operand_enum_type);
+    auto operand_enum_ref = ir::clone_type_ref(operand_ref);
+    operand_enum_ref.variant_name.clear();
+    operand_enum_ref.display_name = normalized_operand_ref.display_name;
+    if (!ir::type_refs_equal(operand_enum_ref, normalized_operand_ref)) {
+        throw std::logic_error("try operand type disagrees with its normalized typed enum");
+    }
+    if (normalized_operand_ref.params.empty() ||
+        !ir::type_refs_equal(*normalized_operand_ref.params[0],
+                             type_ref_from_type(*try_expr.type))) {
+        throw std::logic_error("try success type disagrees with its operand payload");
+    }
+    if (info.kind != TypedTryKind::Option && info.kind != TypedTryKind::Result) {
+        throw std::logic_error("try expression carries an invalid propagation kind");
+    }
+    const bool is_result = info.kind == TypedTryKind::Result;
+    if (!operand_ref.nominal_ref.id.has_value() ||
+        *operand_ref.nominal_ref.id != info.owner.value) {
+        throw std::logic_error("try expression enum owner does not match its typed identity");
+    }
+    const std::string failure_variant = is_result ? "Err" : "None";
+    // Source identifiers cannot start with '_', so synthesized locals cannot
+    // capture a user parameter or binding, including names in nested blocks.
+    const std::string prefix = "__try_" + std::to_string(try_temp_counter_++);
+    const std::string temp_name = prefix + "_operand";
+    const std::string error_name = prefix + "_error";
+    const auto typed_path = [&](const std::string &name, const ir::TypeRef &type) {
+        auto expr = make_expr(ir::PathExpr{.path = ir::Path{.root_name = name}}, stmt.range);
+        expr->resolved_type = ir::clone_type_ref(type);
+        return expr;
+    };
 
-    // (1) let <tmp> = <operand>;
+    const auto lowered_operand = lower_typed_expr(*operand);
     ir_block.statements.push_back(make_statement(
         ir::LetStatement{
             .name = temp_name,
-            .type_ref = operand_type != nullptr ? type_ref_from_type(*operand_type)
-                                                : ir::TypeRef{},
+            .type_ref = ir::clone_type_ref(operand_ref),
             .initializer = lowered_operand,
             .adjustment = std::nullopt,
         },
         stmt.range));
 
-    // (2) if let <Pat> = <tmp> { return <FailVal>; }
-    ir::ExprRef scrutinee = make_expr(
-        ir::PathExpr{.path = ir::Path{.root_name = temp_name}}, stmt.range);
-
+    ir::VariantPattern variant{
+        .path = operand_ref.canonical_name + "::" + failure_variant,
+        .kind = is_result ? ir::VariantPatternKind::Tuple : ir::VariantPatternKind::Unit,
+    };
+    variant.owner_enum = operand_ref.nominal_ref;
+    variant.variant_name = failure_variant;
+    auto then_block = make_owned<ir::Block>();
+    std::vector<ir::ExprRef> failure_arguments;
     if (is_result) {
-        // if let Err(err) = tmp { return Err(err); }
-        auto err_pattern = make_owned<ir::MatchPattern>();
-        err_pattern->node = ir::BindingPattern{.name = "err"};
-
-        ir::VariantPattern variant;
-        variant.path = "Err";
-        variant.kind = ir::VariantPatternKind::Tuple;
-        variant.subpatterns.push_back(std::move(err_pattern));
-
-        ir::MatchPattern pattern;
-        pattern.node = std::move(variant);
-
-        auto then_block = make_owned<ir::Block>();
-        then_block->statements.push_back(make_statement(
-            ir::ReturnStatement{
-                .value = make_expr(
-                    ir::CallExpr{
-                        .callee = "std::result::Result::Err",
-                        .arguments = {make_expr(
-                            ir::PathExpr{.path = ir::Path{.root_name = "err"}},
-                            stmt.range)},
-                    },
-                    stmt.range),
-            },
-            stmt.range));
-
-        ir_block.statements.push_back(make_statement(
-            ir::IfLetStatement{
-                .pattern = std::move(pattern),
-                .scrutinee = scrutinee,
-                .then_block = std::move(then_block),
-                .else_block = nullptr,
-            },
-            stmt.range));
-    } else {
-        // if let None = tmp { return None; }
-        // (Default for Option and for the defensive fallback when the
-        // operand type could not be classified — the typechecker should
-        // have rejected non-Option/Result operands already.)
-        ir::VariantPattern variant;
-        variant.path = "None";
-        variant.kind = ir::VariantPatternKind::Unit;
-
-        ir::MatchPattern pattern;
-        pattern.node = std::move(variant);
-
-        auto then_block = make_owned<ir::Block>();
-        then_block->statements.push_back(make_statement(
-            ir::ReturnStatement{
-                .value = make_expr(
-                    ir::CallExpr{
-                        .callee = "std::option::Option::None",
-                        .arguments = {},
-                    },
-                    stmt.range),
-            },
-            stmt.range));
-
-        ir_block.statements.push_back(make_statement(
-            ir::IfLetStatement{
-                .pattern = std::move(pattern),
-                .scrutinee = scrutinee,
-                .then_block = std::move(then_block),
-                .else_block = nullptr,
-            },
-            stmt.range));
+        if (operand_ref.params.size() != 2 || return_ref.params.size() != 2) {
+            throw std::logic_error("try Result operand and return require two type arguments");
+        }
+        const auto &error_ref = *operand_ref.params[1];
+        if (!info.failure_adjustment.has_value() &&
+            !ir::type_refs_equal(error_ref, *return_ref.params[1])) {
+            throw std::logic_error("try Result propagation has no typed error adjustment witness");
+        }
+        auto payload = make_owned<ir::MatchPattern>();
+        payload->node = ir::BindingPattern{.name = error_name};
+        payload->source_range = stmt.range;
+        payload->matched_type_ref = ir::clone_type_ref(error_ref);
+        payload->matched_nominal = error_ref.nominal_ref;
+        variant.subpatterns.push_back(std::move(payload));
+        auto error = typed_path(error_name, error_ref);
+        if (info.failure_adjustment.has_value()) {
+            const std::string adjusted_name = prefix + "_adjusted_error";
+            then_block->statements.push_back(make_statement(
+                ir::LetStatement{
+                    .name = adjusted_name,
+                    .type_ref = ir::clone_type_ref(*return_ref.params[1]),
+                    .initializer = error,
+                    .adjustment = bridge_adjustment(*info.failure_adjustment),
+                },
+                stmt.range));
+            error = typed_path(adjusted_name, *return_ref.params[1]);
+        }
+        failure_arguments.push_back(error);
     }
+    ir::MatchPattern pattern{
+        .node = std::move(variant),
+        .source_range = stmt.range,
+        .matched_nominal = operand_ref.nominal_ref,
+        .matched_type_ref = ir::clone_type_ref(operand_ref),
+    };
+    auto failure = make_expr(
+        ir::CallExpr{
+            .callee = return_ref.canonical_name + "::" + failure_variant,
+            .arguments = std::move(failure_arguments),
+            .callee_ref = return_ref.nominal_ref,
+        },
+        stmt.range);
+    failure->resolved_type = ir::clone_type_ref(return_ref);
+    then_block->statements.push_back(
+        make_statement(ir::ReturnStatement{.value = failure}, stmt.range));
+    ir_block.statements.push_back(make_statement(
+        ir::IfLetStatement{
+            .pattern = std::move(pattern),
+            .scrutinee = typed_path(temp_name, operand_ref),
+            .then_block = std::move(then_block),
+            .else_block = nullptr,
+        },
+        stmt.range));
 
-    // (3) let x = unwrap(<tmp>);
+    auto unwrapped = make_expr(
+        ir::UnwrapExpr{
+            .operand = typed_path(temp_name, operand_ref),
+            .fallback_none_message = nullptr,
+        },
+        stmt.range);
+    unwrapped->resolved_type = type_ref_from_type(*try_expr.type);
     ir_block.statements.push_back(make_statement(
         ir::LetStatement{
             .name = stmt.target_name,
-            .type_ref = try_expr.type != nullptr ? type_ref_from_type(*try_expr.type)
-                                                 : ir::TypeRef{},
-            .initializer = make_expr(
-                ir::UnwrapExpr{
-                    .operand = make_expr(
-                        ir::PathExpr{.path = ir::Path{.root_name = temp_name}},
-                        stmt.range),
-                    .fallback_none_message = nullptr,
-                },
-                stmt.range),
-            .adjustment = std::nullopt,
+            .type_ref = inferred_typed_let_type_ref(stmt, &try_expr),
+            .initializer = unwrapped,
+            .adjustment = bridge_let_adjustment(stmt),
         },
         stmt.range));
 }

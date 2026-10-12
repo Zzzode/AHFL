@@ -224,7 +224,7 @@ class IrProgramPrinter final {
 
     void print(const ir::Program &program) {
         program_ = &program;
-        out_ << program.format_version << '\n';
+        out_ << program.format << '\n';
 
         bool emitted_section = false;
         if (!ir::formal_observations(program).empty()) {
@@ -431,7 +431,7 @@ class IrProgramPrinter final {
                 },
                 [](const ir::WildcardPattern &) { return std::string{"_"}; },
                 [this](const ir::BindingPattern &value) {
-                    std::string rendered = value.is_mut ? "mut " + value.name : value.name;
+                    std::string rendered = value.name;
                     if (value.nested) {
                         rendered += " @ " + render_pattern(*value.nested);
                     }

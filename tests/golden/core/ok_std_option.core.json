@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [
     {

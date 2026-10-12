@@ -206,9 +206,9 @@ parse_source_archive_payload(std::string_view payload,
     std::vector<PayloadFile> files;
     std::size_t cursor = 0;
     const auto format = read_payload_token(payload, cursor);
-    if (!format.has_value() || *format != "ahfl.source_archive.v1") {
+    if (!format.has_value() || *format != "ahfl.source_archive") {
         diagnostics.push_back(
-            "source archive payload format_version must be 'ahfl.source_archive.v1'");
+            "source archive payload format must be 'ahfl.source_archive'");
         return files;
     }
     const auto package = read_payload_token(payload, cursor);
@@ -378,7 +378,7 @@ SourceArchiveResult build_source_archive(const std::filesystem::path &package_ro
 
     SourceArchive archive;
     archive.package_name = std::string{package_name};
-    std::string payload = "ahfl.source_archive.v1";
+    std::string payload = "ahfl.source_archive";
     payload.push_back('\0');
     payload.append(archive.package_name);
     payload.push_back('\0');
@@ -435,7 +435,7 @@ SourceArchiveResult build_source_archive(const std::filesystem::path &package_ro
 
 std::string serialize_source_archive_manifest(const SourceArchive &archive) {
     auto root = ahfl::json::JsonValue::make_object();
-    root->set("format_version", ahfl::json::JsonValue::make_string(archive.format_version));
+    root->set("format", ahfl::json::JsonValue::make_string(archive.format));
     root->set("package", ahfl::json::JsonValue::make_string(archive.package_name));
     root->set("manifest_sha256", ahfl::json::JsonValue::make_string(archive.manifest_sha256));
     root->set("archive_sha256", ahfl::json::JsonValue::make_string(archive.archive_sha256));
@@ -599,15 +599,15 @@ SourceArchiveResult parse_source_archive_manifest(std::string_view input) {
     const auto &root = **parsed;
     reject_unknown_fields(
         root,
-        {"format_version", "package", "manifest_sha256", "archive_sha256", "files"},
+        {"format", "package", "manifest_sha256", "archive_sha256", "files"},
         "",
         result.diagnostics);
     SourceArchive archive;
-    if (auto value = read_string(root, "format_version", result.diagnostics); value.has_value()) {
-        archive.format_version = std::move(*value);
-        if (archive.format_version != "ahfl.source_archive.v1") {
+    if (auto value = read_string(root, "format", result.diagnostics); value.has_value()) {
+        archive.format = std::move(*value);
+        if (archive.format != "ahfl.source_archive") {
             result.diagnostics.push_back(
-                "source archive manifest format_version must be 'ahfl.source_archive.v1'");
+                "source archive manifest format must be 'ahfl.source_archive'");
         }
     }
     if (auto value = read_string(root, "package", result.diagnostics); value.has_value()) {

@@ -102,7 +102,6 @@ std::optional<std::vector<std::uint8_t>> payload_for_tag(std::string_view tag) {
 
 CoreWasmResumeRecord make_record() {
     CoreWasmResumeRecord r;
-    r.format_version = 1;
     r.guarantees = 0;
     r.module_sha256 = hex_of('a');
     r.wire_schema_sha256 = hex_of('b');
@@ -137,7 +136,7 @@ CoreWasmResumeRecord make_record() {
 
     r.nodes.push_back(n0);
     r.nodes.push_back(n1);
-    r.auth_header.alg_version = 1;
+    r.auth_header.alg_id = 1;
     r.auth_header.key_id = test_key_id();
     return r;
 }
@@ -145,9 +144,11 @@ CoreWasmResumeRecord make_record() {
 std::filesystem::path store_root(const std::filesystem::path &case_dir) {
     return case_dir / "store";
 }
+#if defined(__linux__)
 std::filesystem::path marker_path(const std::filesystem::path &case_dir) {
     return case_dir / "control" / "fault-ready.json";
 }
+#endif
 
 // Pre-open shape check on <case-dir>/store so a genuinely-missing / non-directory /
 // symlink / wrong-owner-or-mode / unstat-able store root is a SETUP error (exit 3),

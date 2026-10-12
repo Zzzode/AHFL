@@ -10,6 +10,63 @@
 > remain; the current verification environment SKIPs the Wasmtime execution lanes.
 > B2 and KR6.5 stay false.
 
+## Decision History
+
+### 2026-10-12: Workflow outlined-function placement
+
+An independent decision agent reviewed a real CLI execution failure in which a
+workflow calling an ordinary pure function trapped with stack overflow. The
+workflow function table declared zero outlined functions and omitted their
+bodies, while handlers retained agent-local call indices. Function builders also
+retained the standalone heap global instead of the workflow heap global.
+
+The selected design gives each emitted module one finalized function registry,
+indexed by numeric `CoreFnId` / `CoreInstanceId`. After computing the transitive
+reachable-function closure, planning freezes unique function ordinals. Direct
+calls, function types, function/code sections and closure table entries consume
+the same final placement. Closure signatures use structural numeric parameter
+and result kinds in a flat ordinal table for both agent and workflow emission,
+without string keys. Workflow ABI types 0 through 6 retain their meanings;
+outlined-function and closure types follow them. Agent-local index arithmetic
+and bytecode patching cannot substitute for final module placement.
+
+Pure outlined functions are shared across workflow nodes. Their explicit
+environment and parameters carry values; they do not own agent state or node
+frame identity. Per-node handler relocation remains necessary, while functions
+use the workflow heap global (2) and merged read-only data placement. The heap
+starts beyond every live workflow frame, collection backing region, bridge and
+trace buffer. Its lifetime spans the run: resetting it at each node would
+overwrite aggregates still referenced by earlier node outputs. Descriptors and
+allocation guards must use the same actual heap bounds. Dynamic allocation
+rounds each actual value layout size up to eight bytes, matching planning and
+preserving alignment for subsequent values. Wide size arithmetic rejects
+capacity or integer overflow before emitting a narrowed offset.
+String concatenation and host-exported allocation preserve the same cursor
+alignment without changing logical byte lengths. The checked host allocator
+returns zero without advancing on capacity failure; the unchecked allocator
+traps before advancing. Both keep their `(i32) -> i32` signature, original
+allocation pointer and zero-length probe. Aligning only constructor allocations
+was rejected because a preceding host allocation or concatenation could still
+misalign them; separate heaps would obscure the shared cursor invariant.
+
+Per-node function copies were rejected because they duplicate pure bodies,
+closure tables and types without a node-dependent function semantic, and leave
+module index ownership implicit. The chosen approach follows ordinary compiler
+module symbol placement and reuses reachable-function planning, `CompiledFn`,
+`ClosureCallType` and `WorkflowFunctionTable`; it adds no IR layer or persisted
+protocol. The maintenance cost is making final placement explicit for both
+planning and emission. Existing unsupported function bridges and String literal
+construction remain guarded. Public ABI, artifact schemas and CLI options do
+not change.
+
+Acceptance requires the persistent CLI regression to pass `check`, Core
+emission, verified `build` and wasm3 execution for success, None and both Result
+failure paths; generic Option<Int>/Option<Bool>/Result instances and ordinary
+constructors without `?`; nested and repeated calls; two nodes sharing a pure
+function while preserving an earlier node output; workflow closure calls; and
+existing standalone direct/closure calls. Modules with no outlined functions
+must retain their existing ABI/function ordering and unsupported/capacity guards.
+
 ## 0. Baseline and problem
 
 At the original E1 design baseline, the legacy `wasm` backend was not an
@@ -190,69 +247,39 @@ fuel/cancellation contract.
 
 ### 3.2 State globals and exports
 
-The module has deterministic globals:
-
-- mutable `current_state`, initialized from `CoreAgentDecl::initial` (never
-  hard-coded to zero);
-- mutable exported `transition_count`, initialized to zero;
-- immutable exported `ahfl_abi_version = 1`;
-- mutable private `heap_next` for the existing ABI allocator.
-
-The RFC 0019 ABI export set remains:
+The current agent module exports:
 
 ```text
 memory
 alloc(i32) -> i32
 dealloc(i32, i32) -> ()
-run(i32, i32) -> i32
+run_frame() -> (status:i32, value_ptr:i32)
 step() -> i32
 current_state() -> i32
 transition_count : i32 global
-ahfl_abi_version : i32 global
 ```
 
-`step` executes the current state's E1 action. A final state is stable and
-returns itself without incrementing the counter. A goto updates the state,
-increments the counter exactly once, and returns the new state.
+`run_frame` executes the agent against its admitted frame layout. The host packs
+input/context into the descriptor's regions and reads the result using the same
+verified layout. The status is explicit; an output pointer alone never establishes
+type, length, ownership, or successful completion. There is no pointer-only `run`
+entry and no ABI-version global.
 
-`run` resets `current_state` to the declared initial state and
-`transition_count` to zero, then calls the same step logic until a final state
-is reached. Its input `(ptr,len)` is not dereferenced because the E1 validator
-proved that the only accepted result is the exact input identity. It returns
-`ptr` unchanged. The `run` body performs no load, store, parse, copy, coercion,
-or allocation for that frame. The loop carries a compile-time/state-count fuel
-guard even though the validator already proved termination; exhausting it
-traps rather than hanging.
+`step` updates the declared state and transition count; a final state remains
+stable. `current_state` returns the numeric state index. The private heap cursor
+belongs to the current module layout and is not a version-negotiation field.
 
-`current_state` returns the index. State names are display/provenance and do
-not enter executable identity.
+### 3.3 Workflow entry and current contract
 
-### 3.3 ABI v1 frame limitation is not hidden
+A workflow uses `run_workflow(input_ptr,input_len) -> (status,output_ptr,output_len)`.
+The scheduler executes the admitted DAG, propagates ERROR/PENDING explicitly,
+and returns the final output boundary. The two entry names describe different
+execution semantics, rather than successive ABI generations.
 
-RFC 0019's v1 `run` returns only an output pointer, while RFC 0021's capability
-ABI returns both pointer and length. Existing comments also alternate between
-"length-prefixed bytes" and a separately supplied length. E1 uses one narrow,
-explicit identity exception rather than claiming that this ambiguity is
-resolved:
-
-- the returned output pointer aliases the input buffer exactly;
-- output length equals the caller-known `in_len` by the validated identity
-  invariant;
-- ownership remains with the host, which obtained the buffer from the module's
-  `alloc` and must deallocate that allocation exactly once with the same
-  allocator;
-- the module neither reads nor writes the aliased buffer in `run`.
-
-This exception is valid only when input/output declaration types are identical
-and the final handler has the canonical identity shape. A projection, literal,
-construction, coercion, different output type, or any other value-returning
-form fails closed; none may reuse this alias rule.
-
-Before a value-returning agent/workflow slice lands, the ABI must receive a
-separate reviewed decision. Because published ABI symbols are append-only, a
-likely solution is `run2(...)->(status,ptr,len)` while preserving `run`; E1 does
-not pre-approve that signature, does not generalize its identity alias, and
-must not silently mutate v1.
+Producer, host, tests, and descriptor are updated together. Imports, exports,
+custom-section names, exact structure, and EOF are validated against the current
+contract; missing fields never select an older implementation. See
+[current-contract.zh.md](./current-contract.zh.md).
 
 ## 4. Deterministic wasm binary emission
 
@@ -462,9 +489,8 @@ FOUNDATION; the rest remain), each separately reviewed:
 
 1. **E2 capability boundary — LANDED**: lowered `CoreCapabilityCallStmt`, consumes
    the `ahfl_cap cap_<SymbolId>` `(ptr,len)->(status,ptr,len)` contract, propagates
-   ERROR and PENDING, and uses only P4-D layouts for internal values. The v1
-   value-returning `run` length problem is resolved by the pointer-only pre-effect
-   trap.
+   ERROR and PENDING, and uses only P4-D layouts for internal values. The value boundary is explicit in the current entry signature;
+   the pointer-only export and its trap body are deleted.
 2. **E3 workflow orchestration — LANDED**: deterministic DAG scheduler over
    `CoreWorkflowDecl`, explicit entry identity and multi-agent packaging,
    opaque frame routing where no computation is needed, no expression fallback.

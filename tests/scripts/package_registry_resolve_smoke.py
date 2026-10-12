@@ -47,9 +47,7 @@ def write_text(path, text):
 def write_risk_model(package_dir):
     write_text(
         package_dir / "ahfl.toml",
-        """manifest_version = 2
-
-[package]
+        """[package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -76,9 +74,7 @@ std = { source = "sysroot" }
 def write_app(package_dir):
     write_text(
         package_dir / "ahfl.toml",
-        """manifest_version = 2
-
-[package]
+        """[package]
 name = "registry-app"
 version = "0.1.0"
 edition = "2026"
@@ -148,7 +144,7 @@ def main():
     digest = registry_index["source_archive_sha256"]
 
     package_index = {
-        "format_version": "ahfl.registry.package_index.v1",
+        "format": "ahfl.registry.package_index",
         "package": "risk-model",
         "versions": [registry_index],
     }

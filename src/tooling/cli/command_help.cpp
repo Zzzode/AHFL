@@ -85,7 +85,7 @@ void print_usage(std::ostream &out) {
         << "    ir                         AHFL intermediate representation (AHFL-IR "
            "layer)\n"
         << "    ir-json                    IR in JSON format (AHFL-IR layer)\n"
-        << "    core-ir-json               Core-IR layered JSON projection (ahfl.core.v1)\n"
+        << "    core-ir-json               Core-IR layered JSON projection (ahfl.core)\n"
         << "    opt-ir                     Opt IR diagnostic dump\n"
         << "    opt-ir-json                Opt IR JSON artifact\n"
         << "    native-json                Native backend JSON\n"
@@ -137,9 +137,11 @@ void print_usage(std::ostream &out) {
         << "  --to <version>              Next version for emit public-api-diff only\n";
 
     out << "\nVerification Options:\n"
-        << "  --verify <mode>            Formal verification stage: off or on (default for\n"
+        << "  --verify <mode>            Control-model verification: off or on (default for\n"
         << "                             check/run/build; fail-closed: missing solver or refutation\n"
         << "                             fails the build)\n"
+        << "  --verify-data-contracts    Also verify user data-contract implications;\n"
+        << "                             requires --verify=on, unsupported goals fail\n"
         << "  --formal-backend <name>    Backend: nuxmv, nusmv, spin, or tlaplus\n"
         << "  --model-checker <path>     NuSMV/nuXmv binary path\n"
         << "  --checker-timeout-seconds <n>  Formal checker process timeout\n"

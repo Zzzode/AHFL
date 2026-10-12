@@ -112,8 +112,7 @@ const module = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module).length !== 0)
   throw new Error("aggregate agent expanded import authority");
 const {exports} = await WebAssembly.instantiate(module, {});
-if (exports.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 // Write each field as an i64 at its P4-D offset (every Int field here is
 // unbounded -> i64, 8-byte aligned). DataView writes the little-endian form the

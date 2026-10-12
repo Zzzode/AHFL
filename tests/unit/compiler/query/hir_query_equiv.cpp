@@ -141,7 +141,6 @@ flow for Worker {
 TEST_CASE("hir query equals the directly produced typed program") {
     FrontendQueries queries;
     const FileId file{0};
-    const ModuleId module{0};
     queries.set_source_text(file, "hand_written.ahfl", std::string{kHandWrittenSource});
 
     const auto queried_hir = queries.hir(file);

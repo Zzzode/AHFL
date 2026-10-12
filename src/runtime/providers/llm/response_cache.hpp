@@ -12,15 +12,15 @@
 
 namespace ahfl::llm_provider {
 
-inline constexpr std::string_view kResponseCacheKeyVersion{"ahfl.llm.response-cache-key.v1"};
-inline constexpr std::string_view kResponseCacheSnapshotSchema{"ahfl.llm_response_cache.v0"};
+inline constexpr std::string_view kResponseCacheFormat{"ahfl.llm_response_cache"};
 
-[[nodiscard]] std::string response_cache_key_fingerprint(std::string_view model,
-                                                         std::string_view system,
-                                                         std::string_view user);
+[[nodiscard]] std::string
+response_cache_key_digest(std::string_view model, std::string_view system, std::string_view user);
+
+[[nodiscard]] bool is_response_cache_key_digest(std::string_view value) noexcept;
 
 struct ResponseCacheSnapshotEntry {
-    std::string key_fingerprint;
+    std::string key_digest;
     std::string response;
     std::int64_t inserted_unix_seconds{0};
 };
@@ -47,7 +47,8 @@ class ResponseCache {
     /// Export non-expired entries for optional persistent cache storage.
     [[nodiscard]] std::vector<ResponseCacheSnapshotEntry> snapshot() const;
 
-    /// Load entries from optional persistent cache storage. Expired entries are ignored.
+    /// Load a complete current snapshot. Invalid entries reject the entire snapshot;
+    /// expired entries are ignored.
     [[nodiscard]] std::size_t load_snapshot(const std::vector<ResponseCacheSnapshotEntry> &entries);
 
     /// Clear all entries.
@@ -63,7 +64,6 @@ class ResponseCache {
     [[nodiscard]] std::string
     make_key(std::string_view model, std::string_view system, std::string_view user) const;
     void evict_to_capacity_locked();
-    void prune_expired_locked(std::chrono::steady_clock::time_point now);
 
     std::size_t max_entries_;
     std::chrono::seconds ttl_;

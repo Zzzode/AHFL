@@ -7,55 +7,55 @@ import std::option as option;
 // Each `assert` carries a meaningful Bool over the Option API surface, so the
 // file both type-checks the public API (`ahflc check`) and encodes intended
 // runtime semantics for a future execution harness. Modeled on
-// tests/integration/stdlib_api_smoke (free-function surface).
+// tests/integration/stdlib_api_smoke (inherent method surface).
 //
 // RFC 0013 P2-S1 (Step 10): the explicit type-argument workaround is retired.
 // Calls whose receiver is `Some(concrete)` or whose lambda body drives
-// inference now use the un-annotated top-level form (R3 left-fold + R5
+// inference now use the un-annotated method form (R3 left-fold + R5
 // flow-back). Explicit type args are retained only where the type parameter
 // genuinely cannot be inferred (None-only receivers, arithmetic on unbound
 // lambda params).
 fn option_ut() -> Int effect Pure decreases 0 {
     // ===== 15 positive: Option::Some(...) operations =====
-    assert(option::is_some(option::Option::Some(1)));
-    assert(option::is_none<Int>(option::Option::None));
-    assert(option::is_some(option::map(option::Option::Some(1), \x -> x + 1)));
-    assert(option::unwrap_or(option::map(option::Option::Some(5), \x -> x * 2), 0) == 10);
-    assert(option::is_some(option::and_then(option::Option::Some(1), \x -> option::Option::Some(x + 1))));
-    assert(option::unwrap_or(option::and_then(option::Option::Some(2), \x -> option::Option::Some(x * 3)), 0) == 6);
-    assert(option::unwrap_or(option::filter(option::Option::Some(4), \x -> x > 0), 0) == 4);
-    assert(option::unwrap_or(option::or_else(option::Option::Some(8), \ -> option::Option::Some(0)), 0) == 8);
-    assert(option::unwrap_or(option::Option::Some(9), 0) == 9);
-    assert(option::unwrap_or_else(option::Option::Some(3), \ -> 0) == 3);
-    assert(option::get_or_insert(option::Option::Some(7), 0) == 7);
-    assert(option::unwrap_or(option::map(option::Option::Some(10), \x -> x - 1), 0) == 9);
-    assert(option::is_some(option::or_else(option::Option::Some(1), \ -> option::Option::Some(2))));
-    assert(option::unwrap_or(option::or_else(option::Option::Some(5), \ -> option::Option::Some(2)), 0) == 5);
-    assert(option::unwrap_or(option::map(option::Option::Some(6), \x -> x + x), 0) == 12);
+    assert((option::some<Int>(1)).is_some());
+    assert((option::option_none<Int>()).is_none());
+    assert(((option::some<Int>(1)).map(\x -> x + 1)).is_some());
+    assert(((option::some<Int>(5)).map(\x -> x * 2)).unwrap_or(0) == 10);
+    assert(((option::some<Int>(1)).and_then(\x -> option::some<Int>(x + 1))).is_some());
+    assert(((option::some<Int>(2)).and_then(\x -> option::some<Int>(x * 3))).unwrap_or(0) == 6);
+    assert(((option::some<Int>(4)).filter(\x -> x > 0)).unwrap_or(0) == 4);
+    assert(((option::some<Int>(8)).or_else(\ -> option::some<Int>(0))).unwrap_or(0) == 8);
+    assert((option::some<Int>(9)).unwrap_or(0) == 9);
+    assert((option::some<Int>(3)).unwrap_or_else(\ -> 0) == 3);
+    assert((option::some<Int>(7)).get_or_insert(0) == 7);
+    assert(((option::some<Int>(10)).map(\x -> x - 1)).unwrap_or(0) == 9);
+    assert(((option::some<Int>(1)).or_else(\ -> option::some<Int>(2))).is_some());
+    assert(((option::some<Int>(5)).or_else(\ -> option::some<Int>(2))).unwrap_or(0) == 5);
+    assert(((option::some<Int>(6)).map(\x -> x + x)).unwrap_or(0) == 12);
 
     // ===== 10 boundary: Option::None and edge behaviors =====
     // Explicit type args retained: None-only receivers cannot infer T, and
     // lambdas over unbound T cannot typecheck arithmetic / comparison.
-    assert(option::is_none<Int>(option::map<Int, Int>(option::Option::None, \x: Int -> x + 1)));
-    assert(option::is_none<Int>(option::and_then<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x))));
-    assert(option::is_none<Int>(option::and_then<Int, Int>(option::Option::Some(1), \x: Int -> option::Option::None)));
-    assert(option::is_none(option::filter(option::Option::Some(4), \x -> x > 10)));
-    assert(option::is_none<Int>(option::filter<Int>(option::Option::None, \x: Int -> x > 0)));
-    assert(option::unwrap_or(option::Option::None, 42) == 42);
-    assert(option::unwrap_or_else(option::Option::None, \ -> 42) == 42);
-    assert(option::get_or_insert(option::Option::None, 8) == 8);
-    assert(option::unwrap_or<Int>(option::and_then<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x)), 7) == 7);
-    assert(option::unwrap_or(option::or_else(option::Option::None, \ -> option::Option::Some(11)), 0) == 11);
+    assert(((option::option_none<Int>()).map<Int>(\x: Int -> x + 1)).is_none());
+    assert(((option::option_none<Int>()).and_then<Int>(\x: Int -> option::some<Int>(x))).is_none());
+    assert(((option::some<Int>(1)).and_then<Int>(\x: Int -> option::option_none<Int>())).is_none());
+    assert(((option::some<Int>(4)).filter(\x -> x > 10)).is_none());
+    assert(((option::option_none<Int>()).filter(\x: Int -> x > 0)).is_none());
+    assert((option::option_none<Int>()).unwrap_or(42) == 42);
+    assert((option::option_none<Int>()).unwrap_or_else(\ -> 42) == 42);
+    assert((option::option_none<Int>()).get_or_insert(8) == 8);
+    assert(((option::option_none<Int>()).and_then<Int>(\x: Int -> option::some<Int>(x))).unwrap_or(7) == 7);
+    assert(((option::option_none<Int>()).or_else(\ -> option::some<Int>(11))).unwrap_or(0) == 11);
 
     // ===== 4 xor (M1-2): Some iff exactly one of self/other is Some =====
-    assert(option::is_some(option::xor(option::Option::Some(1), option::Option::None)));
-    assert(option::is_some(option::xor(option::Option::None, option::Option::Some(2))));
-    assert(option::is_none(option::xor(option::Option::Some(1), option::Option::Some(2))));
-    assert(option::is_none<Int>(option::xor<Int>(option::Option::None, option::Option::None)));
+    assert((option::xor(option::some<Int>(1), option::option_none<Int>())).is_some());
+    assert((option::xor(option::option_none<Int>(), option::some<Int>(2))).is_some());
+    assert((option::xor(option::some<Int>(1), option::some<Int>(2))).is_none());
+    assert((option::xor<Int>(option::option_none<Int>(), option::option_none<Int>())).is_none());
 
     // ===== 2 flat_map (M1-1): alias of and_then =====
-    assert(option::is_some(option::flat_map(option::Option::Some(2), \x -> option::Option::Some(x * 3))));
-    assert(option::is_none<Int>(option::flat_map<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x))));
+    assert((option::flat_map(option::some<Int>(2), \x -> option::some<Int>(x * 3))).is_some());
+    assert((option::flat_map<Int, Int>(option::option_none<Int>(), \x: Int -> option::some<Int>(x))).is_none());
 
     return 0;
 }

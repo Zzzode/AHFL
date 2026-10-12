@@ -317,7 +317,7 @@ void print_skipped_temporal_fragment(const SkippedTemporalFragment &fragment, st
 } // namespace
 
 void print_opt_program(const OptProgram &program, std::ostream &out) {
-    out << "opt_program source_version=" << program.source_program_version << '\n';
+    out << "opt_program source_format=" << program.source_program_format << '\n';
     for (const auto &fragment : program.skipped_temporal_fragments) {
         print_skipped_temporal_fragment(fragment, out);
     }

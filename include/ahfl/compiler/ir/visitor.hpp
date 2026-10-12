@@ -31,17 +31,8 @@ class ProgramVisitor {
     void visit(const Program &program);
 
   protected:
-    // Legacy hooks — called by the default visit_*_pre implementations.
-    // Subclasses overriding these continue to work unchanged.
-    virtual void on_program(const Program &program);
-    virtual void on_decl(const Decl &declaration);
-    virtual void on_expr(const Expr &expr);
-    virtual void on_temporal_expr(const TemporalExpr &expr);
-    virtual void on_statement(const Statement &statement);
-    virtual void on_workflow_node(const WorkflowNode &node);
-
     // Pre/post hooks with VisitAction control flow.
-    // Default visit_*_pre delegates to on_* and returns Continue.
+    // Default visit_*_pre returns Continue.
     // Default visit_*_post is a no-op.
     virtual VisitAction visit_decl_pre(const Decl &declaration);
     virtual void visit_decl_post(const Decl &declaration);
@@ -71,16 +62,8 @@ class ProgramRewriter {
     [[nodiscard]] bool rewrite(Program &program);
 
   protected:
-    // Legacy hooks — called by the default rewrite_*_pre implementations.
-    virtual bool on_program(Program &program);
-    virtual bool on_decl(Decl &declaration);
-    virtual bool on_expr(Expr &expr);
-    virtual bool on_temporal_expr(TemporalExpr &expr);
-    virtual bool on_statement(Statement &statement);
-    virtual bool on_workflow_node(WorkflowNode &node);
-
     // Pre/post hooks with VisitAction control flow.
-    // Default rewrite_*_pre delegates to on_* and returns {Continue, modified}.
+    // Default rewrite_*_pre returns {Continue, false}.
     // Default rewrite_*_post returns false (no modification).
     virtual RewriteAction rewrite_decl_pre(Decl &declaration);
     virtual bool rewrite_decl_post(Decl &declaration);

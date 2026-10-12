@@ -8,7 +8,7 @@
 // RFC 0026 KR6.5 E4-B0-C2b: the single runtime-owned authority for Decimal and
 // Duration Value *spelling* semantics. Both the decimal builtins and the shared
 // wire codec parse/validate spellings through THIS module so there is exactly one
-// grammar per family in the runtime trust paths (Codex C2b policy rev2, P0-2).
+// grammar per family in the runtime trust paths.
 //
 // Scope boundary: this is the runtime host-value layer's Value-spelling
 // authority ONLY. The compiler's const-evaluator keeps its own
@@ -33,7 +33,7 @@ struct DecimalParts {
     std::int32_t scale{0};
 };
 
-// The two disjoint, both-legal Decimal spelling families (C2b policy rev2 P0-3):
+// The two disjoint, both-legal Decimal spelling families:
 //   * SourceLiteral: `DIGIT+ "." DIGIT+ ["d"]` — the user/source form. Leading
 //     zeros allowed (grammar already allows them); no sign. The mantissa is the
 //     digits with the point removed; scale == count of fractional digits.
@@ -70,7 +70,7 @@ struct DecimalDecoded {
 // Duration
 // ---------------------------------------------------------------------------
 
-// The two disjoint, both-legal Duration spelling families (C2b policy rev2 P0-3):
+// The two disjoint, both-legal Duration spelling families:
 //   * SourceUnit: `DIGIT+ (ms|s|m|h)` — the user/source form, normalized to i64
 //     milliseconds with a checked (pre-multiply) overflow guard. Leading zeros
 //     allowed; no sign.

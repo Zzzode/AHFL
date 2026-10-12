@@ -296,15 +296,11 @@ struct FlowTypeInfo {
 // (requires / ensures / invariant). The originating AST node stores the
 // decreases syntax (optional expression list or wildcard). When present the
 // typechecker records `has_decreases` together with either a list of
-// expression source ranges (decreases_exprs) or the wildcard flag
+// expression source ranges (decreases_expr_ranges) or the wildcard flag
 // (decreases_is_wildcard). Full typed-expression attachment and termination
 // semantics are deferred to P4.S5a; this struct captures the plumbing so
 // downstream passes (validation, IR lowering, backend translation) can
 // observe the clause surface without re-reading the AST.
-struct DecreasesExprInfo {
-    SourceRange expr_range;
-};
-
 struct ContractClauseInfo {
     int clause_kind{0};
     bool is_temporal{false};
@@ -316,7 +312,6 @@ struct ContractClauseInfo {
     // because termination / ranking proofs can be attached to any contract
     // clause surface by the user.
     bool has_decreases{false};
-    std::vector<DecreasesExprInfo> decreases_exprs;
     bool decreases_is_wildcard{false};
     // P4.S6: explicit ranges used by typed-hir serialization round-trip and
     // the downstream IR pipeline (mirrors naming in ir::ContractClause).
@@ -327,7 +322,7 @@ struct ContractClauseInfo {
 };
 
 struct ContractTypeInfo {
-    SymbolId symbol{0};
+    std::optional<SourceId> source_id;
     std::string target_name;
     SymbolId target_symbol{0};
     SourceRange target_range;

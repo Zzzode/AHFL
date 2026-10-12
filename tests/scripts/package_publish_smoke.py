@@ -77,7 +77,7 @@ def write_text(path, text):
 def public_api_snapshot(package, version, entries):
     return json.dumps(
         {
-            "schema": "ahfl.public_api.v1",
+            "format": "ahfl.public_api",
             "package": {
                 "name": package,
                 "version": version,
@@ -94,7 +94,7 @@ def public_api_snapshot(package, version, entries):
 def seed_previous_release_cache(cache_dir, package, version, snapshot):
     digest = sha256_digest(snapshot)
     registry_entry = {
-        "format_version": "ahfl.registry.index.v1",
+        "format": "ahfl.registry.index",
         "registry_id": "default",
         "package": package,
         "version": version,
@@ -105,7 +105,7 @@ def seed_previous_release_cache(cache_dir, package, version, snapshot):
         "dependencies": [{"name": "std", "source": "sysroot"}],
     }
     package_index = {
-        "format_version": "ahfl.registry.package_index.v1",
+        "format": "ahfl.registry.package_index",
         "package": package,
         "versions": [registry_entry],
     }
@@ -120,9 +120,7 @@ def seed_previous_release_cache(cache_dir, package, version, snapshot):
 def write_publish_fixture(package_dir, version="0.2.0"):
     (package_dir / "src").mkdir(parents=True, exist_ok=True)
     (package_dir / "ahfl.toml").write_text(
-        f"""manifest_version = 2
-
-[package]
+        f"""[package]
 name = "publish-demo"
 version = "{version}"
 edition = "2026"
@@ -190,10 +188,10 @@ class LocalRegistry:
             def do_PUT(self):
                 payload, body = self._read_json()
                 outer.requests.append(("PUT", self.path, payload))
-                if self.path != "/v1/packages/publish-demo/versions/0.2.0/publish":
+                if self.path != "/packages/publish-demo/versions/0.2.0/publish":
                     self._write_json(404, {"error": "not found"})
                     return
-                if body.get("format_version") != "ahfl.registry.publish_request.v1":
+                if body.get("format") != "ahfl.registry.publish_request":
                     self._write_json(400, {"error": "bad schema"})
                     return
                 entry = body.get("registry_index", {})
@@ -206,10 +204,10 @@ class LocalRegistry:
             def do_POST(self):
                 payload, body = self._read_json()
                 outer.requests.append(("POST", self.path, payload))
-                if self.path != "/v1/packages/publish-demo/versions/0.2.0/yank":
+                if self.path != "/packages/publish-demo/versions/0.2.0/yank":
                     self._write_json(404, {"error": "not found"})
                     return
-                if body.get("format_version") != "ahfl.registry.yank_request.v1":
+                if body.get("format") != "ahfl.registry.yank_request":
                     self._write_json(400, {"error": "bad schema"})
                     return
                 if body.get("reason") != "bad release":
@@ -228,7 +226,7 @@ class LocalRegistry:
 
         self.httpd = ThreadingServer(("127.0.0.1", 0), Handler)
         host, port = self.httpd.server_address
-        self.base_url = f"http://{host}:{port}/v1"
+        self.base_url = f"http://{host}:{port}"
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         return self
@@ -297,7 +295,7 @@ def main():
     evidence = json.loads(dry_run.read_text(encoding="utf-8"))
     api_snapshot = json.loads(public_api.read_text(encoding="utf-8"))
 
-    if registry.get("format_version") != "ahfl.registry.index.v1":
+    if registry.get("format") != "ahfl.registry.index":
         raise AssertionError(f"unexpected registry index schema: {registry}")
     if registry.get("package") != "publish-demo" or registry.get("version") != "0.2.0":
         raise AssertionError(f"unexpected registry coordinate: {registry}")
@@ -348,7 +346,7 @@ def main():
         upload_evidence = json.loads(
             (upload_out / "publish-demo-0.2.0.publish.json").read_text(encoding="utf-8")
         )
-        if upload_evidence["format_version"] != "ahfl.publish.v1":
+        if upload_evidence["format"] != "ahfl.publish":
             raise AssertionError(f"unexpected publish evidence schema: {upload_evidence}")
         if upload_evidence["upload_performed"] is not True:
             raise AssertionError(f"publish evidence did not record upload: {upload_evidence}")

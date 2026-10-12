@@ -1,7 +1,11 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
 
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
+#include "base/json/json_value.hpp"
+
+#include <algorithm>
 
 #include <filesystem>
 #include <fstream>
@@ -30,12 +34,12 @@ namespace {
 }
 
 // Every committed IR JSON golden that is `print_program_ir_json` output
-// (format_version "ahfl.ir.v2"). KR5.9 requires parse -> print to reproduce
+// (format "ahfl.ir"). KR5.9 requires parse -> print to reproduce
 // each of these byte-for-byte.
 //
 // The `*.opt-ir.json` / `*.opt-ir.optimized.json` goldens are intentionally
 // EXCLUDED: they are a different serialization (`"format":
-// "AHFL_OPT_IR_V1"`) produced by the opt-IR pipeline's own emitter, not by
+// "AHFL_OPT_IR"`) produced by the opt-IR pipeline's own emitter, not by
 // IrJsonPrinter / print_program_ir_json, so parse_program_ir_json does not
 // (and should not) accept them.
 constexpr std::string_view kGoldenJsonFiles[] = {
@@ -318,6 +322,8 @@ TEST_CASE("IR JSON round-trips a non-empty LetStatement adjustment plan") {
     const auto *let_out =
         std::get_if<LetStatement>(&flow_out->state_handlers[0].body.statements[0]->node);
     REQUIRE(let_out != nullptr);
+    CHECK(let_out->type_ref.kind == TypeRefKind::Struct);
+    CHECK(let_out->type_ref.collection_capacity == std::uint64_t{8});
     REQUIRE(let_out->adjustment.has_value());
     CHECK(let_out->adjustment->nodes.size() == 2);
     CHECK(let_out->adjustment->root == 0);
@@ -742,4 +748,138 @@ TEST_CASE("type_refs_equal distinguishes on nominal kind, capacity, and nested p
     SUBCASE("identical rebuild compares equal") {
         CHECK(ahfl::ir::type_refs_equal(base, make_full_type_ref()));
     }
+}
+
+namespace {
+[[nodiscard]] ahfl::ir::Program current_contract_program() {
+    using namespace ahfl::ir;
+    Program program;
+    ConstDecl value;
+    value.name = "ENABLED";
+    value.type_ref.kind = TypeRefKind::Bool;
+    value.type_ref.display_name = "Bool";
+    value.value = program.expr_arena.make(BoolLiteralExpr{true});
+    program.declarations.emplace_back(std::move(value));
+
+    FnDecl fn;
+    fn.name = "empty";
+    fn.has_body = false;
+    program.declarations.emplace_back(std::move(fn));
+    return program;
+}
+
+void erase_json_field(ahfl::json::JsonValue &object, std::string_view name) {
+    std::erase_if(object.object_fields, [name](const auto &entry) { return entry.first == name; });
+}
+} // namespace
+
+TEST_CASE("IR JSON current contract preserves nullable and conditional writer fields") {
+    auto program = current_contract_program();
+    auto &constant = std::get<ahfl::ir::ConstDecl>(program.declarations[0]);
+    SUBCASE("optional function body") {}
+    SUBCASE("nullable lambda body") {
+        constant.value = program.expr_arena.make(ahfl::ir::LambdaExpr{});
+    }
+    SUBCASE("nullable method receiver") {
+        ahfl::ir::MethodCallExpr call;
+        call.method = "apply";
+        constant.value = program.expr_arena.make(std::move(call));
+    }
+    const auto valid = print_json(program);
+    const auto parsed = ahfl::parse_program_ir_json(valid);
+    REQUIRE(parsed.has_value());
+    CHECK(print_json(*parsed) == valid);
+}
+
+TEST_CASE("IR JSON rejects incomplete and historical structures") {
+    const auto valid = print_json(current_contract_program());
+    const auto dom = ahfl::json::parse_json(valid);
+    REQUIRE(dom.has_value());
+    auto &root = **dom;
+    auto *declarations = root.get_mut("declarations");
+    REQUIRE(declarations != nullptr);
+    REQUIRE(declarations->array_items.size() == 2);
+    auto &constant = *declarations->array_items[0];
+    auto &fn = *declarations->array_items[1];
+
+    SUBCASE("wrong format") {
+        root.set("format", ahfl::json::JsonValue::make_string("ahfl.ir.invalid"));
+    }
+    SUBCASE("missing format") {
+        erase_json_field(root, "format");
+    }
+    SUBCASE("missing structured type") {
+        erase_json_field(constant, "type_ref");
+    }
+    SUBCASE("missing required false boolean") {
+        erase_json_field(fn, "has_body");
+    }
+    SUBCASE("missing expression boolean") {
+        auto *value = constant.get_mut("value");
+        REQUIRE(value != nullptr);
+        erase_json_field(*value, "value");
+    }
+    SUBCASE("missing expression child") {
+        erase_json_field(constant, "value");
+    }
+    SUBCASE("null required expression child") {
+        constant.set("value", ahfl::json::JsonValue::make_null());
+    }
+    SUBCASE("unknown nested field") {
+        constant.set("future_field", ahfl::json::JsonValue::make_bool(false));
+    }
+    SUBCASE("removed mutation marker") {
+        constant.set("is_mut", ahfl::json::JsonValue::make_bool(false));
+    }
+    SUBCASE("unknown root field") {
+        root.set("format_version", ahfl::json::JsonValue::make_int(1));
+    }
+    CHECK_FALSE(ahfl::parse_program_ir_json(ahfl::json::serialize_json(root)).has_value());
+}
+
+TEST_CASE("IR JSON trait signatures and function bodies share complete effect encoding") {
+    using namespace ahfl::ir;
+    Program program;
+    TraitDecl trait;
+    trait.name = "Show";
+    TraitMethodSig signature;
+    signature.name = "show";
+    signature.has_return_type = true;
+    signature.return_type_ref.kind = TypeRefKind::Int;
+    signature.return_type_ref.display_name = "Int";
+    trait.methods.push_back(std::move(signature));
+    program.declarations.emplace_back(std::move(trait));
+
+    FnDecl method;
+    method.name = "impl#0::show";
+    method.has_return_type = true;
+    method.return_type_ref.kind = TypeRefKind::Int;
+    method.return_type_ref.display_name = "Int";
+    method.has_body = false;
+    method.effect.has_decreases = true;
+    method.effect.decreases_terms.push_back(program.expr_arena.make(IntegerLiteralExpr{"0"}));
+    method.symbol_ref =
+        SymbolRef{.kind = SymbolRefKind::Function, .canonical_name = "impl#0::show", .id = 7};
+    program.declarations.emplace_back(std::move(method));
+
+    ImplDecl impl;
+    impl.index = 0;
+    impl.target_type_ref.kind = TypeRefKind::Struct;
+    impl.target_type_ref.canonical_name = "Widget";
+    impl.trait_ref = SymbolRef{.kind = SymbolRefKind::Type, .canonical_name = "Show", .id = 8};
+    impl.method_refs.push_back(
+        SymbolRef{.kind = SymbolRefKind::Function, .canonical_name = "impl#0::show", .id = 7});
+    program.declarations.emplace_back(std::move(impl));
+
+    recompute_derived_analyses(program, ProgramPhase::Analyzed);
+    const auto valid = print_json(program);
+    const auto parsed = ahfl::parse_program_ir_json(valid);
+    REQUIRE(parsed.has_value());
+    CHECK(print_json(*parsed) == valid);
+    const auto &parsed_trait = std::get<TraitDecl>(parsed->declarations[0]);
+    REQUIRE(parsed_trait.methods.size() == 1);
+    CHECK_FALSE(parsed_trait.methods[0].effect.has_decreases);
+    const auto &parsed_method = std::get<FnDecl>(parsed->declarations[1]);
+    CHECK(parsed_method.effect.has_decreases);
+    REQUIRE(parsed_method.effect.decreases_terms.size() == 1);
 }

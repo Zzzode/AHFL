@@ -77,7 +77,7 @@ def main() -> int:
         result = run_checker(checker, root)
         require(result.returncode == 0, f"contract inspection must succeed:\n{result.stderr}")
         report = json.loads(result.stdout)
-        require(report["schema"] == "ahfl.beta-gate-report.v1", "unexpected report schema")
+        require(report["format"] == "ahfl.beta-gate-report", "unexpected report schema")
         require(report["status"] == "not_ready", "missing evidence must report not_ready")
         require(
             {criterion["id"] for criterion in report["criteria"]} == EXPECTED_CRITERIA,
@@ -99,7 +99,7 @@ def main() -> int:
                 evidence_path.write_text(
                     json.dumps(
                         {
-                            "schema": evidence["schema"],
+                            "format": evidence["format"],
                             "status": "passed",
                             "criterion": criterion["id"],
                             "source_revision": revision,
@@ -150,7 +150,7 @@ def main() -> int:
 
         first_evidence = root / config["criteria"][0]["evidence"][0]["path"]
         bad = json.loads(first_evidence.read_text(encoding="utf-8"))
-        bad["schema"] = "wrong.schema"
+        bad["format"] = "wrong.schema"
         first_evidence.write_text(json.dumps(bad) + "\n", encoding="utf-8")
         result = run_checker(checker, root, "--require-ready")
         require(result.returncode != 0, "wrong evidence schema must fail")

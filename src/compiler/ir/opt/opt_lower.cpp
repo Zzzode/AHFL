@@ -1215,7 +1215,7 @@ void lower_temporal_embedded_exprs(OptProgram &program,
 
 OptProgram lower_to_opt(const Program &program) {
     OptProgram result;
-    result.source_program_version = program.format_version;
+    result.source_program_format = program.format;
 
     for (const auto &decl : program.declarations) {
         const auto *flow = std::get_if<FlowDecl>(&decl);

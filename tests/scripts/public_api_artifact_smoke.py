@@ -39,8 +39,8 @@ def run_failing_command(args):
 def public_api_snapshot(ahflc, *args):
     output = run_command([ahflc, "emit", "public-api", *map(str, args)])
     snapshot = json.loads(output)
-    if snapshot.get("schema") != "ahfl.public_api.v1":
-        raise AssertionError(f"unexpected schema: {snapshot.get('schema')}")
+    if snapshot.get("format") != "ahfl.public_api":
+        raise AssertionError(f"unexpected schema: {snapshot.get('format')}")
     return snapshot
 
 
@@ -148,7 +148,7 @@ def main():
     new_path.write_text(json.dumps(new_snapshot, separators=(",", ":")), encoding="utf-8")
     diff = run_command([ahflc, "emit", "public-api-diff", old_path, new_path])
     expected_diff_fragments = [
-        "ahfl.public_api.diff.v1",
+        "ahfl.public_api.diff",
         "added: 1",
         "+ function refund_audit::main::NewHelper",
         "removed: 1",

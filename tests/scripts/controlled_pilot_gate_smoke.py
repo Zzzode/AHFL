@@ -69,14 +69,14 @@ def write_contract(root: Path) -> None:
     (config / "controlled-pilot-gate.json").write_text(
         json.dumps(
             {
-                "schema": "ahfl.controlled-pilot-gate.v1",
+                "format": "ahfl.controlled-pilot-gate",
                 "reference_workflow": "examples/execution-demo",
                 "evidence": {
                     "path": (
                         "build/release-evidence/pilot/"
                         "reference-workflow-production-matrix.json"
                     ),
-                    "schema": "ahfl.controlled-pilot-evidence.v1",
+                    "format": "ahfl.controlled-pilot-evidence",
                 },
                 "minimums": {
                     "soak_kind": "bounded-ci-soak",
@@ -99,7 +99,7 @@ def write_contract(root: Path) -> None:
 
 def valid_evidence(revision: str) -> dict[str, object]:
     return {
-        "schema": "ahfl.controlled-pilot-evidence.v1",
+        "format": "ahfl.controlled-pilot-evidence",
         "status": "passed",
         "source_revision": revision,
         "reference_workflow": "examples/execution-demo",
@@ -150,7 +150,7 @@ def main() -> int:
         require(result.returncode == 0, f"contract inspection failed:\n{result.stderr}")
         report = json.loads(result.stdout)
         require(
-            report["schema"] == "ahfl.controlled-pilot-gate-report.v1",
+            report["format"] == "ahfl.controlled-pilot-gate-report",
             "unexpected gate report schema",
         )
         require(report["status"] == "missing_evidence", "missing evidence status lost")
@@ -184,7 +184,7 @@ def main() -> int:
         (root / "tracked.txt").write_text("baseline\n", encoding="utf-8")
 
         mutations = (
-            ("wrong schema", lambda value: value.update(schema="wrong.schema")),
+            ("wrong schema", lambda value: value.update(format="wrong.format")),
             ("non-passing status", lambda value: value.update(status="failed")),
             (
                 "short soak",

@@ -206,7 +206,7 @@ def load_events(path: Path) -> list[dict[str, object]]:
     events = [json.loads(line) for line in text.splitlines() if line]
     require(events, "canonical event stream is empty")
     require(
-        all(event.get("schema") == "ahfl.run-event" for event in events),
+        all(event.get("format") == "ahfl.run-event" for event in events),
         "canonical event schema mismatch",
     )
     require(
@@ -329,7 +329,7 @@ def run_persistent_cache_case(ahflc: Path, source: Path, work: Path) -> None:
         "persistent cache was not reused across processes",
     )
     snapshot_text = snapshot.read_text(encoding="utf-8")
-    require("ahfl.llm_response_cache.v0" in snapshot_text, "cache snapshot schema missing")
+    require("ahfl.llm_response_cache" in snapshot_text, "cache snapshot schema missing")
     require("provider-runtime-secret" not in snapshot_text, "cache snapshot leaked API key")
     require("hello" not in snapshot_text, "cache snapshot leaked prompt input")
 
@@ -456,6 +456,9 @@ def main() -> int:
     # invocation's rmtree/config-write race the other's ahflc startup so both
     # processes read one config and doubled the server request count.
     work = Path(tempfile.mkdtemp(prefix="run-", dir=work_root))
+    home = work / "home"
+    home.mkdir(mode=0o700)
+    os.environ["HOME"] = str(home.resolve())
     source = work / "smoke.ahfl"
     write_source(source)
 

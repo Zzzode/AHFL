@@ -82,8 +82,14 @@ build_workflow_lane(const CoreWasmExecutionDescriptor &descriptor) {
         node_node->set("schedule_pos", juint(node.schedule_pos));
         node_node->set("runner", juint(node.runner));
         node_node->set("has_capability", json::JsonValue::make_bool(node.has_capability));
-        node_node->set("capability_ordinal", juint(node.capability_ordinal));
-        node_node->set("source_symbol", juint(node.source_symbol));
+        auto capabilities = json::JsonValue::make_array();
+        for (const auto &[ordinal, symbol] : node.all_capabilities) {
+            auto capability = json::JsonValue::make_object();
+            capability->set("ordinal", juint(ordinal));
+            capability->set("source_symbol", juint(symbol));
+            capabilities->push(std::move(capability));
+        }
+        node_node->set("capabilities", std::move(capabilities));
         // WH-5b.3: the P6-dense block ordinal the host uses to resolve a
         // node's boundary root (node_inputs/node_outputs are P6-dense,
         // parallel to node_blocks).
@@ -92,7 +98,7 @@ build_workflow_lane(const CoreWasmExecutionDescriptor &descriptor) {
     }
     lane->set("nodes", std::move(nodes));
 
-    // V2-D: the per-packaged-runner node-frame blocks and the entry/output
+    // workflow-frame: the per-packaged-runner node-frame blocks and the entry/output
     // coordinates the p6 workflow host packs/encodes against.
     if (!descriptor.frame_section.node_blocks.empty()) {
         auto blocks = json::JsonValue::make_array();
@@ -126,7 +132,7 @@ build_workflow_lane(const CoreWasmExecutionDescriptor &descriptor) {
 
 // --- RFC 0026 P6-7 rung E: descriptor rendering of the verified P4-D layout
 // table and the boundary wire-schema table. These mirror, value-for-value, the
-// module's `ahfl.core-layout.v1` / `ahfl.wire-schema.v1` custom sections (the
+// module's `ahfl.core-layout` / `ahfl.wire-schema` custom sections (the
 // same in-memory tables used to canonically emit those sections), so an
 // embedded host packs input and encodes output from descriptor facts with no
 // second trust channel. Layout / schema node identity is a dense array index.
@@ -328,11 +334,11 @@ build_frame_lane(const CoreWasmExecutionDescriptor &descriptor) {
     node->set("output_size", juint(lane.output_size));
     node->set("payload_arena_base", juint(lane.payload_arena_base));
     node->set("payload_arena_capacity", juint(lane.payload_arena_capacity));
-    // V2-B: the rodata span the read walker authorizes for String PtrLen
+    // string-frame: the rodata span the read walker authorizes for String PtrLen
     // payloads in addition to the packed input-payload arena.
     node->set("rodata_base", juint(lane.rodata_base));
     node->set("rodata_extent", juint(lane.rodata_extent));
-    // V2-C: the capability bridge control page frame and the dense
+    // capability-bridge: the capability bridge control page frame and the dense
     // per-call-site facts the host callback walks.
     node->set("bridge_control_base", juint(lane.bridge_control_base));
     node->set("bridge_block_stride", juint(lane.bridge_block_stride));
@@ -363,7 +369,7 @@ build_frame_lane(const CoreWasmExecutionDescriptor &descriptor) {
         s->set("result_extent", juint(site.result_extent));
         s->set("result_payload_base", juint(site.result_payload_base));
         s->set("result_payload_capacity", juint(site.result_payload_capacity));
-        // v3 frame section: the site's private scalar/PtrLen spill window.
+        // frame section: the site's private scalar/PtrLen spill window.
         s->set("spill_base", juint(site.spill_base));
         s->set("spill_extent", juint(site.spill_extent));
         bridge_sites->push(std::move(s));
@@ -406,7 +412,7 @@ build_wire_schema(const irc::CoreWireSchemaTable &schema) {
         auto roots = json::JsonValue::make_object();
         roots->set("input", juint(schema.frame_roots->input.value));
         roots->set("output", juint(schema.frame_roots->output.value));
-        // V2-D: per-packaged-runner node boundary roots (parallel to the
+        // workflow-frame: per-packaged-runner node boundary roots (parallel to the
         // workflow_lane.node_blocks array).
         if (!schema.frame_roots->node_inputs.empty()) {
             auto node_inputs = json::JsonValue::make_array();
@@ -477,7 +483,7 @@ render_wasm_execution_descriptor(const CoreWasmExecutionDescriptor &descriptor,
                                  std::string_view kind,
                                  std::string_view entry) {
     auto root = json::JsonValue::make_object();
-    root->set("schema", jstr(std::string(kWasmdExecutionDescriptorFormat)));
+    root->set("format", jstr(std::string(kWasmdExecutionDescriptorFormat)));
     root->set("kind", jstr(std::string(kind)));
     root->set("entry", jstr(std::string(entry)));
     populate_wasm_descriptor_fields(*root, descriptor);

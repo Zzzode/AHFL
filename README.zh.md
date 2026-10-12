@@ -17,39 +17,29 @@
   </p>
 </p>
 
-AHFL（Agent Handoff Flow Language）是一门用于建模和执行可审计 Agent 工作流的强类型 DSL 与 C++23 编译器。
+AHFL（Agent Handoff Flow Language）是一门用于建模和执行可审计 Agent 工作流的强类型领域专用语言（DSL），附带 C++23 编译器。
 
-## 项目状态
+## 你可以用 AHFL 做什么
 
-AHFL 当前由 beta gate 治理，仍可能发生 breaking change；迁移策略见
-[migration policy](docs/reference/migration-policy.zh.md)。产品能力以逐项
-release evidence 为准，不以存在源码、handler、golden 或聚合测试数量为准。
+AHFL 用于需要明确执行顺序、能力调用边界、失败处理、回放和审计的工作流。
+目前为 Beta 版本，升级时语言或命令变化可能影响已有项目。
 
-### 已验证 Beta 能力
+- <!-- beta-capability:BETA-01 schema=ahfl.beta-evidence.run-profiles --> 将工作流输入和选项保存为 manifest 运行配置，再用 `ahflc run --profile` 选择配置。
+- <!-- beta-capability:BETA-02 schema=ahfl.beta-evidence.runtime-identity --> 通过执行报告中的数值 ID 关联工作流、节点、Agent、能力、调用、值和事件。
+- <!-- beta-capability:BETA-03 schema=ahfl.beta-evidence.event-projections --> 以文本、JSON 或 JSONL 查看同一次执行，并使用执行事件回放和审计。
+- <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix --> 通过终止事件识别运行结果，包括成功、失败、取消和超时。
+- <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence --> 格式化 AHFL 源码时保留注释、属性、效果标注、泛型、导入和可见性；重复格式化不会继续改变结果。
+- <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration --> 使用标准库泛型类型 `List`、`Map`、`Set` 和 `Option` 表达集合和可选值。
+- <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke --> 安装附带标准库的 CLI 和语言服务器，或安装内置语言服务器和标准库的平台 VSIX 扩展包。
+- <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze --> 通过 CLI 参考查找可用命令和输出产物，并用 `ahflc --help` 查看已安装编译器的选项。
 
-- <!-- beta-capability:BETA-01 schema=ahfl.beta-evidence.run-profiles.v1 --> Manifest run profile 可直接启动 reference workflow，无需重复提供 CLI 配置。
-- <!-- beta-capability:BETA-02 schema=ahfl.beta-evidence.runtime-identity.v1 --> Runtime 的 workflow、node、agent、capability、invocation、value 与 event 关联使用强类型数值 ID。
-- <!-- beta-capability:BETA-03 schema=ahfl.beta-evidence.event-projections.v1 --> 单一 flat event store 驱动 human、JSON、JSONL、replay 与 audit 投影。
-- <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix.v1 --> 已接受的成功与失败生命周期路径都具有唯一 terminal event。
-- <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence.v1 --> AHFL formatter 对 std/ 与 formatter fixtures 无损且幂等，并由阻断式 CI gate 检查。
-- <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration.v1 --> 核心容器解析为 nominal stdlib 泛型，不再保留 legacy runtime Option 表示或迁移开关。
-- <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke.v1 --> Clean-prefix 安装包含 ahflc、ahfl-lsp 与 sysroot；platform VSIX 包含 release LSP 与 sysroot，并通过隔离安装。
-- <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze.v1 --> Beta 产品面保持冻结；新增 action、backend 或 artifact 必须先有 accepted RFC。
+建议从[事件分诊示例](examples/execution-demo/README.md)开始：它连接三个 Agent，
+通过兼容 OpenAI 的接口调用大语言模型（LLM）。需要声明业务合同和验证时序规则时，
+参见[保障指南](docs/tutorials/assurance.zh.md)。
 
-证据合同位于 [`config/beta-gate.json`](config/beta-gate.json)。未列入上表的能力
-可以作为编译器模块、实验 backend 或开发工具存在，但本 README 不声明其已达到
-beta readiness。Native Protobuf transport、多 region 运行、官方 registry service、
-浏览器 playground 与 Marketplace 发布均不在当前已验证 beta 产品面内。
-
-## AHFL 解决什么问题
-
-AHFL 面向需要显式管理执行顺序、capability 边界、失败处理、replay 与 audit 的
-工作流，定位为 typed control and assurance layer。Beta reference scenario 是
-[`examples/execution-demo`](examples/execution-demo)：它包含多 Agent 节点、本地
-HTTP-backed LLM capability 与带 replay/audit 投影的规范化事件流。
-
-Formal emitter、其他基础设施 backend 和更深 IDE 功能仍可用于开发与评估，但它们
-与已验证 beta runtime path 分开治理。
+Native Protobuf 传输、多区域运行、官方包注册服务、托管浏览器 Playground 和
+Marketplace 分发不在已验证的 Beta 能力范围内。可以在本地试用 Playground，
+参见[启动步骤](tools/playground/README.md)。
 
 ## 语言预览
 
@@ -96,7 +86,7 @@ workflow RefundAuditWorkflow {
 | C++ 编译器 | 支持 C++23。推荐 GCC 13+、Clang 17+ 或 Apple Clang 15+。 |
 | CMake | 3.22+ |
 | Ninja | 推荐，仓库 presets 默认使用 Ninja。 |
-| NuSMV / nuXmv | 可选，仅外部模型检查需要。 |
+| NuSMV / Z3 | 随仓库构建安装，分别用于默认控制验证和按需数据验证。 |
 | Node.js | 可选，仅 VS Code 扩展开发或打包需要。 |
 
 ### 从源码构建
@@ -105,146 +95,74 @@ workflow RefundAuditWorkflow {
 git clone https://github.com/Zzzode/AHFL.git
 cd AHFL
 
+AHFL_BUILD_JOBS=$(getconf _NPROCESSORS_ONLN)
 cmake --preset dev
-cmake --build --preset build-dev
+cmake --build --preset build-dev -j"$AHFL_BUILD_JOBS"
 ```
 
 ### 运行编译器
 
+用 `check` 查找类型错误并验证声明的状态机和工作流规则。添加
+`--verify-data-contracts` 可以证明数据规则在给定前提下成立；该证明不涵盖
+flow 实现是否符合规则，运行时也不会自动检查宿主谓词。参见
+[退款规则示例](examples/refund-rules/README.md)。
+
+运行事件分诊工作流前，先按示例完成[模型服务配置](examples/execution-demo/README.md)。
+示例从环境变量读取 API 密钥。
+
 ```bash
-# 类型检查源码文件。
+# 检查类型与默认有限控制模型。
 ./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 
-# 通过 manifest profile 运行 beta reference workflow。
+# 按需请求有界退款金额规则的合同蕴含证明。
+./build/dev/src/tooling/cli/ahflc check --manifest examples/refund-rules/ahfl.toml --verify-data-contracts
+
+# 通过 manifest 运行配置启动事件分诊工作流。
 cd examples/execution-demo
 ../../build/dev/src/tooling/cli/ahflc run --output-format json
 
-# 查看所有命令和 artifact。
+# 查看所有命令和输出产物。
 ../../build/dev/src/tooling/cli/ahflc --help
 ```
 
-提交的 LLM 配置只使用环境变量 secret handle。运行 provider-backed workflow 前请先阅读
-[reference workflow 指南](examples/execution-demo/README.md)和
-[执行指南](docs/reference/user-guide-execution.zh.md)。
-
-## 架构
-
-```mermaid
-flowchart LR
-    Source[AHFL source] --> Parse[ANTLR parser]
-    Parse --> AST[AST]
-    AST --> Resolve[Resolver]
-    Resolve --> Typecheck[TypeChecker]
-    Typecheck --> TypedHIR[Typed HIR]
-    TypedHIR --> Validate[Validator]
-    Validate --> IR[AHFL-IR]
-    IR --> Backends[Backends and artifact emitters]
-    IR --> OptIR[Opt IR artifacts]
-    Backends --> Native[Native runtime artifacts]
-    Backends --> Formal[SMV formal backend]
-    Native --> Runtime[Runtime and provider handoff]
-    TypedHIR --> LSP[LSP features]
-```
-
-普通 backend 的主合同是 AHFL-IR。Opt IR 是显式诊断 artifact，不是 backend emission 或 LSP 常驻状态的默认输入。
-
-## 仓库结构
-
-```text
-grammar/              ANTLR 语法
-include/ahfl/         编译器公共头文件
-src/base/             共享 support、JSON 和 validation 工具
-src/compiler/         syntax、semantics、IR、passes、handoff 和 backends
-src/pipeline/         Runtime-adjacent artifact 模型与 builder
-src/runtime/          WASM 内嵌运行时、workflow engine 和 provider
-src/tooling/          CLI、LSP、DAP、formatter、package、profiling 和测试工具
-tests/                单元、golden、集成和 benchmark 测试
-tools/vscode/         VS Code 扩展客户端与打包流程
-docs/                 规范、设计、计划和参考文档
-examples/             AHFL 示例程序
-```
+模型服务选项、输入和执行报告的用法，参见[执行指南](docs/tutorials/execution.zh.md)。
 
 ## 文档
 
 | 主题 | 入口 |
 | --- | --- |
 | 文档索引 | [docs/README.md](docs/README.md) |
-| 用户指南 | [docs/reference/user-guide-overview.zh.md](docs/reference/user-guide-overview.zh.md) |
+| 用户指南 | [docs/tutorials/README.md](docs/tutorials/README.md) |
 | 语言规范 | [docs/spec/core-language.zh.md](docs/spec/core-language.zh.md) |
 | CLI 参考 | [docs/reference/cli-commands.zh.md](docs/reference/cli-commands.zh.md) |
 | IR 格式 | [docs/reference/ir-format.zh.md](docs/reference/ir-format.zh.md) |
-| Project / workspace 使用 | [docs/reference/project-usage.zh.md](docs/reference/project-usage.zh.md) |
-| Runtime events 与 recovery | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
+| 管理项目与工作区 | [docs/tutorials/packages.zh.md](docs/tutorials/packages.zh.md) |
+| 执行事件与恢复 | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
 | VS Code LSP 扩展 | [docs/reference/lsp-vscode-extension.zh.md](docs/reference/lsp-vscode-extension.zh.md) |
 | 贡献指南 | [docs/reference/contributor-guide.zh.md](docs/reference/contributor-guide.zh.md) |
 
-## VS Code 与 LSP
+## 在 VS Code 中编辑工作流
 
-正常 CMake 构建会生成 LSP 服务端，也可以单独构建：
+语言服务器通过语言服务器协议（LSP）提供诊断、补全和导航。可以单独构建：
 
 ```bash
-cmake --build --preset build-dev --target ahfl-lsp
+cmake --build --preset build-dev --target ahfl-lsp -j"$(getconf _NPROCESSORS_ONLN)"
 ```
 
-生成面向用户安装的 platform VSIX，内置 release LSP：
+生成可安装的 VSIX 扩展包，内置语言服务器与标准库：
 
 ```bash
 scripts/package-vscode-vsix-release.sh
 code --install-extension tools/vscode/dist/ahfl-language-<version>-<target>.vsix
 ```
 
-开发、打包和 Marketplace 发布细节见 [docs/reference/lsp-vscode-extension.zh.md](docs/reference/lsp-vscode-extension.zh.md)。
+打开 `.ahfl` 文件后即可使用诊断、补全和导航。配置与故障排查见
+[VS Code 指南](docs/reference/lsp-vscode-extension.zh.md)。
 
-## 开发
+## 参与开发
 
-```bash
-# 构建变体
-cmake --preset dev
-cmake --preset release
-cmake --preset asan
-cmake --preset tsan
-
-# 构建与测试
-cmake --build --preset build-dev
-ctest --preset test-dev --output-on-failure
-
-# 格式化
-cmake --build --preset build-format
-cmake --build --preset build-format-check
-
-# 文档同步门禁
-python3 scripts/check-ir-doc-sync.py
-ctest --preset test-dev --output-on-failure -R '^ahfl\.docs\.ir_sync_gate$'
-```
-
-Parser 重新生成是显式操作，并使用锁定的 ANTLR 工具链：
-
-```bash
-ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh
-ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --check
-```
-
-### Golden 文件测试
-
-测试套件在 `tests/golden/**` 下附带已提交的参考（golden）文件，用于固定编译器各产物输出的逐字内容。
-
-- 运行完整的 golden-lock 基线：
-  ```bash
-  ctest --preset test-dev --output-on-failure -R '^p5_smv_golden_lock$'
-  ```
-- 通过时所有 SMV formal 用例应保持 **0 diff**；失败时脚本会打印可直接粘贴执行的 `diff -u` 命令以及内联 unified diff，方便评审人员即时核查。
-
-**PR 强制要求。** 如果你的改动是有意更新 golden 输出（例如编译器 pass、后端或诊断格式变更），你 **必须** 在 PR 描述中附上失败测试打印的 `diff` 输出，并且把更新后的 golden 文件与源码改动放在 **同一个 patch** 中提交。评审者应能确认源码 diff 与 golden diff 是同一枚硬币的两面。
-
-## 贡献
-
-1. 行为变化先开 focused issue 或 discussion。
-2. 每个 commit 只包含一个逻辑变化。
-3. 使用 Conventional Commits，例如 `fix(parser): reject invalid state transition`。
-4. Breaking change 必须在 footer 写 `BREAKING CHANGE:`，并说明影响范围和迁移路径。
-5. 提交 PR 前运行相关测试、`git diff --check` 和格式检查。
-
-贡献流程和验证建议见 [docs/reference/contributor-guide.zh.md](docs/reference/contributor-guide.zh.md)。
+编译器开发与贡献流程，参见
+[贡献指南](docs/reference/contributor-guide.zh.md)。
 
 ## License
 

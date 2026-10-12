@@ -3,7 +3,7 @@
 // RFC 0026 KR6.8 WH-1: SHARED hand-built EXECUTABLE wasm module fixtures for
 // the wasm3 engine tests. Unlike resume_test_support.hpp's admission-only
 // modules (Type/Import/Memory + custom sections, NO code), these carry real
-// function bodies the wasm3 interpreter executes: the identity run2/alloc lane,
+// function bodies the wasm3 interpreter executes: the identity run_workflow/alloc lane,
 // the capability-import lanes (opaque 2-param and section-9 1-param), and the
 // trap / out-of-bounds fault shapes.
 //
@@ -194,19 +194,19 @@ inline std::vector<std::uint8_t> checked_alloc_body() {
     return body;
 }
 
-// The export surface every executable fixture shares: memory, run2, alloc.
-// `run2_func_index` / `alloc_func_index` are the defined-function indices
+// The export surface every executable fixture shares: memory, run_workflow, alloc.
+// `run_workflow_func_index` / `alloc_func_index` are the defined-function indices
 // (imports occupy the low indices). Either export may be suppressed to
 // exercise the engine's missing-export rejection.
 inline std::vector<std::uint8_t>
-standard_exports(std::uint32_t run2_func_index, std::uint32_t alloc_func_index,
-                 bool emit_run2 = true, bool emit_alloc = true) {
+standard_exports(std::uint32_t run_workflow_func_index, std::uint32_t alloc_func_index,
+                 bool emit_run_workflow = true, bool emit_alloc = true) {
     std::vector<std::uint8_t> payload;
-    const std::uint32_t count = 1 + (emit_run2 ? 1u : 0u) + (emit_alloc ? 1u : 0u);
+    const std::uint32_t count = 1 + (emit_run_workflow ? 1u : 0u) + (emit_alloc ? 1u : 0u);
     put_uleb(payload, count);
     put_export(payload, "memory", kExportKindMemory, 0);
-    if (emit_run2) {
-        put_export(payload, "run2", kExportKindFunc, run2_func_index);
+    if (emit_run_workflow) {
+        put_export(payload, "run_workflow", kExportKindFunc, run_workflow_func_index);
     }
     if (emit_alloc) {
         put_export(payload, "alloc", kExportKindFunc, alloc_func_index);
@@ -214,14 +214,14 @@ standard_exports(std::uint32_t run2_func_index, std::uint32_t alloc_func_index,
     return payload;
 }
 
-// Append the two standard code-section entries (run2 body + checked alloc
+// Append the two standard code-section entries (run_workflow body + checked alloc
 // body) and emit the code section.
 inline void append_standard_code(std::vector<std::uint8_t> &m,
-                                 const std::vector<std::uint8_t> &run2_body) {
+                                 const std::vector<std::uint8_t> &run_workflow_body) {
     std::vector<std::uint8_t> code_payload;
     put_uleb(code_payload, 2);
-    auto run2_entry = code_entry(run2_body);
-    code_payload.insert(code_payload.end(), run2_entry.begin(), run2_entry.end());
+    auto run_workflow_entry = code_entry(run_workflow_body);
+    code_payload.insert(code_payload.end(), run_workflow_entry.begin(), run_workflow_entry.end());
     auto alloc_entry = code_entry(checked_alloc_body());
     code_payload.insert(code_payload.end(), alloc_entry.begin(), alloc_entry.end());
     put_section(m, 10, code_payload);
@@ -229,43 +229,43 @@ inline void append_standard_code(std::vector<std::uint8_t> &m,
 
 // ==== module builders ====
 
-// The import-free identity module: run2 forwards (0, entry_ptr, entry_len) and
+// The import-free identity module: run_workflow forwards (0, entry_ptr, entry_len) and
 // alloc is the checked bump allocator. No imports, so A2 cannot admit it (A2
 // requires a capability Import section); the engine applies the F3-equivalent
 // fixed-page cross-check itself. `memory_min_pages` and the export-suppression
 // flags exist for the negative tests (bad memory / missing export).
 [[nodiscard]] inline std::vector<std::uint8_t>
-identity_module(std::uint32_t memory_min_pages = 1, bool emit_run2 = true,
+identity_module(std::uint32_t memory_min_pages = 1, bool emit_run_workflow = true,
                 bool emit_alloc = true) {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     // type 0: (i32,i32)->(i32,i32,i32); type 1: (i32)->i32
     put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
                                          func_type({kI32}, {kI32})}));
     // no imports
-    put_section(m, 3, function_section({0, 1})); // func 0 = run2 (type 0), func 1 = alloc (type 1)
+    put_section(m, 3, function_section({0, 1})); // func 0 = run_workflow (type 0), func 1 = alloc (type 1)
     put_section(m, 5, memory_section(memory_min_pages));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
-    put_section(m, 7, standard_exports(0, 1, emit_run2, emit_alloc));
-    // run2 body: i32.const 0; local.get 0; local.get 1; end
-    std::vector<std::uint8_t> run2_body = locals_decl({});
-    put_i32_const(run2_body, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 1);
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    put_section(m, 7, standard_exports(0, 1, emit_run_workflow, emit_alloc));
+    // run_workflow body: i32.const 0; local.get 0; local.get 1; end
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+    put_i32_const(run_workflow_body, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 1);
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
 // The capability-import module. The import uses the bridge-lane
 // (i32)->(i32,i32) signature (control-block pointer in, status + value_ptr
-// out); run2 is (i32,i32)->(i32,i32,i32) and forwards the entry pointer to
+// out); run_workflow is (i32,i32)->(i32,i32,i32) and forwards the entry pointer to
 // the import, returning (status, ptr, 0).
 [[nodiscard]] inline std::vector<std::uint8_t>
 capability_module(std::uint64_t symbol) {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
 
     // type 0: (i32)->(i32,i32)            (bridge import)
-    // type 1: (i32,i32)->(i32,i32,i32)    (run2)
+    // type 1: (i32,i32)->(i32,i32,i32)    (run_workflow)
     // type 2: (i32)->i32                  (alloc)
     put_section(m, 1,
                 rts::type_payload({func_type({kI32}, {kI32, kI32}),
@@ -275,29 +275,29 @@ capability_module(std::uint64_t symbol) {
     // import: ahfl_cap.cap_<symbol> : func type 0
     put_section(m, 2, rts::import_payload({{symbol, 0}}));
 
-    // defined funcs: run2 (type 1) at func index 1, alloc (type 2) at func
+    // defined funcs: run_workflow (type 1) at func index 1, alloc (type 2) at func
     // index 2 (the import is func index 0).
     put_section(m, 3, function_section({1, 2}));
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(1, 2));
 
-    // run2 body: forward the entry pointer (local 0) to the bridge import
+    // run_workflow body: forward the entry pointer (local 0) to the bridge import
     // (func 0) as the control-block pointer, then return (status, ptr, 0).
-    std::vector<std::uint8_t> run2_body = locals_decl({{2, kI32}}); // local 2=status, 3=ptr
-    put_op_uleb(run2_body, kOpLocalGet, 0); // control-block pointer
-    put_op_uleb(run2_body, kOpCall, 0);     // bridge import -> (status, ptr)
-    put_op_uleb(run2_body, kOpLocalSet, 3); // ptr
-    put_op_uleb(run2_body, kOpLocalSet, 2); // status
-    put_op_uleb(run2_body, kOpLocalGet, 2); // status
-    put_op_uleb(run2_body, kOpLocalGet, 3); // ptr
-    put_i32_const(run2_body, 0);            // output_len = 0 (bridge has no len word)
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({{2, kI32}}); // local 2=status, 3=ptr
+    put_op_uleb(run_workflow_body, kOpLocalGet, 0); // control-block pointer
+    put_op_uleb(run_workflow_body, kOpCall, 0);     // bridge import -> (status, ptr)
+    put_op_uleb(run_workflow_body, kOpLocalSet, 3); // ptr
+    put_op_uleb(run_workflow_body, kOpLocalSet, 2); // status
+    put_op_uleb(run_workflow_body, kOpLocalGet, 2); // status
+    put_op_uleb(run_workflow_body, kOpLocalGet, 3); // ptr
+    put_i32_const(run_workflow_body, 0);            // output_len = 0 (bridge has no len word)
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
-// WH-3: the bridge-lane CLASSIFIER module. run2 calls the (i32)->(i32,i32)
+// WH-3: the bridge-lane CLASSIFIER module. run_workflow calls the (i32)->(i32,i32)
 // bridge import with the entry pointer as the control-block pointer, then
 // classifies the first result (the raw ahfl_cap_status): any non-zero status
 // traps (unreachable, the bridge lane's guest contract); OK binds the result
@@ -305,37 +305,37 @@ capability_module(std::uint64_t symbol) {
 [[nodiscard]] inline std::vector<std::uint8_t>
 bridge_classifier_module(std::uint64_t symbol) {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    // type 0: (i32)->(i32,i32) (bridge import); type 1: (i32,i32)->(i32,i32,i32) (run2);
+    // type 0: (i32)->(i32,i32) (bridge import); type 1: (i32,i32)->(i32,i32,i32) (run_workflow);
     // type 2: (i32)->i32 (alloc)
     put_section(m, 1, rts::type_payload({func_type({kI32}, {kI32, kI32}),
                                          func_type({kI32, kI32}, {kI32, kI32, kI32}),
                                          func_type({kI32}, {kI32})}));
     put_section(m, 2, rts::import_payload({{symbol, 0}})); // ahfl_cap.cap_<symbol> : type 0
-    put_section(m, 3, function_section({1, 2})); // func 1 = run2 (type 1), func 2 = alloc (type 2)
+    put_section(m, 3, function_section({1, 2})); // func 1 = run_workflow (type 1), func 2 = alloc (type 2)
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(1, 2));
 
-    // run2 body: call the bridge import (func 0) with local 0 as the
+    // run_workflow body: call the bridge import (func 0) with local 0 as the
     // control-block pointer; classify the raw status.
-    std::vector<std::uint8_t> run2_body = locals_decl({{2, kI32}}); // local 2=status, 3=ptr
-    put_op_uleb(run2_body, kOpLocalGet, 0); // control-block pointer
-    put_op_uleb(run2_body, kOpCall, 0);    // bridge import -> (status, ptr)
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({{2, kI32}}); // local 2=status, 3=ptr
+    put_op_uleb(run_workflow_body, kOpLocalGet, 0); // control-block pointer
+    put_op_uleb(run_workflow_body, kOpCall, 0);    // bridge import -> (status, ptr)
     // Stack: [status, ptr] (ptr on top). Save to locals.
-    put_op_uleb(run2_body, kOpLocalSet, 3); // ptr
-    put_op_uleb(run2_body, kOpLocalSet, 2); // status
+    put_op_uleb(run_workflow_body, kOpLocalSet, 3); // ptr
+    put_op_uleb(run_workflow_body, kOpLocalSet, 2); // status
     // Bridge lane guest contract: any non-zero status traps.
-    put_op_uleb(run2_body, kOpLocalGet, 2);
-    run2_body.push_back(kOpIf);
-    run2_body.push_back(kBlockTypeVoid);
-    run2_body.push_back(kOpUnreachable);
-    run2_body.push_back(kOpEnd);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 2);
+    run_workflow_body.push_back(kOpIf);
+    run_workflow_body.push_back(kBlockTypeVoid);
+    run_workflow_body.push_back(kOpUnreachable);
+    run_workflow_body.push_back(kOpEnd);
     // OK: bind the result pointer, return (0, ptr, 0).
-    put_i32_const(run2_body, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 3);
-    put_i32_const(run2_body, 0);
-    run2_body.push_back(kOpEnd); // end func
-    append_standard_code(m, run2_body);
+    put_i32_const(run_workflow_body, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 3);
+    put_i32_const(run_workflow_body, 0);
+    run_workflow_body.push_back(kOpEnd); // end func
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
@@ -345,14 +345,14 @@ bridge_classifier_module(std::uint64_t symbol) {
 [[nodiscard]] inline std::vector<std::uint8_t>
 with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_symbol) {
     put_section(module_bytes, 0,
-                custom_payload("ahfl.wasm-exec-manifest.v1",
+                custom_payload("ahfl.execution-manifest",
                                exec_manifest_body(
                                    7, {{.workflow_node_id = 1,
                                         .cap_call_count = 1,
                                         .capability = 0,
                                         .source_symbol = source_symbol}})));
     put_section(module_bytes, 0,
-                custom_payload("ahfl.wire-schema.v1",
+                custom_payload("ahfl.wire-schema",
                                encode_schema(schema_table(
                                    {}, {CapSpec{.cap_id = 0,
                                                 .symbol = source_symbol,
@@ -360,7 +360,7 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     return module_bytes;
 }
 
-// run2 executes `unreachable` (a wasm trap, not a host abort).
+// run_workflow executes `unreachable` (a wasm trap, not a host abort).
 [[nodiscard]] inline std::vector<std::uint8_t> trap_module() {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
@@ -369,14 +369,14 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(0, 1));
-    std::vector<std::uint8_t> run2_body = locals_decl({});
-    run2_body.push_back(kOpUnreachable);
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+    run_workflow_body.push_back(kOpUnreachable);
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
-// run2 performs an out-of-bounds i32.load at 0xFFFF0000 (a wasm trap).
+// run_workflow performs an out-of-bounds i32.load at 0xFFFF0000 (a wasm trap).
 [[nodiscard]] inline std::vector<std::uint8_t> oob_load_module() {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
@@ -385,19 +385,19 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(0, 1));
-    // run2 body: i32.const -65536; i32.load align=2 offset=0; drop;
+    // run_workflow body: i32.const -65536; i32.load align=2 offset=0; drop;
     //            i32.const 0; local.get 0; local.get 1; end
-    std::vector<std::uint8_t> run2_body = locals_decl({});
-    put_i32_const(run2_body, -65536); // 0xFFFF0000 as u32
-    run2_body.push_back(kOpI32Load);
-    put_uleb(run2_body, 2); // align = 2 (natural for i32)
-    put_uleb(run2_body, 0); // offset = 0
-    run2_body.push_back(kOpDrop);
-    put_i32_const(run2_body, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 1);
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+    put_i32_const(run_workflow_body, -65536); // 0xFFFF0000 as u32
+    run_workflow_body.push_back(kOpI32Load);
+    put_uleb(run_workflow_body, 2); // align = 2 (natural for i32)
+    put_uleb(run_workflow_body, 0); // offset = 0
+    run_workflow_body.push_back(kOpDrop);
+    put_i32_const(run_workflow_body, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 1);
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
@@ -423,16 +423,16 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(0, 1));
-    std::vector<std::uint8_t> run2_body = locals_decl({});
-    put_op_uleb(run2_body, kOpLocalGet, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 1);
-    put_op_uleb(run2_body, kOpCall, 0);
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+    put_op_uleb(run_workflow_body, kOpLocalGet, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 1);
+    put_op_uleb(run_workflow_body, kOpCall, 0);
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
-// run2 executes memory.grow(1) and drops the result, then returns (0,0,0).
+// run_workflow executes memory.grow(1) and drops the result, then returns (0,0,0).
 // The Memory section is well-formed (min=1, no max) so the module passes the
 // structural gate, but the grow breaks the fixed-single-page invariant
 // mid-invoke (wasm3 v0.9.0 reallocates the linear memory): the engine must
@@ -447,20 +447,20 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(0, 1));
-    std::vector<std::uint8_t> run2_body = locals_decl({});
-    put_i32_const(run2_body, 1);
-    run2_body.push_back(kOpMemoryGrow);
-    run2_body.push_back(0x00); // reserved immediate (wasm memory.grow encoding)
-    run2_body.push_back(kOpDrop);
-    put_i32_const(run2_body, 0);
-    put_i32_const(run2_body, 0);
-    put_i32_const(run2_body, 0);
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+    put_i32_const(run_workflow_body, 1);
+    run_workflow_body.push_back(kOpMemoryGrow);
+    run_workflow_body.push_back(0x00); // reserved immediate (wasm memory.grow encoding)
+    run_workflow_body.push_back(kOpDrop);
+    put_i32_const(run_workflow_body, 0);
+    put_i32_const(run_workflow_body, 0);
+    put_i32_const(run_workflow_body, 0);
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
-// run2 returns a fixed non-zero raw status word (0xDEADBEEF) with the entry
+// run_workflow returns a fixed non-zero raw status word (0xDEADBEEF) with the entry
 // ptr/len, proving the engine passes the raw u32 status through verbatim with
 // NO classification (P2-4 review fix-forward).
 [[nodiscard]] inline std::vector<std::uint8_t> nonzero_status_module() {
@@ -471,70 +471,70 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
     put_section(m, 7, standard_exports(0, 1));
-    // run2 body: i32.const 0xDEADBEEF; local.get 0; local.get 1; end
-    std::vector<std::uint8_t> run2_body = locals_decl({});
-    put_i32_const(run2_body, static_cast<std::int32_t>(0xDEADBEEFu));
-    put_op_uleb(run2_body, kOpLocalGet, 0);
-    put_op_uleb(run2_body, kOpLocalGet, 1);
-    run2_body.push_back(kOpEnd);
-    append_standard_code(m, run2_body);
+    // run_workflow body: i32.const 0xDEADBEEF; local.get 0; local.get 1; end
+    std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+    put_i32_const(run_workflow_body, static_cast<std::int32_t>(0xDEADBEEFu));
+    put_op_uleb(run_workflow_body, kOpLocalGet, 0);
+    put_op_uleb(run_workflow_body, kOpLocalGet, 1);
+    run_workflow_body.push_back(kOpEnd);
+    append_standard_code(m, run_workflow_body);
     return m;
 }
 
-// A module with run2 + alloc + runv exports and one bridge-lane ahfl_cap
-// import that runv calls. When the host callback aborts, invoke_runv must
-// map the sentinel to Run2HostAborted (distinct from Run2Trapped). The runv
+// A module with run_workflow + alloc + run_frame exports and one bridge-lane ahfl_cap
+// import that run_frame calls. When the host callback aborts, invoke_run_frame must
+// map the sentinel to WorkflowRunHostAborted (distinct from WorkflowRunTrapped). The run_frame
 // body calls the (i32)->(i32,i32) bridge import with a null control-block
 // pointer and returns the (status, ptr) pair.
-[[nodiscard]] inline std::vector<std::uint8_t> runv_import_module() {
+[[nodiscard]] inline std::vector<std::uint8_t> run_frame_import_module() {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     // type 0: (i32)->(i32,i32)            (bridge import)
-    // type 1: (i32,i32)->(i32,i32,i32)    (run2)
+    // type 1: (i32,i32)->(i32,i32,i32)    (run_workflow)
     // type 2: (i32)->i32                  (alloc)
-    // type 3: ()->(i32,i32)               (runv)
+    // type 3: ()->(i32,i32)               (run_frame)
     put_section(m, 1, rts::type_payload({func_type({kI32}, {kI32, kI32}),
                                          func_type({kI32, kI32}, {kI32, kI32, kI32}),
                                          func_type({kI32}, {kI32}),
                                          func_type({}, {kI32, kI32})}));
     // import: ahfl_cap.cap_0 : func type 0 (func index 0)
     put_section(m, 2, rts::import_payload({{0, 0}}));
-    // defined funcs: run2 (func 1, type 1), alloc (func 2, type 2),
-    //               runv (func 3, type 3)
+    // defined funcs: run_workflow (func 1, type 1), alloc (func 2, type 2),
+    //               run_frame (func 3, type 3)
     put_section(m, 3, function_section({1, 2, 3}));
     put_section(m, 5, memory_section(1));
     put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
-    // exports: memory, run2 (func 1), alloc (func 2), runv (func 3)
+    // exports: memory, run_workflow (func 1), alloc (func 2), run_frame (func 3)
     {
         std::vector<std::uint8_t> payload;
         put_uleb(payload, 4);
         put_export(payload, "memory", kExportKindMemory, 0);
-        put_export(payload, "run2", kExportKindFunc, 1);
+        put_export(payload, "run_workflow", kExportKindFunc, 1);
         put_export(payload, "alloc", kExportKindFunc, 2);
-        put_export(payload, "runv", kExportKindFunc, 3);
+        put_export(payload, "run_frame", kExportKindFunc, 3);
         put_section(m, 7, payload);
     }
-    // code section: run2 (identity), alloc (checked bump), runv (calls import)
+    // code section: run_workflow (identity), alloc (checked bump), run_frame (calls import)
     {
         std::vector<std::uint8_t> code_payload;
         put_uleb(code_payload, 3);
-        // run2 body: i32.const 0; local.get 0; local.get 1; end
-        std::vector<std::uint8_t> run2_body = locals_decl({});
-        put_i32_const(run2_body, 0);
-        put_op_uleb(run2_body, kOpLocalGet, 0);
-        put_op_uleb(run2_body, kOpLocalGet, 1);
-        run2_body.push_back(kOpEnd);
-        auto run2_entry = code_entry(run2_body);
-        code_payload.insert(code_payload.end(), run2_entry.begin(), run2_entry.end());
+        // run_workflow body: i32.const 0; local.get 0; local.get 1; end
+        std::vector<std::uint8_t> run_workflow_body = locals_decl({});
+        put_i32_const(run_workflow_body, 0);
+        put_op_uleb(run_workflow_body, kOpLocalGet, 0);
+        put_op_uleb(run_workflow_body, kOpLocalGet, 1);
+        run_workflow_body.push_back(kOpEnd);
+        auto run_workflow_entry = code_entry(run_workflow_body);
+        code_payload.insert(code_payload.end(), run_workflow_entry.begin(), run_workflow_entry.end());
         // alloc body
         auto alloc_entry = code_entry(checked_alloc_body());
         code_payload.insert(code_payload.end(), alloc_entry.begin(), alloc_entry.end());
-        // runv body: i32.const 0; call 0; end (bridge import, null ctrl ptr)
-        std::vector<std::uint8_t> runv_body = locals_decl({});
-        put_i32_const(runv_body, 0);
-        put_op_uleb(runv_body, kOpCall, 0);
-        runv_body.push_back(kOpEnd);
-        auto runv_entry = code_entry(runv_body);
-        code_payload.insert(code_payload.end(), runv_entry.begin(), runv_entry.end());
+        // run_frame body: i32.const 0; call 0; end (bridge import, null ctrl ptr)
+        std::vector<std::uint8_t> run_frame_body = locals_decl({});
+        put_i32_const(run_frame_body, 0);
+        put_op_uleb(run_frame_body, kOpCall, 0);
+        run_frame_body.push_back(kOpEnd);
+        auto run_frame_entry = code_entry(run_frame_body);
+        code_payload.insert(code_payload.end(), run_frame_entry.begin(), run_frame_entry.end());
         put_section(m, 10, code_payload);
     }
     return m;

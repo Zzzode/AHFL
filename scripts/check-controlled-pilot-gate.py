@@ -53,9 +53,9 @@ def validate_contract(config: Any) -> list[str]:
     failures: list[str] = []
     if not isinstance(config, dict):
         return ["controlled-pilot gate config must be a JSON object"]
-    if config.get("schema") != "ahfl.controlled-pilot-gate.v1":
+    if config.get("format") != "ahfl.controlled-pilot-gate":
         failures.append(
-            "controlled-pilot gate config schema must be ahfl.controlled-pilot-gate.v1"
+            "controlled-pilot gate config schema must be ahfl.controlled-pilot-gate"
         )
     if not str(config.get("reference_workflow", "")).strip():
         failures.append("reference_workflow must not be empty")
@@ -66,7 +66,7 @@ def validate_contract(config: Any) -> list[str]:
     else:
         if not str(evidence.get("path", "")).strip():
             failures.append("evidence.path must not be empty")
-        if not str(evidence.get("schema", "")).strip():
+        if not str(evidence.get("format", "")).strip():
             failures.append("evidence.schema must not be empty")
 
     minimums = config.get("minimums")
@@ -108,10 +108,10 @@ def validate_evidence(config: dict[str, Any], evidence: Any) -> list[str]:
     if not isinstance(evidence, dict):
         return ["evidence must be a JSON object"]
     expected_evidence = config["evidence"]
-    if evidence.get("schema") != expected_evidence["schema"]:
+    if evidence.get("format") != expected_evidence["format"]:
         failures.append(
-            f"schema mismatch: found {evidence.get('schema')!r}, "
-            f"expected {expected_evidence['schema']!r}"
+            f"schema mismatch: found {evidence.get('format')!r}, "
+            f"expected {expected_evidence['format']!r}"
         )
     if evidence.get("status") != "passed":
         failures.append(f"evidence status is {evidence.get('status')!r}, expected 'passed'")
@@ -218,14 +218,14 @@ def report(
     current_source_revision: str,
 ) -> dict[str, Any]:
     return {
-        "schema": "ahfl.controlled-pilot-gate-report.v1",
+        "format": "ahfl.controlled-pilot-gate-report",
         "status": status,
         "source_revision": source_revision,
         "current_source_revision": current_source_revision,
         "reference_workflow": config["reference_workflow"],
         "evidence": {
             "path": config["evidence"]["path"],
-            "schema": config["evidence"]["schema"],
+            "format": config["evidence"]["format"],
         },
         "minimums": config["minimums"],
         "required_faults": config["required_faults"],

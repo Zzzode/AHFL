@@ -4,7 +4,7 @@
 //
 // `run_native_scenario` drives the wasm3-backed facade
 // (WasmWorkflowRuntime / WasmAgentRunner) directly in-process and produces
-// the canonical observation document (ahfl.evaluator-observation.v1,
+// the canonical observation document (ahfl.evaluator-observation,
 // historical schema name), so the differential comparator
 // (observation_compare.hpp) can diff blessing-vs-native without a Node
 // subprocess.

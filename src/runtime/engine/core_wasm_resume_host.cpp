@@ -27,9 +27,9 @@ using engine::GuestPointer;
 using engine::ImportAbort;
 using engine::ImportCallbackResult;
 using engine::ImportObservation;
-using engine::Run2HostAborted;
-using engine::Run2ResultTuple;
-using engine::Run2Trapped;
+using engine::WorkflowRunHostAborted;
+using engine::WorkflowRunResultTuple;
+using engine::WorkflowRunTrapped;
 using host_codes::AdmissionPhase;
 using host_codes::host_code_for;
 using ps::PayloadStoreError;
@@ -128,12 +128,12 @@ artifact_declares_fixed_single_page(const csm::VerifiedCoreWasmSchemaModule &mod
 }
 
 // Per-replay mutable state shared between run_resume and the synchronous
-// import callback the engine invokes nested inside invoke_run2.
+// import callback the engine invokes nested inside invoke_run_workflow.
 struct ReplayState {
     const ResumeRequest *request{nullptr};
     PreparedResume *prepared{nullptr};
     // The precise fail-closed reason a callback decision observed; surfaced by
-    // run_resume when the engine unwinds run2 with Run2HostAborted.
+    // run_resume when the engine unwinds run_workflow with WorkflowRunHostAborted.
     std::optional<ResumeFailure> abort_failure{};
 };
 
@@ -185,7 +185,7 @@ invoke_live_and_record(ReplayState &state, const rc::ReadyForLive &live,
                 // D2b-8: the Pending row stays sealed (no record, no frame)
                 // and the PENDING status is propagated to the module: the
                 // import reply carries AHFL_CAP_PENDING and the module ends
-                // run2 with a PENDING exit, which the controller accepts in
+                // run_workflow with a PENDING exit, which the controller accepts in
                 // AwaitingLiveResult and persists as a new Suspended
                 // coordinate.
                 return ImportCallbackResult{
@@ -579,7 +579,7 @@ std::expected<ResumeOutcome, ResumeFailure> run_resume(const ResumeRequest &requ
     }
 
     // L0: pack the entry frame as P4-D into the entry node's I block and
-    // hand run2 its (ptr,len). The bridge lane requires the entry at the
+    // hand run_workflow its (ptr,len). The bridge lane requires the entry at the
     // node's fixed input region, not a bump allocation.
     const auto entry = prepared.entry_frame().bytes();
     if (!request.pack_entry_frame) {
@@ -594,14 +594,14 @@ std::expected<ResumeOutcome, ResumeFailure> run_resume(const ResumeRequest &requ
     const auto entry_ptr = packed_entry->first;
     const auto entry_len = packed_entry->second;
 
-    // (5) run2 blocks while every ahfl_cap import is served synchronously.
-    auto run = engine.invoke_run2(entry_ptr, entry_len);
+    // (5) run_workflow blocks while every ahfl_cap import is served synchronously.
+    auto run = engine.invoke_run_workflow(entry_ptr, entry_len);
     if (!run.has_value()) {
         return std::unexpected(host_failure(ResumeHostReason::EngineFailure, run.error()));
     }
 
-    // A callback fail-closed decision unwound run2. Report its precise reason.
-    if (std::holds_alternative<Run2HostAborted>(*run)) {
+    // A callback fail-closed decision unwound run_workflow. Report its precise reason.
+    if (std::holds_alternative<WorkflowRunHostAborted>(*run)) {
         if (state.abort_failure.has_value()) {
             return std::unexpected(*state.abort_failure);
         }
@@ -613,8 +613,8 @@ std::expected<ResumeOutcome, ResumeFailure> run_resume(const ResumeRequest &requ
     // Failed; no tombstone is emitted and the generation stays Available /
     // unconsumed. finish_run never yields a plan for a trap, but both arms are
     // handled so a contract change can't dereference a nonexistent error.
-    if (std::holds_alternative<Run2Trapped>(*run)) {
-        auto classified = rc::finish_run(prepared, rc::Run2Exit{rc::Run2Trapped{}});
+    if (std::holds_alternative<WorkflowRunTrapped>(*run)) {
+        auto classified = rc::finish_run(prepared, rc::WorkflowRunExit{rc::WorkflowRunTrapped{}});
         if (!classified.has_value()) {
             return std::unexpected(map_step_error(classified.error()));
         }
@@ -622,9 +622,9 @@ std::expected<ResumeOutcome, ResumeFailure> run_resume(const ResumeRequest &requ
         return std::unexpected(step_failure(rc::ResumeStepReason::ModuleTrap));
     }
 
-    const Run2ResultTuple tuple = std::get<Run2ResultTuple>(*run);
+    const WorkflowRunResultTuple tuple = std::get<WorkflowRunResultTuple>(*run);
 
-    // Re-read the WHOLE post-run2 page once: it is both the terminal event
+    // Re-read the WHOLE post-run_workflow page once: it is both the terminal event
     // prefix authority and the source of the forwarded L5 output span.
     auto whole = engine.read_whole_memory();
     if (!whole.has_value()) {
@@ -644,10 +644,10 @@ std::expected<ResumeOutcome, ResumeFailure> run_resume(const ResumeRequest &requ
     // one of two terminal transactions (D2b-8): a MarkConsumedPlan (OK run ->
     // tombstone + output frame) or a FormNewPendingCoordinatePlan (PENDING run
     // -> publish the new Suspended coordinate, no output frame).
-    rc::Run2Returned returned;
+    rc::WorkflowRunReturned returned;
     returned.raw_status = tuple.raw_status;
     returned.whole_linear_memory = *whole;
-    auto terminal_plan = rc::finish_run(prepared, rc::Run2Exit{returned});
+    auto terminal_plan = rc::finish_run(prepared, rc::WorkflowRunExit{returned});
     if (!terminal_plan.has_value()) {
         return std::unexpected(map_step_error(terminal_plan.error()));
     }

@@ -1,7 +1,7 @@
 #pragma once
 
 // RFC 0026 KR6.8 WH-4: a runtime-owned decoder for the state-entry trace ring
-// the V2-D P6 workflow emitter writes into a module's linear memory. This is
+// the workflow-frame P6 workflow emitter writes into a module's linear memory. This is
 // the host-side reader for the ring the guest appends one (runner, state)
 // 8-byte record to on EVERY dispatched state (core_wasm_codegen.cpp
 // append_state_trace_record), giving the host real runtime state-sequence

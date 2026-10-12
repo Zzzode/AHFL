@@ -319,7 +319,7 @@ class ProgramVerifier {
     // per-parameter variance vector MUST be exactly `type_param_count` long, and
     // every entry must be a legal Variance enumerator. The length check is
     // UNCONDITIONAL (Codex re-review P0): `type_param_count == 0` with an empty
-    // vector is naturally legal (0 == 0), so a monomorphic legacy artifact still
+    // vector is naturally legal (0 == 0), so a monomorphic artifact still
     // passes, but a generic nominal (`type_param_count > 0`) with an empty vector
     // is REJECTED - the coercion verifier indexes variances by parameter position
     // and cannot accept a missing vector. This is a lower-neutral structural check
@@ -330,7 +330,7 @@ class ProgramVerifier {
     void verify_variance_metadata(std::uint32_t type_param_count,
                                   const std::vector<Variance> &variances,
                                   const std::string &path) {
-        // BackendReady-only: Structural mode stays permissive for partial / legacy
+        // BackendReady-only: Structural mode stays permissive for partial programs
         // IR whose variance vectors are not yet materialized. A backend consuming
         // the IR (coercion verifier / Core lowering) requires the vector present.
         if (!is_backend_ready_mode(mode_)) {
@@ -1575,7 +1575,7 @@ class ProgramVerifier {
         //     SAME symbol as the nominal-only `matched_nominal`; a resolved
         //     NON-nominal (primitive/Fn/...) matched type requires matched_nominal to
         //     be Unknown (a primitive scrutinee has no enum).
-        // Structural (non-BackendReady) mode stays permissive for partial/legacy
+        // Structural (non-BackendReady) mode stays permissive for partial programs
         // programs; the type-ref shape recursion below still runs there.
         if (is_backend_ready_mode(mode_)) {
             if (pattern.matched_type_ref.kind == TypeRefKind::Unresolved) {

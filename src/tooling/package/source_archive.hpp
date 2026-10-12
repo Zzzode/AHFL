@@ -16,7 +16,7 @@ struct SourceArchiveFile {
 };
 
 struct SourceArchive {
-    std::string format_version{"ahfl.source_archive.v1"};
+    std::string format{"ahfl.source_archive"};
     std::string package_name;
     std::string manifest_sha256;
     std::string archive_sha256;

@@ -1,4 +1,4 @@
-ahfl.ir.v2
+ahfl.ir
 @provenance(module=ir::workflow_value_flow, source=ir/workflow_value_flow.ahfl)
 module ir::workflow_value_flow
 

@@ -185,8 +185,7 @@ for (const c of cases) {
   if (WebAssembly.Module.imports(module).length !== 0)
     throw new Error(`${c.path}: scalar agent expanded import authority`);
   const {exports} = await WebAssembly.instantiate(module, {});
-  if (exports.ahfl_abi_version.value !== 1)
-    throw new Error(`${c.path}: abi version mismatch`);
+
   // Native observation includes the initial state first; step() results begin
   // AFTER the first transition.
   const expected = c.entered.slice(1);

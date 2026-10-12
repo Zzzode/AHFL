@@ -1,48 +1,30 @@
 # AHFL Native Runtime Artifacts
 
-本文是 AHFL 编译期 handoff 与运行期 event/projection 格式的参考入口。架构与不变量见 [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)，命令用法见 [user-guide-execution.zh.md](./user-guide-execution.zh.md)。
+本文用于读取 handoff package、执行计划、运行事件和恢复快照。运行命令与示例见[执行指南](../tutorials/execution.zh.md)，handoff 配置见 [Native handoff 指南](../tutorials/native-handoff.zh.md)。
 
-## 分层
+## 选择需要读取的文件
 
 ```mermaid
 flowchart LR
-    Manifest[Package manifest] --> Package[Native handoff package]
-    Package --> Plan[ExecutionPlan]
-    Plan --> DryRun[DryRunTrace]
-    Plan --> Runtime[WasmWorkflowRuntime]
-    Runtime --> Events[ExecutionEventStore]
-    Events --> Report[ExecutionReport]
-    Events --> Projections[Replay Audit Scheduler Checkpoint]
-    Projections --> Recovery[WorkflowRecoverySnapshot]
+    Package[Handoff package] --> Plan[执行计划]
+    Plan --> DryRun[模拟轨迹]
+    Plan --> Run[运行 workflow]
+    Run --> Events[JSONL 事件流]
+    Run --> Report[JSON 运行报告]
+    Run --> Recovery[恢复快照]
 ```
 
-`ExecutionPlan` 和 `DryRunTrace` 是 compiler/pipeline artifact。真实运行的动态事实只存在于 `ExecutionEventStore`；report、renderer 与所有运行期 projection 都是派生结果。
+`ExecutionPlan` 描述依赖和计划，`DryRunTrace` 是模拟结果。读取真实运行状态时，使用执行事件或由事件生成的报告。
 
-## 代码入口
+## 关联事件与运行结果
 
-| Contract | 代码入口 |
-| --- | --- |
-| Native handoff package | `include/ahfl/compiler/handoff/package.hpp` |
-| Execution plan | `include/ahfl/compiler/handoff/package.hpp` |
-| Dry-run trace | `src/pipeline/execution/dry_run/runner.hpp` |
-| Strong runtime IDs and events | `include/ahfl/runtime/execution_event.hpp` |
-| Execution report | `include/ahfl/runtime/execution_report.hpp` |
-| Human / JSON / JSONL renderer | `include/ahfl/runtime/execution_renderer.hpp` |
-| Replay / audit / scheduler / checkpoint | `include/ahfl/runtime/execution_projection.hpp` |
-| OTLP-compatible trace projection | `include/ahfl/runtime/execution_otel.hpp` |
-| Recovery store | `src/runtime/engine/workflow_recovery.hpp` |
+运行事件中的 `RunId`、`WorkflowId`、`WorkflowNodeId`、`AgentId`、`CapabilityId`、`ProviderId`、`AgentStateId`、`InvocationId`、`RuntimeValueId`、`DiagnosticId`、`ExecutionEventId`、`CheckpointId` 是不同种类的数值身份。
 
-## Strong IDs
-
-以下类型是互不隐式转换的 numeric index wrapper：
-
-`RunId`、`WorkflowId`、`WorkflowNodeId`、`AgentId`、`CapabilityId`、`ProviderId`、`AgentStateId`、`InvocationId`、`RuntimeValueId`、`DiagnosticId`、`ExecutionEventId`、`CheckpointId`。
-
-字符串只用于 source-level name、diagnostic 和 renderer。事件关联、预算归属、retry/fallback 关联和恢复判断禁止使用名称字符串。
+关联事件、能力调用、诊断和恢复记录时使用相应 ID。名称用于展示；不要把名称字符串当作 ID，也不要混用不同种类的 ID。
 
 ## Event Payload
 
-`ExecutionEventPayload` 是 `std::variant`，当前 family 如下：
+运行事件的类别和名称如下：
 
 | Family | Payload |
 | --- | --- |
@@ -58,14 +40,13 @@ flowchart LR
 
 `CapabilityUsageRecorded` 位于对应 invocation 的 start 与 terminal 之间，每个 invocation
 最多一条。它保存 prompt/completion/total token、estimated cost 和 stable policy notices；
-不保存 prompt、response 或 secret。失败 event 在 JSON/JSONL 中按 `DiagnosticId` 从 flat
-diagnostic store materialize code、message、range、position 与 related notes。
+不保存 prompt、response 或 secret。失败 event 在 JSON/JSONL 中包含 code、message、range、position 与 related notes；可按 `DiagnosticId` 关联同一诊断。
 
-## Validation
+## 校验事件完整性
 
-`validate_execution_events` 至少拒绝：
+接入事件流时，应检查以下约束；不满足约束的完整事件流会被 `validate_execution_events` 拒绝：
 
-1. event ID 与 flat store index 不一致。
+1. event ID 未按事件顺序从 0 开始连续编号。
 2. monotonic offset 倒退。
 3. 同一 identity 重复 start。
 4. started identity 缺少 terminal event。
@@ -74,42 +55,36 @@ diagnostic store materialize code、message、range、position 与 related notes
 7. usage 出现在 invocation start 前或 terminal 后。
 8. 同一 invocation 重复 usage。
 
-失败返回结构化 issue，不允许通过 renderer 隐藏。
+校验失败返回结构化 issue。尚未结束的实时流可能缺少 terminal event；完整性检查应在运行结束或读取完整记录后进行。
 
-## Projection Matrix
+## 选择结果视图
 
-| Consumer | Stable input | Output |
+| 需要的信息 | 输入与接口 | 输出 |
 | --- | --- | --- |
-| Report builder | event span | workflow/node terminal status、execution order、output/diagnostic IDs |
-| Replay builder | `WorkflowResult` | node progression、blocking dependencies、restored checkpoint |
-| Audit builder | `WorkflowResult` | event counts、degradation/checkpoint counts、terminal invariant |
-| Scheduler builder | `WorkflowResult` | dependency satisfaction、completed prefix、next candidate |
-| Checkpoint builder | `WorkflowResult` | completed node value IDs、resume candidate |
-| Recovery materializer | checkpoint projection + value store | deep-cloned recoverable node values |
-| Human/JSON renderer | report + metadata/value stores | final presentation |
-| JSONL renderer | event store | ordered machine event stream |
-| OTel adapter | event store + run wall-clock anchor | deterministic OTLP-compatible span model / JSON |
+| 最终业务结果 | `ExecutionReport`，CLI `--output-format human` 或 `json` | workflow/节点最终状态、执行顺序、输出和诊断。 |
+| 逐条事件 | CLI `--output-format jsonl` | 按事件 ID 排序的机器事件流。 |
+| 重放、审计、调度或 checkpoint | runtime projection API，读取 `WorkflowResult` | 节点进展、依赖、事件计数、下一可运行节点和恢复候选。 |
+| 分布式追踪 | `build_execution_otel_trace(...)`，读取事件与运行起始时间 | OpenTelemetry 追踪数据，使用 OTLP（OpenTelemetry Protocol）兼容格式。 |
 
-projection 不能互相成为第一输入；所有 builder 独立读取 canonical events。
+projection API 是从运行事实生成特定视图的库接口，定义在 `include/ahfl/runtime/`。接入系统时请读取结构化视图，避免解析 human output。
 
-## Recovery Schema
+## 读取恢复快照
 
-当前持久化 schema（加载器接受两种，wasm lane 写 v2）：
+加载器只接受当前完整格式 `ahfl.workflow-recovery`：
 
 ```text
-ahfl.workflow-recovery.v1
-ahfl.workflow-recovery.v2
+ahfl.workflow-recovery
 ```
 
-snapshot 保存 workflow ID、checkpoint ID 和已完成节点的 agent/value。v2 额外保存
+snapshot 保存 workflow ID、checkpoint ID、已完成节点的 agent/value，以及
 挂起节点坐标、节点 input（信息性，不作为恢复信任源）、pending capability 的
 SymbolId/ordinal，以及覆盖挂起点之前**整个 workflow** 的 capability memo
-（按 per-node ordinal 索引，带 cap_id/arg_hash 完整性交叉校验；结果带
-NativeOnly/LegacyV2/ExactSidecar 三态信任来源，sidecar 逐字保留 value wire JSON）。
+（按 per-node ordinal 索引，带 cap_id/arg_hash 完整性交叉校验；结果可带
+按当前强类型 binding 解码的精确 result wire JSON）。
 保存使用 atomic replace。load 对 missing、read failure、schema/value corruption、
 非法 identity 和 memo 坐标/ordinal 不一致 fail closed。
 
-wasm lane 的恢复模型是**冷启动整模块重放**：在 fresh wasm instance 上从头重跑整个
+Wasm 的恢复模型是**冷启动整模块重放**：在 fresh wasm instance 上从头重跑整个
 module，frontier 之前的 capability 调用逐字回喂 memo（绝不 live 重调），重放到
 pending 调用时由 host 提供结果后继续。恢复后的 event stream 包含：
 
@@ -118,12 +93,11 @@ pending 调用时由 host 提供结果后继续。恢复后的 event stream 包�
 3. 后续未完成节点的正常 scheduled/start/terminal events
 4. 唯一 `RunCompleted`
 
-v1 是 v2 的未改动子集，两条 load path 共存；schema 演进只允许 append-only，破坏性
-变更必须发新版本字符串。参考证据为 `durable_resume_capstone` 与 `long_soak_smoke`。
+快照仅使用 `format: "ahfl.workflow-recovery"` 的当前结构。读取时严格校验字段、类型与身份；未知字段或缺少必填字段拒绝，旧快照须重新生成；不要通过编辑快照跳过结果或身份校验。恢复操作步骤见[执行指南](../tutorials/execution.zh.md)。
 
-## CLI Contract
+## 导出与读取命令
 
-公开 runtime 产品面：
+导出执行计划、模拟轨迹或读取真实运行结果：
 
 ```text
 ahflc emit execution-plan ...
@@ -131,26 +105,6 @@ ahflc emit dry-run-trace ...
 ahflc run [--profile <name>] [--output-format human|json|jsonl|quiet] ...
 ```
 
-replay、audit、scheduler 和 checkpoint 是 event-native library projections；它们不作为平行公开 artifact catalog。
+replay、audit、scheduler 和 checkpoint 通过 runtime 库接口读取；CLI 使用上述执行计划、模拟轨迹和运行结果输出。
 
-`build_execution_otel_trace(...)` 同样是纯 projection。它生成 run -> workflow -> node ->
-capability parent/child spans，并把 retry、fallback、checkpoint、resume 与 interruption 作为
-span events；它不修改 runtime state，也不成为新的事实源。
-
-## Breaking Change Checklist
-
-修改 runtime event 或 recovery schema 时：
-
-1. 更新 payload/ID 定义及 terminal invariant。
-2. 更新 report、所有 projection 和 renderer。
-3. 更新 recovery schema 或给出明确拒绝策略。
-4. 更新 event/report/projection/recovery tests。
-5. 更新 reference workflow resume 证据（`durable_resume_capstone` / `long_soak_smoke`）。
-6. 运行 architecture、scope-freeze、controlled-pilot 和 beta gates：
-
-```bash
-python3 scripts/check-architecture.py
-python3 scripts/check-product-scope-freeze.py
-ctest --preset test-dev --output-on-failure -L '^ahfl-controlled-pilot$'
-ctest --preset test-dev --output-on-failure -L '^ahfl-beta-gate$'
-```
+追踪数据按 run、workflow、node、capability 组织父子 span，并把 retry、fallback、checkpoint、resume 与 interruption 记录为 span event；生成追踪数据不改变运行状态。

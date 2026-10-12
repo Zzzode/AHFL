@@ -389,6 +389,23 @@ std::uint32_t clone_expr(CloneContext &ctx, std::uint32_t old_idx) {
     // Substitute the expression's type.
     new_expr.type = substitute_type(old_expr.type, ctx.subst, ctx.subst_scope_id, ctx.types);
 
+    if (new_expr.try_info.has_value()) {
+        auto &info = *new_expr.try_info;
+        info.operand_enum_type =
+            substitute_type(info.operand_enum_type, ctx.subst, ctx.subst_scope_id, ctx.types);
+        info.return_enum_type =
+            substitute_type(info.return_enum_type, ctx.subst, ctx.subst_scope_id, ctx.types);
+        if (info.failure_adjustment.has_value()) {
+            auto &plan = *info.failure_adjustment;
+            plan.source = substitute_type(plan.source, ctx.subst, ctx.subst_scope_id, ctx.types);
+            plan.target = substitute_type(plan.target, ctx.subst, ctx.subst_scope_id, ctx.types);
+            for (auto &node : plan.nodes) {
+                node.source = substitute_type(node.source, ctx.subst, ctx.subst_scope_id, ctx.types);
+                node.target = substitute_type(node.target, ctx.subst, ctx.subst_scope_id, ctx.types);
+            }
+        }
+    }
+
     // Clone children recursively.
     for (auto &child : new_expr.children) {
         child.expr_index = clone_expr(ctx, child.expr_index);

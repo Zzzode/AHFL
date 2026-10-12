@@ -24,14 +24,14 @@ ACCEPTED_STATUSES = {"accepted"}
 IMPLEMENTATION_ALLOWED_STATUSES = {"implementing", "implemented", "stabilized"}
 NO_GO_STATUSES = {"postponed", "rejected", "out-of-scope"}
 KNOWN_RFC_STATUSES = DRAFT_STATUSES | ACCEPTED_STATUSES | IMPLEMENTATION_ALLOWED_STATUSES | NO_GO_STATUSES
-EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence.v1"
-OWNER_DECISION_SCHEMA = "ahfl.native_grpc_owner_decision.v1"
-BENCHMARK_SCHEMA = "ahfl.native_grpc_benchmark.v1"
-BUILD_MATRIX_SCHEMA = "ahfl.native_grpc_build_matrix.v1"
-DEPENDENCY_POLICY_SCHEMA = "ahfl.native_grpc_dependency_policy.v1"
-FEATURE_FLAG_SCHEMA = "ahfl.native_grpc_feature_flag.v1"
-FALLBACK_SEMANTICS_SCHEMA = "ahfl.native_grpc_fallback_semantics.v1"
-TEST_STRATEGY_SCHEMA = "ahfl.native_grpc_test_strategy.v1"
+EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence"
+OWNER_DECISION_SCHEMA = "ahfl.native_grpc_owner_decision"
+BENCHMARK_SCHEMA = "ahfl.native_grpc_benchmark"
+BUILD_MATRIX_SCHEMA = "ahfl.native_grpc_build_matrix"
+DEPENDENCY_POLICY_SCHEMA = "ahfl.native_grpc_dependency_policy"
+FEATURE_FLAG_SCHEMA = "ahfl.native_grpc_feature_flag"
+FALLBACK_SEMANTICS_SCHEMA = "ahfl.native_grpc_fallback_semantics"
+TEST_STRATEGY_SCHEMA = "ahfl.native_grpc_test_strategy"
 EXPECTED_RFC = "0004-native-grpc-transport"
 EXPECTED_RUNTIME_CONFIG = "runtime.transport.native_grpc"
 EXPECTED_RELEASE_EVIDENCE_GATE = "ahfl.runtime.native_grpc_release_evidence"
@@ -103,11 +103,11 @@ REQUIRED_GATES: tuple[str, ...] = (
     "test_strategy",
 )
 OWNER_DECISION_GO_CONDITIONS = tuple(gate for gate in REQUIRED_GATES if gate != "runtime_owner_decision")
-EVIDENCE_KEYS = {"schema", "rfc", "updated_at", "decision", "gates"}
+EVIDENCE_KEYS = {"format", "rfc", "updated_at", "decision", "gates"}
 DECISION_KEYS = {"state", "owner", "signed_off_at", "record"}
 GATE_KEYS = {"status", "owner", "evidence", "notes"}
 OWNER_DECISION_KEYS = {
-    "schema",
+    "format",
     "rfc",
     "decision",
     "owner",
@@ -118,13 +118,13 @@ OWNER_DECISION_KEYS = {
     "required_before_implementation",
     "continued_transport_scope",
 }
-BENCHMARK_KEYS = {"schema", "rfc", "environment", "runs"}
+BENCHMARK_KEYS = {"format", "rfc", "environment", "runs"}
 BENCHMARK_ENVIRONMENT_KEYS = {"platform", "runner", "cpu_model", "timestamp"}
 BENCHMARK_RUN_KEYS = {"scenario", "transport", "metrics"}
-BUILD_MATRIX_KEYS = {"schema", "rfc", "platforms"}
+BUILD_MATRIX_KEYS = {"format", "rfc", "platforms"}
 BUILD_PLATFORM_KEYS = {"platform"} | REQUIRED_BUILD_TEXT_FIELDS | REQUIRED_BUILD_NUMERIC_FIELDS
 DEPENDENCY_POLICY_KEYS = {
-    "schema",
+    "format",
     "rfc",
     "dependency_source",
     "license_review",
@@ -134,7 +134,7 @@ DEPENDENCY_POLICY_KEYS = {
     "approved_by",
 }
 FEATURE_FLAG_KEYS = {
-    "schema",
+    "format",
     "rfc",
     "build_flag",
     "runtime_config",
@@ -142,7 +142,7 @@ FEATURE_FLAG_KEYS = {
     "disabled_diagnostics",
     "release_evidence_gate",
 }
-FALLBACK_SEMANTICS_KEYS = {"schema", "rfc", "scenarios"}
+FALLBACK_SEMANTICS_KEYS = {"format", "rfc", "scenarios"}
 FALLBACK_SCENARIO_KEYS = {
     "scenario",
     "behavior",
@@ -150,7 +150,7 @@ FALLBACK_SCENARIO_KEYS = {
     "fallback_transport",
     "fail_closed",
 }
-TEST_STRATEGY_KEYS = {"schema", "rfc", "coverage"}
+TEST_STRATEGY_KEYS = {"format", "rfc", "coverage"}
 TEST_COVERAGE_KEYS = {"area", "tests"}
 SKIP_DIRS = {
     ".git",
@@ -331,7 +331,7 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
             f"allowed fields are {sorted(EVIDENCE_KEYS)}"
         )
 
-    if evidence.get("schema") != EVIDENCE_SCHEMA:
+    if evidence.get("format") != EVIDENCE_SCHEMA:
         failures.append(
             f"{DECISION_EVIDENCE_REL}: schema must be {EVIDENCE_SCHEMA!r}"
         )
@@ -623,7 +623,7 @@ def validate_unique_strings(value: object, path: str) -> list[str]:
 
 def validate_artifact_header(data: dict[str, object], rel: Path | str, schema: str) -> list[str]:
     failures: list[str] = []
-    if data.get("schema") != schema:
+    if data.get("format") != schema:
         failures.append(f"{rel}: artifact schema must be {schema!r}")
     if data.get("rfc") != EXPECTED_RFC:
         failures.append(f"{rel}: artifact rfc must be {EXPECTED_RFC!r}")

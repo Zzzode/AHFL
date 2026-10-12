@@ -48,14 +48,14 @@ class CapabilityMockSetJsonReader final {
             return std::nullopt;
         }
 
-        std::optional<std::string> format_version;
+        std::optional<std::string> format;
         std::vector<CapabilityMock> mocks;
 
         for (const auto &[key, value] : root_.object_fields) {
-            if (key == "format_version") {
-                format_version =
+            if (key == "format") {
+                format =
                     read_string_field(*value,
-                                      "capability mock set field 'format_version' must be a string",
+                                      "capability mock set field 'format' must be a string",
                                       diagnostics_);
             } else if (key == "mocks") {
                 if (!read_mock_array(*value, mocks)) {
@@ -71,17 +71,17 @@ class CapabilityMockSetJsonReader final {
             }
         }
 
-        if (!format_version.has_value()) {
+        if (!format.has_value()) {
             add_error(diagnostics_,
-                      "capability mock set is missing required field 'format_version'");
+                      "capability mock set is missing required field 'format'");
         }
         if (diagnostics_.has_error()) {
             return std::nullopt;
         }
 
-        if (*format_version != kCapabilityMockSetFormatVersion) {
+        if (*format != kCapabilityMockSetFormat) {
             add_error(diagnostics_,
-                      "unsupported capability mock set format_version '" + *format_version + "'");
+                      "unsupported capability mock set format '" + *format + "'");
             return std::nullopt;
         }
 
@@ -91,7 +91,7 @@ class CapabilityMockSetJsonReader final {
         }
 
         return CapabilityMockSet{
-            .format_version = std::move(*format_version),
+            .format = std::move(*format),
             .mocks = std::move(mocks),
         };
     }

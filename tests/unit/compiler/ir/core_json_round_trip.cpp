@@ -539,6 +539,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "formal/fail_bounded_data_semantics.ahfl",
         "formal/fail_real_smv_control.ahfl",
         "formal/fail_smt_bmc_refuted.ahfl",
+        "formal/fail_smt_inconsistent_assumptions.ahfl",
         "formal/ok_bounded_data_semantics.ahfl",
         "formal/ok_flow_workflow_semantics.ahfl",
         "formal/ok_many_state_machine.ahfl",
@@ -548,6 +549,11 @@ lower_golden_file(const std::filesystem::path &path) {
         "formatter/formatted_struct_2spaces.ahfl",
         "formatter/formatted_struct_4spaces.ahfl",
         "formatter/unformatted_struct.ahfl",
+        // CRD rejection fixtures still lower to valid Core-IR and must stay
+        // covered by the directory-discovered serialization corpus.
+        "infra/crd_recursive.ahfl",
+        "infra/crd_tuple.ahfl",
+        "infra/crd_unsupported.ahfl",
         "infra/multi_agent.ahfl",
         "infra/palette.ahfl",
         "infra/service_mesh.ahfl",
@@ -649,37 +655,37 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/p6_scalar_trap.ahfl",
         "wasm/p6_unwrap_none_trap.ahfl",
         "wasm/p6_unwrap_some.ahfl",
-        "wasm/v2a_computed_aggregate.ahfl",
-        "wasm/v2a_computed_enum.ahfl",
-        "wasm/v2a_computed_if_let_return.ahfl",
-        "wasm/v2a_computed_payload_enum.ahfl",
-        "wasm/v2a_computed_scalar.ahfl",
-        "wasm/v2a_input_nested_aggregate_reject.ahfl",
-        "wasm/v2a_input_payload_enum_reject.ahfl",
-        "wasm/v2b_bounded_string.ahfl",
-        "wasm/v2b_builtin_i64_final.ahfl",
-        "wasm/v2b_computed_string.ahfl",
-        "wasm/v2b_enum_string.ahfl",
-        "wasm/v2b_list_nested_string_arena.ahfl",
-        "wasm/v2b_list_string_arena.ahfl",
-        "wasm/v2b_rodata_overflow.ahfl",
-        "wasm/v2b_string_passthrough.ahfl",
-        // V2-C fix-forward regressions: a two-handler bridge chain, a
+        "wasm/computed_aggregate.ahfl",
+        "wasm/computed_enum.ahfl",
+        "wasm/computed_if_let_return.ahfl",
+        "wasm/computed_payload_enum.ahfl",
+        "wasm/computed_scalar.ahfl",
+        "wasm/input_nested_aggregate_reject.ahfl",
+        "wasm/input_payload_enum_reject.ahfl",
+        "wasm/bounded_string.ahfl",
+        "wasm/builtin_i64_final.ahfl",
+        "wasm/computed_string.ahfl",
+        "wasm/enum_string.ahfl",
+        "wasm/list_nested_string_arena.ahfl",
+        "wasm/list_string_arena.ahfl",
+        "wasm/rodata_overflow.ahfl",
+        "wasm/string_passthrough.ahfl",
+        // capability-bridge fix-forward regressions: a two-handler bridge chain, a
         // producing match followed by an ordered bridge statement, and a
         // single tag-only-enum bridge argument.
-        "wasm/v2c_bridge_chain.ahfl",
-        "wasm/v2c_multi_arg_bridge.ahfl",
-        "wasm/v2c_route_then_bridge.ahfl",
-        "wasm/v2c_single_arg_bridge.ahfl",
-        "wasm/v2c_single_enum_bridge.ahfl",
-        // V2-D: the opaque-terminal preamble shape is verifier-clean Core; the
+        "wasm/bridge_chain.ahfl",
+        "wasm/multi_arg_bridge.ahfl",
+        "wasm/route_then_bridge.ahfl",
+        "wasm/single_arg_bridge.ahfl",
+        "wasm/single_enum_bridge.ahfl",
+        // workflow-frame: the opaque-terminal preamble shape is verifier-clean Core; the
         // fail-closed gate now lives in wasm codegen (BFS reachability), not in
         // Core verification, so the fixture belongs in the lowering corpus.
-        "wasm/v2d_computed_goto_preamble_reject.ahfl",
-        // V2-D fix-forward: a non-entry computed-final node whose I_k would be
+        "wasm/computed_goto_preamble_reject.ahfl",
+        // workflow-frame fix-forward: a non-entry computed-final node whose I_k would be
         // dereferenced as an inline nested frame is verifier-clean Core; the
         // fail-closed gate lives in wasm workflow codegen, not the verifier.
-        "wasm/v2d_nonentry_nested_frame_reject.ahfl",
+        "wasm/nonentry_nested_frame_reject.ahfl",
         // WH-4: the trace-ring KAT fixture lowers to a verifier-clean Core
         // program, so it belongs in the lowering corpus.
         "wasm/wh4_trace_workflow.ahfl",
@@ -707,6 +713,8 @@ lower_golden_file(const std::filesystem::path &path) {
         // verifier-clean Core; the codegen static ordinal assignment is
         // execution-order sound for the straight-line call sequence.
         "wasm/wh5b2_two_bridge_calls.ahfl",
+        // Repeated pending frontiers preserve all three typed capability calls.
+        "wasm/session_three_bridge_calls.ahfl",
         // WH-5b.3: rich-fidelity hybrid fixtures crossing ENTRY and
         // NODE_OUTPUT boundaries lower to verifier-clean Core.
         "wasm/wh5b_hybrid_rich_fidelity.ahfl",
@@ -885,15 +893,15 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
     SUBCASE("duplicate JSON object key") {
         // The shared parser rejects a duplicate key (json_value.cpp parse_object).
         require_rejected_with(
-            R"({"format_version": "ahfl.core.v1", "format_version": "ahfl.core.v1"})",
+            R"({"format": "ahfl.core", "format": "ahfl.core"})",
             "core.json.NOT_JSON");
     }
 
-    SUBCASE("wrong format_version") {
+    SUBCASE("wrong format") {
         std::string edited = valid;
-        const std::string from = "\"ahfl.core.v1\"";
-        edited.replace(edited.find(from), from.size(), "\"ahfl.ir.v2\"");
-        require_rejected_with(edited, "core.json.BAD_FORMAT_VERSION");
+        const std::string from = "\"ahfl.core\"";
+        edited.replace(edited.find(from), from.size(), "\"ahfl.ir\"");
+        require_rejected_with(edited, "core.json.BAD_FORMAT");
     }
 
     SUBCASE("wrong layer") {
@@ -963,7 +971,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // A hand-built doc with two entries where the first is a Tuple whose
         // element is slot 1 (a forward reference).
         const std::string doc = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [
@@ -989,7 +997,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // Two DIFFERENT value types in swapped order: interning mints the
         // first-seen node at 0, so neither slot's minted id matches its position.
         const std::string doc = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [
@@ -1010,7 +1018,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // This document is IN canonical order (bool at 0, unit at 1) and legal,
         // so the swap must be constructed by repeating a shape that collides.
         const std::string swapped = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [
@@ -1039,7 +1047,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // A genuinely non-canonical doc: the same node twice. The second slot
         // interning to the FIRST slot's id trips the identity-remap assert.
         const std::string duplicate = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [
@@ -1083,7 +1091,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // Only meaningful if the program has >= 2 instances; otherwise build a
         // minimal doc with two same-key instances.
         const std::string doc = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [],
@@ -1115,7 +1123,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
     SUBCASE("wrong variant arity in a bad payload") {
         // A capability payload with a bogus field is a field-mask violation.
         const std::string doc = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [],
@@ -1168,7 +1176,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
     SUBCASE("extra field inside a bounds object") {
         // A scalar refinement `{"minimum","maximum"}` is likewise hand-editable.
         const std::string doc = R"({
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [],
   "value_types": [
@@ -1225,7 +1233,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         };
         const std::string body = nest(nest, 0, 1100);
         const std::string doc =
-            std::string(R"({"format_version":"ahfl.core.v1","layer":"core","types":[],)") +
+            std::string(R"({"format":"ahfl.core","layer":"core","types":[],)") +
             R"("value_types":[{"kind":"bool"}],"capabilities":[],"agents":[],"flows":[)";
         const std::string flow =
             R"({"agent":0,"agent_name":"A","target_ref":{"kind":"agent","canonical_name":"A"},)";
@@ -1700,12 +1708,8 @@ TEST_CASE("Core-IR JSON reader rejects an out-of-range numeric closure result_ty
     require_rejected_with(doc, "core.json.OUT_OF_RANGE");
 }
 
-// FB-3a2 fix-forward P2: 'captures' and 'env_bindings' were added to the fn
-// object WITHOUT bumping the pre-stabilization 'ahfl.core.v1' format. An older
-// v1 producer therefore emits fn objects with neither field; the reader must
-// default both to empty (an ordinary fn declares no env slots) and accept the
-// doc rather than failing the required-field check.
-TEST_CASE("Core-IR JSON reader accepts a v1 fn object without captures or env_bindings") {
+// A current function always carries its capture and environment signature.
+TEST_CASE("Core-IR JSON reader rejects omitted captures or env_bindings") {
     using namespace ir::core;
     CoreProgram program;
     program.value_types.push_back(CoreValueType{CoreVtInt{}});
@@ -1735,7 +1739,7 @@ TEST_CASE("Core-IR JSON reader accepts a v1 fn object without captures or env_bi
     std::string doc = print(program);
     REQUIRE_FALSE(doc.empty());
 
-    // Erase the two field lines exactly as an older v1 writer would omit them
+    // Erase mandatory fields to exercise current-schema rejection
     // (each printed line carries its own trailing comma).
     const auto erase_field_lines = [&doc](std::string_view key) {
         const std::string needle = "\"" + std::string(key) + "\"";
@@ -1754,14 +1758,9 @@ TEST_CASE("Core-IR JSON reader accepts a v1 fn object without captures or env_bi
     CHECK(doc.find("\"env_bindings\"") == std::string::npos);
 
     const auto parsed = parse_core_ir_json(doc);
-    for (const auto &diagnostic : parsed.diagnostics) {
-        INFO("diagnostic: " << diagnostic.code << " - " << diagnostic.message);
-        CHECK(false);
-    }
-    REQUIRE(parsed.ok());
-    REQUIRE(parsed.program->fns.size() == 1);
-    CHECK(parsed.program->fns[0].captures.empty());
-    CHECK(parsed.program->fns[0].env_bindings.empty());
+    CHECK_FALSE(parsed.ok());
+    CHECK_FALSE(parsed.diagnostics.empty());
+
 }
 
 // The pairing invariant stays fail-closed: a fn object that carries
@@ -1816,23 +1815,12 @@ TEST_CASE("Core-IR JSON reader rejects a fn object pairing env_bindings without 
     }
     REQUIRE(doc.find("\"captures\"") == std::string::npos);
 
-    // Parsing succeeds structurally (both fields default independently), but the
-    // reader's final verifier gate rejects the 0-vs-1 pairing.
+    // Captures is a required current-format field, even when it would be empty.
     const auto parsed = parse_core_ir_json(doc);
-    for (const auto &diagnostic : parsed.diagnostics) {
-        INFO("diagnostic: " << diagnostic.code << " - " << diagnostic.message);
-    }
     CHECK_FALSE(parsed.ok());
-    bool saw_pairing_gate = false;
-    for (const auto &diagnostic : parsed.diagnostics) {
-        // The reader wraps post-parse verification failures as
-        // core.json.VERIFY_FAILED with the inner verifier code in the message.
-        if (diagnostic.code == "core.json.VERIFY_FAILED" &&
-            diagnostic.message.find("core.verify.CLOSURE_CAPTURE_ARITY") !=
-                std::string::npos &&
-            diagnostic.message.find("pre-bound env slot") != std::string::npos) {
-            saw_pairing_gate = true;
-        }
-    }
-    CHECK(saw_pairing_gate);
+    CHECK(std::any_of(parsed.diagnostics.begin(), parsed.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                          return diagnostic.code == "core.json.MISSING_FIELD" &&
+                                 diagnostic.message.find("captures") != std::string::npos;
+                      }));
 }

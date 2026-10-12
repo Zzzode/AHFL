@@ -179,8 +179,7 @@ for (const c of cases) {
       "(a physical no-op must emit none)");
 
   const {exports} = await WebAssembly.instantiate(module, {});
-  if (exports.ahfl_abi_version.value !== 1)
-    throw new Error(`${c.path}: abi version mismatch`);
+
   const expected = c.entered.slice(1);
   if (c.entered[0] !== c.initial)
     throw new Error(`${c.path}: frozen initial id mismatch`);

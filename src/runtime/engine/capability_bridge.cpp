@@ -43,6 +43,7 @@ clone_capability_call_result(const CapabilityCallResult &other) {
     clone.usage = other.usage;
     clone.pending_cap_id = other.pending_cap_id;
     clone.pending_ordinal = other.pending_ordinal;
+    clone.automatically_resumable = other.automatically_resumable;
     return clone;
 }
 

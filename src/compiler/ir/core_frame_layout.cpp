@@ -27,24 +27,11 @@ namespace layout_diag = ahfl::ir::core::layout;
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
                                std::string(layout_diag::kInvalid),
                                std::move(message),
-                               std::nullopt, {}};
+                               std::nullopt,
+                               {}};
 }
 
 constexpr std::array<std::uint8_t, 6> kMagic{'A', 'H', 'F', 'L', 'C', 'L'};
-// Frame-bridge v2 D1 (rung V2-B): payload format v2 appends the rodata span
-// after the arena span. v1 payloads end exactly at the arena span and stay
-// decodable; the encoder writes kVersion.
-// Frame-bridge v2 fix-forward: payload format v3 appends each bridge call
-// site's private scalar/PtrLen spill window [spill_base, +spill_extent) to the
-// per-site record, so an embedded host can region-membership-test every
-// spilled descriptor against the site's own declared window (design 4.3/5).
-// v2 records stay decodable with zero spill windows.
-// KR6.6: payload format v4 appends the construct-heap base (the runtime bump
-// heap's aligned start address) as a presence-gated trailing block, so the
-// host can authorize [construct_heap_base, 65536) for String concat result
-// payloads. v3 payloads stay decodable with a zero construct_heap_base.
-constexpr std::uint8_t kVersion = 5;
-constexpr std::uint8_t kMinVersion = 1;
 constexpr std::uint8_t kTargetWasm32 = 0;
 
 // Shape tags (a stable, explicit X-set — never reuse a retired ordinal).
@@ -65,44 +52,9 @@ constexpr std::uint8_t kReprF64 = 2;
 
 class Encoder {
   public:
-    [[nodiscard]] std::optional<std::vector<std::uint8_t>> run(
-        const CoreFrameLayoutSection &section) {
-        if (section.format_version < kMinVersion || section.format_version > kVersion) {
-            diagnostics_.push_back(
-                fail("frame-layout section requests an unsupported format version"));
-            return std::nullopt;
-        }
-        // A v1 payload carries no rodata span; a v2 section must report the v1
-        // constants with a zero rodata extent (the canonical no-Data-section
-        // shape), never a half-upgraded form.
-        const bool carries_v3_spill_windows =
-            std::any_of(section.bridge_call_sites.begin(),
-                        section.bridge_call_sites.end(),
-                        [](const CoreFrameBridgeCallSite &site) {
-                            return site.spill_base != 0 || site.spill_extent != 0;
-                        });
-        if (section.format_version == 1 &&
-            (section.rodata_base != 0 || section.rodata_extent != 0 ||
-             section.bridge_control_base != 0 || section.bridge_block_stride != 0 ||
-             section.bridge_control_extent != 0 || section.bridge_spill_base != 0 ||
-             section.bridge_spill_extent != 0 || !section.bridge_call_sites.empty() ||
-             !section.node_blocks.empty() || section.entry_payload_base != 0 ||
-             section.entry_payload_capacity != 0 || section.workflow_output_base != 0 ||
-             section.state_trace_base != 0 || section.state_trace_capacity != 0 ||
-             section.construct_heap_base != 0)) {
-            diagnostics_.push_back(
-                fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
-            return std::nullopt;
-        }
-        // The per-site private spill windows are a v3 addition; a v2 payload
-        // predates them and must carry zero words.
-        if (section.format_version < 3 && carries_v3_spill_windows) {
-            diagnostics_.push_back(
-                fail("a v2 frame-layout section cannot carry per-site bridge spill windows"));
-            return std::nullopt;
-        }
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>>
+    run(const CoreFrameLayoutSection &section) {
         bytes_.assign(kMagic.begin(), kMagic.end());
-        u8(static_cast<std::uint8_t>(section.format_version));
 
         // Target data layout.
         const TargetDataLayout &target = section.table.target;
@@ -114,8 +66,7 @@ class Encoder {
         }
         u8(kTargetWasm32);
 
-        if (!u64_ok(section.table.layouts.size()) ||
-            !u64_ok(section.table.value_layouts.size())) {
+        if (!u64_ok(section.table.layouts.size()) || !u64_ok(section.table.value_layouts.size())) {
             diagnostics_.push_back(fail("frame-layout table exceeds its 32-bit id space"));
             return std::nullopt;
         }
@@ -153,75 +104,67 @@ class Encoder {
         // Frame-payload arena span.
         u32(section.payload_arena_base);
         u32(section.payload_arena_capacity);
-        // V2-B: the rodata literal-pool span (base is kP6RodataBase).
-        if (section.format_version >= 2) {
-            u32(section.rodata_base);
-            u32(section.rodata_extent);
-            // V2-C: the capability-bridge control-block page frame followed by
-            // the dense per-call-site records (root placement + payload span +
-            // dense param/result layout ids).
-            u32(section.bridge_control_base);
-            u32(section.bridge_block_stride);
-            u32(section.bridge_control_extent);
-            u32(section.bridge_spill_base);
-            u32(section.bridge_spill_extent);
-            u32_size(section.bridge_call_sites.size());
-            for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
-                u32(site.call_site_id);
-                u64(site.source_symbol);
-                u32(site.arity);
-                u32(site.block_offset);
-                u32(site.result_base);
-                u32(site.result_extent);
-                u32(site.result_payload_base);
-                u32(site.result_payload_capacity);
-                id(site.result_layout);
-                u32_size(site.param_layouts.size());
-                for (const CoreLayoutId param : site.param_layouts) {
-                    id(param);
-                }
-                // v3: the site's private scalar/PtrLen spill window.
-                if (section.format_version >= 3) {
-                    u32(site.spill_base);
-                    u32(site.spill_extent);
-                }
-                // v5: capability-final marker.
-                if (section.format_version >= 5) {
-                    u8(site.is_final ? 1u : 0u);
-                }
+        //  the rodata literal-pool span (base is kP6RodataBase).
+
+        u32(section.rodata_base);
+        u32(section.rodata_extent);
+        // Capability bridge: the capability-bridge control-block page frame followed by
+        // the dense per-call-site records (root placement + payload span +
+        // dense param/result layout ids).
+        u32(section.bridge_control_base);
+        u32(section.bridge_block_stride);
+        u32(section.bridge_control_extent);
+        u32(section.bridge_spill_base);
+        u32(section.bridge_spill_extent);
+        u32_size(section.bridge_call_sites.size());
+        for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
+            u32(site.call_site_id);
+            u64(site.source_symbol);
+            u32(site.arity);
+            u32(site.block_offset);
+            u32(site.result_base);
+            u32(site.result_extent);
+            u32(site.result_payload_base);
+            u32(site.result_payload_capacity);
+            id(site.result_layout);
+            u32_size(site.param_layouts.size());
+            for (const CoreLayoutId param : site.param_layouts) {
+                id(param);
             }
-            // V2-D: the presence-gated workflow node-packaging extension.
-            if (!section.node_blocks.empty()) {
-                u8(1);
-                u32(section.entry_payload_base);
-                u32(section.entry_payload_capacity);
-                u32(section.workflow_output_base);
-                u32_size(section.node_blocks.size());
-                for (const CoreFrameLayoutSection::NodeBlock &block : section.node_blocks) {
-                    id(block.input_layout);
-                    id(block.context_layout);
-                    id(block.output_layout);
-                    u32(block.input_size);
-                    u32(block.context_size);
-                    u32(block.output_size);
-                    u32(block.input_base);
-                    u32(block.context_base);
-                    u32(block.scratch_base);
-                    u32(block.scratch_size);
-                    u32(block.output_base);
-                }
-                u32(section.state_trace_base);
-                u32(section.state_trace_capacity);
-            }
-            // KR6.6: the presence-gated construct-heap base extension. A
-            // module without String concat carries a zero base and keeps its
-            // exact v3 bytes; a module with String concat encodes the base so
-            // the host can authorize the bump-heap region for output reads.
-            if (section.construct_heap_base != 0) {
-                u8(1);
-                u32(section.construct_heap_base);
-            }
+            // The site's private scalar/PtrLen spill window.
+
+            u32(site.spill_base);
+            u32(site.spill_extent);
+
+            // Capability-final marker.
+
+            u8(site.is_final ? 1u : 0u);
         }
+        // Workflow frame: the presence-gated workflow node-packaging extension.
+        u8(section.node_blocks.empty() ? 0u : 1u);
+        if (!section.node_blocks.empty()) {
+            u32(section.entry_payload_base);
+            u32(section.entry_payload_capacity);
+            u32(section.workflow_output_base);
+            u32_size(section.node_blocks.size());
+            for (const CoreFrameLayoutSection::NodeBlock &block : section.node_blocks) {
+                id(block.input_layout);
+                id(block.context_layout);
+                id(block.output_layout);
+                u32(block.input_size);
+                u32(block.context_size);
+                u32(block.output_size);
+                u32(block.input_base);
+                u32(block.context_base);
+                u32(block.scratch_base);
+                u32(block.scratch_size);
+                u32(block.output_base);
+            }
+            u32(section.state_trace_base);
+            u32(section.state_trace_capacity);
+        }
+        // Zero explicitly disables the construct heap.
+        u32(section.construct_heap_base);
         return std::move(bytes_);
     }
 
@@ -233,7 +176,9 @@ class Encoder {
     std::vector<std::uint8_t> bytes_;
     std::vector<CoreLowerDiagnostic> diagnostics_;
 
-    void u8(std::uint8_t v) { bytes_.push_back(v); }
+    void u8(std::uint8_t v) {
+        bytes_.push_back(v);
+    }
 
     void leb(std::uint64_t value) {
         do {
@@ -245,8 +190,12 @@ class Encoder {
             u8(current);
         } while (value != 0);
     }
-    void u32(std::uint32_t value) { leb(value); }
-    void u64(std::uint64_t value) { leb(value); }
+    void u32(std::uint32_t value) {
+        leb(value);
+    }
+    void u64(std::uint64_t value) {
+        leb(value);
+    }
     void u32_size(std::size_t value) {
         if (value > std::numeric_limits<std::uint32_t>::max()) {
             diagnostics_.push_back(fail("frame-layout vector exceeds its 32-bit encoding domain"));
@@ -267,84 +216,85 @@ class Encoder {
     // A boundary root may be the kInvalid sentinel (the workflow section has no
     // agent input root; its roots are the per-node wire arrays), encoded as the
     // raw u32 so it round-trips without being mistaken for a table id.
-    void boundary_root_id(CoreLayoutId value) { u32(value.value); }
+    void boundary_root_id(CoreLayoutId value) {
+        u32(value.value);
+    }
 
     void encode_layout(const CoreLayout &layout) {
         u64(layout.size);
         u32(layout.align);
         u8(layout.is_zero_sized ? 1U : 0U);
-        std::visit(
-            Overloaded{
-                [&](const CoreLayoutPending &) {
-                    diagnostics_.push_back(
-                        fail("frame-layout table contains an unfinished layout placeholder"));
-                },
-                [&](const CoreLayoutScalar &shape) {
-                    u8(kShapeScalar);
-                    switch (shape.repr) {
-                    case CoreScalarRepr::I32:
-                        u8(kReprI32);
-                        break;
-                    case CoreScalarRepr::I64:
-                        u8(kReprI64);
-                        break;
-                    case CoreScalarRepr::F64:
-                        u8(kReprF64);
-                        break;
-                    }
-                },
-                [&](const CoreLayoutBytes &shape) {
-                    u8(kShapeBytes);
-                    u64(shape.byte_count);
-                },
-                [&](const CoreLayoutPtrLen &) { u8(kShapePtrLen); },
-                [&](const CoreLayoutFnRef &) { u8(kShapeFnRef); },
-                [&](const CoreLayoutClosure &shape) {
-                    u8(kShapeClosure);
-                    u8(shape.environment.has_value() ? 1U : 0U);
-                    if (shape.environment.has_value()) {
-                        id(*shape.environment);
-                    }
-                },
-                [&](const CoreLayoutStruct &shape) {
-                    u8(kShapeStruct);
-                    u32_size(shape.field_offsets.size());
-                    u32_size(shape.field_layouts.size());
-                    for (const std::uint64_t offset : shape.field_offsets) {
-                        u64(offset);
-                    }
-                    for (const CoreLayoutId field : shape.field_layouts) {
-                        id(field);
-                    }
-                },
-                [&](const CoreLayoutEnum &shape) {
-                    u8(kShapeEnum);
-                    u32(shape.tag_size);
-                    u64(shape.payload_offset);
-                    u32_size(shape.variant_payload_layouts.size());
-                    u32_size(shape.variant_payload_sizes.size());
-                    for (const CoreLayoutId payload : shape.variant_payload_layouts) {
-                        id(payload);
-                    }
-                    for (const std::uint64_t size : shape.variant_payload_sizes) {
-                        u64(size);
-                    }
-                },
-                [&](const CoreLayoutContainer &shape) {
-                    u8(kShapeContainer);
-                    id(shape.element);
-                    u8(shape.value.has_value() ? 1U : 0U);
-                    if (shape.value.has_value()) {
-                        id(*shape.value);
-                    }
-                    u64(shape.capacity);
-                    u64(shape.stride);
-                    u64(shape.value_offset);
-                    u64(shape.backing_size);
-                },
-                [&](const CoreLayoutUninhabited &) { u8(kShapeUninhabited); },
-            },
-            layout.shape);
+        std::visit(Overloaded{
+                       [&](const CoreLayoutPending &) {
+                           diagnostics_.push_back(fail(
+                               "frame-layout table contains an unfinished layout placeholder"));
+                       },
+                       [&](const CoreLayoutScalar &shape) {
+                           u8(kShapeScalar);
+                           switch (shape.repr) {
+                           case CoreScalarRepr::I32:
+                               u8(kReprI32);
+                               break;
+                           case CoreScalarRepr::I64:
+                               u8(kReprI64);
+                               break;
+                           case CoreScalarRepr::F64:
+                               u8(kReprF64);
+                               break;
+                           }
+                       },
+                       [&](const CoreLayoutBytes &shape) {
+                           u8(kShapeBytes);
+                           u64(shape.byte_count);
+                       },
+                       [&](const CoreLayoutPtrLen &) { u8(kShapePtrLen); },
+                       [&](const CoreLayoutFnRef &) { u8(kShapeFnRef); },
+                       [&](const CoreLayoutClosure &shape) {
+                           u8(kShapeClosure);
+                           u8(shape.environment.has_value() ? 1U : 0U);
+                           if (shape.environment.has_value()) {
+                               id(*shape.environment);
+                           }
+                       },
+                       [&](const CoreLayoutStruct &shape) {
+                           u8(kShapeStruct);
+                           u32_size(shape.field_offsets.size());
+                           u32_size(shape.field_layouts.size());
+                           for (const std::uint64_t offset : shape.field_offsets) {
+                               u64(offset);
+                           }
+                           for (const CoreLayoutId field : shape.field_layouts) {
+                               id(field);
+                           }
+                       },
+                       [&](const CoreLayoutEnum &shape) {
+                           u8(kShapeEnum);
+                           u32(shape.tag_size);
+                           u64(shape.payload_offset);
+                           u32_size(shape.variant_payload_layouts.size());
+                           u32_size(shape.variant_payload_sizes.size());
+                           for (const CoreLayoutId payload : shape.variant_payload_layouts) {
+                               id(payload);
+                           }
+                           for (const std::uint64_t size : shape.variant_payload_sizes) {
+                               u64(size);
+                           }
+                       },
+                       [&](const CoreLayoutContainer &shape) {
+                           u8(kShapeContainer);
+                           id(shape.element);
+                           u8(shape.value.has_value() ? 1U : 0U);
+                           if (shape.value.has_value()) {
+                               id(*shape.value);
+                           }
+                           u64(shape.capacity);
+                           u64(shape.stride);
+                           u64(shape.value_offset);
+                           u64(shape.backing_size);
+                       },
+                       [&](const CoreLayoutUninhabited &) { u8(kShapeUninhabited); },
+                   },
+                   layout.shape);
     }
 };
 
@@ -352,8 +302,12 @@ class Cursor {
   public:
     explicit Cursor(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
 
-    [[nodiscard]] bool at_end() const noexcept { return offset_ == bytes_.size(); }
-    [[nodiscard]] std::size_t remaining() const noexcept { return bytes_.size() - offset_; }
+    [[nodiscard]] bool at_end() const noexcept {
+        return offset_ == bytes_.size();
+    }
+    [[nodiscard]] std::size_t remaining() const noexcept {
+        return bytes_.size() - offset_;
+    }
 
     [[nodiscard]] std::optional<std::uint8_t> u8() {
         if (offset_ >= bytes_.size()) {
@@ -390,7 +344,9 @@ class Cursor {
         }
         return static_cast<std::uint32_t>(*value);
     }
-    [[nodiscard]] std::optional<std::uint64_t> u64() { return leb(); }
+    [[nodiscard]] std::optional<std::uint64_t> u64() {
+        return leb();
+    }
 
     [[nodiscard]] std::optional<CoreLayoutId> id() {
         const auto value = u32();
@@ -437,12 +393,6 @@ class Decoder {
             result.diagnostics.push_back(fail("frame-layout section has a bad magic header"));
             return result;
         }
-        const auto version = cursor_.u8();
-        if (!version.has_value() || *version < kMinVersion || *version > kVersion) {
-            result.diagnostics.push_back(fail("frame-layout section has an unsupported version"));
-            return result;
-        }
-        const std::uint8_t payload_version = *version;
         const auto target = cursor_.u8();
         if (!target.has_value() || *target != kTargetWasm32) {
             result.diagnostics.push_back(
@@ -476,125 +426,96 @@ class Decoder {
         }
         section.payload_arena_base = *arena_base;
         section.payload_arena_capacity = *arena_capacity;
-        section.format_version = payload_version;
-
-        // V2-B: a v2 payload carries the rodata span after the arena span; a v1
-        // payload ends exactly here (its rodata span is absent / zero).
-        if (payload_version < 2) {
-            if (!cursor_.at_end()) {
-                result.diagnostics.push_back(fail("frame-layout v1 section carries trailing bytes"));
+        const auto rodata_base = cursor_.u32();
+        const auto rodata_extent = cursor_.u32();
+        if (!rodata_base.has_value() || !rodata_extent.has_value()) {
+            result.diagnostics.push_back(fail("frame-layout rodata span is malformed"));
+            return result;
+        }
+        section.rodata_base = *rodata_base;
+        section.rodata_extent = *rodata_extent;
+        if (!decode_bridge_sites(section)) {
+            result.diagnostics = std::move(diagnostics_);
+            return result;
+        }
+        const auto nodes_present = cursor_.u8();
+        if (!nodes_present.has_value() || *nodes_present > 1) {
+            result.diagnostics.push_back(fail("frame-layout node-block tag is malformed"));
+            return result;
+        }
+        if (*nodes_present == 1) {
+            const auto entry_base = cursor_.u32();
+            const auto entry_capacity = cursor_.u32();
+            const auto wf_output = cursor_.u32();
+            if (!entry_base.has_value() || !entry_capacity.has_value() || !wf_output.has_value()) {
+                result.diagnostics.push_back(fail("frame-layout workflow span is malformed"));
                 return result;
             }
-        } else {
-            const auto rodata_base = cursor_.u32();
-            const auto rodata_extent = cursor_.u32();
-            if (!rodata_base.has_value() || !rodata_extent.has_value()) {
-                result.diagnostics.push_back(fail("frame-layout rodata span is malformed"));
+            section.entry_payload_base = *entry_base;
+            section.entry_payload_capacity = *entry_capacity;
+            section.workflow_output_base = *wf_output;
+            const auto block_count = cursor_.u32();
+            if (!block_count.has_value() || !bounded_count(*block_count)) {
+                result.diagnostics.push_back(fail("frame-layout node-block count is malformed"));
                 return result;
             }
-            section.rodata_base = *rodata_base;
-            section.rodata_extent = *rodata_extent;
-            if (!decode_bridge_sites(section)) {
-                result.diagnostics = std::move(diagnostics_);
-                return result;
+            section.node_blocks.reserve(*block_count);
+            for (std::uint32_t i = 0; i < *block_count; ++i) {
+                CoreFrameLayoutSection::NodeBlock block;
+                const auto input_layout = cursor_.id();
+                const auto context_layout = cursor_.id();
+                const auto output_layout = cursor_.id();
+                if (!input_layout.has_value() || !context_layout.has_value() ||
+                    !output_layout.has_value()) {
+                    bad("frame-layout node-block root layout is truncated");
+                    result.diagnostics = std::move(diagnostics_);
+                    return result;
+                }
+                block.input_layout = *input_layout;
+                block.context_layout = *context_layout;
+                block.output_layout = *output_layout;
+                const auto isize = cursor_.u32();
+                const auto csize = cursor_.u32();
+                const auto osize = cursor_.u32();
+                const auto ibase = cursor_.u32();
+                const auto cbase = cursor_.u32();
+                const auto sbase = cursor_.u32();
+                const auto ssize = cursor_.u32();
+                const auto obase = cursor_.u32();
+                if (!isize || !csize || !osize || !ibase || !cbase || !sbase || !ssize || !obase) {
+                    bad("frame-layout node-block span is truncated");
+                    result.diagnostics = std::move(diagnostics_);
+                    return result;
+                }
+                block.input_size = *isize;
+                block.context_size = *csize;
+                block.output_size = *osize;
+                block.input_base = *ibase;
+                block.context_base = *cbase;
+                block.scratch_base = *sbase;
+                block.scratch_size = *ssize;
+                block.output_base = *obase;
+                section.node_blocks.push_back(std::move(block));
             }
-            // V2-D: the optional trailing workflow node-packaging extension.
-            if (!cursor_.at_end()) {
-                const auto present = cursor_.u8();
-                if (!present.has_value() || *present != 1) {
-                    result.diagnostics.push_back(
-                        fail("frame-layout v2 node-block tag is malformed"));
-                    return result;
-                }
-                const auto entry_base = cursor_.u32();
-                const auto entry_capacity = cursor_.u32();
-                const auto wf_output = cursor_.u32();
-                if (!entry_base.has_value() || !entry_capacity.has_value() ||
-                    !wf_output.has_value()) {
-                    result.diagnostics.push_back(
-                        fail("frame-layout workflow span is malformed"));
-                    return result;
-                }
-                section.entry_payload_base = *entry_base;
-                section.entry_payload_capacity = *entry_capacity;
-                section.workflow_output_base = *wf_output;
-                const auto block_count = cursor_.u32();
-                if (!block_count.has_value() || !bounded_count(*block_count)) {
-                    result.diagnostics.push_back(
-                        fail("frame-layout node-block count is malformed"));
-                    return result;
-                }
-                section.node_blocks.reserve(*block_count);
-                for (std::uint32_t i = 0; i < *block_count; ++i) {
-                    CoreFrameLayoutSection::NodeBlock block;
-                    const auto input_layout = cursor_.id();
-                    const auto context_layout = cursor_.id();
-                    const auto output_layout = cursor_.id();
-                    if (!input_layout.has_value() || !context_layout.has_value() ||
-                        !output_layout.has_value()) {
-                        bad("frame-layout node-block root layout is truncated");
-                        return result;
-                    }
-                    block.input_layout = *input_layout;
-                    block.context_layout = *context_layout;
-                    block.output_layout = *output_layout;
-                    const auto isize = cursor_.u32();
-                    const auto csize = cursor_.u32();
-                    const auto osize = cursor_.u32();
-                    const auto ibase = cursor_.u32();
-                    const auto cbase = cursor_.u32();
-                    const auto sbase = cursor_.u32();
-                    const auto ssize = cursor_.u32();
-                    const auto obase = cursor_.u32();
-                    if (!isize || !csize || !osize || !ibase || !cbase || !sbase ||
-                        !ssize || !obase) {
-                        bad("frame-layout node-block span is truncated");
-                        return result;
-                    }
-                    block.input_size = *isize;
-                    block.context_size = *csize;
-                    block.output_size = *osize;
-                    block.input_base = *ibase;
-                    block.context_base = *cbase;
-                    block.scratch_base = *sbase;
-                    block.scratch_size = *ssize;
-                    block.output_base = *obase;
-                    section.node_blocks.push_back(std::move(block));
-                }
-                const auto trace_base = cursor_.u32();
-                const auto trace_capacity = cursor_.u32();
-                if (!trace_base.has_value() || !trace_capacity.has_value()) {
-                    result.diagnostics.push_back(
-                        fail("frame-layout workflow state-trace span is truncated"));
-                    return result;
-                }
-                section.state_trace_base = *trace_base;
-                section.state_trace_capacity = *trace_capacity;
-            }
-            // KR6.6: the optional presence-gated construct-heap base
-            // extension (String concat result region). A v3 payload ends
-            // exactly here; a v4 payload with String concat carries the
-            // trailing tag + base.
-            if (!cursor_.at_end()) {
-                const auto present = cursor_.u8();
-                if (!present.has_value() || *present != 1) {
-                    result.diagnostics.push_back(
-                        fail("frame-layout construct-heap tag is malformed"));
-                    return result;
-                }
-                const auto heap_base = cursor_.u32();
-                if (!heap_base.has_value() || *heap_base == 0) {
-                    result.diagnostics.push_back(
-                        fail("frame-layout construct-heap base is malformed"));
-                    return result;
-                }
-                section.construct_heap_base = *heap_base;
-            }
-            if (!cursor_.at_end()) {
+            const auto trace_base = cursor_.u32();
+            const auto trace_capacity = cursor_.u32();
+            if (!trace_base.has_value() || !trace_capacity.has_value()) {
                 result.diagnostics.push_back(
-                    fail("frame-layout v2 section carries trailing bytes"));
+                    fail("frame-layout workflow state-trace span is truncated"));
                 return result;
             }
+            section.state_trace_base = *trace_base;
+            section.state_trace_capacity = *trace_capacity;
+        }
+        const auto heap_base = cursor_.u32();
+        if (!heap_base.has_value()) {
+            result.diagnostics.push_back(fail("frame-layout construct-heap base is truncated"));
+            return result;
+        }
+        section.construct_heap_base = *heap_base;
+        if (!cursor_.at_end()) {
+            result.diagnostics.push_back(fail("frame-layout section carries trailing bytes"));
+            return result;
         }
 
         auto local = verify_local(section);
@@ -616,8 +537,7 @@ class Decoder {
         }
     }
 
-    [[nodiscard]] static bool
-    valid_id(const CoreLayoutTable &table, CoreLayoutId id) noexcept {
+    [[nodiscard]] static bool valid_id(const CoreLayoutTable &table, CoreLayoutId id) noexcept {
         return id.value < table.layouts.size();
     }
 
@@ -876,7 +796,7 @@ class Decoder {
         return layout;
     }
 
-    // V2-C: decode the capability-bridge control-frame span and the dense
+    // Capability bridge: decode the capability-bridge control-frame span and the dense
     // per-call-site records.
     [[nodiscard]] bool decode_bridge_sites(CoreFrameLayoutSection &section) {
         const auto control_base = cursor_.u32();
@@ -884,9 +804,8 @@ class Decoder {
         const auto control_extent = cursor_.u32();
         const auto spill_base = cursor_.u32();
         const auto spill_extent = cursor_.u32();
-        if (!control_base.has_value() || !block_stride.has_value() ||
-            !control_extent.has_value() || !spill_base.has_value() ||
-            !spill_extent.has_value()) {
+        if (!control_base.has_value() || !block_stride.has_value() || !control_extent.has_value() ||
+            !spill_base.has_value() || !spill_extent.has_value()) {
             bad("frame-layout bridge control-frame span is malformed");
             return false;
         }
@@ -916,12 +835,12 @@ class Decoder {
             const auto payload_base = cursor_.u32();
             const auto payload_capacity = cursor_.u32();
             const auto result_layout = cursor_.id();
-            if (!call_site_id.has_value() || !source_symbol.has_value() ||
-                !arity.has_value() || !block_offset.has_value() ||
-                !result_base.has_value() || !result_extent.has_value() ||
-                !payload_base.has_value() || !payload_capacity.has_value() ||
-                !result_layout.has_value()) {
-                bad("frame-layout bridge call-site record is truncated");                return false;
+            if (!call_site_id.has_value() || !source_symbol.has_value() || !arity.has_value() ||
+                !block_offset.has_value() || !result_base.has_value() ||
+                !result_extent.has_value() || !payload_base.has_value() ||
+                !payload_capacity.has_value() || !result_layout.has_value()) {
+                bad("frame-layout bridge call-site record is truncated");
+                return false;
             }
             site.call_site_id = *call_site_id;
             site.source_symbol = *source_symbol;
@@ -950,26 +869,26 @@ class Decoder {
                 }
                 site.param_layouts.push_back(*param);
             }
-            // v3: the site's private scalar/PtrLen spill window.
-            if (section.format_version >= 3) {
-                const auto spill_base = cursor_.u32();
-                const auto spill_extent = cursor_.u32();
-                if (!spill_base.has_value() || !spill_extent.has_value()) {
-                    bad("frame-layout bridge call-site spill window is truncated");
-                    return false;
-                }
-                site.spill_base = *spill_base;
-                site.spill_extent = *spill_extent;
+            // The site's private scalar/PtrLen spill window.
+
+            const auto spill_base = cursor_.u32();
+            const auto spill_extent = cursor_.u32();
+            if (!spill_base.has_value() || !spill_extent.has_value()) {
+                bad("frame-layout bridge call-site spill window is truncated");
+                return false;
             }
-            // v5: capability-final marker.
-            if (section.format_version >= 5) {
-                const auto is_final = cursor_.u8();
-                if (!is_final.has_value()) {
-                    bad("frame-layout bridge call-site is_final marker is truncated");
-                    return false;
-                }
-                site.is_final = (*is_final != 0);
+            site.spill_base = *spill_base;
+            site.spill_extent = *spill_extent;
+
+            // Capability-final marker.
+
+            const auto is_final = cursor_.u8();
+            if (!is_final.has_value() || *is_final > 1) {
+                bad("frame-layout bridge call-site is_final marker is malformed");
+                return false;
             }
+            site.is_final = (*is_final != 0);
+
             section.bridge_call_sites.push_back(std::move(site));
         }
         return true;
@@ -995,8 +914,8 @@ class Decoder {
                 bad("frame-layout backing placement is truncated");
                 return false;
             }
-            section.placements.push_back(CoreFrameBackingPlacement{
-                *edge, *container, *base, *extent});
+            section.placements.push_back(
+                CoreFrameBackingPlacement{*edge, *container, *base, *extent});
         }
         return true;
     }
@@ -1013,13 +932,12 @@ class Decoder {
         // A workflow section (node blocks present) has no agent input root: its
         // boundary roots are the per-node arrays in the wire schema and the
         // input root is encoded kInvalid. The workflow OUTPUT root is still a
-        // real layout id (run2 returns the workflow output slot at that root).
+        // real layout id (run_workflow returns the workflow output slot at that root).
         const bool workflow_section = !section.node_blocks.empty();
-        const bool input_root_ok =
-            workflow_section
-                ? section.input_layout.value == CoreLayoutId::kInvalid ||
-                      valid_id(table, section.input_layout)
-                : valid_id(table, section.input_layout);
+        const bool input_root_ok = workflow_section
+                                       ? section.input_layout.value == CoreLayoutId::kInvalid ||
+                                             valid_id(table, section.input_layout)
+                                       : valid_id(table, section.input_layout);
         if (!input_root_ok || !valid_id(table, section.output_layout)) {
             fail_local("frame-layout boundary root id is out of range");
             return diags;
@@ -1032,11 +950,10 @@ class Decoder {
                     [](const CoreLayoutPending &) { return false; },
                     [&](const CoreLayoutScalar &shape) {
                         const bool i32 = shape.repr == CoreScalarRepr::I32;
-                        const bool wide = shape.repr == CoreScalarRepr::I64 ||
-                                          shape.repr == CoreScalarRepr::F64;
-                        return (i32 || wide) &&
-                               (i32 ? (layout.size == 4 && layout.align == 4)
-                                    : (layout.size == 8 && layout.align == 8));
+                        const bool wide =
+                            shape.repr == CoreScalarRepr::I64 || shape.repr == CoreScalarRepr::F64;
+                        return (i32 || wide) && (i32 ? (layout.size == 4 && layout.align == 4)
+                                                     : (layout.size == 8 && layout.align == 8));
                     },
                     [&](const CoreLayoutBytes &shape) {
                         return shape.byte_count == layout.size && shape.byte_count > 0 &&
@@ -1046,7 +963,8 @@ class Decoder {
                     [](const CoreLayoutFnRef &) { return true; },
                     [&](const CoreLayoutClosure &shape) {
                         return layout.size == 8 && layout.align == 4 &&
-                               (!shape.environment.has_value() || valid_id(table, *shape.environment));
+                               (!shape.environment.has_value() ||
+                                valid_id(table, *shape.environment));
                     },
                     [&](const CoreLayoutStruct &shape) {
                         if (shape.field_offsets.size() != shape.field_layouts.size()) {
@@ -1065,9 +983,8 @@ class Decoder {
                                layout.size == expected->size && layout.align == expected->align;
                     },
                     [&](const CoreLayoutEnum &shape) {
-                        if (shape.tag_size != 4 ||
-                            shape.variant_payload_layouts.size() !=
-                                shape.variant_payload_sizes.size()) {
+                        if (shape.tag_size != 4 || shape.variant_payload_layouts.size() !=
+                                                       shape.variant_payload_sizes.size()) {
                             return false;
                         }
                         for (const CoreLayoutId payload : shape.variant_payload_layouts) {
@@ -1106,18 +1023,15 @@ class Decoder {
 
         // Placements: dense edge indices, container nodes, extents that match the
         // RE-DERIVED aligned backing (== stride*capacity), and pairwise-disjoint
-        // fixed-page extents on the sum-of-prior-backing rule. A V2-D workflow
+        // fixed-page extents on the sum-of-prior-backing rule. A workflow
         // section carries input-collection backing placements (the host packer
         // needs them to place collection elements) but NO agent payload arena:
         // the entry payload arena is the separate workflow span, checked by
         // verify_workflow_spans below.
         constexpr std::uint64_t kBackingBase = kP6CollectionBackingBase;
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
-        const bool workflow_section_v2 =
-            section.format_version >= 2 && !section.node_blocks.empty();
-        if (workflow_section_v2) {
-            if (section.payload_arena_base != 0 ||
-                section.payload_arena_capacity != 0) {
+        if (workflow_section) {
+            if (section.payload_arena_base != 0 || section.payload_arena_capacity != 0) {
                 fail_local("a workflow frame-layout section cannot carry an agent payload arena");
                 return diags;
             }
@@ -1128,8 +1042,7 @@ class Decoder {
         // duplicate would silently keep the last placement and shadow the
         // first (the JS oracle rejects this with Map.has). Reject at admission.
         std::vector<bool> placed_layouts(table.layouts.size(), false);
-        for (std::uint32_t i = 0;
-             i < section.placements.size(); ++i) {
+        for (std::uint32_t i = 0; i < section.placements.size(); ++i) {
             const CoreFrameBackingPlacement &placement = section.placements[i];
             if (placement.edge_index != i) {
                 fail_local("frame-layout backing placement edge indices are not dense and in "
@@ -1158,8 +1071,7 @@ class Decoder {
                            "geometry");
                 return diags;
             }
-            const std::uint64_t aligned_extent =
-                (geometry->backing_size + 7u) & ~std::uint64_t{7u};
+            const std::uint64_t aligned_extent = (geometry->backing_size + 7u) & ~std::uint64_t{7u};
             // extent must equal the aligned re-derived backing and cover the
             // full stride*capacity store, so a shrink cannot pass with capacity
             // left intact.
@@ -1184,7 +1096,7 @@ class Decoder {
 
         // Arena span begins exactly at the aligned post-placement high-water and
         // stays inside the page.
-        if (!workflow_section_v2) {
+        if (!workflow_section) {
             const std::uint64_t expected_arena = (expected_cursor + 7u) & ~std::uint64_t{7u};
             if (section.payload_arena_base != expected_arena) {
                 fail_local("frame-layout payload arena does not begin at the aligned backing "
@@ -1199,37 +1111,37 @@ class Decoder {
             return diags;
         }
 
-        // V2-B: the rodata span names the fixed [256,1024) reservation. It is
+        //  the rodata span names the fixed [256,1024) reservation. It is
         // either empty (no Data section) or an 8-aligned extent entirely inside
         // the region, beginning exactly at kP6RodataBase.
-        if (section.format_version >= 2) {
-            if (section.rodata_base != kP6RodataBase) {
-                fail_local("frame-layout rodata span must begin at the fixed rodata base 256");
-                return diags;
-            }
-            if (section.rodata_extent > kP6RodataCapacity) {
-                fail_local("frame-layout rodata extent exceeds its fixed [256,1024) region");
-                return diags;
-            }
-            if (!section.node_blocks.empty()) {
-                // V2-D workflow module: the physical layout (node blocks, the
-                // shared bridge page, the entry arena, result placements)
-                // follows the workflow D6 cursor, not the agent backing/arena
-                // cursor. Verify in-page bounds, alignment and pairwise
-                // disjointness independently.
-                if (!verify_workflow_spans(section, fail_local)) {
-                    return diags;
-                }
-            } else if (!verify_bridge_spans(section, fail_local)) {
-                return diags;
-            }
+
+        if (section.rodata_base != kP6RodataBase) {
+            fail_local("frame-layout rodata span must begin at the fixed rodata base 256");
+            return diags;
         }
+        if (section.rodata_extent > kP6RodataCapacity) {
+            fail_local("frame-layout rodata extent exceeds its fixed [256,1024) region");
+            return diags;
+        }
+        if (!section.node_blocks.empty()) {
+            // workflow module: the physical layout (node blocks, the
+            // shared bridge page, the entry arena, result placements)
+            // follows the workflow D6 cursor, not the agent backing/arena
+            // cursor. Verify in-page bounds, alignment and pairwise
+            // disjointness independently.
+            if (!verify_workflow_spans(section, fail_local)) {
+                return diags;
+            }
+        } else if (!verify_bridge_spans(section, fail_local)) {
+            return diags;
+        }
+
         return diags;
     }
 
     // Shared validation of the bridge control-frame shape and the dense
     // per-call-site RECORDS on the explicitly untrusted transport boundary.
-    // The agent-lane (V2-C) and workflow (V2-D) sections carry identical dense
+    // The agent-lane  and workflow  sections carry identical dense
     // records, so a transported section of either kind gets the same
     // guarantees: a zero-site section carries an all-zero control span; with
     // sites the stride is a non-zero 8-aligned constant, the control extent is
@@ -1245,7 +1157,9 @@ class Decoder {
     verify_bridge_records(const CoreFrameLayoutSection &section,
                           const std::function<void(std::string)> &fail_local) {
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
-        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+        const auto align8 = [](std::uint64_t value) {
+            return (value + 7u) & ~std::uint64_t{7u};
+        };
         const std::uint32_t site_count =
             static_cast<std::uint32_t>(section.bridge_call_sites.size());
         if (site_count == 0) {
@@ -1278,14 +1192,13 @@ class Decoder {
                        "fixed-page address");
             return false;
         }
-        const std::uint64_t expected_spill =
-            section.bridge_control_base + blocks_extent;
+        const std::uint64_t expected_spill = section.bridge_control_base + blocks_extent;
         if (static_cast<std::uint64_t>(section.bridge_spill_base) != expected_spill) {
-            fail_local("frame-layout bridge spill slots must immediately follow the control blocks");
+            fail_local(
+                "frame-layout bridge spill slots must immediately follow the control blocks");
             return false;
         }
-        const std::uint64_t control_extent =
-            blocks_extent + section.bridge_spill_extent;
+        const std::uint64_t control_extent = blocks_extent + section.bridge_spill_extent;
         if (section.bridge_control_extent != control_extent ||
             section.bridge_control_base + section.bridge_control_extent > kPageEnd) {
             fail_local("frame-layout bridge control-frame extent is inconsistent or exceeds the "
@@ -1314,25 +1227,25 @@ class Decoder {
                            "offset");
                 return false;
             }
-            if (section.format_version >= 3) {
-                if (site.spill_extent % 8u != 0) {
-                    fail_local("a frame-layout bridge spill window must be 8-aligned");
-                    return false;
-                }
-                const std::uint64_t expected_site_spill =
-                    static_cast<std::uint64_t>(section.bridge_spill_base) + spill_cursor;
-                if (static_cast<std::uint64_t>(site.spill_base) != expected_site_spill) {
-                    fail_local("a frame-layout bridge spill window does not densely follow the "
-                               "prior sites' windows");
-                    return false;
-                }
-                spill_cursor += site.spill_extent;
-                if (spill_cursor > section.bridge_spill_extent) {
-                    fail_local("a frame-layout bridge spill window runs past the module spill "
-                               "region");
-                    return false;
-                }
+
+            if (site.spill_extent % 8u != 0) {
+                fail_local("a frame-layout bridge spill window must be 8-aligned");
+                return false;
             }
+            const std::uint64_t expected_site_spill =
+                static_cast<std::uint64_t>(section.bridge_spill_base) + spill_cursor;
+            if (static_cast<std::uint64_t>(site.spill_base) != expected_site_spill) {
+                fail_local("a frame-layout bridge spill window does not densely follow the "
+                           "prior sites' windows");
+                return false;
+            }
+            spill_cursor += site.spill_extent;
+            if (spill_cursor > section.bridge_spill_extent) {
+                fail_local("a frame-layout bridge spill window runs past the module spill "
+                           "region");
+                return false;
+            }
+
             for (const CoreLayoutId param : site.param_layouts) {
                 if (!valid_id(section.table, param)) {
                     fail_local("frame-layout bridge call-site names an unknown param layout");
@@ -1343,8 +1256,7 @@ class Decoder {
                 fail_local("frame-layout bridge call-site names an unknown result layout");
                 return false;
             }
-            const CoreLayout &result_layout =
-                section.table.layouts[site.result_layout.value];
+            const CoreLayout &result_layout = section.table.layouts[site.result_layout.value];
             const std::uint64_t aligned_result = align8(result_layout.size);
             if (aligned_result != site.result_extent || site.result_extent == 0) {
                 fail_local("a frame-layout bridge result placement extent must equal its layout's "
@@ -1352,7 +1264,7 @@ class Decoder {
                 return false;
             }
         }
-        if (section.format_version >= 3 && spill_cursor != section.bridge_spill_extent) {
+        if (spill_cursor != section.bridge_spill_extent) {
             fail_local("the per-site bridge spill windows do not exactly partition the module "
                        "spill region");
             return false;
@@ -1360,7 +1272,7 @@ class Decoder {
         return true;
     }
 
-    // V2-D: validate a workflow module's frame spans. The agent placement/arena
+    // Workflow frame: validate a workflow module's frame spans. The agent placement/arena
     // cursor rules do not apply (a workflow has no agent input placements; the
     // entry frame is packed directly into an entry node's I block). Every named
     // span must be inside the fixed page, 8-aligned where it starts a region,
@@ -1371,7 +1283,9 @@ class Decoder {
     verify_workflow_spans(const CoreFrameLayoutSection &section,
                           const std::function<void(std::string)> &fail_local) {
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
-        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+        const auto align8 = [](std::uint64_t value) {
+            return (value + 7u) & ~std::uint64_t{7u};
+        };
 
         struct Span {
             std::uint64_t lo;
@@ -1379,8 +1293,7 @@ class Decoder {
         };
         std::vector<Span> spans;
         auto add = [&](std::uint64_t base, std::uint64_t extent) -> bool {
-            if (extent == 0 || base % 8u != 0 || base >= kPageEnd ||
-                base + extent > kPageEnd) {
+            if (extent == 0 || base % 8u != 0 || base >= kPageEnd || base + extent > kPageEnd) {
                 fail_local("a workflow frame span is unaligned, empty, or outside the fixed page");
                 return false;
             }
@@ -1414,8 +1327,7 @@ class Decoder {
                 fail_local("a workflow node input/output layout root must be non-empty");
                 return false;
             }
-            if (block.input_size != expected_input ||
-                block.output_size != expected_output ||
+            if (block.input_size != expected_input || block.output_size != expected_output ||
                 block.context_size != expected_context) {
                 fail_local("a workflow node block size disagrees with the aligned size of its "
                            "named layout root");
@@ -1456,13 +1368,11 @@ class Decoder {
                 return false;
             }
         }
-        // V2-D emission half 2: the state-entry trace ring (8-byte count
+        // Workflow trace: the state-entry trace ring (8-byte count
         // header plus the fixed record capacity) is a disjoint in-page span.
         if (section.state_trace_capacity != 0) {
-            if (section.state_trace_base == 0 ||
-                section.state_trace_base % 8u != 0 ||
-                section.state_trace_capacity < 8u ||
-                section.state_trace_capacity % 8u != 0 ||
+            if (section.state_trace_base == 0 || section.state_trace_base % 8u != 0 ||
+                section.state_trace_capacity < 8u || section.state_trace_capacity % 8u != 0 ||
                 !add(section.state_trace_base, section.state_trace_capacity)) {
                 fail_local("a workflow state-trace span is unaligned, undersized, or outside the "
                            "fixed page");
@@ -1482,8 +1392,8 @@ class Decoder {
                 return false;
             }
         }
-        std::sort(spans.begin(), spans.end(),
-                  [](const Span &a, const Span &b) { return a.lo < b.lo; });
+        std::sort(
+            spans.begin(), spans.end(), [](const Span &a, const Span &b) { return a.lo < b.lo; });
         for (std::size_t i = 1; i < spans.size(); ++i) {
             if (spans[i].lo < spans[i - 1].hi) {
                 fail_local("two workflow frame spans overlap inside the fixed page");
@@ -1493,21 +1403,22 @@ class Decoder {
         return true;
     }
 
-    // V2-C: validate the capability-bridge control-frame span and the dense
+    // Capability bridge: validate the capability-bridge control-frame span and the dense
     // per-call-site result placements. The regions form ONE sum cursor chained
     // off the frame-payload arena: control blocks, the scalar/PtrLen spill
     // slots, then per call site the result root and its payload arena. Two sites
     // can therefore never alias (the e5ef55c sum-of-prior-backing class).
-    [[nodiscard]] bool
-    verify_bridge_spans(const CoreFrameLayoutSection &section,
-                        const std::function<void(std::string)> &fail_local) {
+    [[nodiscard]] bool verify_bridge_spans(const CoreFrameLayoutSection &section,
+                                           const std::function<void(std::string)> &fail_local) {
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
-        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+        const auto align8 = [](std::uint64_t value) {
+            return (value + 7u) & ~std::uint64_t{7u};
+        };
         const std::uint32_t site_count =
             static_cast<std::uint32_t>(section.bridge_call_sites.size());
         // Dense-record validation is shared with the workflow lane (zero-site
         // invariant, stride/control-extent shape, dense ids, arity, block
-        // offsets, param/result roots, result extents, v3 spill windows).
+        // offsets, param/result roots, result extents, spill windows).
         if (!verify_bridge_records(section, fail_local)) {
             return false;
         }
@@ -1520,9 +1431,9 @@ class Decoder {
         // sum cursor the backing placements use, and every per-site result
         // root + payload arena chains off one sum cursor (so two sites can
         // never alias, the e5ef55c sum-of-prior-backing class).
-        const std::uint64_t expected_control = align8(
-            static_cast<std::uint64_t>(section.payload_arena_base) +
-            section.payload_arena_capacity);
+        const std::uint64_t expected_control =
+            align8(static_cast<std::uint64_t>(section.payload_arena_base) +
+                   section.payload_arena_capacity);
         if (section.bridge_control_base != expected_control) {
             fail_local("frame-layout bridge control frame must begin at the 8-aligned arena "
                        "high-water");
@@ -1603,8 +1514,7 @@ class ConsistencyChecker {
     }
 
     [[nodiscard]] static std::uint64_t pair_key(CoreLayoutId l, CoreWireSchemaNodeId w) noexcept {
-        return (static_cast<std::uint64_t>(l.value) << 32U) |
-               static_cast<std::uint64_t>(w.value);
+        return (static_cast<std::uint64_t>(l.value) << 32U) | static_cast<std::uint64_t>(w.value);
     }
 
     // Local-shape verdict for one pair plus the child pairs that still have to
@@ -1616,12 +1526,10 @@ class ConsistencyChecker {
         std::vector<Pair> children;
     };
 
-    [[nodiscard]] bool check_scalar_repr(CoreScalarRepr repr,
-                                         const CoreWireSchemaInt &schema) {
-        const bool narrow =
-            schema.bounds.has_value() &&
-            schema.bounds->first >= std::numeric_limits<std::int32_t>::min() &&
-            schema.bounds->second <= std::numeric_limits<std::int32_t>::max();
+    [[nodiscard]] bool check_scalar_repr(CoreScalarRepr repr, const CoreWireSchemaInt &schema) {
+        const bool narrow = schema.bounds.has_value() &&
+                            schema.bounds->first >= std::numeric_limits<std::int32_t>::min() &&
+                            schema.bounds->second <= std::numeric_limits<std::int32_t>::max();
         const CoreScalarRepr expected = narrow ? CoreScalarRepr::I32 : CoreScalarRepr::I64;
         return repr == expected;
     }
@@ -1698,8 +1606,7 @@ class ConsistencyChecker {
                         ok(false, "frame layout/wire disagree on Option enum shape");
                         return;
                     }
-                    const CoreLayoutId some_payload =
-                        e->variant_payload_layouts[*some_idx];
+                    const CoreLayoutId some_payload = e->variant_payload_layouts[*some_idx];
                     if (!layout_valid(some_payload)) {
                         ok(false, "frame layout/wire Option payload edge is out of range");
                         return;
@@ -1719,8 +1626,7 @@ class ConsistencyChecker {
                         ok(false, "frame layout/wire disagree on sequence container shape");
                         return;
                     }
-                    const std::uint64_t expected_capacity =
-                        schema.capacity.value_or(c->capacity);
+                    const std::uint64_t expected_capacity = schema.capacity.value_or(c->capacity);
                     if (c->capacity != expected_capacity) {
                         ok(false, "frame layout/wire sequence capacities disagree");
                         return;
@@ -1734,8 +1640,7 @@ class ConsistencyChecker {
                         ok(false, "frame layout/wire disagree on map container shape");
                         return;
                     }
-                    const std::uint64_t expected_capacity =
-                        schema.capacity.value_or(c->capacity);
+                    const std::uint64_t expected_capacity = schema.capacity.value_or(c->capacity);
                     if (c->capacity != expected_capacity) {
                         ok(false, "frame layout/wire map capacities disagree");
                         return;
@@ -1785,7 +1690,7 @@ class ConsistencyChecker {
                         }
                         for (std::uint32_t slot = 0; slot < slot_count; ++slot) {
                             result.children.emplace_back(payload->field_layouts[slot],
-                                                        schema.variants[i].slots[slot].type);
+                                                         schema.variants[i].slots[slot].type);
                         }
                     }
                     result.valid = true;
@@ -1813,8 +1718,7 @@ class ConsistencyChecker {
     // a legal but very deep acyclic Struct/Tuple chain must never recurse on the
     // C++ stack. Children are pushed in reverse so they pop left-to-right,
     // matching the former recursion's first-error order.
-    [[nodiscard]] bool check_iterative(CoreLayoutId layout_root,
-                                       CoreWireSchemaNodeId wire_root) {
+    [[nodiscard]] bool check_iterative(CoreLayoutId layout_root, CoreWireSchemaNodeId wire_root) {
         if (!layout_valid(layout_root) || !wire_id_valid(wire_root)) {
             return reject("frame layout/wire root id is out of range");
         }
@@ -1882,8 +1786,7 @@ encode_core_frame_layout_section(const CoreFrameLayoutSection &section) {
     return result;
 }
 
-CoreFrameLayoutDecodeResult
-decode_core_frame_layout_section(std::span<const std::uint8_t> bytes) {
+CoreFrameLayoutDecodeResult decode_core_frame_layout_section(std::span<const std::uint8_t> bytes) {
     Decoder decoder(bytes);
     CoreFrameLayoutDecodeResult decoded = decoder.run();
     if (!decoded.ok()) {
@@ -1913,13 +1816,12 @@ verify_frame_layout_wire_consistency(const CoreLayoutTable &layouts,
     return checker.run(layout_root, wire_root);
 }
 
-std::vector<CoreLowerDiagnostic>
-verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
-                          const CoreWireSchemaTable &wire) {
+std::vector<CoreLowerDiagnostic> verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
+                                                           const CoreWireSchemaTable &wire) {
     if (section.bridge_call_sites.empty()) {
         return {};
     }
-    // Frame-bridge v2 D4 rung V2-C: every capability argument/result root must
+    // Every capability argument/result root must
     // lie inside the frame-WALK wire subset — Unit/Bool/Int/Float/String,
     // struct, enum, option, tuple, bounded sequence. map / decimal / duration
     // / timestamp / uuid stay fail-closed HERE (compile + admission), so the
@@ -1939,49 +1841,49 @@ verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
                 continue;
             }
             visited[id] = 1;
-            const bool rejected = std::visit(
-                Overloaded{
-                    [](const CoreWireSchemaFloat &) { return false; },
-                    [](const CoreWireSchemaDecimal &) { return true; },
-                    [](const CoreWireSchemaDuration &) { return true; },
-                    [](const CoreWireSchemaTimestamp &) { return true; },
-                    [](const CoreWireSchemaUuid &) { return true; },
-                    [](const CoreWireSchemaClosure &) { return true; },
-                    [](const CoreWireSchemaMap &) { return true; },
-                    [](const CoreWireSchemaUnit &) { return false; },
-                    [](const CoreWireSchemaBool &) { return false; },
-                    [](const CoreWireSchemaInt &) { return false; },
-                    [](const CoreWireSchemaString &) { return false; },
-                    [&](const CoreWireSchemaOption &s) {
-                        worklist.push_back(s.value.value);
-                        return false;
-                    },
-                    [&](const CoreWireSchemaSequence &s) {
-                        worklist.push_back(s.element.value);
-                        return false;
-                    },
-                    [&](const CoreWireSchemaTuple &s) {
-                        for (const CoreWireSchemaNodeId element : s.elements) {
-                            worklist.push_back(element.value);
-                        }
-                        return false;
-                    },
-                    [&](const CoreWireSchemaStruct &s) {
-                        for (const CoreWireSchemaField &field : s.fields) {
-                            worklist.push_back(field.type.value);
-                        }
-                        return false;
-                    },
-                    [&](const CoreWireSchemaEnum &s) {
-                        for (const CoreWireSchemaVariant &variant : s.variants) {
-                            for (const CoreWireSchemaField &slot : variant.slots) {
-                                worklist.push_back(slot.type.value);
-                            }
-                        }
-                        return false;
-                    },
-                },
-                wire.nodes[id].shape);
+            const bool rejected =
+                std::visit(Overloaded{
+                               [](const CoreWireSchemaFloat &) { return false; },
+                               [](const CoreWireSchemaDecimal &) { return true; },
+                               [](const CoreWireSchemaDuration &) { return true; },
+                               [](const CoreWireSchemaTimestamp &) { return true; },
+                               [](const CoreWireSchemaUuid &) { return true; },
+                               [](const CoreWireSchemaClosure &) { return true; },
+                               [](const CoreWireSchemaMap &) { return true; },
+                               [](const CoreWireSchemaUnit &) { return false; },
+                               [](const CoreWireSchemaBool &) { return false; },
+                               [](const CoreWireSchemaInt &) { return false; },
+                               [](const CoreWireSchemaString &) { return false; },
+                               [&](const CoreWireSchemaOption &s) {
+                                   worklist.push_back(s.value.value);
+                                   return false;
+                               },
+                               [&](const CoreWireSchemaSequence &s) {
+                                   worklist.push_back(s.element.value);
+                                   return false;
+                               },
+                               [&](const CoreWireSchemaTuple &s) {
+                                   for (const CoreWireSchemaNodeId element : s.elements) {
+                                       worklist.push_back(element.value);
+                                   }
+                                   return false;
+                               },
+                               [&](const CoreWireSchemaStruct &s) {
+                                   for (const CoreWireSchemaField &field : s.fields) {
+                                       worklist.push_back(field.type.value);
+                                   }
+                                   return false;
+                               },
+                               [&](const CoreWireSchemaEnum &s) {
+                                   for (const CoreWireSchemaVariant &variant : s.variants) {
+                                       for (const CoreWireSchemaField &slot : variant.slots) {
+                                           worklist.push_back(slot.type.value);
+                                       }
+                                   }
+                                   return false;
+                               },
+                           },
+                           wire.nodes[id].shape);
             if (rejected) {
                 return false;
             }
@@ -1994,7 +1896,8 @@ verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
     };
     for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
         const auto capability_it =
-            std::find_if(wire.capabilities.begin(), wire.capabilities.end(),
+            std::find_if(wire.capabilities.begin(),
+                         wire.capabilities.end(),
                          [&](const CoreWireCapabilitySchema &schema) {
                              return schema.source_symbol == site.source_symbol;
                          });
@@ -2002,10 +1905,10 @@ verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
             return fail_local("a frame-layout bridge call site names a capability the wire-schema "
                               "table does not project");
         }
-        if (capability_it->params.size() != site.arity ||
-            site.param_layouts.size() != site.arity) {
-            return fail_local("a frame-layout bridge call site arity disagrees with the wire-schema "
-                              "capability parameter count");
+        if (capability_it->params.size() != site.arity || site.param_layouts.size() != site.arity) {
+            return fail_local(
+                "a frame-layout bridge call site arity disagrees with the wire-schema "
+                "capability parameter count");
         }
         for (std::uint32_t i = 0; i < site.arity; ++i) {
             if (!within_frame_walk_subset(capability_it->params[i])) {

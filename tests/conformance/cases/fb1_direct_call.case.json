@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/fb1_direct_call.ahfl",
   "kind": "agent",
   "entry": "wasm::fb1_direct_call::DirectCallAgent",

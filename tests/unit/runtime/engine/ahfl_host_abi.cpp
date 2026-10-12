@@ -2,8 +2,8 @@
 //
 // The header is a published C FFI boundary. These assertions lock the ABI
 // invariants the design review made non-negotiable: fixed 32-bit widths for the
-// status/format/version types, OK == 0, the size-prefixed args struct with
-// struct_size as its first field, and the version constant. The header is C but
+// status type, OK == 0, the size-prefixed args struct with
+// struct_size as its first field, and exact struct size. The header is C but
 // guarded by extern "C"; this project is C++-only, so we compile it as C++ and
 // verify the contract holds under a C++ translation unit.
 
@@ -34,29 +34,18 @@ void check(bool condition, const std::string &name) {
 // implementation-defined width and break the boundary.
 static_assert(std::is_same_v<ahfl_cap_status, std::uint32_t>,
               "ahfl_cap_status must be uint32_t");
-static_assert(std::is_same_v<ahfl_wire_format, std::uint32_t>,
-              "ahfl_wire_format must be uint32_t");
 static_assert(sizeof(ahfl_cap_status) == 4, "status is 32-bit");
 
 // OK must stay 0 (fail-closed: anything non-OK is a failure/pending).
 static_assert(AHFL_CAP_OK == 0u, "OK must be 0");
 static_assert(AHFL_CAP_ERROR == 1u && AHFL_CAP_PENDING == 2u, "core status codes pinned");
 
-// struct_size must be the first field so readers can detect appended fields.
+// struct_size must be the first field so readers can validate the complete layout.
 static_assert(offsetof(ahfl_invoke_args, struct_size) == 0,
               "struct_size must be the first field of ahfl_invoke_args");
 
-void test_version_constant() {
-    check(AHFL_ABI_VERSION == 1u, "ABI version constant is 1");
-}
-
-void test_wire_format() {
-    check(AHFL_WIRE_VALUE_JSON == 1u, "value_json wire format is 1");
-}
-
 void test_args_struct_shape() {
-    // A caller populating the struct sets struct_size to its own sizeof, so the
-    // runtime can tell which (appended) fields are present.
+    // The current contract requires an exact struct size.
     ahfl_invoke_args args{};
     args.struct_size = static_cast<std::uint32_t>(sizeof(ahfl_invoke_args));
     args.cap_id = 42u;
@@ -74,8 +63,6 @@ void test_status_values_distinct() {
 } // namespace
 
 int main() {
-    test_version_constant();
-    test_wire_format();
     test_args_struct_shape();
     test_status_values_distinct();
 

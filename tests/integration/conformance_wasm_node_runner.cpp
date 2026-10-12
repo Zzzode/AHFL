@@ -73,30 +73,30 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // single-lane P6 architecture where the bridge (i32)->(i32,i32) is the sole
 // capability calling convention.
 // RFC 0026 P6-7 rung E: the two raw P4-D frame cases (p6_aggregate /
-// p6_collection) now pack input, invoke runv, and encode the output frame with
+// p6_collection) now pack input, invoke run_frame, and encode the output frame with
 // real differential agreement, so the census moved 14/7 -> 16/5. The fix-forward
 // two-container overlap regression (p6_frame_two_containers) drives the generic
-// Node pack/runv/encode walker through TWO same-typed input containers with
-// distinct live elements and moved 16/5 -> 17/5. Frame-bridge v2 rung V2-C
-// (v2c_multi_arg_bridge) lands the first direct agent that invokes a
+// Node pack/run_frame/encode walker through TWO same-typed input containers with
+// distinct live elements and moved 16/5 -> 17/5. Frame-bridge v2 rung capability-bridge
+// (multi_arg_bridge) lands the first direct agent that invokes a
 // MULTI-ARGUMENT capability from a non-final handler through the additive
 // (i32)->(i32,i32) control-block bridge: the host walks the dense P4-D spans
 // into the multi-argument wire envelope, packs the aggregate result into the
 // call site's disjoint placement, and a computed final materializes a String
-// projected from that result through ctx, moving 17/5 -> 18/5. The V2-C
+// projected from that result through ctx, moving 17/5 -> 18/5. The capability-bridge
 // fix-forward adds three regression agents and a per-call argument-envelope
 // differential dimension (18/5 -> 21/5):
-//   * v2c_bridge_chain: TWO computed non-final handlers chain behind a plain
+//   * bridge_chain: TWO computed non-final handlers chain behind a plain
 //     goto and each invokes the same capability; the two dense call sites
 //     share one import ordinal, so reachability must see the planned computed
 //     successors and the host must resolve each site from its control-block
 //     address (never ordinal -> single site);
-//   * v2c_route_then_bridge: a producing pattern-arena match followed by an
+//   * route_then_bridge: a producing pattern-arena match followed by an
 //     ordered bridge statement OUTSIDE the match arms (route then call);
-//   * v2c_single_enum_bridge: one tag-only-enum bridge argument pins the SSOT
+//   * single_enum_bridge: one tag-only-enum bridge argument pins the SSOT
 //     single-argument envelope ({"value":{...}} for a non-Struct, never the
 //     bare enum object) via the new capability_arguments comparison.
-// Frame-bridge v2 rung V2-D RETURN (emission half 1) packages a workflow whose
+// Frame-bridge v2 rung workflow-frame RETURN (emission half 1) packages a workflow whose
 // RETURN is a PROJECTED or CONSTRUCTED P4-D frame: the computed runner is
 // re-emitted with its fixed regions/globals relocated onto per-instance
 // I/C/scratch/O node blocks and a merged rodata Data region, the tuple runner
@@ -106,7 +106,7 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // into module pointer-tree form before the entry runner, admitting an enum
 // payload projection off `input`. This moves enum_variant_e2e and if_let_e2e
 // (two scenarios) from the skip set to differential agreement: 21/5 -> 24/2.
-// Frame-bridge v2 rung V2-D emission half 2 (scalar capability-result ->
+// Frame-bridge v2 rung workflow-frame emission half 2 (scalar capability-result ->
 // context stores + constructed SummaryInput) lands e2e_multi_agent (two
 // scenarios): packaged runners now dispatch EVERY state through relocated
 // handlers on a bounded fuel ladder (a computed-goto if-routing handler takes
@@ -125,17 +125,17 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // nested_projection, unwrap_some, and the implies boolean fixture) move from
 // bespoke Node probe coverage to manifest-driven cases that AGREE under both
 // engines with identity-final borrowed frames: 26/0 -> 42/0.
-// FB-5 slice B: the five V2-A computed-final fixtures (computed_scalar,
+// FB-5 slice B: the five computed-final computed-final fixtures (computed_scalar,
 // computed_aggregate, computed_enum with two scenarios, computed_if_let_return
 // with three scenarios, computed_payload_enum with two scenarios) move from
 // bespoke probe-only coverage to nine differential scenarios whose finals
 // construct output frames (scalar materialization, nested aggregate pointer
 // expansion, tag-only and payload-bearing enum ladders): 42/0 -> 51/0.
-// FB-5 slice C: the V2-B String/computed-final agents (string_passthrough 1,
+// FB-5 slice C: the string-frame String/computed-final agents (string_passthrough 1,
 // computed_string 2, bounded_string 2 scenarios), the two bounded-list input
 // arena agents (list_string_arena, list_nested_string_arena), and the
 // bounded-String durable-resume capability workflow (e3_capability_workflow_
-// resume) add eight differential scenarios: 51/0 -> 59/0. v2b_enum_string is
+// resume) add eight differential scenarios: 51/0 -> 59/0. enum_string is
 // excluded: the retired evaluator misrouted its String tuple-variant enum
 // construction through the capability invoker while the wasm run is correct;
 // the fixture can be re-added when a blessing is captured.
@@ -541,7 +541,7 @@ int run_one(const CaseEntry &entry,
 
     // Produce first. A p6-frame module carries its P4-D core-layout section;
     // the Node host packs the canonical input into the fixed frame, drives
-    // runv, and encodes the output frame, so it produces a comparable
+    // run_frame, and encodes the output frame, so it produces a comparable
     // observation just like every other emitted case below. Only cases that do
     // not emit at all (the KR6.6 blocked lane) skip before an engine reference
     // is needed.

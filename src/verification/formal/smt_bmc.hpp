@@ -6,8 +6,7 @@
 // queries and discharges them through the solver seam (smt_solver.hpp):
 //
 //   * requires clauses  -> assumptions (asserted directly);
-//   * invariant clauses -> goals AND assumptions (must hold, and may be relied
-//                          on by later goals within the same contract);
+//   * invariant clauses -> independent goals, never premises for other goals;
 //   * ensures clauses    -> goals (postconditions to prove);
 //   * forbid clauses     -> goals whose *positive* form must be unreachable, so
 //                          the goal proven is `(not predicate)`;
@@ -17,11 +16,15 @@
 // unsat: unsat => G holds on all models (Safe); sat => a counterexample exists
 // (Unsafe); unknown / unavailable => not proven (never silently Safe).
 //
-// "Bounded" here refers to the Int(lo,hi) range assumptions and the solver
-// timeout; the data-predicate fragment is loop-free, so a single query per
-// goal is complete for it. KR7.2 adds an optional real two-query k-induction
-// (base case + inductive step with havoc transitions) for invariant goals;
-// the temporal fragment is handled by slice 6.
+// This proves contract implications only; no flow assignments or execution
+// transition relation are encoded. Satisfiable preconditions are checked before
+// refutation, preventing proofs from contradictory premises.
+//
+// Integer ranges are type-domain constraints, not execution-depth bounds.
+// Timeout and unknown results remain failures. The optional two-query invariant
+// check re-encodes abstract predicates with independent (havoc) values; it has
+// no execution transition relation and is not an execution induction proof.
+// Its bounded_only flag records this existing abstraction limitation.
 
 #include <cstddef>
 #include <optional>
@@ -33,16 +36,18 @@
 #include "ahfl/compiler/ir/ir.hpp"
 #include "verification/formal/smt_encode.hpp"
 #include "verification/formal/smt_solver.hpp"
+#include "verification/formal/subset.hpp"
 
 namespace ahfl::formal {
 
 enum class SmtBmcStatus {
-    Safe,        // every goal proven unconditionally (all queries unsat)
+    Safe,        // every contract implication proven under consistent requires
     BoundedSafe, // proven within the bound; the inductive step could not be
                  // strengthened to an unbounded proof (RFC 0017 Q6 fallback)
+    InconsistentAssumptions, // requires and symbol bounds have no model
     Unsafe,      // at least one goal refuted (a query was sat)
     Unknown,     // a query returned unknown / timed out
-    Unsupported, // no encodable data-predicate goals in the program
+    Unsupported, // no data goals, or selected clauses are not encodable
     SolverUnavailable,
 };
 
@@ -54,7 +59,7 @@ struct SmtBmcGoal {
     std::size_t clause_index{0};
     std::string description; // e.g. "ensures" or "requires divisor != 0"
     SmtSolverStatus verdict{SmtSolverStatus::SolverError};
-    bool proven{false}; // verdict == Unsat
+    bool proven{false}; // consistent premises and a completed Unsat proof
     // K-induction only: true when the goal held as a base case but its
     // inductive step was Sat (the invariant is not a tautology under havoc
     // transitions), so the proof is bound-limited. Tautological invariants
@@ -75,9 +80,17 @@ struct SmtBmcGoal {
     std::optional<SourceRange> source_range;
 };
 
+struct SmtBmcAssumptionCheck {
+    std::string target_name;
+    SmtSolverStatus verdict{SmtSolverStatus::SolverError};
+    bool consistent{false};
+};
+
 struct SmtBmcResult {
     SmtBmcStatus status{SmtBmcStatus::Unsupported};
     std::vector<SmtBmcGoal> goals;
+    std::vector<SmtBmcAssumptionCheck> assumption_checks;
+    std::vector<SubsetIneligibleClause> unsupported_clauses;
     std::size_t proven_count{0};
     std::string error_message;
 };
@@ -86,7 +99,7 @@ struct SmtBmcResult {
 struct SmtBmcOptions {
     SmtEncodeOptions encode; // e.g. emit_overflow_checks
     SmtSolverOptions solver; // solver kind / path / timeout
-    // KR7.2: when true, run a real two-query k-induction for invariant goals.
+    // When true, run the existing two-query abstract predicate check.
     // The base case is the standard refutation query. The inductive step
     // re-instantiates the predicate at step 0 (hypothesis) and step 1
     // (negation) with havoc transitions (transition relation = true). Unsat
@@ -103,15 +116,13 @@ struct SmtBmcOptions {
 
 [[nodiscard]] std::string_view smt_bmc_status_name(SmtBmcStatus status) noexcept;
 
-// Render an SMT-BMC result as a text report block for `ahflc verify`. Lines are
+// Render a report for `ahflc check --verify-data-contracts`. Lines are
 // prefixed `smt_bmc_` to sit alongside the SMV `checker_*` lines. Refuted goals
 // print their counterexample assignments. Deterministic.
 void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out);
 
-// Whether an SMT-BMC result should fail the verify command. Only a genuine
-// refutation (Unsafe) fails; Unsupported / SolverUnavailable / Unknown /
-// BoundedSafe / Safe never do (a missing solver is a skip, never a failure and
-// never a false pass).
+// Explicitly requested proof goals fail closed: Safe/BoundedSafe succeed.
+// No data goals is not applicable; unsupported clauses and unresolved proofs fail.
 [[nodiscard]] bool smt_bmc_result_is_failure(const SmtBmcResult &result) noexcept;
 
 } // namespace ahfl::formal

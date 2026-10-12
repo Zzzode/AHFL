@@ -130,7 +130,7 @@ std::string read_text_file(const std::filesystem::path &path) {
 
 std::string registry_package_index_json(std::string_view package_name,
                                         const std::vector<RegistryIndexEntry> &entries) {
-    std::string json = R"({"format_version":"ahfl.registry.package_index.v1","package":")";
+    std::string json = R"({"format":"ahfl.registry.package_index","package":")";
     json += package_name;
     json += R"(","versions":[)";
     for (std::size_t i = 0; i < entries.size(); ++i) {
@@ -144,7 +144,7 @@ std::string registry_package_index_json(std::string_view package_name,
 }
 
 std::string public_api_snapshot_json(std::string_view package_name, std::string_view version) {
-    std::string json = R"({"schema":"ahfl.public_api.v1","package":{"name":")";
+    std::string json = R"({"format":"ahfl.public_api","package":{"name":")";
     json += package_name;
     json += R"(","version":")";
     json += version;
@@ -171,8 +171,8 @@ void test_parse_version_basic() {
     check(pre.patch == 0, "parse_version prerelease patch");
     check(pre.prerelease == "alpha", "parse_version prerelease tag");
 
-    auto formatted = Resolver::format_version(v);
-    check(formatted == "1.2.3", "format_version roundtrip");
+    auto formatted = Resolver::format(v);
+    check(formatted == "1.2.3", "format roundtrip");
 }
 
 void test_satisfies_caret_constraint() {
@@ -222,12 +222,12 @@ void test_resolve_simple_dependency_graph() {
     // Should pick highest satisfying version
     if (result.resolved.size() >= 1) {
         check(result.resolved[0].name == "ahfl-stdlib", "resolve stdlib name");
-        check(Resolver::format_version(result.resolved[0].version) == "1.1.0",
+        check(Resolver::format(result.resolved[0].version) == "1.1.0",
               "resolve picks highest stdlib");
     }
     if (result.resolved.size() >= 2) {
         check(result.resolved[1].name == "ahfl-http", "resolve http name");
-        check(Resolver::format_version(result.resolved[1].version) == "0.6.0",
+        check(Resolver::format(result.resolved[1].version) == "0.6.0",
               "resolve picks highest http");
     }
 }
@@ -382,8 +382,7 @@ void test_registry_fetch_version_from_cached_metadata() {
 void test_registry_fetch_package_artifacts_from_transport() {
     const auto root = make_temp_root("registry-fetch-artifacts-source");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -481,8 +480,7 @@ std = { source = "sysroot" }
 void test_registry_fetch_package_artifacts_from_cache_after_network_failure() {
     const auto root = make_temp_root("registry-fetch-artifacts-cache-source");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -542,7 +540,7 @@ void test_registry_fetch_package_artifacts_invalid_live_index_does_not_use_cache
                          "registry-index"] =
         RegistryHttpResponse{.status_code = 200, .body = R"({"bad":true})", .success = true};
     cache->entries["registry-index:risk-model:2.1.3"] = R"({
-        "format_version":"ahfl.registry.index.v1",
+        "format":"ahfl.registry.index",
         "registry_id":"default",
         "package":"risk-model",
         "version":"2.1.3",
@@ -565,8 +563,7 @@ void test_registry_fetch_package_artifacts_invalid_live_index_does_not_use_cache
 void test_registry_fetch_package_artifacts_rejects_payload_digest_drift() {
     const auto root = make_temp_root("registry-fetch-artifacts-drift-source");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -684,7 +681,7 @@ void test_registry_fetch_public_api_snapshot_rejects_digest_drift() {
 }
 
 void test_registry_fetch_public_api_snapshot_rejects_schema_drift() {
-    const std::string snapshot = R"({"schema":"wrong","entries":[]})";
+    const std::string snapshot = R"({"format":"wrong","entries":[]})";
     const auto digest = sha256_digest(snapshot);
     auto transport = std::make_shared<FakeRegistryTransport>();
     auto cache = std::make_shared<FakeRegistryCache>();
@@ -704,8 +701,7 @@ void test_registry_fetch_public_api_snapshot_rejects_schema_drift() {
 void test_registry_publish_package_sends_validated_envelope() {
     const auto root = make_temp_root("registry-publish-source");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -755,7 +751,7 @@ std = { source = "sysroot" }
         check(transport->requests.size() == 1, "registry publish sends one request");
         if (!transport->requests.empty()) {
             check(transport->requests.front().method == "PUT", "registry publish uses PUT");
-            check(transport->requests.front().body.find("ahfl.registry.publish_request.v1") !=
+            check(transport->requests.front().body.find("ahfl.registry.publish_request") !=
                       std::string::npos,
                   "registry publish body schema");
             check(transport->requests.front().body.find("source_archive_payload") !=
@@ -774,8 +770,7 @@ std = { source = "sysroot" }
 void test_registry_publish_package_rejects_public_api_digest_drift_before_request() {
     const auto root = make_temp_root("registry-publish-digest-drift");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -843,7 +838,7 @@ void test_registry_yank_package_requires_yanked_response() {
     check(transport->requests.size() == 1, "registry yank sends one request");
     if (!transport->requests.empty()) {
         check(transport->requests.front().method == "POST", "registry yank uses POST");
-        check(transport->requests.front().body.find("ahfl.registry.yank_request.v1") !=
+        check(transport->requests.front().body.find("ahfl.registry.yank_request") !=
                   std::string::npos,
               "registry yank body schema");
         check(transport->requests.front().body.find("bad release") != std::string::npos,
@@ -876,8 +871,7 @@ void test_registry_package_input_resolution_fetches_transitive_registry_packages
     const auto out = make_temp_root("registry-input-resolution-output");
 
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "app"
 version = "1.0.0"
 edition = "2026"
@@ -897,8 +891,7 @@ risk-model = { source = "registry", registry = "default", version = "^2.0.0" }
     write_text_file(root / "src" / "main.ahfl", "module app::main;\n");
 
     write_text_file(risk_root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -918,8 +911,7 @@ audit-core = { source = "registry", registry = "default", version = "^1.0.0" }
     write_text_file(risk_root / "src" / "main.ahfl", "module risk_model::main;\n");
 
     write_text_file(audit_root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "audit-core"
 version = "1.4.0"
 edition = "2026"
@@ -1056,7 +1048,7 @@ void test_registry_index_entry_parse_and_serialize() {
     constexpr std::string_view digest =
         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const std::string input = std::string{R"({
-            "format_version":"ahfl.registry.index.v1",
+            "format":"ahfl.registry.index",
             "registry_id":"default",
             "package":"risk-model",
             "version":"2.1.3",
@@ -1104,7 +1096,7 @@ void test_registry_index_entry_rejects_unknown_fields() {
     constexpr std::string_view digest =
         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const std::string input = std::string{R"({
-            "format_version":"ahfl.registry.index.v1",
+            "format":"ahfl.registry.index",
             "registry_id":"default",
             "package":"risk-model",
             "version":"2.1.3",
@@ -1128,7 +1120,7 @@ void test_registry_index_entry_rejects_invalid_digests() {
     constexpr std::string_view digest =
         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const std::string input = std::string{R"({
-            "format_version":"ahfl.registry.index.v1",
+            "format":"ahfl.registry.index",
             "registry_id":"default",
             "package":"risk-model",
             "version":"2.1.3",
@@ -1207,9 +1199,7 @@ void test_registry_candidate_selection_reports_no_satisfying_version() {
 void test_source_archive_builds_normalized_payload() {
     const auto root = make_temp_root("source-archive-normalized");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-
-[package]
+                    R"([package]
 name = "risk-model"
 version = "1.0.0"
 edition = "2026"
@@ -1272,8 +1262,7 @@ std = { source = "sysroot" }
 void test_source_archive_excluded_files_do_not_change_digest() {
     const auto root = make_temp_root("source-archive-excluded");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "1.0.0"
 edition = "2026"
@@ -1321,7 +1310,7 @@ void test_source_archive_manifest_rejects_unknown_fields_and_invalid_digests() {
     constexpr std::string_view digest =
         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const std::string input = std::string{R"json({
-            "format_version":"ahfl.source_archive.v1",
+            "format":"ahfl.source_archive",
             "package":"risk-model",
             "manifest_sha256":")json"} +
                               std::string{digest} + R"json(",
@@ -1344,8 +1333,7 @@ void test_source_archive_materializes_verified_payload() {
     const auto root = make_temp_root("source-archive-materialize-source");
     const auto out = make_temp_root("source-archive-materialize-output");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "1.0.0"
 edition = "2026"
@@ -1388,8 +1376,7 @@ void test_source_archive_materialize_rejects_tampering_and_non_empty_output() {
     const auto root = make_temp_root("source-archive-materialize-tamper-source");
     const auto out = make_temp_root("source-archive-materialize-tamper-output");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "1.0.0"
 edition = "2026"
@@ -1442,8 +1429,7 @@ void test_registry_package_input_materializes_verified_archive() {
     const auto root = make_temp_root("registry-package-input-source");
     const auto out = make_temp_root("registry-package-input-output");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"
@@ -1515,8 +1501,7 @@ void test_registry_package_input_rejects_digest_drift_and_manifest_mismatch() {
         "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
     const auto root = make_temp_root("registry-package-input-reject-source");
     write_text_file(root / "ahfl.toml",
-                    R"(manifest_version = 2
-[package]
+                    R"([package]
 name = "risk-model"
 version = "2.1.3"
 edition = "2026"

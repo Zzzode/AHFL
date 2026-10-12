@@ -22,7 +22,7 @@ struct EmitContext {
     // others. Defaults to wasi.
     WasmProfile wasm_profile{WasmProfile::Wasi};
     // When non-null, the executable wasm backend renders the embedded-host
-    // execution descriptor (ahfl.wasm-execution-descriptor.v1) into this
+    // execution descriptor (ahfl.wasm-execution-descriptor) into this
     // string after a successful emit, so a caller (ahflc build
     // --emit-descriptor) can write the sidecar without a second compile.
     // Ignored by non-WASM backends.

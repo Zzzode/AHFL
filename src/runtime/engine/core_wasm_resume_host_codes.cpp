@@ -129,7 +129,7 @@ std::string_view host_code_for(core_wasm_resume_controller::ResumeStepReason rea
     case ResumeStepReason::TransitionInvalid:
         return kTransitionInvalid;
     case ResumeStepReason::ModuleError:
-        // A run2 ERROR, including fail-closed normalization of an unknown /
+        // A run_workflow ERROR, including fail-closed normalization of an unknown /
         // import ERROR.
         return kModuleError;
     case ResumeStepReason::ModuleTrap:

@@ -9,11 +9,11 @@
 
 若本文与其他设计说明冲突，以本文为准。
 
-**执行语义。** 本规范定义静态语义（类型、约束、文法）。动态执行语义由 WASM 引擎实现定义——验证后的 IR 经三层塔（Typed HIR → AHFL-IR → Core-IR）降到 Core-IR，由 wasm 后端发射 wasm32 模块，vendored wasm3 内嵌引擎执行。执行引擎是唯一的语义权威，见 [architecture-overview.zh.md](../design/architecture-overview.zh.md) §2.3 与 [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)。
+**执行语义。** 本规范定义静态语义（类型、约束、文法）；程序由 WASM 执行引擎运行。capability 的调用、挂起和恢复规则见 §3.4.1，宿主接入契约见 [Host ABI](../reference/host-abi.zh.md)。
 
 ## 1. 范围
 
-AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳定实现并可直接进入 parser/checker 阶段的核心能力：
+AHFL Core 是面向 agent 编排与控制的强类型领域专用语言（DSL），覆盖以下核心能力：
 
 1. 数据 schema 与基础类型
 2. 纯谓词声明与外部 capability 声明
@@ -29,38 +29,34 @@ AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳�
 3. `observability` / `compliance`
 4. `main` 与服务启动
 5. CTL
-6. 高阶类型（HKT）、union 类型与 intersection 类型——这三类抽象在本规范覆盖的 Core 范围内不提供，且未在演进路径上
+6. 高阶类型（HKT）、union 类型与 intersection 类型
 
-### 1.1 语言演进路径
+### 1.1 函数、泛型与标准库
 
-历史上本规范将"通用高阶函数与用户自定义泛型"列为 out-of-scope。该条目已被撤销：函数抽象（`fn`）、用户泛型（单态化实现）、一等闭包、`trait` / typeclass、ADT（`enum` 带 payload）以及统一 effect 系统不再由本规范排除，而是由 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) 定义的可验证演进路径统一承载。该 RFC 把上述能力的语法形态、类型规则、stdlib 库化（容器从关键字迁移为库类型）、以及进入 `contract` / `invariant` / `safety` / `liveness` / `flow guard` 的可验证子集（`effect Pure` + `decreases` 终止度量 + bounded refinement）一并规定，并给出 P0–P7 分阶段迁移计划。函数抽象 / 泛型 / 闭包 / `trait` / corelib 边界的最终定义以该 RFC 为准；本规范不再各自重复。
+函数抽象（`fn`）、用户泛型、一等闭包、`trait` / typeclass、带 payload 的 `enum`（代数数据类型，ADT）以及统一 effect 系统的语法、类型规则和标准库边界，见 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md)。容器是标准库名义类型，使用时须声明 package dependency 并显式 import（§4.1）。进入 `contract` / `invariant` / `safety` / `liveness` / `flow guard` 的表达式还须满足可验证子集的纯性、终止度量（`decreases`）和有界精化约束；具体可编码范围见 §5.6。
 
-### 1.2 语言演进原则
+### 1.2 表达式与可验证性
 
-> **语言表达力与可验证性正交——用可验证子集连接二者，不用降级语言换可判定性。**
+语言表达式是否合法，与它是否属于可验证子集，是两个独立的判断：
 
-这是本规范后续一切类型系统与 effect 演进的指导原则。具体含义：
-
-1. 引入新的表达力（`fn`、泛型、闭包、`trait`、ADT）本身不削弱可验证性；可判定性由调用是否落入可验证子集（`effect Pure` + `decreases` + bounded）静态判定
+1. `fn`、泛型、闭包、`trait`、ADT 的使用不直接决定可验证性；调用是否落入可验证子集（`effect Pure` + `decreases` + bounded）由静态检查判定
 2. 子集之外的代码（IO、非确定、无度量的递归）合法存在，服务于 runtime / capability / workflow 路径，仅不进入 `contract` / `invariant` / temporal 公式
-3. 不得通过"砍掉 trait / 闭包 / ADT"来换取可判定性——这与上述正交原则相悖
+3. 使用 `trait`、闭包或 ADT 的表达式，只要满足可验证子集约束，仍可参与验证
 
 ### 1.3 表达力边界：capability 是通用计算的唯一入口
 
-> **定位约束（[RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md)，accepted）：AHFL 是一门可嵌入的 agent workflow 编排 DSL。它的表达力聚焦于 workflow 建模，通用计算由宿主经 `capability` 边界提供，不进入语言核心。**
+AHFL 是一门可嵌入的 agent workflow 编排 DSL。它的表达力聚焦于 workflow 建模，通用计算由宿主经 `capability` 边界提供。
 
 区分两类表达力：
 
-1. **A 型——workflow 建模表达力**：`agent` 状态机、`transition`、类型化数据流、`contract`、handoff、multi-agent 与 workflow DAG 编排。这是 AHFL 语言核心，**无上限做强**。
-2. **B 型——节点内通用计算**：任意算法、裸 IO、可变数据结构、系统调用、字符串处理库等。这些**不进入语言核心**，而是声明为 `capability`（§3.4）由宿主实现——`capability` 是 AHFL 与通用计算世界之间的唯一受控入口。
+1. **workflow 建模**：`agent` 状态机、`transition`、类型化数据流、`contract`、handoff、multi-agent 与 workflow DAG 编排，由 AHFL 语言表达。
+2. **节点内通用计算**：任意算法、裸 IO、可变数据结构、系统调用、字符串处理库等，声明为 `capability`（§3.4）并由宿主实现。`capability` 是 AHFL 与通用计算世界之间的唯一受控入口。
 
 规范含义：
 
 1. 一个 workflow 节点若需要节点内的通用计算（读任意文件、正则解析、自定义数值计算），应将其声明为 `capability` 并由宿主实现，而非期望语言核心提供该计算。
-2. `fn` / 泛型 / 闭包等（RFC 0013 演进）服务于 A 型编排的表达（如谓词、数据变换的建模），落入 §5.6 可验证子集时可被验证；它们不是把 AHFL 变成通用计算语言的许可。
+2. `fn` / 泛型 / 闭包等服务于编排的表达（如谓词、数据变换的建模），落入 §5.6 可验证子集时可被验证；节点内通用计算仍须通过 `capability` 调用宿主。
 3. 该边界与 §4.6 effect 分级、§5.6 可验证子集一致：`capability` 是外部效应（含通用计算）的唯一声明式入口，其 effect 等级（§3.4）向宿主声明每个能力的风险。
-
-评估任何语言特性提案的判据：**它增强 A 型编排表达力，还是把语言核心推向 B 型通用计算？** 后者应留在 `capability` 边界之外。
 
 ## 2. 词法定义
 
@@ -177,6 +173,11 @@ navigation identity，但类型等价、method receiver identity 和 trait match
 仍使用 target declaration identity。`pub use` 不支持 enum variant、impl item、
 associated item 或 trait conformance re-export。
 
+公开 nominal type 的公开 inherent method 随 target `SymbolId` 参与查找，
+因此经 facade 重导出的类型仍可调用其公开方法。这不创建 method alias；
+跨 package 的私有方法仍不可用。primitive extension impl 与 trait conformance
+继续服从 defining module 的 import 规则。
+
 位于非 exported module 且未被 API-reachable facade 或 handoff artifact export
 触达的 `pub` symbol 会产生 `visibility.UNREACHABLE_PUBLIC` warning。handoff
 target export 只能引用 `pub` source symbol；否则必须产生
@@ -278,9 +279,9 @@ Param           ::= Ident ":" Type ;
 5. `CapabilityEffectItem` 各字段在 effect block 内至多出现一次；字段顺序任意
 6. `domain`、`compensation`、`policy` 中的 `QualifiedIdent` 在前端只校验词法合法性，不将其解析为强制存在的符号引用；其真实可用性由 assurance profile 在后续阶段校验
 
-#### 3.4.1 capability 执行语义：同步观感、异步落地、durable resume
+#### 3.4.1 capability 调用、挂起与持久恢复
 
-> 由 [RFC 0021](../rfcs/0021-capability-embedding-abi.zh.md)（embedding ABI，implemented）与 [RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)（durable resume，implemented）定义。本节规定语言可见的执行语义；宿主 ABI 字节契约见 `docs/reference/`，obligation 合成见 `assurance.zh.md`。
+本节规定语言可见的执行语义。宿主 ABI（应用二进制接口）的字节契约见 [Host ABI](../reference/host-abi.zh.md)，持久恢复契约见 [RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)，obligation 合成见 [Assurance 规范](assurance.zh.md)。
 
 capability 调用在**源码层面始终是同步的**：`let x = Cap(args);` 的观感永远是"调用 → 得结果 → 继续"。语言不引入 `async` / `await`；异步性完全由宿主吸收。宿主对每次调用返回三态之一：
 
@@ -345,6 +346,11 @@ IdentListOpt        ::= [ IdentList ] ;
 9. 所有状态必须从 `initial` 可达
 
 ### 3.6 contract 定义
+
+同一 Agent 可以关联多份 `contract for` 声明，包含跨模块通过 import alias
+引用同一 Agent 的合同。每份合同是独立声明，保留自己的条款和源文件；目标
+Agent 的身份不等于合同声明身份。合同检查保留各声明自己的前提假设，不在
+不同合同块之间隐式合并 `requires` 或 invariant。
 
 ```ebnf
 ContractDecl        ::= "contract" "for" QualifiedIdent "{"
@@ -569,7 +575,7 @@ ConstExpr           ::= Expr ;
 13. `match` 的具体 top-level variant arm 会在 arm body 内窄化 scrutinee path；wildcard、catch-all binding 与 or-pattern 不产生唯一 variant fact。
 14. `if let` 使用同一套 `Pattern` 语义；当 pattern 已经覆盖 scrutinee enum 的所有 constructor 且仍写出 `else` 分支时，报告 `typecheck.UNREACHABLE_IF_LET_ELSE` warning。
 15. `is_some`、`is_none`、`is_ok`、`is_err` 的零参数 method call 在 `if` 条件中会产生局部分支 narrowing fact；receiver 必须是可窄化 path，否则不产生 fact。
-16. 后缀 `?`（try 运算符，[RFC 0014](../rfcs/0014-try-operator.zh.md)）的 operand 必须是 `Option<T>` 或 `Result<T, E>`；`?` 仅允许出现在 `fn` 函数体中 let 绑定的直接初始化式位置（`let x = e?;`），不得出现在 `predicate`、`contract`、`flow` handler、`workflow` 等上下文中。完整类型规则、语义与 HIR→IR 脱糖见 §4.6.9。
+16. 后缀 `?`（try 运算符，[RFC 0014](../rfcs/0014-try-operator.zh.md)）的 operand 必须是 `Option<T>` 或 `Result<T, E>`；`?` 仅允许出现在 `fn` 函数体中 let 绑定的直接初始化式位置（`let x = e?;`），不得出现在 `predicate`、`contract`、`flow` handler、`workflow` 等上下文中。完整类型规则与求值语义见 §4.6.9。
 
 ### 3.11 时序表达式
 
@@ -606,10 +612,10 @@ WorkflowTemporalExpr ::= TemporalExpr ;
 4. `running(n)`、`completed(n)`、`completed(n, s)` 只允许在 workflow `safety` / `liveness` 中使用
 5. `completed(n, s)` 中 `s` 必须是节点 `n` 对应 agent 的终态
 
-实现说明：
+形式化验证边界：
 
-1. 当前仓库中的 `emit-smv` 只 lower validate 通过后的受限 formal subset
-2. `called`、`in_state`、`running`、`completed` 的 backend 映射，以及 `TemporalAtom` 中裸 `Expr` 的 observation abstraction 规则，见 `../design/formal-backend.zh.md`
+1. `emit-smv` 只接受通过校验且属于受限形式化子集的程序
+2. `called`、`in_state`、`running`、`completed` 的模型含义，以及 `TemporalAtom` 中裸 `Expr` 的 observation abstraction 规则，见 [形式化后端](../design/formal-backend.zh.md)
 
 ### 3.12 常量表达式
 
@@ -687,7 +693,7 @@ Error
 5. `Error` 仅作为诊断传播哨兵，标识一次确定失败的类型推导；不得作为正常值的类型
 6. 规范后续若写 `T`，默认指源码可写值类型，而不是这些内部辅助类型
 
-这三个内部辅助类型在类型关系求解器（`type_relations.cpp`）中按以下规则处理，用于错误恢复而不污染用户可见的子类型闭包：
+这三个内部辅助类型按以下规则处理，用于错误恢复而不扩大用户可见的子类型闭包：
 
 1. **等价**：`Any`、`Never`、`Error` 各自与同种辅助类型等价；它们彼此之间不等价（`Any` ≠ `Never` ≠ `Error`），且不与任何源码可写类型 `T` 等价
 2. **Error 双向通配**：只要 `Error` 出现在子类型关系 `S <: T` 的某一侧（无论源侧还是目标侧），关系即判定为成立。这样一次真实错误不会级联放大为数十条虚假二级诊断
@@ -758,18 +764,16 @@ type A = B
    **不可**赋给有界容器（缺少静态 capacity 见证）。capacity 子类型与元素
    variance 复合。
 
-除此之外，所有**名义泛型类型**（`struct<T...>` / `enum<T...>`）的子类型关系按其类型参数上声明的 **variance** 决定。variance 的完整设计（通过 trait 约束对每个泛型参数声明 `covariant` / `contravariant` / `invariant`）在 **PHASE B** 中落地。在当前阶段，以下 variance 对 stdlib 容器按名称硬编码生效，其余用户定义的名义泛型一律视为 invariant：
+名义泛型类型的子类型关系还受 **variance（型变）** 约束：covariant（协变）允许参数沿子类型关系放宽；invariant（不变）要求参数类型等价。标准库容器遵循下表，其余用户定义的名义泛型一律为 invariant：
 
 | 名义类型 | 参数 0 | 参数 1 |
 | --- | --- | --- |
 | `std::option::Option<T>` | covariant | — |
-| `std::result::Result<T, E>` | （注：当前保持 invariant，待 PHASE B 与 `Option` 对齐） | — |
+| `std::result::Result<T, E>` | invariant（T） | invariant（E） |
 | `std::collections::List<T>` | covariant | — |
 | `std::collections::Set<T>` | covariant | — |
 | `std::collections::Map<K, V>` | invariant（K） | covariant（V） |
 | 其它用户 `struct` / `enum<T...>` | invariant | invariant |
-
-对当前实现的说明（parenthetical）：截至本版本，`Result` 的 variance 尚未与 `Option` 对齐；容器级别的 covariance 实现位于 `src/compiler/semantics/type_relations.cpp` 中名义 struct/enum 的专用子类型分支，在 trait-based variance 系统交付前暂时以 canonical-name 分派。
 
 其他隐式子类型关系不存在。
 
@@ -782,8 +786,7 @@ type A = B
 5. `std::collections::Map<K, V>` 的 key 位置保持不变；不能因为 `K1 <: K2`
    就推出 `std::collections::Map<K1, V> <: std::collections::Map<K2, V>`
 6. `readonly` 不是保留关键字，用户程序不得书写 `readonly collections::List<T>`、
-   `Readonly<T>` 或等价语法；若未来引入，需要单独修订本规范、grammar、AST、
-   Typed HIR、typechecker 与 IR 表达
+   `Readonly<T>` 或等价语法
 
 ### 4.4 结构体与枚举
 
@@ -806,18 +809,18 @@ type A = B
 1. 若缺少期望类型，编译器必须报错
 2. 期望类型可来自变量标注、字段类型、参数类型、返回类型
 
-#### 4.5.1 Typed HIR 脱糖（desugaring）
+#### 4.5.1 空字面量与名义容器
 
-上述空字面量在 Typed HIR 中均不再保留独立 AST 节点，而是被**脱糖**为对应名义容器的标准构造形式（以保持 typed tree 统一为 std-nominal）：
+上述空字面量是对应名义容器标准构造形式的语法糖：
 
-| 源码形式 | 期望类型 | 脱糖后的 typed HIR |
+| 源码形式 | 期望类型 | 等价构造 |
 | --- | --- | --- |
 | `none` | `std::option::Option<T>` | `std::option::Option::None`（带泛型实参 `T` 的枚举变体值） |
 | `[]` | `std::collections::List<T>` | `std::collections::list_from_array<T>()` 或等价的名义空 List 构造子 |
 | `set[]` | `std::collections::Set<T>` | `std::collections::set_from_array<T>()` 或等价的名义空 Set 构造子 |
 | `map[]` | `std::collections::Map<K, V>` | `std::collections::map_from_entries<K, V>()` 或等价的名义空 Map 构造子 |
 
-因此类型检查阶段不再为"空容器字面量"维护专用代码路径；所有空形态最终都进入名义 struct/enum 的构造与类型关系通用路径。
+空字面量采用对应名义类型的构造规则与类型关系。
 
 ### 4.6 表达式类型规则
 
@@ -875,11 +878,11 @@ fields(S) = { f1:T1, ..., fn:Tn }
 
 #### 4.6.4 `some()` 与 `none()`
 
-源码语法保留 `some(e)` / `none` 作为表达式一级的语法糖（§3.10 PrimaryExpr）。**在 Typed HIR 中二者均被脱糖为名义 enum `std::option::Option` 的构造函数**：
+`some(e)` / `none` 是名义 enum `std::option::Option` 构造形式的语法糖（§3.10 PrimaryExpr）：
 
-| 源码形式 | Typed HIR 脱糖结果 |
+| 源码形式 | 等价构造 |
 | --- | --- |
-| `some(e)` | `std::option::Option::Some(E)`，其中 `E` 是 `e` 的脱糖后 typed 表达式；推导类型为 `std::option::Option<T>`，`T = type_of(E)` |
+| `some(e)` | `std::option::Option::Some(e)`，推导类型为 `std::option::Option<T>`，`T = type_of(e)` |
 | `none` | 参见 §4.5.1：脱糖为 `std::option::Option::None`，要求上下文提供 `std::option::Option<T>` 期望类型以补全泛型实参 `T` |
 
 等价的推导规则可写作：
@@ -896,7 +899,7 @@ expected_type(Γ) = std::option::Option<T>
         (脱糖后值为 std::option::Option::None)
 ```
 
-因此 `std::option::Option<T>` 的子类型与 variance 行为完全由名义 enum 泛型规则（§4.3.2）驱动，`some(e)` 和 `none` 没有专用的子类型路径。
+`std::option::Option<T>` 的子类型与 variance 行为遵循名义 enum 泛型规则（§4.3.2）；`some(e)` 和 `none` 遵循同样的规则。
 
 #### 4.6.5 capability 调用
 
@@ -999,16 +1002,15 @@ predicate 调用允许出现在：
 4. `=>`：
    - 仅作用于 `Bool`
 
-测试要求：混合 numeric operator、不同 scale `Decimal` 加减、源码层 `Decimal`
+诊断要求：混合 numeric operator、不同 scale `Decimal` 加减、源码层 `Decimal`
 除法 operator、以及 `Int < Float` 必须以稳定诊断
 `typecheck.INVALID_OPERATION` 失败；`Decimal` 乘法必须以 product scale 参与
-assignability 检查；`std::decimal::div` 必须覆盖显式 target scale 和 rounding mode。
-`TypeRelationOptions::allow_numeric_widening` 仅可用于显式兼容或分析模式，
-不得改变源码表达式类型规则。
+assignability 检查；`std::decimal::div` 要求显式 target scale 和 rounding mode。
+兼容或分析模式中的 numeric widening 不得改变源码表达式类型规则。
 
 #### 4.6.8 表达式 Effect 分级
 
-除类型判断 `Σ ; Γ ⊢ e : T` 外，编译器对每个 `Expr` 同时维护一个 **effect 等级** `ε(e)`，用于在静态语义层区分纯/不纯表达式，是 §3.9、§4.6.5、§4.7.2 中"纯表达式"约束的判定依据（实现见 `src/compiler/semantics/effects.cpp`）。Effect 等级按副作用强度递增分为 6 级：
+除类型判断 `Σ ; Γ ⊢ e : T` 外，每个 `Expr` 还有一个 **effect 等级** `ε(e)`，用于区分纯/不纯表达式，是 §3.9、§4.6.5、§4.7.2 中"纯表达式"约束的判定依据。Effect 等级按副作用强度递增分为 6 级：
 
 | 等级 | 名称 | 典型来源 | 是否纯 |
 | --- | --- | --- | --- |
@@ -1070,10 +1072,9 @@ E <: F
 | `None` | 外层 fn 提前返回 `Option::None` |
 | `Err(err)` | 外层 fn 提前返回 `Result::Err(err)` |
 
-**位置约束。** 当前实现中，`?` 仅允许作为 let 绑定的直接初始化式
+**位置约束。** `?` 仅允许作为 let 绑定的直接初始化式
 （`let x = e?;`）；在任意表达式位置（如 `f(e?)`、`a? + b?`）使用报告
-`typecheck.TRY_NOT_IN_LET_BINDING`。任意表达式位置需要 statement-buffer
-lowering（A-Normalization 式提升），是独立 follow-up。
+`typecheck.TRY_NOT_IN_LET_BINDING`。
 
 **禁止上下文。** `?` 只允许出现在 `fn` 函数体中。以下上下文在 sema 层拒绝：
 
@@ -1084,9 +1085,7 @@ lowering（A-Normalization 式提升），是独立 follow-up。
 5. 无显式返回类型的 `fn`（`typecheck.TRY_OUTSIDE_FUNCTION`）
 6. 无显式返回类型的闭包（`typecheck.TRY_IN_CLOSURE_WITHOUT_RETURN_TYPE`）
 
-**HIR→IR 脱糖。** `let x = e?;` 在 HIR→IR lowering 阶段做语句级展开，复用现有
-IR 构造（LetStatement / IfLetStatement / ReturnStatement / UnwrapExpr），不引入
-新 IR 节点：
+**等价求值过程。** `let x = e?;` 按以下顺序求值：
 
 1. `let <tmp> = e;` — 求值 operand
 2. `if let None = <tmp> { return Option::None; }`（Option）或
@@ -1096,24 +1095,38 @@ IR 构造（LetStatement / IfLetStatement / ReturnStatement / UnwrapExpr），�
 
 **示例。**
 
+以下示例用于声明了 `std = { source = "sysroot" }` dependency 的 package。
+
 Option 情形：
 
 ```ahfl
-fn sum_options(a: Option<Int>, b: Option<Int>) -> Option<Int> {
-    let x: Int = a?;       // None → 提前返回 Option::None
-    let y: Int = b?;       // None → 提前返回 Option::None
-    return Option::Some(x + y);
+module try_examples::option;
+
+import std::option as option;
+
+fn sum_options(a: option::Option<Int>, b: option::Option<Int>) -> option::Option<Int> {
+    let x: Int = a?;
+    let y: Int = b?;
+    return option::Option::Some(x + y);
 }
 ```
 
 Result 情形：
 
 ```ahfl
-fn parse_chain(s: String) -> Result<Int, String> {
-    let n: Int = parse_int(s)?;   // Err(e) → 提前返回 Result::Err(e)
-    return Result::Ok(n * 2);
+module try_examples::result;
+
+import std::result as result;
+
+fn double_result(value: result::Result<Int, String>) -> result::Result<Int, String> {
+    let n: Int = value?;
+    return result::Result::Ok(n * 2);
 }
 ```
+
+两个示例都在失败路径提前返回；成功路径继续计算。需要自行处理或替换失败值时，可以使用 `match` 显式分支。
+
+当前可执行产物支持解包 `Bool` / `Int`（含有界整数）成功载荷。其他成功载荷仍遵循上述类型规则并可通过 `check`，但生成可执行产物时会报告不支持。
 
 ### 4.7 合同与时序公式类型规则
 
@@ -1331,7 +1344,7 @@ U <: W.output
 
 ## 5. 静态检查清单
 
-编译器前端至少应实现下列检查：
+程序必须通过下列静态检查：
 
 ### 5.1 声明级检查
 
@@ -1375,15 +1388,13 @@ U <: W.output
 5. 节点输入表达式只引用允许的依赖节点
 6. `return` 类型匹配
 
-### 5.6 可验证子集与 SMT-BMC 数据谓词判定
+### 5.6 可验证子集与按需数据合同判定
 
-`contract` 的 `requires` / `ensures` / `invariant` / `forbid` 子句携带的**数据谓词**
-（`ExprRef` 分支，区别于 `invariant` / `forbid` 的时序 `TemporalExpr` 分支）在满足下述
-可编码条件时进入**可验证子集(verifiable subset)**，由 SMT-BMC 引擎精确判定；否则被
-形式化后端**抽象**（不证明，仅保留为观测假设），并发出 `formal.NOT_IN_VERIFIED_SUBSET`
-告警。该子集的规范边界由 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md) 定义,
-其判定复用 §4.6 的 effect 分级（要求 `rank(ε) ≤ 2`,即 `Pure` / `ConstOnly` /
-`PredicateCall`)与 §4.7 的合同上下文环境。
+默认 `check` / `build` / `run` 验证 Agent/workflow 有限控制模型与用户时序目标；普通数据 `requires` 为环境前提，数据 `ensures` / `invariant` / `forbid` 默认 `not_requested`。未请求的数据不启动 SMT（可满足性模理论）求解器，也不发子集 warning。
+
+`--verify-data-contracts` 显式选择 package 数据目标，要求 `--verify=on`。`ExprRef` 数据分支与 `TemporalExpr` 时序分支分别报告；纯控制 temporal 声明本身即请求，含未编码 observation 的目标必须标为 conditional/unsupported。
+
+所选数据条款及其必要前提满足下述编码条件时进入可验证子集；不支持时以 `formal.NOT_IN_VERIFIED_SUBSET` error 和源位置拒绝，不能静默抽象掉必要前提后继续证明。边界见 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md)。语义纯性要求仍复用 §4.6 effect 分级（`rank(ε) ≤ 2`）与 §4.7 合同环境；语义纯并不表示一定可编码。
 
 **可编码的节点(进入子集):**
 
@@ -1403,8 +1414,9 @@ U <: W.output
    （`N = 0`）分别编码为 `true` / `false`（vacuous）。每个 `P[x:=coll@i]` 复用上述
    标量子集编码,binder 替换为按索引命名的元素符号 `coll@i`（`Map` 为
    `coll@i.key` / `coll@i.val`）;不引入 SMT array / sequence theory,子集保持可判定。
+   元素（Map 的键和值）必须能映射为 `Bool` / `Int` / `Int(lo,hi)`；body 和 collection operand 必须在编码子集内。N 个符号槽模型不包含 flow 更新集合或动态长度的执行关系。
 
-**离开子集的节点(被抽象,发 `formal.NOT_IN_VERIFIED_SUBSET`):**
+**离开子集的节点（显式请求时拒绝）：**
 
 1. `String` 内容谓词(字符串等值以外的内容判定)
 2. capability 调用结果、lambda、`struct` / `enum` 字面量、索引访问、`match`、`unwrap`
@@ -1414,18 +1426,23 @@ U <: W.output
 `formal.UNBOUNDED_QUANTIFIER` **拒绝**（非抽象）——作者必须给集合一个有界类型
 才能验证其上的量化性质;绝不猜测边界或验证 vacuous 实例。
 
-**判定语义(证明即反证):** 对每个目标子句 G,SMT-BMC 断言
-`(assumptions ∧ ¬G)` 并检查可满足性——`requires` 作为假设,`invariant` / `ensures`
-作为目标(`invariant` 也作为兄弟目标的假设,但不假设自身),`forbid` 证明其否定,
-除数义务作为独立目标。`unsat` ⇒ G 成立(`Safe`);`sat` ⇒ 存在反例(`Unsafe`,
-satisfying model 即具体违反赋值);`unknown` / 求解器缺失 ⇒ 不下结论(`Unknown` /
-`solver_unavailable`,**绝不静默判 Safe**)。数据谓词片段无循环,单查询即完备;
-k-induction 对该片段无归纳步可强化,回退到 `bounded_safe`(RFC 0017 Q6)。
+**判定语义（合同蕴含，scope = contract_implication）：** 令 T 为类型边界，R 为所有 requires，G 为目标。先检查 T ∧ R 可满足；UNSAT 表示前提矛盾，必须失败，不能使所有目标真空获证。再查询 T ∧ R ∧ ¬G：UNSAT 表示 R 在 T 下蕴含 G（数据状态 proved），SAT 表示公式反例（refuted）。invariant / ensures 是独立目标，任何未证明 invariant 都不能用作自身或兄弟目标的假设；forbid 证明表达式的否定，除数有效性作为单独义务。
+
+所选 unsupported 条款、前提矛盾、unknown、timeout、缺 solver 或反例均使检查失败。此引擎未编码 flow 的赋值、返回值或 capability 数据关系，因此合同蕴含不是执行实现证明，SAT 赋值也不是执行轨迹。不根据“数据表达式无循环”宣称完整执行证明或 k-induction。
+
+Int 的数学整数编码不自动包含运行时 machine integer 溢出证明；精化边界及运算范围需要显式约束。`runtime_contract_checks: not_implemented`：合同 host predicate 与 flow assert/requires 尚无自动运行时检查，不能把声明描述为已经执行的业务防护。
 
 ## 6. 最小一致性示例
 
+将下列代码保存为 package 中的 `refund::audit` 模块，并在 `ahfl.toml` 的
+`[dependencies]` 中声明 `std = { source = "sysroot" }`。工程创建与检查步骤见
+[工程与包配置](../tutorials/packages.zh.md)。该示例展示声明、数据流和控制约束；
+合同中的外部 `predicate` 不会自动在运行时执行，数据合同验证范围见 §5.6。
+
 ```ahfl
 module refund::audit;
+
+import std::option as option;
 
 struct RefundRequest {
     order_id: String;
@@ -1436,13 +1453,13 @@ struct RefundRequest {
 struct RefundContext {
     result: AuditResult = AuditResult::Reject;
     reason: String = "pending";
-    ticket_id: Optional<String> = none;
+    ticket_id: option::Option<String> = option::Option::None;
 }
 
 struct RefundDecision {
     result: AuditResult;
     reason: String;
-    ticket_id: Optional<String>;
+    ticket_id: option::Option<String>;
 }
 
 struct OrderInfo {
@@ -1519,10 +1536,10 @@ flow for RefundAudit {
         ctx.reason = decision.reason;
 
         if decision.result == AuditResult::Approve {
-            ctx.ticket_id = some(TicketCreate(input.order_id, decision.reason));
+            ctx.ticket_id = option::Option::Some(TicketCreate(input.order_id, decision.reason));
             goto Approved;
         } else {
-            ctx.ticket_id = none;
+            ctx.ticket_id = option::Option::None;
             goto Rejected;
         }
     }
@@ -1556,19 +1573,3 @@ workflow RefundAuditWorkflow {
     return: audit;
 }
 ```
-
-## 7. 结论
-
-这份规范刻意做了三件事：
-
-1. 把语法面收窄到可实现、可检查、可生成 parser 的范围
-2. 把 effectful capability、纯 predicate、时序公式三层语义拆开
-3. 把类型系统收敛为“名义类型 + 极小 refinement + 精确边界匹配”
-
-如果后续要扩展到 `AHFL Native`，建议只在这份 Core 规范之上追加：
-
-1. `tool` 实现体
-2. `llm_config`
-3. `observability`
-4. `compliance`
-5. 更丰富的 workflow 条件分支与 saga 语义

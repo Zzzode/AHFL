@@ -10,48 +10,48 @@ fn list_ut() -> Int effect Pure decreases 0 {
     let ys: collections::List<Int> = collections::empty<Int>();
 
     // construction / size
-    assert(collections::length<Int>(xs) == 3);
-    assert(collections::length<Int>(ys) == 0);
-    assert(collections::is_empty<Int>(ys));
-    assert(collections::length<Int>(collections::singleton<Int>(7)) == 1);
-    assert(collections::length<Int>(collections::list_cons<Int>(0, xs)) == 4);
+    assert(xs.length() == 3);
+    assert(ys.length() == 0);
+    assert(ys.is_empty());
+    assert((collections::singleton<Int>(7)).length() == 1);
+    assert((collections::list_cons<Int>(0, xs)).length() == 4);
 
     // access
-    assert(option::unwrap_or<Int>(collections::list_get<Int>(xs, 0), 0) == 1);
-    assert(option::unwrap_or<Int>(collections::list_get<Int>(xs, 2), 0) == 3);
-    assert(option::is_none<Int>(collections::list_get<Int>(xs, 9)));
-    assert(option::unwrap_or<Int>(collections::first<Int>(xs), 0) == 1);
-    assert(option::unwrap_or<Int>(collections::last<Int>(xs), 0) == 3);
-    assert(option::is_none<Int>(collections::first<Int>(ys)));
+    assert((xs.get(0)).unwrap_or(0) == 1);
+    assert((xs.get(2)).unwrap_or(0) == 3);
+    assert((xs.get(9)).is_none());
+    assert((xs.first()).unwrap_or(0) == 1);
+    assert((xs.last()).unwrap_or(0) == 3);
+    assert((ys.first()).is_none());
 
     // fold / map / filter
-    assert(collections::fold<Int, Int>(xs, 0, \(acc: Int, x: Int) -> acc + x) == 6);
-    assert(collections::fold<Int, Int>(ys, 0, \(acc: Int, x: Int) -> acc + x) == 0);
-    assert(collections::length<Int>(collections::map<Int, Int>(xs, \x: Int -> x * 2)) == 3);
-    assert(option::unwrap_or<Int>(collections::first<Int>(collections::map<Int, Int>(xs, \x: Int -> x * 2)), 0) == 2);
-    assert(collections::length<Int>(collections::filter<Int>(xs, \x: Int -> x > 1)) == 2);
-    assert(collections::length<Int>(collections::filter<Int>(xs, \x: Int -> x > 9)) == 0);
+    assert(xs.fold<Int>(0, \(acc: Int, x: Int) -> acc + x) == 6);
+    assert(ys.fold<Int>(0, \(acc: Int, x: Int) -> acc + x) == 0);
+    assert((xs.map<Int>(\x: Int -> x * 2)).length() == 3);
+    assert(((xs.map<Int>(\x: Int -> x * 2)).first()).unwrap_or(0) == 2);
+    assert((xs.filter(\x: Int -> x > 1)).length() == 2);
+    assert((xs.filter(\x: Int -> x > 9)).length() == 0);
 
     // append
-    assert(collections::length<Int>(collections::append<Int>(xs, xs)) == 6);
-    assert(option::unwrap_or<Int>(collections::last<Int>(collections::append<Int>(xs, xs)), 0) == 3);
+    assert((xs.append(xs)).length() == 6);
+    assert(((xs.append(xs)).last()).unwrap_or(0) == 3);
 
     // sort / dedup / slice (M2-1)
     let unsorted: collections::List<Int> = collections::list_cons<Int>(3, collections::list_cons<Int>(1, collections::list_cons<Int>(2, collections::singleton<Int>(1))));
     let sorted: collections::List<Int> = collections::sort<Int>(unsorted);
-    assert(collections::length<Int>(sorted) == 4);
-    assert(option::unwrap_or<Int>(collections::first<Int>(sorted), 0) == 1);
-    assert(option::unwrap_or<Int>(collections::last<Int>(sorted), 0) == 3);
-    assert(collections::length<Int>(collections::dedup<Int>(sorted)) == 3);
+    assert(sorted.length() == 4);
+    assert((sorted.first()).unwrap_or(0) == 1);
+    assert((sorted.last()).unwrap_or(0) == 3);
+    assert((collections::dedup<Int>(sorted)).length() == 3);
 
     // ---- §6.2 container-trait dispatch (RFC 0013 P5 / KR5.5) ---------------
     // These call the Foldable / Iterable / Functor trait methods on List<Int>.
     // iter_head / iter_tail / iter_next / to_list / for_each have NO inherent
     // namesake, so resolving them is a genuine test of trait-impl dispatch.
-    assert(option::unwrap_or<Int>(xs.iter_head(), 0) == 1);
-    assert(option::unwrap_or<Int>(xs.iter_next(), 0) == 1);
+    assert((xs.iter_head()).unwrap_or(0) == 1);
+    assert((xs.iter_next()).unwrap_or(0) == 1);
     assert(xs.iter_tail().length() == 2);
-    assert(option::is_none<Int>(ys.iter_head()));
+    assert((ys.iter_head()).is_none());
     assert(ys.iter_tail().length() == 0);
 
     // to_list returns Self (element-typed Foldable), length preserved.
@@ -70,7 +70,7 @@ fn list_ut() -> Int effect Pure decreases 0 {
 
     // Functor::map is Fn(T) -> T -> Self (T == Int), unlike inherent map<U>.
     assert(xs.map(\ (x: Int) -> x + 1).length() == 3);
-    assert(option::unwrap_or<Int>(xs.map(\ (x: Int) -> x + 1).first(), 0) == 2);
+    assert((xs.map(\ (x: Int) -> x + 1).first()).unwrap_or(0) == 2);
 
     return 0;
 }

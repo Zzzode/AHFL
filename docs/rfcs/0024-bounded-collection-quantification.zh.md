@@ -87,7 +87,7 @@ real agent-workflow contracts) stalls at toy predicates.
    string elements for equality but not inspect their content.
 3. **No nested-collection element quantification (first version).** `forall x in
    list_of_lists: forall y in x: ...` — quantifying over an element that is
-   itself a collection with its own dynamic bound — is out of scope for v1;
+   itself a collection with its own dynamic bound — is out of scope for the current scope;
    scalar-element and map-entry bodies only. Nested scalar quantifiers over two
    *independently bounded* collections are allowed.
 4. **No runtime evaluation change.** `forall` / `exists` already have a natural
@@ -269,11 +269,11 @@ code; the feature is opt-in per clause.
 
 All three resolved for review (2026-08-25).
 
-1. ~~Bound-source syntax~~ (resolved): **type-only for v1.** The per-collection
+1. ~~Bound-source syntax~~ (resolved): **type-only for the current scope.** The per-collection
    bound comes solely from the collection's bounded type (`List<T>(N)`,
    introduced by [RFC 0025](0025-bounded-collection-types.zh.md)) — one source
    of truth in the type system, no clause-local bound. A clause-local
-   `(bound N)` override is a possible ergonomic follow-up, not v1.
+   `(bound N)` override is a possible ergonomic follow-up, outside the current type-only scope.
 2. ~~Map unrolling order~~ (resolved): **normalized key order.** `Map` runtime
    values are order-normalized (RFC P7); the unrolling keys element symbols on
    that normalized order, so `emit smt` output is deterministic regardless of

@@ -743,7 +743,7 @@ static WireSchemaCustomSection wire_schema_custom_section(
             const std::string name(
                 bytes.begin() + static_cast<std::ptrdiff_t>(name_offset),
                 bytes.begin() + static_cast<std::ptrdiff_t>(name_offset + *name_size));
-            if (name == "ahfl.wire-schema.v1") {
+            if (name == "ahfl.wire-schema") {
                 found.table_bytes = std::vector<std::uint8_t>(
                     bytes.begin() +
                         static_cast<std::ptrdiff_t>(name_offset + *name_size),
@@ -811,7 +811,7 @@ static bool rejects_capability_frame(const ahfl::ir::core::CoreProgram &program)
 
 static bool same_e1_program(const ahfl::ir::core::CoreProgram &lhs,
                             const ahfl::ir::core::CoreProgram &rhs) {
-    if (lhs.format_version != rhs.format_version || lhs.types != rhs.types ||
+    if (lhs.format != rhs.format || lhs.types != rhs.types ||
         lhs.value_types != rhs.value_types || lhs.flows != rhs.flows ||
         lhs.instances != rhs.instances || lhs.capabilities != rhs.capabilities ||
         lhs.workflows.size() != rhs.workflows.size() || lhs.agents != rhs.agents) {
@@ -926,8 +926,8 @@ int main() {
             // RFC 0026 E4-B1 + KR6.6 identity-final frame lane: an identity-only
             // E1 agent has no reachable capability import, so its imports set is
             // empty. It DOES carry the two P6-frame custom sections
-            // (ahfl.core-layout.v1 + ahfl.wire-schema.v1) because the identity
-            // final is a first-class p6-frame terminal (runv returns the
+            // (ahfl.core-layout + ahfl.wire-schema) because the identity
+            // final is a first-class p6-frame terminal (run_frame returns the
             // borrowed input base).
             const auto e1_custom = first.ok()
                                        ? wire_schema_custom_section(first.artifact->bytes)
@@ -937,46 +937,28 @@ int main() {
                       e1_custom.table_bytes.has_value(),
                   "E1 no-import artifact carries the two P6-frame custom sections");
 
-            // Function index 5 is run by the fixed E1 index table. Its body
-            // must end in local.get 0; end and contain no frame load/store.
-            // This is BINARY/STRUCTURAL evidence, not execution evidence.
-            const auto run_body = first.ok()
-                                      ? wasm_function_body(first.artifact->bytes, 5)
-                                      : std::optional<std::vector<std::uint8_t>>{};
-            const bool returns_arg_zero =
-                run_body && run_body->size() >= 3 &&
-                (*run_body)[run_body->size() - 3] == 0x20 &&
-                (*run_body)[run_body->size() - 2] == 0x00 &&
-                run_body->back() == 0x0b;
-            const bool has_frame_memory_op =
-                run_body && std::any_of(run_body->begin(), run_body->end(), [](std::uint8_t op) {
-                    return op >= 0x28 && op <= 0x3e;
-                });
-            check(returns_arg_zero && !has_frame_memory_op,
-                  "E1 run identity alias is structurally local.get 0 with no frame memory op");
-
-            // runv is the LAST defined function. The E1 identity agent has
+            // run_frame is the LAST defined function. The E1 identity agent has
             // zero compiled handlers (an identity final and a goto need no
-            // handler body), so the code section is 6 fixed ABI + runv = 7
-            // functions and runv is at index 6. Its identity arm returns
+            // handler body), so the code section is 5 fixed ABI + run_frame = 6
+            // functions and run_frame is at index 5. Its identity arm returns
             // (OK=0, kP6AggregateInputBase=1024) — the borrowed input frame,
             // no copy. The body must contain that return and no direct frame
             // load/store.
-            const auto runv_body = first.ok()
-                                       ? wasm_function_body(first.artifact->bytes, 6)
+            const auto run_frame_body = first.ok()
+                                       ? wasm_function_body(first.artifact->bytes, 5)
                                        : std::optional<std::vector<std::uint8_t>>{};
-            const bool runv_identity =
-                runv_body && contains_bytes(*runv_body,
+            const bool run_frame_identity =
+                run_frame_body && contains_bytes(*run_frame_body,
                                             {0x41, 0x00, 0x41, 0x80,
                                              0x08, 0x0f});
-            const bool runv_has_frame_memory_op =
-                runv_body && std::any_of(runv_body->begin(),
-                                         runv_body->end(),
+            const bool run_frame_has_frame_memory_op =
+                run_frame_body && std::any_of(run_frame_body->begin(),
+                                         run_frame_body->end(),
                                          [](std::uint8_t op) {
                                              return op >= 0x28 && op <= 0x3e;
                                          });
-            check(runv_identity && !runv_has_frame_memory_op,
-                  "E1 runv identity path returns OK,input_base without frame access");
+            check(run_frame_identity && !run_frame_has_frame_memory_op,
+                  "E1 run_frame identity path returns OK,input_base without frame access");
 
             auto tampered = *layout.table;
             tampered.target.pointer_size = 8;
@@ -989,7 +971,7 @@ int main() {
         }
     }
 
-    // Test 10 (RFC 0026 KR6.5 E1 rev2): every deviation from the one
+    // Test 10 (RFC 0026 KR6.5 E1): every deviation from the one
     // canonical opaque identity return fails closed with no artifact.
     {
         using namespace ahfl::ir::core;
@@ -1085,7 +1067,7 @@ int main() {
     }
 
     // Test 11 (RFC 0026 KR6.5 E2): the canonical capability final emits the
-    // exact ahfl_cap import and append-only run2 ABI. These checks are binary /
+    // exact ahfl_cap import and append-only run_workflow ABI. These checks are binary /
     // structural evidence, not host execution evidence.
     {
         using namespace ahfl::ir::core;
@@ -1118,7 +1100,7 @@ int main() {
             // result-root ptr out. The old opaque tuple (i32,i32)->(i32,i32,i32)
             // was deleted with the WireJson lane. The bridge type is the last
             // type in the table (index 5 for a no-fn/no-closure agent: 4 fixed +
-            // runv at 4, bridge at 5).
+            // run_frame at 4, bridge at 5).
             check(import_section &&
                       contains_bytes(*import_section,
                                      {0x01, 0x08, 'a', 'h', 'f', 'l', '_', 'c', 'a', 'p',
@@ -1130,22 +1112,16 @@ int main() {
             check(first.ok() &&
                       std::find(first.artifact->exports.begin(),
                                 first.artifact->exports.end(),
-                                "runv") != first.artifact->exports.end() &&
+                                "run_frame") != first.artifact->exports.end() &&
                       std::find(first.artifact->exports.begin(),
                                 first.artifact->exports.end(),
-                                "run2") == first.artifact->exports.end(),
-                  "E2 exports runv without the deleted agent run2 entry");
+                                "run_workflow") == first.artifact->exports.end(),
+                  "E2 exports run_frame without the deleted agent run_workflow entry");
 
-            const auto legacy_run = first.ok()
-                                        ? wasm_function_body(first.artifact->bytes, 5)
-                                        : std::optional<std::vector<std::uint8_t>>{};
-            const auto runv = first.ok()
-                                  ? wasm_function_body(first.artifact->bytes, 6)
+            const auto run_frame = first.ok()
+                                  ? wasm_function_body(first.artifact->bytes, 5)
                                   : std::optional<std::vector<std::uint8_t>>{};
-            check(legacy_run == std::optional<std::vector<std::uint8_t>>{
-                                    std::vector<std::uint8_t>{0x00, 0x00, 0x0b}},
-                  "E2 capability artifact legacy run traps before every effect");
-            // RFC 0026 dual-track elimination: runv (defined-function index 6,
+            // RFC 0026 dual-track elimination: run_frame (defined-function index 5,
             // the last entry) drives the state walk then emits the bridge call
             // at the capability final. It writes the 4-word bridge control
             // block (call_site_id, arg_count, arg ptr, arg len — four
@@ -1165,15 +1141,15 @@ int main() {
                     }
                     return count;
                 };
-            check(runv && count_bytes(*runv, {0x36, 0x02, 0x00}) == 4 &&
-                      contains_bytes(*runv, {0x10, 0x00}) &&
-                      contains_bytes(*runv, {0x20, 0x01, 0x41, 0x02, 0x46,
+            check(run_frame && count_bytes(*run_frame, {0x36, 0x02, 0x00}) == 4 &&
+                      contains_bytes(*run_frame, {0x10, 0x00}) &&
+                      contains_bytes(*run_frame, {0x20, 0x01, 0x41, 0x02, 0x46,
                                              0x04, 0x40, 0x00, 0x0b}) &&
-                      contains_bytes(*runv, {0x20, 0x01, 0x41, 0x00, 0x46, 0x04,
+                      contains_bytes(*run_frame, {0x20, 0x01, 0x41, 0x00, 0x46, 0x04,
                                              0x40, 0x41, 0x00, 0x20, 0x02, 0x0f,
                                              0x0b}) &&
-                      !contains_bytes(*runv, {0x23, 0x04}),
-                  "E2 runv writes the bridge control block, calls the bridge "
+                      !contains_bytes(*run_frame, {0x23, 0x04}),
+                  "E2 run_frame writes the bridge control block, calls the bridge "
                   "import once, and traps on PENDING");
             check(same_e1_program(program, snapshot) && *layout.table == layout_snapshot,
                   "E2 emission does not mutate Core or the P4-D side artifact");
@@ -1227,11 +1203,10 @@ int main() {
             // capability agents) and the wire-schema section. This block proves
             // the wire-schema target section + that its raw table (name framing
             // stripped) decodes and re-encodes through the C1 authority; the
-            // trailing placement and the byte-identical pre-B1 prefix are locked
-            // by wasm_e2_binary_gate.py.
+            // trailing section placement is checked by wasm_e2_binary_gate.py.
             // RFC 0026 E4-B1 + KR6.8 WH-4 D-C + dual-track elimination: the
             // E2 capability artifact carries three custom sections: the
-            // ahfl.core-layout.v1 P6-frame layout, the AHFLXM exec-manifest
+            // ahfl.core-layout P6-frame layout, the AHFLXM exec-manifest
             // (D-C, for capability agents), and the wire-schema section.
             const auto e2_custom = first.ok()
                                        ? wire_schema_custom_section(first.artifact->bytes)
@@ -1246,8 +1221,6 @@ int main() {
                       "E2 wire-schema payload decodes through the C1 admission authority");
                 if (decoded.table.has_value()) {
                     const auto &table = *decoded.table;
-                    check(table.format_version == 1,
-                          "E2 decoded wire-schema table is format version 1");
                     check(table.capabilities.size() == 1,
                           "E2 decoded table exposes exactly the one reachable capability");
                     if (table.capabilities.size() == 1) {
@@ -1605,10 +1578,10 @@ int main() {
                                        "Runner",
                                        "app",
                                        301};
-        const auto legacy = backends::resolve_core_wasm_entry(single, nullptr);
-        check(legacy.has_value() &&
-                  std::get_if<CoreAgentId>(&*legacy) != nullptr &&
-                  std::get<CoreAgentId>(*legacy) == CoreAgentId{0},
+        const auto implicit_entry = backends::resolve_core_wasm_entry(single, nullptr);
+        check(implicit_entry.has_value() &&
+                  std::get_if<CoreAgentId>(&*implicit_entry) != nullptr &&
+                  std::get<CoreAgentId>(*implicit_entry) == CoreAgentId{0},
               "metadata-free single-agent E1 compatibility resolves typed agent zero");
 
         auto multiple = make_e1_core_program();
@@ -1665,7 +1638,7 @@ int main() {
         const auto missing = backends::resolve_core_wasm_entry(single, &empty_metadata);
         check(!missing.has_value() &&
                   missing.error().code == backends::core_wasm_diag::kEntryAmbiguous,
-              "present package metadata without an entry never uses legacy fallback");
+              "present package metadata without an entry requires its declared entry");
     }
 
     // Test 15: E3-C2 emits a deterministic real multi-agent workflow module.
@@ -1736,31 +1709,18 @@ int main() {
         const auto second_runner = valid_result.artifact.has_value()
                                        ? wasm_function_body(valid_result.artifact->bytes, 5)
                                        : std::nullopt;
-        const auto workflow_run = valid_result.artifact.has_value()
-                                      ? wasm_function_body(valid_result.artifact->bytes, 6)
-                                      : std::nullopt;
-        const auto workflow_run2 = valid_result.artifact.has_value()
-                                       ? wasm_function_body(valid_result.artifact->bytes, 7)
+        const auto workflow_run_workflow = valid_result.artifact.has_value()
+                                       ? wasm_function_body(valid_result.artifact->bytes, 6)
                                        : std::nullopt;
         const bool traps_before_effect =
             current_body == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}} &&
             step_body == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}};
-        const auto has_no_memory_ops = [](const std::vector<std::uint8_t> &body) {
-            return std::none_of(body.begin(), body.end(), [](std::uint8_t byte) {
-                return byte >= 0x28 && byte <= 0x3e;
-            });
-        };
         const bool schedule_calls_in_order =
-            workflow_run2.has_value() &&
-            small_fixture_call_indices(*workflow_run2) ==
+            workflow_run_workflow.has_value() &&
+            small_fixture_call_indices(*workflow_run_workflow) ==
                 std::vector<std::uint32_t>{4, 5};
-        // RFC 0026 dual-track elimination: the P6 workflow runner's identity
-        // arm copies the input frame to the node's O_k block (i32.load +
-        // i32.store word-by-word bulk copy), and the run2 scheduler loads
-        // each runner's output for the per-node stash. The old WireJson
-        // lane's runners were frame-opaque and its run2 emitted only
-        // i32.store; the P6 lane legitimately touches frame memory with
-        // i32.load + i32.store in both. The run function stays a trap.
+        // Identity runners copy input into the node output frame. The scheduler
+        // reads that output and stores it in the node stash.
         const auto has_only_i32_load_store = [](const std::vector<std::uint8_t> &body) {
             return std::none_of(body.begin(), body.end(), [](std::uint8_t byte) {
                 return (byte >= 0x29 && byte <= 0x35) || (byte >= 0x37 && byte <= 0x3e);
@@ -1770,8 +1730,7 @@ int main() {
             first_runner.has_value() && second_runner.has_value() &&
             has_only_i32_load_store(*first_runner) &&
             has_only_i32_load_store(*second_runner) &&
-            workflow_run.has_value() && has_no_memory_ops(*workflow_run) &&
-            workflow_run2.has_value() && has_only_i32_load_store(*workflow_run2);
+            workflow_run_workflow.has_value() && has_only_i32_load_store(*workflow_run_workflow);
         check(traps_before_effect && runners_are_p6_frame && schedule_calls_in_order,
               "E3-C2 workflow step/state trap and P6 identity runners dispatch with frame copy");
 
@@ -1841,10 +1800,10 @@ int main() {
         branch_workflow.nodes.push_back(std::move(join));
         const auto branch_join_result = emit_workflow(branch_join);
         // The branch_join workflow has 3 P6 nodes (2 parallel roots + 1 join),
-        // so runner_count = 3 and run2 is at code-section index 5 + 3 = 8
-        // (the original E3 workflow has 2 nodes and run2 at index 7).
-        const auto branch_run2 = branch_join_result.artifact.has_value()
-                                     ? wasm_function_body(branch_join_result.artifact->bytes, 8)
+        // so runner_count = 3 and run_workflow is at code-section index 5 + 3 = 8
+        // (the original E3 workflow has 2 nodes and run_workflow at index 7).
+        const auto branch_run_workflow = branch_join_result.artifact.has_value()
+                                     ? wasm_function_body(branch_join_result.artifact->bytes, 7)
                                      : std::nullopt;
         // RFC 0026 dual-track elimination: each P6 node has its own runner
         // function (the old WireJson lane deduped runners by instance; the
@@ -1853,8 +1812,8 @@ int main() {
         check(verify_core_program(branch_join).ok() && branch_join_result.ok() &&
                   branch_join_result.artifact->packaged_agent_instances ==
                       std::vector<CoreInstanceId>{CoreInstanceId{0}, CoreInstanceId{1}} &&
-                  branch_run2.has_value() &&
-                  small_fixture_call_indices(*branch_run2) ==
+                  branch_run_workflow.has_value() &&
+                  small_fixture_call_indices(*branch_run_workflow) ==
                       std::vector<std::uint32_t>{4, 5, 6},
               "E3-C2 emits declaration-order parallel roots plus a join with per-node runners");
 
@@ -1932,27 +1891,24 @@ int main() {
 
         // Opcode/index-level structural contract for the capability workflow.
         // `wasm_function_body` indexes Code-section defined bodies (0-based,
-        // import-independent): alloc=0, run=6, run2=7 regardless of import_count.
-        // The absolute import_count+1 shift is proven by the run2 call operands
+        // import-independent): alloc=0, run_workflow=6 regardless of import_count.
+        // The absolute import_count+1 shift is proven by the run_workflow call operands
         // {5,6} and by the executed Node export table.
-        const auto cap_run2 = capability_result.artifact.has_value()
-                                  ? wasm_function_body(capability_result.artifact->bytes, 7)
+        const auto cap_run_workflow = capability_result.artifact.has_value()
+                                  ? wasm_function_body(capability_result.artifact->bytes, 6)
                                   : std::nullopt;
-        const auto cap_run = capability_result.artifact.has_value()
-                                 ? wasm_function_body(capability_result.artifact->bytes, 6)
-                                 : std::nullopt;
         const auto cap_alloc = capability_result.artifact.has_value()
                                    ? wasm_function_body(capability_result.artifact->bytes, 0)
                                    : std::nullopt;
-        // Latch-first: run2 begins with the locals prologue {01,09,7f} (one i32
+        // Latch-first: run_workflow begins with the locals prologue {01,09,7f} (one i32
         // local group of 9) immediately followed by the pending-latch gate
-        // global.get 5 / if / unreachable / end. This proves it is the FIRST
+        // global.get 4 / if / unreachable / end. This proves it is the FIRST
         // instruction, not merely present somewhere in the body.
         const std::vector<std::uint8_t> latch_prefix = {
-            0x01, 0x09, 0x7f, 0x23, 0x05, 0x04, 0x40, 0x00, 0x0b};
+            0x01, 0x09, 0x7f, 0x23, 0x04, 0x04, 0x40, 0x00, 0x0b};
         const bool latch_first =
-            cap_run2.has_value() && cap_run2->size() >= latch_prefix.size() &&
-            std::equal(latch_prefix.begin(), latch_prefix.end(), cap_run2->begin());
+            cap_run_workflow.has_value() && cap_run_workflow->size() >= latch_prefix.size() &&
+            std::equal(latch_prefix.begin(), latch_prefix.end(), cap_run_workflow->begin());
         // Body-before-count ORDER: node0's record body ends with the reserved
         // [36..39]=0 store at absolute address 1068 (i32.const 1068 = 0x41 0xac
         // 0x08, i32.const 0, i32.store), and the event_count publish stores value
@@ -1963,29 +1919,27 @@ int main() {
         const std::vector<std::uint8_t> count_publish = {
             0x41, 0x80, 0x08, 0x41, 0x01, 0x36, 0x02, 0x00};
         bool event_writes = false;
-        if (cap_run2.has_value()) {
-            const auto reserved_at = std::search(cap_run2->begin(), cap_run2->end(),
+        if (cap_run_workflow.has_value()) {
+            const auto reserved_at = std::search(cap_run_workflow->begin(), cap_run_workflow->end(),
                                                  reserved_store.begin(), reserved_store.end());
-            const auto publish_at = std::search(cap_run2->begin(), cap_run2->end(),
+            const auto publish_at = std::search(cap_run_workflow->begin(), cap_run_workflow->end(),
                                                 count_publish.begin(), count_publish.end());
-            event_writes = reserved_at != cap_run2->end() &&
-                           publish_at != cap_run2->end() && reserved_at < publish_at;
+            event_writes = reserved_at != cap_run_workflow->end() &&
+                           publish_at != cap_run_workflow->end() && reserved_at < publish_at;
         }
-        // Legacy run on the capability lane is a bare pre-effect trap.
-        const bool cap_run_traps =
-            cap_run == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}};
         // Checked alloc returns 0 on capacity exhaustion (i32.gt_u 0x4b guard and
         // an early i32.const 0 / return 0x0f), distinct from the unchecked bump.
         const bool checked_alloc =
             cap_alloc.has_value() && contains_bytes(*cap_alloc, {0x4b}) &&
-            contains_bytes(*cap_alloc, {0x41, 0x00, 0x0f});
+            contains_bytes(*cap_alloc, {0x41, 0x00, 0x0f}) &&
+            contains_bytes(*cap_alloc, {0x20, 0x02, 0x41, 0x07, 0x6a, 0x41, 0x78, 0x71});
         // The scheduler runner calls dispatch to the shifted runner indices {5,6}.
         const bool cap_schedule_calls =
-            cap_run2.has_value() &&
-            small_fixture_call_indices(*cap_run2) == std::vector<std::uint32_t>{5, 6};
-        check(latch_first && event_writes && cap_run_traps && checked_alloc &&
+            cap_run_workflow.has_value() &&
+            small_fixture_call_indices(*cap_run_workflow) == std::vector<std::uint32_t>{5, 6};
+        check(latch_first && event_writes && checked_alloc &&
                   cap_schedule_calls,
-              "E4-B2-C run2 latch-first + body-before-count + checked alloc + shifted dispatch");
+              "E4-B2-C run_workflow latch-first + body-before-count + aligned checked alloc + shifted dispatch");
 
         // RFC 0026 E4-B2-C + WH-5c.5 node-event + stash region capacity
         // boundary through the real public emitter (scaled Core builder,
@@ -2098,51 +2052,46 @@ int main() {
         using namespace ahfl::ir::core;
         namespace backends = ahfl::backends;
 
-        // The exact 473-byte E1 artifact after the WireJson lane
-        // elimination: run2 removed, runv added, defined-function base
-        // shifted from 7 to 6. The scaffold is additive; any drift here
-        // means an existing emit path moved.
-        constexpr std::uint8_t kP60E1Snapshot[473] = {
+        // Pin the complete current E1 artifact, including frame entry,
+        // unversioned sections, aligned allocation, and fixed-page failure gate.
+        constexpr std::uint8_t kP60E1Snapshot[435] = {
             0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x1a, 0x05, 0x60,
             0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f,
             0x00, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x00, 0x02, 0x7f, 0x7f,
-            0x03, 0x08, 0x07, 0x01, 0x02, 0x00, 0x00, 0x00, 0x03, 0x04, 0x05, 0x03,
-            0x01, 0x00, 0x01, 0x06, 0x1b, 0x05, 0x7f, 0x01, 0x41, 0x01, 0x0b, 0x7f,
-            0x01, 0x41, 0x00, 0x0b, 0x7f, 0x00, 0x41, 0x01, 0x0b, 0x7f, 0x01, 0x41,
-            0x80, 0x08, 0x0b, 0x7f, 0x01, 0x41, 0x00, 0x0b, 0x07, 0x66, 0x09, 0x06,
-            0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x05, 0x61, 0x6c, 0x6c,
-            0x6f, 0x63, 0x00, 0x00, 0x07, 0x64, 0x65, 0x61, 0x6c, 0x6c, 0x6f, 0x63,
-            0x00, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x05, 0x04, 0x73, 0x74, 0x65,
+            0x03, 0x07, 0x06, 0x01, 0x02, 0x00, 0x00, 0x00, 0x04, 0x05, 0x03, 0x01,
+            0x00, 0x01, 0x06, 0x16, 0x04, 0x7f, 0x01, 0x41, 0x01, 0x0b, 0x7f, 0x01,
+            0x41, 0x00, 0x0b, 0x7f, 0x01, 0x41, 0x80, 0x08, 0x0b, 0x7f, 0x01, 0x41,
+            0x00, 0x0b, 0x07, 0x52, 0x07, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79,
+            0x02, 0x00, 0x05, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00, 0x00, 0x07, 0x64,
+            0x65, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00, 0x01, 0x04, 0x73, 0x74, 0x65,
             0x70, 0x00, 0x04, 0x0d, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f,
             0x73, 0x74, 0x61, 0x74, 0x65, 0x00, 0x02, 0x10, 0x74, 0x72, 0x61, 0x6e,
             0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74,
-            0x03, 0x01, 0x10, 0x61, 0x68, 0x66, 0x6c, 0x5f, 0x61, 0x62, 0x69, 0x5f,
-            0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x03, 0x02, 0x04, 0x72, 0x75,
-            0x6e, 0x76, 0x00, 0x06, 0x0a, 0xb9, 0x01, 0x07, 0x11, 0x01, 0x01, 0x7f,
-            0x23, 0x03, 0x21, 0x01, 0x23, 0x03, 0x20, 0x00, 0x6a, 0x24, 0x03, 0x20,
-            0x01, 0x0b, 0x03, 0x00, 0x01, 0x0b, 0x04, 0x00, 0x23, 0x00, 0x0b, 0x0a,
-            0x00, 0x41, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x72, 0x0b, 0x24, 0x00,
-            0x23, 0x00, 0x41, 0x00, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x05, 0x23, 0x00,
-            0x41, 0x01, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x24, 0x00, 0x23, 0x01, 0x41,
-            0x01, 0x6a, 0x24, 0x01, 0x41, 0x00, 0x05, 0x00, 0x0b, 0x0b, 0x0b, 0x2f,
-            0x01, 0x01, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00, 0x24, 0x01, 0x41,
-            0x03, 0x21, 0x02, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03, 0x0d, 0x01, 0x20,
-            0x02, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x02, 0x41, 0x01, 0x6b, 0x21,
-            0x02, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x20, 0x00, 0x0b, 0x3c,
-            0x01, 0x03, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00, 0x24, 0x01, 0x41,
-            0x03, 0x21, 0x00, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03, 0x0d, 0x01, 0x20,
-            0x00, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x00, 0x41, 0x01, 0x6b, 0x21,
-            0x00, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x23, 0x00, 0x41, 0x00,
-            0x46, 0x04, 0x40, 0x41, 0x00, 0x41, 0x80, 0x08, 0x0f, 0x0b, 0x00, 0x0b,
-            0x00, 0x34, 0x13, 0x61, 0x68, 0x66, 0x6c, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-            0x2d, 0x6c, 0x61, 0x79, 0x6f, 0x75, 0x74, 0x2e, 0x76, 0x31, 0x41, 0x48,
-            0x46, 0x4c, 0x43, 0x4c, 0x05, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01,
-            0x06, 0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x01, 0x00, 0x80, 0x02, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x13, 0x61, 0x68, 0x66,
-            0x6c, 0x2e, 0x77, 0x69, 0x72, 0x65, 0x2d, 0x73, 0x63, 0x68, 0x65, 0x6d,
-            0x61, 0x2e, 0x76, 0x31, 0x41, 0x48, 0x46, 0x4c, 0x57, 0x53, 0x01, 0x01,
-            0x0c, 0x0a, 0x61, 0x70, 0x70, 0x3a, 0x3a, 0x49, 0x6e, 0x70, 0x75, 0x74,
-            0x00, 0x00, 0x01, 0x00, 0x00,
+            0x03, 0x01, 0x09, 0x72, 0x75, 0x6e, 0x5f, 0x66, 0x72, 0x61, 0x6d, 0x65,
+            0x00, 0x05, 0x0a, 0xb2, 0x01, 0x06, 0x3a, 0x01, 0x02, 0x7f, 0x23, 0x02,
+            0x21, 0x01, 0x20, 0x00, 0x41, 0x80, 0x80, 0x04, 0x4b, 0x04, 0x40, 0x00,
+            0x0b, 0x20, 0x01, 0x41, 0x80, 0x80, 0x04, 0x4b, 0x04, 0x40, 0x00, 0x0b,
+            0x20, 0x01, 0x20, 0x00, 0x6a, 0x22, 0x02, 0x41, 0x80, 0x80, 0x04, 0x4b,
+            0x04, 0x40, 0x00, 0x0b, 0x20, 0x02, 0x41, 0x07, 0x6a, 0x41, 0x78, 0x71,
+            0x24, 0x02, 0x20, 0x01, 0x0b, 0x03, 0x00, 0x01, 0x0b, 0x04, 0x00, 0x23,
+            0x00, 0x0b, 0x0a, 0x00, 0x41, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x72,
+            0x0b, 0x24, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x04, 0x7f, 0x41, 0x00,
+            0x05, 0x23, 0x00, 0x41, 0x01, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x24, 0x00,
+            0x23, 0x01, 0x41, 0x01, 0x6a, 0x24, 0x01, 0x41, 0x00, 0x05, 0x00, 0x0b,
+            0x0b, 0x0b, 0x3c, 0x01, 0x03, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00,
+            0x24, 0x01, 0x41, 0x03, 0x21, 0x00, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03,
+            0x0d, 0x01, 0x20, 0x00, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x00, 0x41,
+            0x01, 0x6b, 0x21, 0x00, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x23,
+            0x00, 0x41, 0x00, 0x46, 0x04, 0x40, 0x41, 0x00, 0x41, 0x80, 0x08, 0x0f,
+            0x0b, 0x00, 0x0b, 0x00, 0x32, 0x10, 0x61, 0x68, 0x66, 0x6c, 0x2e, 0x63,
+            0x6f, 0x72, 0x65, 0x2d, 0x6c, 0x61, 0x79, 0x6f, 0x75, 0x74, 0x41, 0x48,
+            0x46, 0x4c, 0x43, 0x4c, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01, 0x06,
+            0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x01, 0x00, 0x80, 0x02, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, 0x10, 0x61, 0x68,
+            0x66, 0x6c, 0x2e, 0x77, 0x69, 0x72, 0x65, 0x2d, 0x73, 0x63, 0x68, 0x65,
+            0x6d, 0x61, 0x41, 0x48, 0x46, 0x4c, 0x57, 0x53, 0x01, 0x0c, 0x0a, 0x61,
+            0x70, 0x70, 0x3a, 0x3a, 0x49, 0x6e, 0x70, 0x75, 0x74, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00,
         };
 
         const auto e1_program = make_e1_core_program();
@@ -2153,7 +2102,7 @@ int main() {
         const std::vector<std::uint8_t> e1_snapshot(
             std::begin(kP60E1Snapshot), std::end(kP60E1Snapshot));
         check(e1_result.ok() && e1_result.artifact->bytes == e1_snapshot,
-              "P6-0 scaffold leaves the canonical E1 artifact byte-identical");
+              "P6-0 canonical E1 artifact pins aligned fail-closed allocation");
 
         // Opcode byte constants pinned here (mirror of the encoder's scalar
         // ladder); byte-pattern assertions prove the right physical instruction
@@ -2172,6 +2121,193 @@ int main() {
             return backends::emit_core_wasm(
                 program, layout, {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
         };
+
+        // An outlined function's match region can exit through either a
+        // value return or a trap. The same nested branch must reject a path
+        // that neither exits nor yields.
+        {
+            auto program = make_e1_core_program();
+            const CoreValueTypeId boolean{1};
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            CoreFnDecl fn;
+            fn.id = CoreFnId{0};
+            fn.instance = CoreInstanceId{0};
+            fn.name = "_inst_return_or_trap";
+            fn.origin = {ahfl::ir::SymbolRefKind::Function, "app::return_or_trap",
+                         "return_or_trap", "app", 600};
+            fn.params = {CoreValueId{0}};
+            fn.storage.value_count = 1;
+            fn.storage.value_types = {boolean};
+            fn.storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{0};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{0};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{0};
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            fn.body.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+
+            CoreInstanceDecl instance;
+            instance.id = CoreInstanceId{0};
+            instance.instance_key = fn.name;
+            instance.origin = fn.origin;
+            instance.payload = CoreFnInstance{CoreFnId{0}};
+            program.instances.push_back(std::move(instance));
+            program.fns.push_back(std::move(fn));
+
+            // Reach the ordinary function through an agent handler so emission
+            // exercises its native function body and match completion gate.
+            auto &flow = program.flows[0];
+            flow.storage.value_count = 3;
+            flow.storage.value_types = {CoreValueTypeId{0}, boolean, boolean};
+            flow.storage.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+                         std::nullopt, boolean});
+            flow.storage.exprs.push_back(
+                CoreExpr{CoreCallExpr{CoreInstanceId{0}, {CoreValueId{1}}},
+                         std::nullopt, boolean});
+            auto &start = flow.states[1].body;
+            start.statements.insert(start.statements.begin(),
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.statements.insert(start.statements.begin(),
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+
+            const auto layout = compute_core_layouts(program);
+            check(verify_core_program(program).ok() && layout.ok(),
+                  "outlined fn nested return/trap match is verified Core");
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            check(emitted.ok(), "outlined fn match admits mixed return/trap exits");
+
+            auto &fn_match = std::get<CoreMatchStmt>(program.fns[0].body.statements[0].node);
+            auto &partial = std::get<CoreIfStmt>(fn_match.arms[0].body->statements[0].node);
+            partial.else_region->statements.clear();
+            const auto rejected = layout.table.has_value()
+                                      ? emit_agent(program, *layout.table)
+                                      : backends::CoreWasmCodegenResult{};
+            check(!verify_core_program(program).ok() && !rejected.artifact.has_value(),
+                  "outlined fn match rejects a nested path without yield or exit");
+        }
+
+        // A three-byte concatenation followed by repeated four-byte outlined
+        // constructs must keep the shared dynamic cursor eight-byte aligned.
+        {
+            auto program = make_e1_core_program();
+            const CoreValueTypeId boolean{1};
+            const CoreValueTypeId tiny{2};
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}});
+            const CoreValueTypeId string_type{3};
+            program.value_types.push_back(CoreValueType{CoreVtString{std::nullopt}});
+            CoreTypeDecl tiny_decl;
+            tiny_decl.kind = CoreTypeDecl::Kind::Struct;
+            tiny_decl.name = "app::Tiny";
+            tiny_decl.fields = {"flag"};
+            tiny_decl.field_nominal_types = {CoreTypeId{}};
+            tiny_decl.field_has_default = {false};
+            CoreMemberTypeTemplateNode flag_template;
+            flag_template.kind = CoreMemberTypeTemplateKind::Concrete;
+            flag_template.concrete = boolean;
+            tiny_decl.member_type_templates = {flag_template};
+            tiny_decl.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+            program.types.push_back(std::move(tiny_decl));
+
+            CoreFnDecl fn;
+            fn.id = CoreFnId{0};
+            fn.instance = CoreInstanceId{0};
+            fn.name = "_inst_tiny";
+            fn.origin = {ahfl::ir::SymbolRefKind::Function, "app::tiny", "tiny", "app", 601};
+            fn.params = {CoreValueId{0}};
+            fn.storage.value_count = 2;
+            fn.storage.value_types = {boolean, tiny};
+            fn.storage.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Tiny", "", false, CoreTypeId{1}, CoreVariantId{},
+                                  true, {{CoreFieldId{0}, CoreValueId{0}}}},
+                std::nullopt, tiny});
+            fn.body.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{0}}, std::nullopt});
+            fn.body.statements.push_back(
+                CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+            CoreInstanceDecl instance;
+            instance.id = CoreInstanceId{0};
+            instance.instance_key = fn.name;
+            instance.origin = fn.origin;
+            instance.payload = CoreFnInstance{CoreFnId{0}};
+            program.instances.push_back(std::move(instance));
+            program.fns.push_back(std::move(fn));
+
+            auto &flow = program.flows[0];
+            flow.storage.value_count = 5;
+            flow.storage.value_types = {CoreValueTypeId{0}, boolean, tiny, tiny, string_type};
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, boolean});
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreCallExpr{CoreInstanceId{0}, {CoreValueId{1}}}, std::nullopt, tiny});
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreCallExpr{CoreInstanceId{0}, {CoreValueId{1}}}, std::nullopt, tiny});
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::String, "a"}, std::nullopt, string_type});
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::String, "bc"}, std::nullopt, string_type});
+            flow.storage.exprs.push_back(CoreExpr{
+                CoreBinaryExpr{CoreBinaryOp::Add, CoreExprId{4}, CoreExprId{5}},
+                std::nullopt, string_type});
+            auto &start = flow.states[1].body.statements;
+            start.clear();
+            start.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{6}}, std::nullopt});
+            start.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{3}}, std::nullopt});
+            start.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+
+            const auto layout = compute_core_layouts(program);
+            check(verify_core_program(program).ok() && layout.ok() &&
+                      layout.table->layouts[layout.table->value_layouts[tiny.value].value].size == 4,
+                  "outlined Tiny constructor has a verified four-byte value layout");
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            const auto body = emitted.ok()
+                                  ? wasm_function_body(emitted.artifact->bytes, 6)
+                                  : std::nullopt;
+            constexpr std::array<std::uint8_t, 3> aligned_bump{0x41, 0x08, 0x6a};
+            constexpr std::array<std::uint8_t, 3> raw_bump{0x41, 0x04, 0x6a};
+            check(body.has_value() &&
+                      std::search(body->begin(), body->end(), aligned_bump.begin(),
+                                  aligned_bump.end()) != body->end() &&
+                      std::search(body->begin(), body->end(), raw_bump.begin(),
+                                  raw_bump.end()) == body->end(),
+                  "repeated four-byte native allocations preserve eight-byte cursor alignment");
+            const auto handler = emitted.ok()
+                                     ? wasm_function_body(emitted.artifact->bytes, 5)
+                                     : std::nullopt;
+            constexpr std::array<std::uint8_t, 6> aligned_concat_end{
+                0x41, 0x07, 0x6a, 0x41, 0x78, 0x71};
+            check(handler.has_value() &&
+                      std::search(handler->begin(), handler->end(), aligned_concat_end.begin(),
+                                  aligned_concat_end.end()) != handler->end(),
+                  "String concat aligns its heap cursor before subsequent native constructors");
+        }
 
         // Build a 3-state agent (Done final, Start computed goto, High) whose
         // Start handler branches on a scalar comparison. `wide` selects the
@@ -2259,14 +2395,9 @@ int main() {
             return program;
         };
 
-        // P6-2: a scalar computation handler compiles to its OWN `() -> i32`
-        // wasm FUNCTION. The six fixed ABI functions occupy indices 0..5
-        // (import_count == 0 here; the old run2 slot at index 6 was deleted
-        // with the WireJson lane), so the first compiled handler is index 6;
-        // `step()` becomes a thin `call`-based dispatch ladder whose body no
-        // longer contains the arithmetic. `scalar_handler_body` is the single
-        // accessor every P6 assertion below reads.
-        constexpr std::uint32_t kFirstHandlerFunction = 6;
+        // Scalar handlers follow the five fixed agent ABI functions (0..4).
+        // step() dispatches to the handler; arithmetic remains in its own body.
+        constexpr std::uint32_t kFirstHandlerFunction = 5;
         const auto scalar_handler_body = [](const std::vector<std::uint8_t> &bytes) {
             return wasm_function_body(bytes, kFirstHandlerFunction);
         };
@@ -4084,7 +4215,7 @@ int main() {
         // the bridge lane: an in-handler capability call in a non-final state
         // is a valid bridge call site, not a P6 scalar computation. After the
         // WireJson lane elimination every capability call uses the bridge
-        // contract, so the emission succeeds and the artifact carries runv.
+        // contract, so the emission succeeds and the artifact carries run_frame.
         {
             auto program = make_e2_core_program();
             auto &e2_flow = program.flows[0];
@@ -4125,16 +4256,16 @@ int main() {
             const auto emitted = backends::emit_core_wasm(
                 program, *layout.table,
                 {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
-            // RFC 0026 P6-7 frame-bridge v2 (rung V2-C): an in-handler
+            // RFC 0026 P6-7 frame bridge (rung capability-bridge): an in-handler
             // capability statement is a bridge call site. The bare Input
             // root is the whole-frame aggregate address (a legal bridge
             // argument span), and the zero-sized struct is forwarded as
             // (frame_base, 0) — a valid no-op argument. The emission
-            // succeeds and the artifact carries the runv export.
+            // succeeds and the artifact carries the run_frame export.
             check(emitted.ok() && emitted.artifact.has_value() &&
                       std::find(emitted.artifact->exports.begin(),
                                 emitted.artifact->exports.end(),
-                                "runv") != emitted.artifact->exports.end(),
+                                "run_frame") != emitted.artifact->exports.end(),
                   "P6 gate classifies an effectful region as orchestration, not computation");
         }
 
@@ -4287,7 +4418,7 @@ int main() {
                   "P6-6 lifts the coercion arena gate and the per-expr coercion reject");
         }
 
-        // P6-6 StringWiden under frame-bridge v2 V2-B + WH-5c.3 (GAP 5): the
+        // P6-6 StringWiden under frame bridge string-frame + WH-5c.3 (GAP 5): the
         // coercion is a SAME-WIDTH physical no-op (both endpoints are the
         // 2-word PtrLen String layout). WH-5c.3 extended the shared rodata
         // pool to EVERY P6 handler (not just computed-final / bridge handlers),
@@ -5246,7 +5377,7 @@ int main() {
         }
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-D D6 fix-forward: the node-block
+    // RFC 0026 P6-7 frame bridge rung workflow-frame D6 fix-forward: the node-block
     // cursor advances by each packaged P6 instance's OWN block extent exactly
     // once, so the dense high-water is the simple sum of the block extents.
     // Pre-fix a per-runner running total was added to the cursor inside the

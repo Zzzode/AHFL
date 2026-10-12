@@ -1,5 +1,5 @@
 #include "runtime/engine/capability_bridge.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/value/value.hpp"
 
@@ -101,10 +101,13 @@ bool has_request_metadata_name(const GrpcJsonTranscodingRequest &request, const 
     return false;
 }
 
-std::shared_ptr<const TypeRef> make_response_schema(TypeRefKind kind) {
-    auto schema = std::make_shared<TypeRef>();
-    schema->kind = kind;
-    return schema;
+[[nodiscard]] std::optional<ir::core::VerifiedWireSchemaBinding>
+project_return_binding(TypeRef return_type);
+
+std::optional<ir::core::VerifiedWireSchemaBinding> make_response_binding(TypeRefKind kind) {
+    TypeRef schema;
+    schema.kind = kind;
+    return project_return_binding(std::move(schema));
 }
 
 // ============================================================================
@@ -389,7 +392,7 @@ void test_http_capability_rejects_response_schema_mismatch() {
 
     HTTPCapabilityConfig config;
     config.url = "https://example.com/capability";
-    config.response_schema = make_response_schema(TypeRefKind::String);
+    config.response_wire_binding = make_response_binding(TypeRefKind::String);
     auto binding = make_http_capability("http_schema_mismatch", std::move(config), transport);
 
     CapabilityRegistry registry;
@@ -696,7 +699,7 @@ void test_grpc_capability_rejects_response_schema_mismatch() {
     config.endpoint = "https://grpc.example.com";
     config.service = "Example.Service";
     config.method = "Compute";
-    config.response_schema = make_response_schema(TypeRefKind::Int);
+    config.response_wire_binding = make_response_binding(TypeRefKind::Int);
     auto binding = make_grpc_json_transcoding_capability(
         "grpc_schema_mismatch", std::move(config), transport);
 
@@ -1015,7 +1018,7 @@ project_return_binding(TypeRef return_type) {
         return std::nullopt;
     }
     auto migration =
-        ir::core::migrate_type_ref_to_wire_binding(decl->return_type_ref, *env.environment);
+        ir::core::project_type_ref_to_wire_binding(decl->return_type_ref, *env.environment);
     if (!migration.ok() || !migration.binding.has_value()) {
         return std::nullopt;
     }
@@ -1069,10 +1072,10 @@ project_return_binding(TypeRef return_type) {
     return t;
 }
 
-// G4a: a poison binding (four-state conflict: both legacy schema AND verified
-// binding present) fails closed BEFORE transport, with retry=0/CB-off, and never
+// A TextPlain response with a non-String schema fails closed BEFORE transport,
+// with retry=0/CB-off, and never
 // becomes RetryExhausted even if the config requested retries / a circuit breaker.
-void test_http_poison_conflict_fails_closed_pre_transport() {
+void test_http_text_plain_admission_fails_closed_pre_transport() {
     auto transport = std::make_shared<FakeCapabilityTransport>();
     transport->http_response = HttpResponse{.status_code = 200, .body = "42", .error = {}};
 
@@ -1084,10 +1087,10 @@ void test_http_poison_conflict_fails_closed_pre_transport() {
 
     HTTPCapabilityConfig config;
     config.url = "https://example.com/capability";
+    config.response_format = CapabilityResponseFormat::TextPlain;
     config.retry = RetryConfig{.max_retries = 3}; // would retry if reached
     config.circuit_breaker = CircuitBreakerConfig{.failure_threshold = 1, .enabled = true};
-    config.response_schema = make_response_schema(TypeRefKind::Int); // legacy schema
-    config.response_wire_binding = *binding_opt;                     // AND verified binding
+    config.response_wire_binding = *binding_opt;
     auto binding = make_http_capability("http_poison", std::move(config), transport);
 
     // The poison binding pins retry=0 / CB-off / no CB state on the CapabilityBinding
@@ -1112,7 +1115,7 @@ void test_http_poison_conflict_fails_closed_pre_transport() {
     check(transport->http_requests.empty(), "http_poison.zero_transport");
 }
 
-void test_grpc_poison_conflict_fails_closed_pre_transport() {
+void test_grpc_text_plain_admission_fails_closed_pre_transport() {
     auto transport = std::make_shared<FakeCapabilityTransport>();
     transport->grpc_response = GrpcJsonTranscodingResponse{};
 
@@ -1126,9 +1129,9 @@ void test_grpc_poison_conflict_fails_closed_pre_transport() {
     config.endpoint = "https://example.com:50051";
     config.service = "svc";
     config.method = "m";
+    config.response_format = CapabilityResponseFormat::TextPlain;
     config.retry = RetryConfig{.max_retries = 3};
     config.circuit_breaker = CircuitBreakerConfig{.failure_threshold = 1, .enabled = true};
-    config.response_schema = make_response_schema(TypeRefKind::Int);
     config.response_wire_binding = *binding_opt;
     auto binding =
         make_grpc_json_transcoding_capability("grpc_poison", std::move(config), transport);
@@ -1147,9 +1150,8 @@ void test_grpc_poison_conflict_fails_closed_pre_transport() {
     check(transport->grpc_requests.empty(), "grpc_poison.zero_transport");
 }
 
-// G4a four-state (via HTTP): neither => no-schema legacy behavior; binding-only =>
-// exact decode; legacy-only => empty-Program migration exact; both => poison (above).
-void test_http_four_state_neither_and_binding_only() {
+// HTTP accepts either schema-free decoding or a verified projected binding.
+void test_http_optional_and_projected_schema() {
     // neither: JSON body decodes schema-free (an Int literal -> IntValue).
     {
         auto transport = std::make_shared<FakeCapabilityTransport>();
@@ -1184,22 +1186,6 @@ void test_http_four_state_neither_and_binding_only() {
         const auto *iv =
             result.value.has_value() ? std::get_if<IntValue>(&result.value->node) : nullptr;
         check(iv != nullptr && iv->value == 42, "http_binding_only.value_42");
-    }
-    // legacy-only: legacy Int TypeRef migrates (empty-Program) and exact-decodes.
-    {
-        auto transport = std::make_shared<FakeCapabilityTransport>();
-        transport->http_response = HttpResponse{.status_code = 200, .body = "42", .error = {}};
-        HTTPCapabilityConfig config;
-        config.url = "https://example.com/capability";
-        config.response_schema = make_response_schema(TypeRefKind::Int);
-        auto binding = make_http_capability("http_legacy_only", std::move(config), transport);
-        CapabilityRegistry registry;
-        registry.register_capability(std::move(binding));
-        auto result = registry.invoke("http_legacy_only", {});
-        check(result.status == CapabilityCallStatus::Success, "http_legacy_only.status");
-        const auto *iv =
-            result.value.has_value() ? std::get_if<IntValue>(&result.value->node) : nullptr;
-        check(iv != nullptr && iv->value == 42, "http_legacy_only.value_42");
     }
 }
 
@@ -1385,7 +1371,7 @@ void test_g4a_response_table() {
 }
 
 // G4a exact rich-shape response decode via builtin nominals (HTTP + gRPC), plus
-// hostile numeric provenance triad and legacy-only/negative admission cases.
+// hostile numeric provenance and bounded response validation.
 void test_g4a_rich_shape_and_negatives() {
     // HTTP binding-only Option<Int>: null -> Option None; a number -> Some(Int).
     {
@@ -1560,39 +1546,6 @@ void test_g4a_rich_shape_and_negatives() {
                   "rich.grpc_hostile.no_payload_echo");
         }
     }
-    // Legacy-only closed primitive positive: an Int TypeRef migrates + exact-decodes.
-    {
-        auto transport = std::make_shared<FakeCapabilityTransport>();
-        transport->http_response = HttpResponse{.status_code = 200, .body = "7", .error = {}};
-        HTTPCapabilityConfig config;
-        config.url = "https://example.com/capability";
-        config.response_schema = make_response_schema(TypeRefKind::Int);
-        auto binding = make_http_capability("legacy_int_pos", std::move(config), transport);
-        CapabilityRegistry registry;
-        registry.register_capability(std::move(binding));
-        auto result = registry.invoke("legacy_int_pos", {});
-        check(result.status == CapabilityCallStatus::Success, "legacy.int_pos.status");
-        const auto *iv =
-            result.value.has_value() ? std::get_if<IntValue>(&result.value->node) : nullptr;
-        check(iv != nullptr && iv->value == 7, "legacy.int_pos.value_7");
-    }
-    // Legacy-only BoundedString positive: migrates + exact-decodes a JSON string.
-    {
-        auto transport = std::make_shared<FakeCapabilityTransport>();
-        transport->http_response =
-            HttpResponse{.status_code = 200, .body = R"("abc")", .error = {}};
-        HTTPCapabilityConfig config;
-        config.url = "https://example.com/capability";
-        config.response_schema = std::make_shared<const ir::TypeRef>(bounded_string_type(1, 8));
-        auto binding = make_http_capability("legacy_bstr_pos", std::move(config), transport);
-        CapabilityRegistry registry;
-        registry.register_capability(std::move(binding));
-        auto result = registry.invoke("legacy_bstr_pos", {});
-        check(result.status == CapabilityCallStatus::Success, "legacy.bstr_pos.status");
-        const auto *sv =
-            result.value.has_value() ? std::get_if<StringValue>(&result.value->node) : nullptr;
-        check(sv != nullptr && sv->value == "abc", "legacy.bstr_pos.value_abc");
-    }
     // TextPlain + BoundedString binding: in-bounds body succeeds; out-of-bounds fails.
     {
         auto binding_opt = project_return_binding(bounded_string_type(1, 4));
@@ -1643,95 +1596,6 @@ void test_g4a_rich_shape_and_negatives() {
             }
         }
     }
-    // Legacy-only NON-projectable negatives: each must poison at construction
-    // (retry=0) and never touch transport.
-    {
-        struct NegCase {
-            std::string tag;
-            TypeRef schema;
-        };
-        std::vector<NegCase> cases;
-        cases.push_back({"any", prim_type(TypeRefKind::Any)});
-        cases.push_back({"unresolved", prim_type(TypeRefKind::Unresolved)});
-        cases.push_back({"never", prim_type(TypeRefKind::Never)});
-        cases.push_back({"fn", prim_type(TypeRefKind::Fn)});
-        // user nominal with no declaration in the (empty) program.
-        {
-            TypeRef bogus;
-            bogus.kind = TypeRefKind::Struct;
-            bogus.canonical_name = "app::main::DoesNotExist";
-            cases.push_back({"user_nominal_no_decl", std::move(bogus)});
-        }
-        // Option with a missing type argument.
-        {
-            TypeRef opt;
-            opt.kind = TypeRefKind::Enum;
-            opt.canonical_name = "std::option::Option";
-            opt.nominal_ref.kind = SymbolRefKind::Type;
-            opt.nominal_ref.canonical_name = "std::option::Option";
-            cases.push_back({"option_missing_arg", std::move(opt)});
-        }
-        // List with no element type argument (generic-arity negative).
-        {
-            TypeRef list;
-            list.kind = TypeRefKind::Struct;
-            list.canonical_name = "std::collections::List";
-            list.nominal_ref.kind = SymbolRefKind::Type;
-            list.nominal_ref.canonical_name = "std::collections::List";
-            cases.push_back({"list_missing_arg", std::move(list)});
-        }
-        // Set with no element type argument.
-        {
-            TypeRef set;
-            set.kind = TypeRefKind::Struct;
-            set.canonical_name = "std::collections::Set";
-            set.nominal_ref.kind = SymbolRefKind::Type;
-            set.nominal_ref.canonical_name = "std::collections::Set";
-            cases.push_back({"set_missing_arg", std::move(set)});
-        }
-        // Map with only one type argument (missing value type).
-        {
-            TypeRef map;
-            map.kind = TypeRefKind::Struct;
-            map.canonical_name = "std::collections::Map";
-            map.nominal_ref.kind = SymbolRefKind::Type;
-            map.nominal_ref.canonical_name = "std::collections::Map";
-            map.params.push_back(std::make_unique<TypeRef>(prim_type(TypeRefKind::String)));
-            cases.push_back({"map_one_arg", std::move(map)});
-        }
-        // Map with two slots but one is a null param (must fail closed, no crash).
-        {
-            TypeRef map;
-            map.kind = TypeRefKind::Struct;
-            map.canonical_name = "std::collections::Map";
-            map.nominal_ref.kind = SymbolRefKind::Type;
-            map.nominal_ref.canonical_name = "std::collections::Map";
-            map.params.push_back(std::make_unique<TypeRef>(prim_type(TypeRefKind::String)));
-            map.params.push_back(nullptr); // null value slot
-            cases.push_back({"map_null_value_slot", std::move(map)});
-        }
-        for (auto &c : cases) {
-            auto transport = std::make_shared<FakeCapabilityTransport>();
-            transport->http_response = HttpResponse{.status_code = 200, .body = "1", .error = {}};
-            HTTPCapabilityConfig config;
-            config.url = "https://example.com/capability";
-            config.response_schema = std::make_shared<const ir::TypeRef>(std::move(c.schema));
-            auto binding =
-                make_http_capability("legacy_neg_" + c.tag, std::move(config), transport);
-            check(binding.retry.max_retries == 0, "legacy_neg." + c.tag + ".binding_retry_zero");
-            check(!binding.circuit_breaker.enabled, "legacy_neg." + c.tag + ".binding_cb_disabled");
-            check(binding.circuit_state == nullptr, "legacy_neg." + c.tag + ".binding_no_cb_state");
-            CapabilityRegistry registry;
-            registry.register_capability(std::move(binding));
-            auto result = registry.invoke("legacy_neg_" + c.tag, {});
-            check(result.status == CapabilityCallStatus::Error,
-                  "legacy_neg." + c.tag + ".status_error");
-            check(result.error_message.find("response schema admission failed") !=
-                      std::string::npos,
-                  "legacy_neg." + c.tag + ".message");
-            check(transport->http_requests.empty(), "legacy_neg." + c.tag + ".zero_transport");
-        }
-    }
 }
 
 } // anonymous namespace
@@ -1766,9 +1630,9 @@ int main() {
     test_grpc_capability_mtls_auth_paths();
     test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
-    test_http_poison_conflict_fails_closed_pre_transport();
-    test_grpc_poison_conflict_fails_closed_pre_transport();
-    test_http_four_state_neither_and_binding_only();
+    test_http_text_plain_admission_fails_closed_pre_transport();
+    test_grpc_text_plain_admission_fails_closed_pre_transport();
+    test_http_optional_and_projected_schema();
     test_g4a_response_table();
     test_g4a_rich_shape_and_negatives();
 

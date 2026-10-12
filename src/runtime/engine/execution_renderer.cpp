@@ -280,8 +280,7 @@ event_payload_json(const WorkflowResult &result, const ExecutionEventPayload &pa
 
 [[nodiscard]] std::unique_ptr<JsonValue> report_json(const WorkflowResult &result) {
     auto root = JsonValue::make_object();
-    root->set("schema", JsonValue::make_string("ahfl.run-report"));
-    root->set("schema_version", JsonValue::make_int(1));
+    root->set("format", JsonValue::make_string("ahfl.run-report"));
 
     auto run = JsonValue::make_object();
     run->set("id", id_json(result.report.run.index()));
@@ -475,8 +474,7 @@ ExecutionRenderResult render_human(const WorkflowResult &result, std::ostream &o
 ExecutionRenderResult render_json_lines(const WorkflowResult &result, std::ostream &out) {
     for (const auto &event : result.events.events()) {
         auto root = JsonValue::make_object();
-        root->set("schema", JsonValue::make_string("ahfl.run-event"));
-        root->set("schema_version", JsonValue::make_int(1));
+        root->set("format", JsonValue::make_string("ahfl.run-event"));
         root->set("event_id", id_json(event.id.index()));
         root->set("type", JsonValue::make_string(std::string(event_type(event.payload))));
         root->set("monotonic_offset_ns",

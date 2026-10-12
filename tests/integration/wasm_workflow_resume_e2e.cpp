@@ -1076,56 +1076,37 @@ void test_e4_memo_round_trip(const std::filesystem::path &repo_root,
 
     // P2-8: directly assert the e4 snapshot memo tuple contents.
     {
-        check(snapshot_for_assert.suspended.has_value(),
-              "e4.tuple.has_suspended");
+        check(snapshot_for_assert.suspended.has_value(), "e4.tuple.has_suspended");
         if (snapshot_for_assert.suspended.has_value()) {
             const auto &susp = *snapshot_for_assert.suspended;
             check(susp.memo.size() == 1, "e4.tuple.memo_size_1");
             if (susp.memo.size() == 1) {
                 const auto &entry = susp.memo[0];
                 // Node coordinate: the memo entry is for `first` (node_id 0).
-                check(entry.node.has_value(), "e4.tuple.has_node");
-                if (entry.node.has_value()) {
-                    check(entry.node->index() == 0, "e4.tuple.node_is_first");
+                check(entry.node.valid(), "e4.tuple.has_node");
+                if (entry.node.valid()) {
+                    check(entry.node.index() == 0, "e4.tuple.node_is_first");
                 }
                 // Ordinal 0 (the first call on `first`).
                 check(entry.ordinal == 0, "e4.tuple.ordinal_0");
                 // Cap A identity: the cap_id matches A's source_symbol
                 // (captured by the invoker during origination).
-                check(state_a->a_symbol_id.has_value(),
-                      "e4.tuple.a_symbol_captured");
+                check(state_a->a_symbol_id.has_value(), "e4.tuple.a_symbol_captured");
                 if (state_a->a_symbol_id.has_value()) {
-                    check(entry.cap_id == *state_a->a_symbol_id,
-                          "e4.tuple.cap_id_is_A");
+                    check(entry.cap_id == *state_a->a_symbol_id, "e4.tuple.cap_id_is_A");
                 }
                 // arg_hash is set (non-zero for a non-empty arg vector).
                 check(entry.arg_hash != 0, "e4.tuple.arg_hash_nonzero");
-                // RFC 0026 dual-track elimination: the bridge lane stores
-                // NativeOnly at origination (the result is a P4-D binary
-                // frame, not JSON). The persistence layer serializes the
-                // native Value to wire JSON; on reload the entry becomes
-                // ExactSidecar with wire-JSON authoritative_json (verified
-                // by the Process B cold-start resume below).
-                check(entry.source ==
-                          ahfl::runtime::PersistedMemoResultSource::NativeOnly,
-                      "e4.tuple.native_only");
-                // NativeOnly carries no authoritative_json (the wire JSON is
-                // minted at persistence time, not at origination).
-                check(!entry.authoritative_json.has_value(),
-                      "e4.tuple.no_authoritative_json_at_origination");
-                // The result presence bit is set.
-                check(entry.result_present.has_value(),
-                      "e4.tuple.has_result_present");
-                if (entry.result_present.has_value()) {
-                    check(*entry.result_present,
-                          "e4.tuple.result_present_true");
+                const auto *memory = std::get_if<ahfl::runtime::InMemoryMemoResult>(&entry.result);
+                check(memory != nullptr, "e4.tuple.in_memory_result");
+                if (memory != nullptr) {
+                    check(memory->present, "e4.tuple.result_present_true");
                 }
             }
         }
     }
 
-    check(std::filesystem::exists(snapshot_path),
-          "e4.snapshot_file_on_disk");
+    check(std::filesystem::exists(snapshot_path), "e4.snapshot_file_on_disk");
 
     // ---- Process B: cold start. Fresh facade, on-disk snapshot is the
     // only link. A is memo-supplied (zero live calls); B is
@@ -1549,11 +1530,12 @@ void test_ac3_workflow_id_mismatch(
 
 // AC3 case 3: suspended node not in descriptor. The snapshot's suspended
 // node id is unknown to the module -> validation fail-closed.
-void test_ac3_suspended_node_unknown(
-    const std::filesystem::path &repo_root,
-    const std::filesystem::path &work_dir) {
+void test_ac3_suspended_node_unknown(const std::filesystem::path &repo_root,
+                                     const std::filesystem::path &work_dir) {
     ac3_e4_fail_closed(
-        repo_root, work_dir, "ac3x3",
+        repo_root,
+        work_dir,
+        "ac3x3",
         [](WorkflowRecoverySnapshot &snap, const InvokerState &) {
             snap.suspended->node = ahfl::runtime::WorkflowNodeId{999};
         },
@@ -1561,13 +1543,58 @@ void test_ac3_suspended_node_unknown(
         "recovery snapshot suspended node ID is unknown to this module");
 }
 
+// Every persisted node domain is checked before u32 narrowing; high-bit IDs
+// with the same low bits as genuine nodes must fail before external effects.
+void test_ac3_high_bit_node_coordinates(const std::filesystem::path &repo_root,
+                                        const std::filesystem::path &work_dir) {
+    if constexpr (sizeof(std::size_t) <= sizeof(std::uint32_t)) {
+        return;
+    }
+    constexpr std::uint64_t kHighBit = std::uint64_t{1} << 32;
+    ac3_e4_fail_closed(
+        repo_root,
+        work_dir,
+        "ac3_high_suspended",
+        [](WorkflowRecoverySnapshot &snap, const InvokerState &) {
+            snap.suspended->node = ahfl::runtime::WorkflowNodeId{
+                static_cast<std::size_t>(kHighBit + snap.suspended->node.index())};
+        },
+        std::nullopt,
+        "recovery snapshot suspended node ID is outside the module's numeric domain");
+    ac3_e4_fail_closed(
+        repo_root,
+        work_dir,
+        "ac3_high_completed",
+        [](WorkflowRecoverySnapshot &snap, const InvokerState &) {
+            check(!snap.completed_nodes.empty(), "ac3_high_completed.fixture_has_completed_node");
+            if (!snap.completed_nodes.empty()) {
+                auto &node = snap.completed_nodes[0].node;
+                node = ahfl::runtime::WorkflowNodeId{
+                    static_cast<std::size_t>(kHighBit + node.index())};
+            }
+        },
+        std::nullopt,
+        "recovery snapshot completed node ID is outside the module's numeric domain");
+    ac3_e4_fail_closed(
+        repo_root,
+        work_dir,
+        "ac3_high_memo",
+        [](WorkflowRecoverySnapshot &snap, const InvokerState &) {
+            auto &node = snap.suspended->memo[0].node;
+            node = ahfl::runtime::WorkflowNodeId{static_cast<std::size_t>(kHighBit + node.index())};
+        },
+        std::nullopt,
+        "recovery snapshot memo node ID is outside the module's numeric domain");
+}
+
 // AC3 case 4: memo cap_id mismatch. The memo entry's cap_id does not
 // match the live import's cap_id -> replay divergence.
-void test_ac3_memo_cap_id_mismatch(
-    const std::filesystem::path &repo_root,
-    const std::filesystem::path &work_dir) {
+void test_ac3_memo_cap_id_mismatch(const std::filesystem::path &repo_root,
+                                   const std::filesystem::path &work_dir) {
     ac3_e4_fail_closed(
-        repo_root, work_dir, "ac3x4",
+        repo_root,
+        work_dir,
+        "ac3x4",
         [](WorkflowRecoverySnapshot &snap, const InvokerState &) {
             snap.suspended->memo[0].cap_id = 999;
         },
@@ -1851,7 +1878,7 @@ void test_non_topological_resume(
 // P2-C: zero-length OK memo. The recording path is provably unreachable on
 // a deterministic guest (handle_opaque always serializes to non-empty JSON;
 // the guest classifies OK-empty as ERROR). The replay-side defense (empty
-// authoritative_json rejected at MemoHit) is exercised here.
+// result_wire_json rejected at MemoHit) is exercised here.
 //
 // P2-D: bogus guest result pointer. The session-level OOB guard is
 // defense-in-depth behind the engine's own alloc_then_write bounds check
@@ -1964,60 +1991,40 @@ void test_p2a_shared_cap_resume_identity(
     // Assert the 7-field memo tuple: node 1's OK call with its own
     // arg_hash (distinct from node 2's).
     {
-        check(snapshot_for_assert.suspended.has_value(),
-              "p2a.tuple.has_suspended");
+        check(snapshot_for_assert.suspended.has_value(), "p2a.tuple.has_suspended");
         if (snapshot_for_assert.suspended.has_value()) {
             const auto &susp = *snapshot_for_assert.suspended;
             check(susp.memo.size() == 1, "p2a.tuple.memo_size_1");
             if (susp.memo.size() == 1) {
                 const auto &entry = susp.memo[0];
                 // 1. Node coordinate: node 1 (first).
-                check(entry.node.has_value(), "p2a.tuple.has_node");
-                if (entry.node.has_value()) {
-                    check(entry.node->index() == 0,
-                          "p2a.tuple.node_is_first");
+                check(entry.node.valid(), "p2a.tuple.has_node");
+                if (entry.node.valid()) {
+                    check(entry.node.index() == 0, "p2a.tuple.node_is_first");
                 }
                 // 2. Ordinal 0.
                 check(entry.ordinal == 0, "p2a.tuple.ordinal_0");
                 // 3. cap_id: Echo's SymbolId.
-                check(state_a->echo_symbol_id.has_value(),
-                      "p2a.tuple.echo_symbol_captured");
+                check(state_a->echo_symbol_id.has_value(), "p2a.tuple.echo_symbol_captured");
                 if (state_a->echo_symbol_id.has_value()) {
-                    check(entry.cap_id == *state_a->echo_symbol_id,
-                          "p2a.tuple.cap_id_is_echo");
+                    check(entry.cap_id == *state_a->echo_symbol_id, "p2a.tuple.cap_id_is_echo");
                 }
                 // 4. arg_hash: node 1's (non-zero, differs from node 2's).
                 check(entry.arg_hash != 0, "p2a.tuple.arg_hash_nonzero");
-                check(state_a->first_arg_hash.has_value(),
-                      "p2a.tuple.first_arg_hash_captured");
+                check(state_a->first_arg_hash.has_value(), "p2a.tuple.first_arg_hash_captured");
                 if (state_a->first_arg_hash.has_value()) {
                     check(entry.arg_hash == *state_a->first_arg_hash,
                           "p2a.tuple.arg_hash_is_first");
                 }
-                check(state_a->second_arg_hash.has_value(),
-                      "p2a.tuple.second_arg_hash_captured");
+                check(state_a->second_arg_hash.has_value(), "p2a.tuple.second_arg_hash_captured");
                 if (state_a->second_arg_hash.has_value()) {
                     check(entry.arg_hash != *state_a->second_arg_hash,
                           "p2a.tuple.arg_hash_differs_from_second");
                 }
-                // 5. Source: NativeOnly (RFC 0026 dual-track elimination:
-                // the bridge lane stores the P4-D frame result at
-                // origination; the persistence layer mints the wire-JSON
-                // sidecar on save, so the in-memory entry is NativeOnly).
-                check(entry.source ==
-                          ahfl::runtime::PersistedMemoResultSource::
-                              NativeOnly,
-                      "p2a.tuple.native_only");
-                // 6. authoritative_json: absent at origination (minted at
-                // persistence time; the reloaded entry is ExactSidecar).
-                check(!entry.authoritative_json.has_value(),
-                      "p2a.tuple.no_authoritative_json_at_origination");
-                // 7. result_present: present, true.
-                check(entry.result_present.has_value(),
-                      "p2a.tuple.has_result_present");
-                if (entry.result_present.has_value()) {
-                    check(*entry.result_present,
-                          "p2a.tuple.result_present_true");
+                const auto *memory = std::get_if<ahfl::runtime::InMemoryMemoResult>(&entry.result);
+                check(memory != nullptr, "p2a.tuple.in_memory_result");
+                if (memory != nullptr) {
+                    check(memory->present, "p2a.tuple.result_present_true");
                 }
             }
         }
@@ -2203,8 +2210,7 @@ void test_p2b_frontier_never_hit(
         if (susp.memo.size() != 1) {
             return;
         }
-        check(state_a->b_symbol_id.has_value(),
-              "p2b.b_symbol_captured");
+        check(state_a->b_symbol_id.has_value(), "p2b.b_symbol_captured");
         if (!state_a->b_symbol_id.has_value()) {
             return;
         }
@@ -2214,7 +2220,7 @@ void test_p2b_frontier_never_hit(
         // fabricated memo entry.
         const auto node2_arg_hash = susp.memo[0].arg_hash;
         const auto node2_json =
-            susp.memo[0].authoritative_json.value_or("");
+            std::get<ahfl::runtime::StoredMemoResult>(susp.memo[0].result).result_wire_json;
 
         // Fabricate an OK memo entry for node 2 (the suspended node).
         // This makes node 2's call a MemoHit on replay instead of the
@@ -2223,10 +2229,7 @@ void test_p2b_frontier_never_hit(
         fabricated.ordinal = 0;
         fabricated.cap_id = *state_a->b_symbol_id;
         fabricated.arg_hash = node2_arg_hash;
-        fabricated.source =
-            ahfl::runtime::PersistedMemoResultSource::ExactSidecar;
-        fabricated.authoritative_json = node2_json;
-        fabricated.result_present = true;
+        fabricated.result = ahfl::runtime::StoredMemoResult{node2_json, true};
         fabricated.node = susp.node;
         susp.memo.push_back(std::move(fabricated));
 
@@ -2288,7 +2291,7 @@ void test_p2b_frontier_never_hit(
 // the reachability comment there).
 //
 // The reachable replay-side defense is exercised here: a memo entry with
-// an empty authoritative_json is rejected at MemoHit (the session refuses
+// an empty result_wire_json is rejected at MemoHit (the session refuses
 // to serve empty bytes as a capability result).
 
 void test_p2c_zero_length_memo_replay(
@@ -2328,10 +2331,8 @@ void test_p2c_zero_length_memo_replay(
             check(false, "p2c.input");
             return;
         }
-        auto suspended =
-            runtime.run(std::string(kWorkflow), std::move(*input));
-        check(suspended.status() == WorkflowStatus::Suspended,
-              "p2c.suspended");
+        auto suspended = runtime.run(std::string(kWorkflow), std::move(*input));
+        check(suspended.status() == WorkflowStatus::Suspended, "p2c.suspended");
     }
 
     // Load + tamper + resume.
@@ -2343,12 +2344,11 @@ void test_p2c_zero_length_memo_replay(
             return;
         }
         auto snapshot = std::move(*loaded);
-        // Tamper the memo's authoritative_json to empty. The MemoHit
+        // Tamper the memo's result_wire_json to empty. The MemoHit
         // cross-check must reject it (the session refuses to serve empty
         // bytes as a capability result).
-        if (snapshot.suspended.has_value() &&
-            !snapshot.suspended->memo.empty()) {
-            snapshot.suspended->memo[0].authoritative_json = "";
+        if (snapshot.suspended.has_value() && !snapshot.suspended->memo.empty()) {
+            snapshot.suspended->memo[0].result = ahfl::runtime::StoredMemoResult{"", true};
         } else {
             check(false, "p2c.tamper_preconditions");
             return;
@@ -2738,6 +2738,7 @@ int main(int argc, char **argv) {
     test_ac3_corrupt_snapshot_json(repo, work);
     test_ac3_workflow_id_mismatch(repo, work);
     test_ac3_suspended_node_unknown(repo, work);
+    test_ac3_high_bit_node_coordinates(repo, work);
     test_ac3_memo_cap_id_mismatch(repo, work);
     test_ac3_memo_arg_hash_mismatch(repo, work);
     test_ac3_wire_json_wrong_type(repo, work);

@@ -57,7 +57,17 @@ RegistryServer::~RegistryServer() {
 }
 
 void RegistryServer::start() {
+#if defined(__linux__)
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd_ >= 0 && ::fcntl(listen_fd_, F_SETFD, FD_CLOEXEC) < 0) {
+        const int saved = errno;
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        errno = saved;
+    }
+#endif
     if (listen_fd_ < 0) {
         throw std::runtime_error(std::string("registry server socket: ") + std::strerror(errno));
     }
@@ -192,8 +202,13 @@ void RegistryServer::serve() {
 
         sockaddr_in peer{};
         socklen_t peer_len = sizeof(peer);
+#if defined(__linux__)
         const int client_fd =
             ::accept4(listen_fd_, reinterpret_cast<sockaddr *>(&peer), &peer_len, SOCK_CLOEXEC);
+#else
+        const int client_fd =
+            ::accept(listen_fd_, reinterpret_cast<sockaddr *>(&peer), &peer_len);
+#endif
         if (client_fd < 0) {
             if (errno == EINTR) {
                 continue;
@@ -203,6 +218,12 @@ void RegistryServer::serve() {
             }
             continue; // transient accept failure — keep serving
         }
+#if !defined(__linux__)
+        if (::fcntl(client_fd, F_SETFD, FD_CLOEXEC) < 0) {
+            ::close(client_fd);
+            continue;
+        }
+#endif
         handle_connection(client_fd);
         ::close(client_fd);
     }

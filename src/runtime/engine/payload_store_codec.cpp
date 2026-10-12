@@ -16,21 +16,20 @@ namespace {
 using ir::core::CoreWorkflowId;
 
 // Raw payload magics: one distinct 6-byte magic per artifact class. The leading
-// authenticated `magic || format_version` is the HMAC domain separator, so distinct
+// authenticated `magic` is the HMAC domain separator, so distinct
 // magics give the three classes distinct HMAC domains. These are distinct from the
 // A1 "AHFLWR", A2 "AHFLXM", and wire-schema "AHFLWS" magics.
 constexpr std::array<std::uint8_t, 6> kSlotMagic = {'A', 'H', 'F', 'L', 'P', 'S'};
 constexpr std::array<std::uint8_t, 6> kManifestMagic = {'A', 'H', 'F', 'L', 'C', 'M'};
 constexpr std::array<std::uint8_t, 6> kPointerMagic = {'A', 'H', 'F', 'L', 'G', 'P'};
 
-constexpr std::uint8_t kFormatVersion = 1;
 constexpr std::uint8_t kAlgHmacSha256 = 1;
 
 // Manifest state discriminator bytes.
 constexpr std::uint8_t kStateAvailable = 0;
 constexpr std::uint8_t kStateConsumed = 1;
 
-// Fixed tail: auth_header (alg_version u8 + key_id 16 + generation u64-LE) = 25,
+// Fixed tail: auth_header (alg_id u8 + key_id 16 + generation u64-LE) = 25,
 // plus the 32-byte tag.
 constexpr std::size_t kKeyIdBytes = 16;
 constexpr std::size_t kGenerationBytes = 8;
@@ -39,15 +38,15 @@ constexpr std::size_t kTagBytes = 32;
 constexpr std::size_t kTailBytes = kAuthHeaderBytes + kTagBytes; // 57
 constexpr std::size_t kDigestHexBytes = 64;
 
-// Coarse pre-auth lower bounds (magic + format_version + fixed body fields), used
+// Coarse pre-auth lower bounds (magic + fixed body fields), used
 // only to reject an impossibly short input before authentication; the real
 // structure is validated in pass 2.
-//   slot:     magic + fmt + wf(>=1) + ckpt(>=1) + gen(8) + slot(>=1) + len(>=1)
-constexpr std::size_t kMinSlotBody = 6 + 1 + 1 + 1 + kGenerationBytes + 1 + 1;
-//   manifest: magic + fmt + wf(>=1) + ckpt(>=1) + gen(8) + state(1)
-constexpr std::size_t kMinManifestBody = 6 + 1 + 1 + 1 + kGenerationBytes + 1;
-//   pointer:  magic + fmt + wf(>=1) + ckpt(>=1) + current_gen(8) + digest(64)
-constexpr std::size_t kMinPointerBody = 6 + 1 + 1 + 1 + kGenerationBytes + kDigestHexBytes;
+//   slot:     magic + wf(>=1) + ckpt(>=1) + gen(8) + slot(>=1) + len(>=1)
+constexpr std::size_t kMinSlotBody = 6 + 1 + 1 + kGenerationBytes + 1 + 1;
+//   manifest: magic + wf(>=1) + ckpt(>=1) + gen(8) + state(1)
+constexpr std::size_t kMinManifestBody = 6 + 1 + 1 + kGenerationBytes + 1;
+//   pointer:  magic + wf(>=1) + ckpt(>=1) + current_gen(8) + digest(64)
+constexpr std::size_t kMinPointerBody = 6 + 1 + 1 + kGenerationBytes + kDigestHexBytes;
 
 // A DigestHex is well-formed iff every byte is lowercase-hex ASCII ([0-9a-f]).
 [[nodiscard]] bool is_lowercase_hex(const DigestHex &hex) noexcept {
@@ -98,9 +97,15 @@ class Reader {
   public:
     explicit Reader(std::span<const std::uint8_t> data) noexcept : data_(data) {}
 
-    [[nodiscard]] bool failed() const noexcept { return failed_; }
-    [[nodiscard]] std::size_t remaining() const noexcept { return data_.size() - pos_; }
-    [[nodiscard]] bool at_end() const noexcept { return pos_ == data_.size(); }
+    [[nodiscard]] bool failed() const noexcept {
+        return failed_;
+    }
+    [[nodiscard]] std::size_t remaining() const noexcept {
+        return data_.size() - pos_;
+    }
+    [[nodiscard]] bool at_end() const noexcept {
+        return pos_ == data_.size();
+    }
 
     [[nodiscard]] std::uint8_t byte() noexcept {
         if (failed_ || pos_ >= data_.size()) {
@@ -190,7 +195,7 @@ class Reader {
 // ---- shared header helpers -------------------------------------------------
 
 void encode_auth_header(std::vector<std::uint8_t> &out, const AuthHeader &h) {
-    out.push_back(h.alg_version);
+    out.push_back(h.alg_id);
     out.insert(out.end(), h.key_id.begin(), h.key_id.end());
     write_u64_le(out, h.generation);
 }
@@ -200,8 +205,8 @@ void encode_auth_header(std::vector<std::uint8_t> &out, const AuthHeader &h) {
 // not expected in practice; the boundary is still handled explicitly. Both the
 // encoders and decoders map ONLY `std::length_error` to a fail-closed IntegrityFailed
 // and let any unrelated exception (e.g. bad_alloc) propagate.
-[[nodiscard]] std::expected<void, PayloadStoreError>
-append_tag(std::vector<std::uint8_t> &prefix, std::span<const std::uint8_t> key) {
+[[nodiscard]] std::expected<void, PayloadStoreError> append_tag(std::vector<std::uint8_t> &prefix,
+                                                                std::span<const std::uint8_t> key) {
     support::Sha256Digest tag;
     try {
         tag = support::hmac_sha256(key, prefix);
@@ -223,8 +228,10 @@ struct FramingCheck {
 // the artifact class (domain). On success the caller decodes the body span
 // `bytes.first(result.auth_off)` in a trusted pass 2.
 [[nodiscard]] std::expected<FramingCheck, PayloadStoreError>
-authenticate(std::span<const std::uint8_t> bytes, const std::array<std::uint8_t, 6> &magic,
-             std::size_t min_body, std::span<const std::uint8_t, 16> expected_key_id,
+authenticate(std::span<const std::uint8_t> bytes,
+             const std::array<std::uint8_t, 6> &magic,
+             std::size_t min_body,
+             std::span<const std::uint8_t, 16> expected_key_id,
              std::span<const std::uint8_t> key) {
     if (bytes.size() < min_body + kTailBytes) {
         return std::unexpected(PayloadStoreError::Truncated);
@@ -233,9 +240,6 @@ authenticate(std::span<const std::uint8_t> bytes, const std::array<std::uint8_t,
         if (bytes[i] != magic[i]) {
             return std::unexpected(PayloadStoreError::Malformed);
         }
-    }
-    if (bytes[magic.size()] != kFormatVersion) {
-        return std::unexpected(PayloadStoreError::Malformed);
     }
     const std::size_t total = bytes.size();
     const std::size_t tag_off = total - kTagBytes;
@@ -263,7 +267,7 @@ authenticate(std::span<const std::uint8_t> bytes, const std::array<std::uint8_t,
         return std::unexpected(PayloadStoreError::IntegrityFailed);
     }
     AuthHeader auth;
-    auth.alg_version = kAlgHmacSha256;
+    auth.alg_id = kAlgHmacSha256;
     for (std::size_t i = 0; i < kKeyIdBytes; ++i) {
         auth.key_id[i] = bytes[auth_off + 1 + i];
     }
@@ -275,19 +279,17 @@ authenticate(std::span<const std::uint8_t> bytes, const std::array<std::uint8_t,
     return FramingCheck{auth_off, auth};
 }
 
-// Consume the leading `magic || format_version` bytes so body offsets line up (both
-// already validated by pass 1).
+// Consume the leading magic bytes already validated by pass 1.
 void consume_magic(Reader &reader, const std::array<std::uint8_t, 6> &magic) {
     for (std::size_t i = 0; i < magic.size(); ++i) {
         (void)reader.byte();
     }
-    (void)reader.byte(); // format_version
 }
 
 // ---- structural validation (shared by encoder and decoder) -----------------
 
 [[nodiscard]] std::optional<PayloadStoreError> validate_slot(const SlotArtifact &s) {
-    if (s.auth.alg_version != kAlgHmacSha256) {
+    if (s.auth.alg_id != kAlgHmacSha256) {
         return PayloadStoreError::Malformed;
     }
     if (s.wf.value == CoreWorkflowId::kInvalid) {
@@ -309,7 +311,7 @@ void consume_magic(Reader &reader, const std::array<std::uint8_t, 6> &magic) {
 }
 
 [[nodiscard]] std::optional<PayloadStoreError> validate_manifest(const CommitManifest &m) {
-    if (m.auth.alg_version != kAlgHmacSha256) {
+    if (m.auth.alg_id != kAlgHmacSha256) {
         return PayloadStoreError::Malformed;
     }
     if (m.wf.value == CoreWorkflowId::kInvalid) {
@@ -353,8 +355,7 @@ void consume_magic(Reader &reader, const std::array<std::uint8_t, 6> &magic) {
         }
         // A Consumed tombstone binds a strictly earlier Available generation. The
         // tighter current-1 / live-digest binding is a B1 store rule.
-        if (consumed.consumed_generation == 0 ||
-            consumed.consumed_generation >= m.generation) {
+        if (consumed.consumed_generation == 0 || consumed.consumed_generation >= m.generation) {
             return PayloadStoreError::GenerationMismatch;
         }
     }
@@ -362,7 +363,7 @@ void consume_magic(Reader &reader, const std::array<std::uint8_t, 6> &magic) {
 }
 
 [[nodiscard]] std::optional<PayloadStoreError> validate_pointer(const GenerationPointer &p) {
-    if (p.auth.alg_version != kAlgHmacSha256) {
+    if (p.auth.alg_id != kAlgHmacSha256) {
         return PayloadStoreError::Malformed;
     }
     if (p.wf.value == CoreWorkflowId::kInvalid) {
@@ -387,7 +388,6 @@ void consume_magic(Reader &reader, const std::array<std::uint8_t, 6> &magic) {
 
 void encode_slot_body(std::vector<std::uint8_t> &out, const SlotArtifact &s) {
     out.insert(out.end(), kSlotMagic.begin(), kSlotMagic.end());
-    out.push_back(kFormatVersion);
     write_u32(out, s.wf.value);
     write_u64(out, s.ckpt.value);
     write_u64_le(out, s.generation);
@@ -398,7 +398,6 @@ void encode_slot_body(std::vector<std::uint8_t> &out, const SlotArtifact &s) {
 
 void encode_manifest_body(std::vector<std::uint8_t> &out, const CommitManifest &m) {
     out.insert(out.end(), kManifestMagic.begin(), kManifestMagic.end());
-    out.push_back(kFormatVersion);
     write_u32(out, m.wf.value);
     write_u64(out, m.ckpt.value);
     write_u64_le(out, m.generation);
@@ -422,7 +421,6 @@ void encode_manifest_body(std::vector<std::uint8_t> &out, const CommitManifest &
 
 void encode_pointer_body(std::vector<std::uint8_t> &out, const GenerationPointer &p) {
     out.insert(out.end(), kPointerMagic.begin(), kPointerMagic.end());
-    out.push_back(kFormatVersion);
     write_u32(out, p.wf.value);
     write_u64(out, p.ckpt.value);
     write_u64_le(out, p.current_generation);
@@ -478,8 +476,10 @@ encode_pointer(const GenerationPointer &pointer, std::span<const std::uint8_t> k
 // ---- decoders --------------------------------------------------------------
 
 std::expected<SlotArtifact, PayloadStoreError>
-decode_slot(std::span<const std::uint8_t> bytes, std::span<const std::uint8_t, 16> expected_key_id,
-            std::span<const std::uint8_t> key, std::uint64_t max_slot_artifact_bytes) {
+decode_slot(std::span<const std::uint8_t> bytes,
+            std::span<const std::uint8_t, 16> expected_key_id,
+            std::span<const std::uint8_t> key,
+            std::uint64_t max_slot_artifact_bytes) {
     if (bytes.size() > max_slot_artifact_bytes) {
         return std::unexpected(PayloadStoreError::SizeCapExceeded);
     }
@@ -537,7 +537,8 @@ decode_slot(std::span<const std::uint8_t> bytes, std::span<const std::uint8_t, 1
 std::expected<CommitManifest, PayloadStoreError>
 decode_manifest(std::span<const std::uint8_t> bytes,
                 std::span<const std::uint8_t, 16> expected_key_id,
-                std::span<const std::uint8_t> key, std::uint64_t max_manifest_artifact_bytes) {
+                std::span<const std::uint8_t> key,
+                std::uint64_t max_manifest_artifact_bytes) {
     if (bytes.size() > max_manifest_artifact_bytes) {
         return std::unexpected(PayloadStoreError::SizeCapExceeded);
     }

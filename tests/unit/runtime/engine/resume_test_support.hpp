@@ -166,7 +166,6 @@ inline std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
     for (char c : magic) {
         b.push_back(static_cast<std::uint8_t>(c));
     }
-    b.push_back(2); // version (WH-5b.2: manifest v2)
     b.push_back(0); // entry.kind = Workflow
     put_uleb(b, entry_id);
     put_uleb(b, nodes.size());
@@ -264,11 +263,11 @@ inline std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
     }
     put_section(m,
                 0,
-                custom_payload("ahfl.wasm-exec-manifest.v1",
+                custom_payload("ahfl.execution-manifest",
                                exec_manifest_body(spec.entry_id, spec.nodes)));
     put_section(m,
                 0,
-                custom_payload("ahfl.wire-schema.v1",
+                custom_payload("ahfl.wire-schema",
                                encode_schema(schema_table(spec.extra_schema_nodes, spec.caps))));
     return m;
 }
@@ -502,7 +501,6 @@ inline CoreWasmResumeRecord make_suspended_record(const VerifiedCoreWasmSchemaMo
                                                   const std::string_view param_json,
                                                   const PayloadSlotId memo_slot_base) {
     CoreWasmResumeRecord r;
-    r.format_version = 1;
     set_matching_digests(r, mod);
     r.entry_id = wf;
     r.entry_input_slot = entry_slot;

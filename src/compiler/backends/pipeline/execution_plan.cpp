@@ -17,7 +17,7 @@ class ExecutionPlanJsonPrinter final : private PipelineJsonHelpers {
 
     void print(const handoff::ExecutionPlan &plan) {
         print_object(0, [&](const auto &field) {
-            field("format_version", [&]() { write_string(plan.format_version); });
+            field("format", [&]() { write_string(plan.format); });
             field("source_package_identity", [&]() {
                 if (plan.source_package_identity.has_value()) {
                     print_package_identity(*plan.source_package_identity, 1);

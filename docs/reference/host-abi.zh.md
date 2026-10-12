@@ -1,29 +1,15 @@
 # AHFL Host Embedding ABI (`ahfl_host.h`)
 
-本文是 [RFC 0021](../rfcs/0021-capability-embedding-abi.zh.md)（Capability Embedding ABI，`implemented`）定义的宿主嵌入 C ABI 的参考文档，配套 [RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)（Durable Capability Resume，`stabilized`）的挂起/恢复语义。规范头文件是 `include/ahfl/runtime/ahfl_host.h`；本文解释契约，头文件是唯一权威。
+宿主通过 `ahfl_host.h` 为 AHFL workflow 提供 capability。本页说明 C ABI（Application Binary Interface，应用二进制接口）的当前结构、帧内存所有权、调用状态和挂起约束。接口定义以 `include/ahfl/runtime/ahfl_host.h` 为准。
 
-## 定位
+## 当前结构与帧契约
 
-AHFL 是一门**可嵌入、可验证的 agent workflow 编排 DSL**（[RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md)）。它只编排 workflow 的结构与行为；**通用计算由宿主经 capability 边界提供**。`ahfl_host.h` 是这条边界的**唯一、语言无关的 C 契约**：宿主可用任意语言（C++/Rust/Go/Java/Node/浏览器 JS）实现它。原生绑定（C++ 函数指针表）与 WASM 绑定（[RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md) 的 `ahfl_cap` import）都从**同一个头文件**派生——一份契约，两种投影。
+本 header 定义当前 C host 契约；仓库尚未提供独立的 C `ahfl_invoke` 实现。
+Wasm 执行器及 native runtime 使用各自已实现的入口。
 
-语言层的 capability 调用**始终是同步观感**（调用 → 得结果 → 继续）；异步性完全由宿主经 `AHFL_CAP_PENDING` 吸收，语言永不引入 `async` / `await`。
-
-## ABI 稳定性规则（不可协商——这是已发布的 FFI 边界）
-
-1. **size-prefixed 结构体**：每个跨边界的多字段结构体以 `uint32_t struct_size`（调用方填 `sizeof`）开头。字段**只能在末尾追加**，已发布字段永不移动或改用途；reader 用 `struct_size` 判断哪些字段存在。
-2. **定宽整型**：只用 `stdint.h` 定宽类型；无 bitfield；不把 enum 用作结构体/返回类型（宽度实现定义）——enum 仅作命名常量，ABI 类型永远是 `uint32_t`；无 `#pragma pack`，自然对齐。
-3. **符号 append-only**：改签名靠新增 `ahfl_invoke2`，绝不修改 `ahfl_invoke`。
-4. **帧字节序钉死**：wire frame 是长度前缀的小端序；字节序现在即固定。
-
-## 版本与 wire format（两条独立轴）
-
-| 符号 | 含义 |
-|---|---|
-| `AHFL_ABI_VERSION`（宏，当前 `1`） | 结构布局 / 符号契约版本。仅在**破坏性** ABI 变更时 bump。 |
-| `uint32_t ahfl_abi_version(void)` | 返回 runtime 链接的 `AHFL_ABI_VERSION`；宿主与 runtime 必须就主契约版本达成一致。 |
-| `ahfl_wire_format`（`uint32_t`） | 帧序列化格式，在**连接级**协商（一个连接一种格式，绝不逐帧打 tag）。`AHFL_WIRE_VALUE_JSON = 1`。核心保留 `0x0001..0x0FFF`，`0x1000+` 留给宿主。 |
-
-结构/符号契约与帧格式**独立演进**——一个变了不强制另一个变。
+结构以 `struct_size` 开头，调用方填写精确 `sizeof`。不支持历史结构、追加字段
+读取或版本协商。字段使用定宽整型与自然对齐。帧使用当前 canonical wire JSON；
+数值 capability ID 表达身份。
 
 ## 能力调用状态：定宽、fail-closed
 
@@ -33,7 +19,7 @@ AHFL 是一门**可嵌入、可验证的 agent workflow 编排 DSL**（[RFC 0020
 |---|---|---|---|
 | `AHFL_CAP_OK` | 0 | 成功 | callee 用 `ahfl_alloc(host,…)` 分配结果帧，写 `*result_ptr` / `*result_len`；caller 解码后经 `ahfl_dealloc` **恰好释放一次**，释放后不再读。 |
 | `AHFL_CAP_ERROR` | 1 | 能力失败 | callee 必须置 `*result_ptr = NULL`、`*result_len = 0`；caller 不得释放。workflow **fail-closed 终止并传播**，绝不静默吞。 |
-| `AHFL_CAP_PENDING` | 2 | 异步：workflow 在当前节点挂起 | callee 置 `*result_ptr = NULL`；参数帧所有权在挂起生命周期内转移给宿主。宿主稍后用结果恢复 workflow（见下"durable resume"）。 |
+| `AHFL_CAP_PENDING` | 2 | 异步：workflow 在当前节点挂起 | callee 置 `*result_ptr = NULL`；参数帧所有权在挂起生命周期内转移给宿主。宿主稍后用结果恢复 workflow（见下文“挂起与恢复”）。 |
 
 ## 不透明宿主句柄
 
@@ -41,7 +27,7 @@ AHFL 是一门**可嵌入、可验证的 agent workflow 编排 DSL**（[RFC 0020
 typedef struct ahfl_host ahfl_host;
 ```
 
-每个入口点都带 `ahfl_host *host`，让 runtime 携带 per-connection / 多实例 / 线程状态而不需要未来破坏签名。宿主定义具体类型，runtime 视之为不透明。
+每个入口点都带 `ahfl_host *host`，让 runtime 携带 per-connection / 多实例 / 线程状态。宿主定义具体类型，runtime 视之为不透明。
 
 ## 分配器:单一所有者规则
 
@@ -62,7 +48,6 @@ typedef struct ahfl_invoke_args {
     uint32_t       args_len;
     uint8_t      **result_ptr;    /* out: callee 分配的结果帧,或 NULL     */
     uint32_t      *result_len;    /* out: 结果帧长度,或 0                 */
-    /* 未来字段只在此末尾追加(timeout / trace id / resume handle / …)。 */
 } ahfl_invoke_args;
 
 ahfl_cap_status ahfl_invoke(ahfl_host *host, ahfl_invoke_args *args);
@@ -72,18 +57,16 @@ runtime(caller)拥有参数帧;能力(callee)产出结果帧。参数帧 caller-
 
 `cap_id` 是 capability 的 `SymbolId`(索引式身份,非名字),延续 [RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md) 的 SymbolId ↔ import 名映射。
 
-## Durable resume(挂起 / 恢复,RFC 0022)
+## 挂起与恢复
 
-当能力返回 `AHFL_CAP_PENDING`,runtime 把 workflow 挂起为一份**纯可序列化的 resume record**(节点 input + 该节点已完成能力调用的 memo 表,schema `ahfl.workflow-recovery.v2`)。进程可退出;宿主稍后用该调用的结果恢复。恢复的语义契约(确定性重放、memo 命中不二次调用、exactly-once、fail-closed 类型校验)见 [`docs/spec/core-language.zh.md` §3.4.1](../spec/core-language.zh.md) 与 [RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)。
+当能力返回 `AHFL_CAP_PENDING`,runtime 把 workflow 挂起为一份**纯可序列化的 resume record**(节点 input + 挂起点之前整个 workflow 的能力调用 memo 表,format `ahfl.workflow-recovery`)。进程可退出;宿主稍后用该调用的结果恢复。恢复的语义约束(确定性重放、memo 命中不二次调用和类型校验)见 [`docs/spec/core-language.zh.md` §3.4.1](../spec/core-language.zh.md) 与 [RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)。
 
-- **原生 / server WASM**:宿主内部 block 等待,直接返回 `AHFL_CAP_OK`,通常不用 `PENDING`。
-- **浏览器**:JSPI 或 Asyncify;能力返回 `PENDING`,微任务里用结果恢复。
-- **serverless**:能力返回 `PENDING`,函数返回;后续事件(webhook / 回调)携带结果恢复。
+同步能力完成后返回 `AHFL_CAP_OK`。需要异步恢复的能力返回 `AHFL_CAP_PENDING`，宿主负责保存恢复记录、等待外部结果并通过所用 runtime 的恢复接口继续执行。接入前应验证该绑定是否支持完整的持久化与恢复流程。
 
-recovery schema v2 是 **stable-artifact**:已持久化的 v2 resume record 在后续版本仍可加载;schema 演进 append-only(新字段可选、老 reader 忽略),破坏性变更须发新版本号。
+恢复记录只接受当前完整格式；格式变化时同步更新所有生产者、消费者与测试，旧记录须重新生成。
 
-## 一致性保证
+## 恢复与外部副作用的限制
 
-WH-9 后仓库只有**一条执行路径**:vendored wasm3 内嵌引擎。带 capability 的 workflow 其执行确定性由 conformance 套件锁定——`ahfl.conformance.wasm_native_differential`(内嵌 wasm3 宿主 vs 已检入 blessing,**73 agreed / 0 skipped**)与 `ahfl.conformance.wasm_node_differential`(Node V8 宿主 vs blessing,**69 agreed / 4 skipped**,4 项为既有 Node 移植缺能力),比较 workflow status、state 迁移序列、capability 调用序列与确定性 `value_json`;wire-schema 模块字节由 `tests/unit/runtime/engine/native_wasm_differential.cpp`(c3 inspector)校验。`tests/integration/durable_resume_capstone.cpp` 验证**同一进程内**两个 fresh `WasmWorkflowRuntime` scope 的 suspend → 落盘快照 → 重新加载 → memo/frontier 重放确定恢复(冷启动整模块重放,非跨进程)。
+workflow 执行编译后的 Core Wasm 模块。挂起恢复会在新实例中从头重放模块，已记录能力调用的结果由 memo（已完成调用结果表）提供，避免再次调用这些能力。
 
-> **范围说明**:所有 workflow 都真实执行编译产物 Core Wasm 模块(内嵌 wasm3 或 Node V8)。WH-9 已删除旧的树步解释器及其"节点边界 checkpoint + SIGKILL 杀进程重启"证据——该模型与 wasm 的"Pending 挂起 + memo + 冷启动整模块重放"结构不兼容,证据诚实退役而非重新指向。真正的**跨进程 / 生产级** durable resume(POSIX 落盘、密钥/KMS、真实重放 exactly-once)仍是 [RFC 0026](../rfcs/0026-ir-tower-and-execution-model.zh.md) E4-B2 的后续工作,不在本契约的当前投影内;各语言宿主 SDK(Rust/Go)与完整 production Wasm host 亦同。
+持久化记录与宿主外部系统中的副作用不是同一个事务。需要跨进程恢复时，宿主还必须保证快照持久化、结果完整性、写入幂等与重放安全；不要把 memo 命中等同于生产系统端到端 exactly-once（恰好一次）保证。生产部署还需验证所用存储、密钥管理和语言绑定的恢复行为。

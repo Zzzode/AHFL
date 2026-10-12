@@ -84,8 +84,7 @@ def parse_json_output(result: subprocess.CompletedProcess[str], label: str) -> d
     except json.JSONDecodeError as error:
         raise AssertionError(f"{label} did not emit JSON: {error}\n{result.stdout}") from error
     require(isinstance(value, dict), f"{label} JSON must be an object")
-    require(value.get("schema") == "ahfl.run-report", f"{label} schema mismatch: {value}")
-    require(value.get("schema_version") == 1, f"{label} schema version mismatch: {value}")
+    require(value.get("format") == "ahfl.run-report", f"{label} schema mismatch: {value}")
     return value
 
 
@@ -106,6 +105,13 @@ def main() -> int:
     repo_root = Path(sys.argv[2]).resolve()
     work_dir = Path(sys.argv[3]).resolve()
     evidence_path = Path(sys.argv[4]).resolve()
+    run_dir = work_dir / f"run-{os.getpid()}"
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True)
+    home = run_dir / "home"
+    home.mkdir(mode=0o700)
+    os.environ["HOME"] = str(home.resolve())
     project = work_dir / "execution-demo"
 
     if project.exists():
@@ -177,7 +183,7 @@ def main() -> int:
         event_lines = [json.loads(line) for line in jsonl_result.stdout.splitlines() if line]
         require(event_lines, "JSONL run emitted no events")
         require(
-            all(event.get("schema") == "ahfl.run-event" for event in event_lines),
+            all(event.get("format") == "ahfl.run-event" for event in event_lines),
             "JSONL run emitted a non-event line",
         )
         require(
@@ -195,7 +201,7 @@ def main() -> int:
         require(quiet_result.returncode == 0, f"quiet run failed: {quiet_result.stderr}")
         quiet_value = json.loads(quiet_result.stdout)
         require(quiet_value.get("ticket_id") == "INC-1002", "quiet output used wrong input")
-        require("schema" not in quiet_value, "quiet output leaked report envelope")
+        require("format" not in quiet_value, "quiet output leaked report envelope")
 
         conflict_result = run(
             ahflc,
@@ -217,7 +223,7 @@ def main() -> int:
     evidence_path.write_text(
         json.dumps(
             {
-                "schema": "ahfl.beta-evidence.run-profiles.v1",
+                "format": "ahfl.beta-evidence.run-profiles",
                 "status": "passed",
                 "criterion": "BETA-01",
                 "source_revision": (

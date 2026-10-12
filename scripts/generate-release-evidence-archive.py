@@ -13,7 +13,7 @@ import threading
 from typing import Any
 
 
-SCHEMA = "ahfl.release_evidence_archive.v1"
+SCHEMA = "ahfl.release_evidence_archive"
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,7 +116,7 @@ def sha256_text(text: str) -> str:
 def public_api_snapshot(package: str, version: str, entries: list[dict[str, Any]]) -> str:
     return json.dumps(
         {
-            "schema": "ahfl.public_api.v1",
+            "format": "ahfl.public_api",
             "package": {
                 "name": package,
                 "version": version,
@@ -138,7 +138,7 @@ def registry_entry(
     yanked: bool = False,
 ) -> dict[str, Any]:
     return {
-        "format_version": "ahfl.registry.index.v1",
+        "format": "ahfl.registry.index",
         "registry_id": "default",
         "package": package,
         "version": version,
@@ -191,8 +191,8 @@ class LocalRegistry:
             def do_GET(self) -> None:
                 outer.requests.append({"method": "GET", "path": self.path})
                 parts = self.path.strip("/").split("/")
-                if len(parts) == 4 and parts[0] == "v1" and parts[1] == "packages" and parts[3] == "registry-index":
-                    package = parts[2]
+                if len(parts) == 3 and parts[0] == "packages" and parts[2] == "registry-index":
+                    package = parts[1]
                     versions = [
                         registry_entry(pkg, version, sha256_text(snapshot))
                         for (pkg, version), snapshot in outer.previous_snapshots.items()
@@ -209,61 +209,57 @@ class LocalRegistry:
                     self._write_json(
                         200,
                         {
-                            "format_version": "ahfl.registry.package_index.v1",
+                            "format": "ahfl.registry.package_index",
                             "package": package,
                             "versions": versions,
                         },
                     )
                     return
                 if (
-                    len(parts) == 6
-                    and parts[0] == "v1"
-                    and parts[1] == "packages"
-                    and parts[3] == "versions"
-                    and parts[5] == "registry-index"
+                    len(parts) == 5
+                    and parts[0] == "packages"
+                    and parts[2] == "versions"
+                    and parts[4] == "registry-index"
                 ):
-                    entry = outer.published.get((parts[2], parts[4]))
+                    entry = outer.published.get((parts[1], parts[3]))
                     if entry is None:
                         self._write_json(404, {"error": "not found"})
                         return
                     self._write_json(200, entry)
                     return
                 if (
-                    len(parts) == 6
-                    and parts[0] == "v1"
-                    and parts[1] == "packages"
-                    and parts[3] == "versions"
-                    and parts[5] == "source-archive"
+                    len(parts) == 5
+                    and parts[0] == "packages"
+                    and parts[2] == "versions"
+                    and parts[4] == "source-archive"
                 ):
-                    artifacts = outer.published_artifacts.get((parts[2], parts[4]))
+                    artifacts = outer.published_artifacts.get((parts[1], parts[3]))
                     if artifacts is None:
                         self._write_json(404, {"error": "not found"})
                         return
                     self._write_json(200, artifacts["source_archive"])
                     return
                 if (
-                    len(parts) == 6
-                    and parts[0] == "v1"
-                    and parts[1] == "packages"
-                    and parts[3] == "versions"
-                    and parts[5] == "source-archive.payload"
+                    len(parts) == 5
+                    and parts[0] == "packages"
+                    and parts[2] == "versions"
+                    and parts[4] == "source-archive.payload"
                 ):
-                    artifacts = outer.published_artifacts.get((parts[2], parts[4]))
+                    artifacts = outer.published_artifacts.get((parts[1], parts[3]))
                     if artifacts is None:
                         self._write_json(404, {"error": "not found"})
                         return
                     self._write_text(200, artifacts["source_archive_payload"])
                     return
                 if (
-                    len(parts) == 6
-                    and parts[0] == "v1"
-                    and parts[1] == "packages"
-                    and parts[3] == "versions"
-                    and parts[5] == "public-api"
+                    len(parts) == 5
+                    and parts[0] == "packages"
+                    and parts[2] == "versions"
+                    and parts[4] == "public-api"
                 ):
-                    snapshot = outer.previous_snapshots.get((parts[2], parts[4]))
+                    snapshot = outer.previous_snapshots.get((parts[1], parts[3]))
                     if snapshot is None:
-                        artifacts = outer.published_artifacts.get((parts[2], parts[4]))
+                        artifacts = outer.published_artifacts.get((parts[1], parts[3]))
                         if artifacts is not None:
                             snapshot = artifacts["public_api_snapshot"]
                     if snapshot is None:
@@ -278,20 +274,19 @@ class LocalRegistry:
                 outer.requests.append({"method": "PUT", "path": self.path, "body": body})
                 parts = self.path.strip("/").split("/")
                 if (
-                    len(parts) != 6
-                    or parts[0] != "v1"
-                    or parts[1] != "packages"
-                    or parts[3] != "versions"
-                    or parts[5] != "publish"
-                    or body.get("format_version") != "ahfl.registry.publish_request.v1"
+                    len(parts) != 5
+                    or parts[0] != "packages"
+                    or parts[2] != "versions"
+                    or parts[4] != "publish"
+                    or body.get("format") != "ahfl.registry.publish_request"
                 ):
                     self._write_json(404, {"error": "not found"})
                     return
                 entry = body.get("registry_index", {})
                 require(body.get("source_archive_payload"), "publish request missing source payload")
                 require(body.get("public_api_snapshot"), "publish request missing public API snapshot")
-                outer.published[(parts[2], parts[4])] = dict(entry)
-                outer.published_artifacts[(parts[2], parts[4])] = {
+                outer.published[(parts[1], parts[3])] = dict(entry)
+                outer.published_artifacts[(parts[1], parts[3])] = {
                     "source_archive": body.get("source_archive", {}),
                     "source_archive_payload": body.get("source_archive_payload", ""),
                     "public_api_snapshot": body.get("public_api_snapshot", ""),
@@ -303,16 +298,15 @@ class LocalRegistry:
                 outer.requests.append({"method": "POST", "path": self.path, "body": body})
                 parts = self.path.strip("/").split("/")
                 if (
-                    len(parts) != 6
-                    or parts[0] != "v1"
-                    or parts[1] != "packages"
-                    or parts[3] != "versions"
-                    or parts[5] != "yank"
-                    or body.get("format_version") != "ahfl.registry.yank_request.v1"
+                    len(parts) != 5
+                    or parts[0] != "packages"
+                    or parts[2] != "versions"
+                    or parts[4] != "yank"
+                    or body.get("format") != "ahfl.registry.yank_request"
                 ):
                     self._write_json(404, {"error": "not found"})
                     return
-                entry = dict(outer.published.get((parts[2], parts[4]), {}))
+                entry = dict(outer.published.get((parts[1], parts[3]), {}))
                 if not entry:
                     self._write_json(409, {"error": "not published"})
                     return
@@ -325,7 +319,7 @@ class LocalRegistry:
 
         self.httpd = ThreadingServer(("127.0.0.1", 0), Handler)
         host, port = self.httpd.server_address
-        self.base_url = f"http://{host}:{port}/v1"
+        self.base_url = f"http://{host}:{port}"
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         return self
@@ -471,9 +465,7 @@ class ArchiveBuilder:
         module_prefix = package.replace("-", "_")
         write_text(
             package_root / "ahfl.toml",
-            f"""manifest_version = 2
-
-[package]
+            f"""[package]
 name = "{package}"
 version = "{version}"
 edition = "2026"
@@ -516,9 +508,7 @@ pub fn score(req: ScoreRequest) -> Int effect Pure decreases 0 {{
         module_prefix = package.replace("-", "_")
         write_text(
             package_root / "ahfl.toml",
-            f"""manifest_version = 2
-
-[package]
+            f"""[package]
 name = "{package}"
 version = "{version}"
 edition = "2026"
@@ -713,7 +703,7 @@ pub fn marker() -> Int effect Pure decreases 0 {{
                 evidence_type="command-artifacts",
                 artifacts=[resolve_stdout, resolve_lockfile_artifact],
                 command=command_template(self.repo, self.ahflc, resolve_args),
-                summary="Resolved a manifest v2 registry dependency from the local fixture registry into ahfl.lock.",
+                summary="Resolved a manifest registry dependency from the local fixture registry into ahfl.lock.",
             )
 
             yank_args = [
@@ -798,7 +788,7 @@ pub fn marker() -> Int effect Pure decreases 0 {{
         self.command_item(
             evidence_id="rfc0006.user_package_with_repo_sysroot",
             covers=["RFC0005", "RFC0006"],
-            args=["check", "--manifest", str(manifest), "--target", "workflow", "--sysroot", str(self.repo)],
+            args=["check", "--verify=off", "--manifest", str(manifest), "--target", "workflow", "--sysroot", str(self.repo)],
             artifact_name="sysroot/user-package-check.txt",
             parse_json=False,
             validate=lambda text: require("ok: checked 3 source(s)" in text, text),
@@ -810,7 +800,7 @@ pub fn marker() -> Int effect Pure decreases 0 {{
         self.command_item(
             evidence_id="rfc0006.source_sysroot_corelib_development",
             covers=["RFC0006"],
-            args=["check", "--manifest", str(source_sysroot_manifest), "--sysroot", str(source_sysroot)],
+            args=["check", "--verify=off", "--manifest", str(source_sysroot_manifest), "--sysroot", str(source_sysroot)],
             artifact_name="sysroot/source-sysroot-check.txt",
             parse_json=False,
             validate=lambda text: require("ok: checked 4 source(s)" in text, text),
@@ -831,7 +821,7 @@ pub fn marker() -> Int effect Pure decreases 0 {{
         self.command_item(
             evidence_id="rfc0011.pattern_matrix.representative_cases",
             covers=["RFC0011"],
-            args=["check", "--manifest", str(fixture / "ahfl.toml"), "--sysroot", str(self.repo)],
+            args=["check", "--verify=off", "--manifest", str(fixture / "ahfl.toml"), "--sysroot", str(self.repo)],
             artifact_name="pattern/rfc0011-pattern-matrix-check.txt",
             parse_json=False,
             validate=lambda text: require("ok: checked 1 source(s)" in text, text),
@@ -937,7 +927,7 @@ pub fn marker() -> Int effect Pure decreases 0 {{
     def write_manifest(self) -> pathlib.Path:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         manifest = {
-            "schema": SCHEMA,
+            "format": SCHEMA,
             "generated_at": self.timestamp,
             "is_release_ready": all(item["status"] == "passed" for item in self.items),
             "total_evidence_count": len(self.items),
@@ -951,7 +941,7 @@ pub fn marker() -> Int effect Pure decreases 0 {{
 
 
 def validate_public_api_snapshot(payload: dict[str, Any]) -> None:
-    require(payload.get("schema") == "ahfl.public_api.v1", "unexpected public API schema")
+    require(payload.get("format") == "ahfl.public_api", "unexpected public API schema")
     package = payload.get("package", {})
     require(package.get("name") == "refund-audit", f"unexpected package: {package}")
     require(package.get("manifest") == "ahfl.toml", f"manifest is not package-relative: {package}")
@@ -990,7 +980,7 @@ def validate_package_graph(payload: dict[str, Any]) -> None:
 
 
 def validate_lockfile(payload: dict[str, Any]) -> None:
-    require(payload.get("format_version") == "ahfl.lock.v1", "unexpected lockfile version")
+    require(payload.get("format") == "ahfl.lock", "unexpected lockfile version")
     require(payload.get("root_package") == "refund-audit", "unexpected root package")
     packages = {package.get("name"): package for package in payload.get("packages", [])}
     require(packages.get("std", {}).get("source") == "sysroot", str(packages))

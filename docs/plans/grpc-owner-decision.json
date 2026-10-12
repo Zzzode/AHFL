@@ -1,5 +1,5 @@
 {
-  "schema": "ahfl.native_grpc_owner_decision.v1",
+  "format": "ahfl.native_grpc_owner_decision",
   "rfc": "0004-native-grpc-transport",
   "decision": "no-go",
   "owner": "decision-agent (autonomous, per CLAUDE.md autonomous decision-making)",

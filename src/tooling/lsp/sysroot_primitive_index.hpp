@@ -10,7 +10,7 @@
 
 namespace ahfl::lsp {
 
-inline constexpr std::string_view kSysrootPrimitiveHomeSchemaVersion = "sysroot-primitive-home-v1";
+inline constexpr std::string_view kSysrootPrimitiveHomeFormat = "sysroot-primitive-home";
 
 struct SysrootPrimitiveIndexInput {
     std::filesystem::path std_manifest;

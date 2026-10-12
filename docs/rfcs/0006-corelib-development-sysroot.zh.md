@@ -59,7 +59,7 @@ decision_due: "2026-07-17"
 
 1. 不改变 AHFL 源码 `import std::option as option;` 的表面语法。
 2. 不设计 registry、version range、remote toolchain download 或 signed toolchain distribution。
-3. 不设计标准库 overlay、SDK overlay 或多版本 std 并存机制；v1 一次分析只允许一个 active `std`。
+3. 不设计标准库 overlay、SDK overlay 或多版本 std 并存机制；一次分析只允许一个 active `std`。
 4. 不让 workspace manifest 自动选择任意 sysroot。Workspace 可以声明 package 成员；toolchain profile 由 CLI 参数、LSP 配置、CLI 环境变量或 release 默认值提供。
 5. 不为旧 JSON descriptor、旧 LSP initialization option 或旧 search-root 语义增加兼容路径。
 
@@ -435,15 +435,15 @@ LSP cache key 必须包含：
 1. 在 LSP 里特判 `std` 目录。缺点是把 package identity 问题放到工具层字符串判断，绕过 PackageGraph，并且无法解释 CLI 和测试中的同类问题。
 2. 总是优先使用 workspace 中的 `std`。缺点是普通用户工程若有名为 `std` 的目录，会意外覆盖 release extension bundled sysroot；这与 Rust/Go/Clang/TypeScript 的工具链资源分层相反。
 3. 继续只使用 `AHFL_SYSROOT`。缺点是 VS Code / LSP 配置不可见，multi-root workspace 无法表达，diagnostics 不能解释 profile origin。
-4. 允许两个 `std` 并存并做 overlay。缺点是需要 SDK overlay、版本匹配、shadowing 和 symbol identity 规则；AHFL v1 没有需求，也会破坏 `PackageId(0)` 的简单性。
+4. 允许两个 `std` 并存并做 overlay。缺点是需要 SDK overlay、工具链匹配、shadowing 和 symbol identity 规则；AHFL 没有需求，也会破坏 `PackageId(0)` 的简单性。
 5. 把 sysroot 写入 `ahfl.toml`。缺点是用户 package manifest 会改变 compiler toolchain 身份，构建可复现性和 IDE 配置边界都变差；package 可以声明需要 `std`，但不能选择工具链根。
 6. 保留 `initializationOptions.sysroot` 和 `initializationOptions.ahfl.sysroot` 作为 alias。缺点是继续制造双入口，extension、tests 和第三方 client 会分裂到不同 schema；AHFL 当前阶段应删除旧入口。
 7. LSP 只维护一个 process-global sysroot。缺点是 multi-root workspace 无法表达不同工具链，且 path dependency 跨 workspace folder 时无法给出明确 profile conflict diagnostic。
 
 ## Open Questions
 
-1. `server_compatibility` 第一版是否只校验 manifest schema version，还是也校验 compiler build id？
-2. 未来是否需要 SDK overlay RFC，用于平台标准库扩展？本 RFC v1 明确不实现。
+1. 工具链身份只按当前 manifest 完整结构、sysroot 内容与实际 compiler build 摘要校验；不协商 manifest schema 编号。
+2. 未来是否需要 SDK overlay RFC，用于平台标准库扩展？本 RFC 明确不实现。
 
 ## Decision History
 

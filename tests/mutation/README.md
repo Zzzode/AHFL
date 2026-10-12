@@ -75,7 +75,7 @@ mutation-testing-elements JSON, and computes killed/survived/score. When
 
 ```json
 {
-  "schema": "ahfl.mutation.target.v1",
+  "format": "ahfl.mutation.target",
   "target": "arithmetic",
   "source": "arithmetic.cpp",
   "test": "arithmetic_test.cpp",
@@ -99,11 +99,11 @@ pins them by index.
 
 ## JSON score-report schemas
 
-### `ahfl.mutation.fallback.v2`
+### `ahfl.mutation.fallback`
 
 ```json
 {
-  "schema": "ahfl.mutation.fallback.v2",
+  "format": "ahfl.mutation.fallback",
   "runner": "fallback",
   "status": "ok",                 // or "tool_unavailable"
   "compiler": "g++",              // present when status == ok
@@ -136,11 +136,11 @@ pins them by index.
 an empty `targets` array. It is an honest "cannot run" contract, not a
 fabricated score.
 
-### `ahfl.mutation.mull.v1`
+### `ahfl.mutation.mull`
 
 ```json
 {
-  "schema": "ahfl.mutation.mull.v1",
+  "format": "ahfl.mutation.mull",
   "runner": "mull",
   "status": "ok",                 // or "tool_unavailable"
   "source_report": "<path to mull JSON>",

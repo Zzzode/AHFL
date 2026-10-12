@@ -7,7 +7,7 @@
 // page, an instance-lifetime bump allocator, and a scripted schedule that
 // publishes node-event records (through the SHARED resume_test_support.hpp
 // synthesizer) and invokes the host's import callback synchronously on the
-// SAME call stack nested inside invoke_run2. This is the same evidence class
+// SAME call stack nested inside invoke_run_workflow. This is the same evidence class
 // as D1b's hand-built memory fixtures -- it proves the host DRIVER (admission
 // order, L0/L3/L4 transfers, the bind/CAS/ACK handshake, fail-closed arms,
 // terminal consume), not Wasm execution. The real-engine port is F5 (Node
@@ -76,7 +76,7 @@ void check(bool ok, std::string_view name) {
 
 // One scripted capability call site: the L2 Param frame the module presents
 // (a view into already-existing instance storage), the ahfl_cap import
-// ordinal, and what run2 does AFTER the host replies.
+// ordinal, and what run_workflow does AFTER the host replies.
 struct FakeCapStep {
     std::uint32_t import_ordinal{0};
     std::vector<std::uint8_t> param_frame;
@@ -95,14 +95,14 @@ struct FakeScript {
     std::optional<eng::EngineError> fail_first_alloc{};
     // Make fresh_instance fail.
     std::optional<eng::EngineError> fail_instantiation{};
-    // Make read_whole_memory report a short page after a successful run2,
+    // Make read_whole_memory report a short page after a successful run_workflow,
     // simulating an engine port whose whole-page transport was truncated.
     bool truncate_whole_memory{false};
-    // WH-3: script the run2 tuple's raw status (default AHFL_CAP_OK). A
+    // WH-3: script the run_workflow tuple's raw status (default AHFL_CAP_OK). A
     // non-OK status (e.g. AHFL_CAP_PENDING) exercises the controller's
     // finish_run classification on the RESUME entry contract (a
     // fresh-instance replay must end OK; PENDING -> TransitionInvalid).
-    std::optional<std::uint32_t> scripted_run2_status{};
+    std::optional<std::uint32_t> scripted_run_workflow_status{};
 };
 
 // A record of every host frame transfer: its exact bytes and guest pointer.
@@ -182,8 +182,8 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
         return eng::GuestPointer{ptr};
     }
 
-    [[nodiscard]] std::expected<eng::Run2Outcome, eng::EngineError>
-    invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_len) override {
+    [[nodiscard]] std::expected<eng::WorkflowRunOutcome, eng::EngineError>
+    invoke_run_workflow(eng::GuestPointer entry_ptr, std::uint32_t entry_len) override {
         if (!instantiated_ || run_started_) {
             return std::unexpected(eng::EngineError::InvalidSequence);
         }
@@ -229,26 +229,26 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
             auto reply = callback_(observation);
             if (std::holds_alternative<eng::ImportAbort>(reply)) {
                 // The host failed closed; the engine unwinds without resuming.
-                return eng::Run2Outcome{eng::Run2HostAborted{}};
+                return eng::WorkflowRunOutcome{eng::WorkflowRunHostAborted{}};
             }
             const auto &frame = std::get<eng::ImportReply>(reply);
             import_raw_statuses_.push_back(frame.raw_status);
-            // D2b-8: a PENDING import reply ends run2 immediately with a
+            // D2b-8: a PENDING import reply ends run_workflow immediately with a
             // PENDING exit: the suspended node writes NO completion event and
             // no subsequent node runs (the driver persists the new coordinate).
             if (frame.raw_status == AHFL_CAP_PENDING) {
-                eng::Run2ResultTuple pending_tuple;
+                eng::WorkflowRunResultTuple pending_tuple;
                 pending_tuple.raw_status = AHFL_CAP_PENDING;
                 pending_tuple.output_ptr = eng::GuestPointer{0};
                 pending_tuple.output_len = 0;
-                return eng::Run2Outcome{pending_tuple};
+                return eng::WorkflowRunOutcome{pending_tuple};
             }
             last_output_ptr = frame.result_ptr.value;
             last_output_len = frame.result_len;
             ++cap_index;
 
             if (step.trap_after_reply) {
-                return eng::Run2Outcome{eng::Run2Trapped{}};
+                return eng::WorkflowRunOutcome{eng::WorkflowRunTrapped{}};
             }
 
             // OK: the node completes, its event record is published AFTER the
@@ -257,13 +257,13 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
             ++completed;
         }
 
-        eng::Run2ResultTuple tuple;
-        if (script_.scripted_run2_status) {
-            // WH-3: a scripted non-OK run2 status (e.g. AHFL_CAP_PENDING)
+        eng::WorkflowRunResultTuple tuple;
+        if (script_.scripted_run_workflow_status) {
+            // WH-3: a scripted non-OK run_workflow status (e.g. AHFL_CAP_PENDING)
             // exercises the controller's finish_run classification on the
             // RESUME entry contract. A real module returns (status,0,0) on a
             // non-OK terminal status; the Fake mirrors that ABI shape.
-            tuple.raw_status = *script_.scripted_run2_status;
+            tuple.raw_status = *script_.scripted_run_workflow_status;
             tuple.output_ptr = eng::GuestPointer{0};
             tuple.output_len = 0;
         } else {
@@ -272,7 +272,7 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
             tuple.output_len = last_output_len;
         }
         (void)completed;
-        return eng::Run2Outcome{tuple};
+        return eng::WorkflowRunOutcome{tuple};
     }
 
     // Test inspection.
@@ -733,7 +733,7 @@ int main(int argc, char **argv) {
 
     // ============ S2: reopen of an already-Injected generation ================
     // The frontier is a ReturnMemo (its committed injected memo): no CAS, no
-    // chosen slot, run2 OK -> Consumed.
+    // chosen slot, run_workflow OK -> Consumed.
     {
         const fs::path work = base / "s2-injected-restart";
         Topology topo = topology_two_nodes();
@@ -1256,8 +1256,8 @@ int main(int argc, char **argv) {
         check(engine.host_allocations().empty(), "S11.engine_never_instantiated");
     }
 
-    // ============ S12: post-run2 short page fails closed =====================
-    // run2 returns OK but the engine port yields a span shorter than the fixed
+    // ============ S12: post-run_workflow short page fails closed =====================
+    // run_workflow returns OK but the engine port yields a span shorter than the fixed
     // 64 KiB page (partial transport read). The terminal gate must reject it
     // before the event-prefix decode / L5 output copy, and no tombstone may be
     // emitted.
@@ -1271,7 +1271,7 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S12.store");
-        // Reopen of an already-Injected generation: no new CAS, run2 reaches
+        // Reopen of an already-Injected generation: no new CAS, run_workflow reaches
         // its OK terminal read where the truncated-page fault is injected.
         const auto suspended = make_suspended_record(
             mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
@@ -1370,7 +1370,7 @@ int main(int argc, char **argv) {
     }
 
     // ============ S14: finish_run raw PENDING -> TransitionInvalid ===========
-    // WH-3: the engine carries run2's raw_status verbatim; the controller's
+    // WH-3: the engine carries run_workflow's raw_status verbatim; the controller's
     // finish_run classifies it. A fresh-instance replay that ends PENDING (the
     // resume entry contract requires OK) fails closed as TransitionInvalid,
     // unchanged from the pre-WH-3 behaviour.
@@ -1393,9 +1393,9 @@ int main(int argc, char **argv) {
         FakeScript script;
         script.nodes = topo.nodes;
         script.caps = cap_steps(1);
-        // The memo reply is served (raw OK), then run2 returns a raw PENDING
+        // The memo reply is served (raw OK), then run_workflow returns a raw PENDING
         // tuple: the engine never classifies, finish_run does.
-        script.scripted_run2_status = AHFL_CAP_PENDING;
+        script.scripted_run_workflow_status = AHFL_CAP_PENDING;
         FakeResumeEngine engine(std::move(script));
 
         host::ResumeRequest request;
@@ -1419,7 +1419,7 @@ int main(int argc, char **argv) {
                   "S14.transition_invalid");
             check(host::host_code(done.error()) == "resume.transition.invalid", "S14.host_code");
         }
-        // The memo reply was still served with raw OK before the PENDING run2.
+        // The memo reply was still served with raw OK before the PENDING run_workflow.
         check(engine.import_reply_statuses().size() == 1 &&
                   engine.import_reply_statuses()[0] == AHFL_CAP_OK,
               "S14.memo_reply_raw_ok");

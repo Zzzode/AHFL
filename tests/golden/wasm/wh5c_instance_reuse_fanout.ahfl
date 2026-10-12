@@ -1,7 +1,7 @@
 module wasm::wh5c_instance_reuse_fanout;
 
 // WH-5c.2 fixture: a workflow with TWO nodes (first, second) reusing ONE
-// packaged agent instance (EchoAgent). The defect (GAP 1) was that the V2-D
+// packaged agent instance (EchoAgent). The defect (GAP 1) was that the workflow-frame
 // packager assigned one node-frame block per packaged INSTANCE and rejected
 // instance reuse with a D5 lifecycle gate, so a fan-out workflow could not
 // lower to wasm. Approach B (decision 12.15.16) flips the cardinality to one

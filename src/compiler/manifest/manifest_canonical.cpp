@@ -168,7 +168,6 @@ void append_dependencies(std::ostream &out, const std::vector<DependencySpec> &d
 
 std::string canonicalize_package_manifest(const PackageManifest &manifest) {
     std::ostringstream out;
-    out << "manifest_version = " << manifest.manifest_version << "\n\n";
 
     out << "[package]\n";
     append_key_value(out, "name", manifest.package_name);
@@ -253,14 +252,10 @@ std::string canonicalize_package_manifest(const PackageManifest &manifest) {
 
 std::string canonicalize_workspace_manifest(const WorkspaceManifest &manifest) {
     std::ostringstream out;
-    out << "manifest_version = " << manifest.manifest_version << "\n\n";
 
     out << "[workspace]\n";
     append_key_value(out, "name", manifest.workspace_name);
     append_string_array(out, "members", manifest.members);
-
-    out << "\n[resolver]\n";
-    out << "version = " << manifest.resolver_version << '\n';
 
     append_dependencies(out, manifest.dependencies);
     return out.str();

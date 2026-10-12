@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """RFC 0026 P6-7 rung A corpus-wide frame-section eligibility gate.
 
-The P4-D frame lane (`ahfl.core-layout.v1` + the boundary-root block of
-`ahfl.wire-schema.v1`) is the UNIFORM execution lane for EVERY agent after
-the dual-track elimination: runv is the sole entry point, all capability
+The P4-D frame lane (`ahfl.core-layout` + the boundary-root block of
+`ahfl.wire-schema`) is the UNIFORM execution lane for EVERY agent after
+the dual-track elimination: run_frame is the sole entry point, all capability
 imports use the bridge functype (i32)->(i32,i32), and there is no WireJson
 lane. Outlined fns, closures, and capability finals are all first-class
 P6-frame constructs.
@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The ONLY fixtures allowed to carry the ahfl.core-layout.v1 frame section.
+# The ONLY fixtures allowed to carry the ahfl.core-layout frame section.
 # Anything else emitting one is a byte-identity / lane-mixing regression.
 # RFC 0026 dual-track elimination: EVERY agent is a P6-frame module — the
 # WireJson lane is gone, so capability/FB agents carry the section too.
@@ -66,26 +66,26 @@ FRAME_FIXTURES = frozenset(
         "p6_unwrap_none_trap",
         "p6_unwrap_some",
         "p6_frame_two_containers",
-        # V2-A computed-final fixtures.
-        "v2a_computed_scalar",
-        "v2a_computed_aggregate",
-        "v2a_computed_enum",
-        "v2a_computed_payload_enum",
-        "v2a_computed_if_let_return",
-        # V2-B String/computed-final and bounded-arena fixtures.
-        "v2b_computed_string",
-        "v2b_bounded_string",
-        "v2b_string_passthrough",
-        "v2b_enum_string",
-        "v2b_list_string_arena",
-        "v2b_list_nested_string_arena",
-        "v2b_builtin_i64_final",
-        # V2-C capability-bridge fixtures.
-        "v2c_multi_arg_bridge",
-        "v2c_bridge_chain",
-        "v2c_route_then_bridge",
-        "v2c_single_arg_bridge",
-        "v2c_single_enum_bridge",
+        # computed-final computed-final fixtures.
+        "computed_scalar",
+        "computed_aggregate",
+        "computed_enum",
+        "computed_payload_enum",
+        "computed_if_let_return",
+        # string-frame String/computed-final and bounded-arena fixtures.
+        "computed_string",
+        "bounded_string",
+        "string_passthrough",
+        "enum_string",
+        "list_string_arena",
+        "list_nested_string_arena",
+        "builtin_i64_final",
+        # capability-bridge capability-bridge fixtures.
+        "multi_arg_bridge",
+        "bridge_chain",
+        "route_then_bridge",
+        "single_arg_bridge",
+        "single_enum_bridge",
         # KR6.6: String concatenation computed final (construct-heap region
         # authorized via the v4 presence-gated construct_heap_base extension).
         "kr66_string_concat",
@@ -114,27 +114,27 @@ FRAME_FIXTURES = frozenset(
     }
 )
 
-CORE_LAYOUT_SECTION = b"ahfl.core-layout.v1"
+CORE_LAYOUT_SECTION = b"ahfl.core-layout"
 
-# The V2-B fixtures that MUST carry exactly one Data(11) section (one per
+# The string-frame fixtures that MUST carry exactly one Data(11) section (one per
 # String-literal module); every other successfully emitting fixture must carry
 # NONE (byte-identity pin for the additive Data section).
 DATA_SECTION_FIXTURES = frozenset(
     {
-        "v2b_computed_string",
-        "v2b_bounded_string",
-        "v2b_enum_string",
+        "computed_string",
+        "bounded_string",
+        "enum_string",
         "fb3_string_capture",
         "kr66_string_concat",
     }
 )
 DATA_SECTION_ID = 11
 
-# A V2-B reject fixture: its one String literal's aligned image exceeds the
+# A string-frame reject fixture: its one String literal's aligned image exceeds the
 # reserved 768-byte rodata region [256,1024), so emission MUST fail closed with
 # the rodata RESOURCE gate (no artifact). Pins the extent metering, not just
 # the happy-path image.
-RODATA_OVERFLOW_FIXTURE = "v2b_rodata_overflow"
+RODATA_OVERFLOW_FIXTURE = "rodata_overflow"
 RODATA_OVERFLOW_SUBSTR = "rodata region"
 
 
@@ -239,7 +239,7 @@ def main(argv: list[str]) -> int:
                     f"pinned frame fixture (the frame lane must not mix with capability/FB "
                     f"agents; byte-identity regression)"
                 )
-        # V2-B: exactly one Data(11) section iff the fixture constructs a
+        # string-frame: exactly one Data(11) section iff the fixture constructs a
         # String literal; additive byte-identity for every other module.
         data_count = sum(1 for sid in section_ids(first) if sid == DATA_SECTION_ID)
         if name in DATA_SECTION_FIXTURES:
@@ -249,7 +249,7 @@ def main(argv: list[str]) -> int:
         elif data_count != 0:
             fail(
                 f"{source.name} unexpectedly carries a Data(11) section (the rodata Data "
-                f"section is additive only for V2-B String-literal frame modules)"
+                f"section is additive only for string-frame String-literal frame modules)"
             )
 
     missing = FRAME_FIXTURES - frame_section_seen
@@ -261,11 +261,11 @@ def main(argv: list[str]) -> int:
     missing_data = DATA_SECTION_FIXTURES - data_section_seen
     if missing_data:
         fail(
-            "pinned V2-B fixtures emitted no Data(11) section: "
+            "pinned string-frame fixtures emitted no Data(11) section: "
             + ", ".join(sorted(missing_data))
         )
 
-    # V2-B extent metering: an over-large literal image fails closed with the
+    # string-frame extent metering: an over-large literal image fails closed with the
     # rodata RESOURCE gate and produces NO artifact.
     overflow_source = wasm_dir / f"{RODATA_OVERFLOW_FIXTURE}.ahfl"
     if not overflow_source.is_file():

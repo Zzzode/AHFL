@@ -103,8 +103,7 @@ const module = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module).length !== 0)
   throw new Error("a pure bounded-recursion agent expanded import authority");
 const {exports: c} = await WebAssembly.instantiate(module, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 const view = new DataView(c.memory.buffer);
 

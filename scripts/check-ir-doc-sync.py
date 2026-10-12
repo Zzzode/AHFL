@@ -18,8 +18,8 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     "docs/design/ir-backend-architecture.zh.md": (
         "```mermaid",
         "emit opt-ir-json",
-        "AHFL_OPT_IR_V1",
-        "AHFL_TYPED_HIR_CACHE_V1",
+        "AHFL_OPT_IR",
+        "ahfl.typed-hir-cache",
         "PathRootKind",
         "AnalysisBundle::source_program_revision",
         "artifact-only",
@@ -27,24 +27,24 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     ),
     "docs/reference/ir-format.zh.md": (
         "emit opt-ir-json",
-        "AHFL_OPT_IR_V1",
+        "AHFL_OPT_IR",
         "skipped_temporal",
         "Program::analysis_revision",
         "artifact-only",
         "readonly",
         # RFC 0026 settled three-layer tower: the AHFL-IR projection
-        # (ahfl.ir.v2) and the layered Core-IR projection (ahfl.core.v1) are
+        # (ahfl.ir) and the layered Core-IR projection (ahfl.core) are
         # permanent per-layer inspection surfaces, neither replacing the other.
         # These fragments pin that co-equal registration so the docs cannot
         # drift back into a deprecation/replacement framing.
         "emit core-ir-json",
-        "ahfl.core.v1",
+        "ahfl.core",
         "分层投影边界",
     ),
     "docs/reference/cli-commands.zh.md": (
         "ahflc emit-opt-ir-json",
         "emit opt-ir-json",
-        "AHFL_OPT_IR_V1",
+        "AHFL_OPT_IR",
         "artifact-only",
         # Settled per-layer projections (see ir-format.zh.md above).
         "emit core-ir-json",

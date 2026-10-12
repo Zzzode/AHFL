@@ -79,8 +79,6 @@ struct DirectProjection {
     TypecheckSnapshot typecheck;
     std::string ir_json;
 
-    [[nodiscard]] friend bool operator==(const DirectProjection &,
-                                         const DirectProjection &) noexcept = default;
 };
 
 [[nodiscard]] DirectProjection project_directly(const ahfl::ast::Program &program) {

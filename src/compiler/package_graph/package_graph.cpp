@@ -456,7 +456,7 @@ void append_checksum_record(std::string &payload,
 [[nodiscard]] std::optional<std::string>
 compute_package_checksum_impl(const PackageInput &input, std::vector<Diagnostic> &diagnostics) {
     std::string payload;
-    payload.append("ahfl.package.checksum.v1");
+    payload.append("ahfl.package.checksum");
     payload.push_back('\0');
     const auto canonical_manifest = manifest::canonicalize_package_manifest(input.manifest);
     append_checksum_record(payload,

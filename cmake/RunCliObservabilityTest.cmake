@@ -91,7 +91,7 @@ if(NOT log_content MATCHES "\"duration_ms\":\"")
 endif()
 
 file(READ "${memory_file}" memory_content)
-if(NOT memory_content MATCHES "\"schema\":\"ahfl\\.memory_report\\.v0\"")
+if(NOT memory_content MATCHES "\"format\":\"ahfl\\.memory_report\"")
     message(FATAL_ERROR "memory report missing schema\n${memory_content}")
 endif()
 if(NOT memory_content MATCHES "\"command\":\"emit-summary\"")

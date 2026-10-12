@@ -5,7 +5,7 @@
 // Drives a SEPARATE effects-free wasm3 instance through step()/current_state/
 // transition_count to collect the state-entry sequence, mirroring the JS
 // oracle's collectStatesViaStep (node_embedded_host.mjs:1035-1065). The
-// canonical instance runs runv/run2 exactly once for effects + output; this
+// canonical instance runs run_frame/run_workflow exactly once for effects + output; this
 // session owns ONLY the state walk.
 //
 // The bounded-walk guard (states.size() + 2), current_state consistency, and
@@ -61,7 +61,7 @@ struct AgentWalkResult {
     // construct_heap_base, the host allocates the input frame there, and
     // the first computed handler's `heap_next = construct_heap_base` reset
     // (FB-1 fix-forward) overwrites the input frame with construct scratch,
-    // corrupting the identity-final output the runv tuple points back at.
+    // corrupting the identity-final output the run_frame tuple points back at.
     // Zero when the module has no construct heap (heap_next stays at the
     // identity base) or the probe failed (the canonical run then skips the
     // advance, which is safe for construct-heap-free modules).

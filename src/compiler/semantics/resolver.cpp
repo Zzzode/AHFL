@@ -3749,7 +3749,7 @@ class ResolverPass final {
     // Python or Scheme. Adding a lint that would warn on "struct Foo + fn
     // Foo" co-existing would therefore be a false-positive machine: the
     // only "collision" the user could observe is an imaginary one. We
-    // retain the error code + message template for forward compatibility
+    // retain the error code + message template for consistent diagnostics
     // (if a future unified namespace lands) but the pass body is empty.
     void lint_name_collision_across_kinds() {
         // Intentionally empty — see comment above.

@@ -443,15 +443,17 @@ index_formal_observation_symbols(const std::vector<FormalObservation> &observati
 void add_contract_policy_obligations(
     std::vector<PolicyObligation> &obligations,
     const ir::ContractDecl &contract,
+    const ir::ContractClauseIndex &contract_index,
     const std::unordered_map<FormalObservationScopeKey,
                              std::vector<std::string>,
                              FormalObservationScopeKeyHash> &observation_index) {
+    const auto clause_begin = contract_index.clause_begin(contract);
     const auto target = std::string(ir::symbol_canonical_name(contract.target_ref));
     for (std::size_t clause_index = 0; clause_index < contract.clauses.size(); ++clause_index) {
         const auto scope_key = FormalObservationScopeKey{
             .kind = FormalObservationScopeKind::ContractClause,
             .owner = target,
-            .clause_index = clause_index,
+            .clause_index = clause_begin + clause_index,
         };
 
         auto observation_symbols = [&]() {
@@ -466,7 +468,7 @@ void add_contract_policy_obligations(
                     .canonical_name = target,
                 },
             .kind = policy_obligation_kind(contract.clauses[clause_index].kind),
-            .clause_index = clause_index,
+            .clause_index = clause_begin + clause_index,
             .observation_symbols = std::move(observation_symbols),
         });
     }
@@ -676,7 +678,7 @@ PackageMetadataValidationResult validate_package_metadata(const ir::Program &pro
 
 Package lower_package(const ir::Program &program, PackageMetadata metadata) {
     if (metadata.identity.has_value()) {
-        metadata.identity->format_version = std::string(kFormatVersion);
+        metadata.identity->format = std::string(kFormat);
     }
 
     Package package{
@@ -687,6 +689,8 @@ Package lower_package(const ir::Program &program, PackageMetadata metadata) {
         .formal_observations = lower_formal_observations(ir::formal_observations(program)),
     };
 
+    ir::ContractClauseIndex contract_index;
+    contract_index.rebuild(program);
     std::unordered_map<std::string, std::vector<std::string>> agent_capabilities;
     std::unordered_map<std::string, const ir::AgentDecl *> agents_by_name;
     const auto formal_observation_index =
@@ -721,7 +725,7 @@ Package lower_package(const ir::Program &program, PackageMetadata metadata) {
                 },
                 [&](const ir::ContractDecl &value) {
                     add_contract_policy_obligations(
-                        package.policy_obligations, value, formal_observation_index);
+                        package.policy_obligations, value, contract_index, formal_observation_index);
                 },
                 [&](const auto &) {},
             },
@@ -1078,7 +1082,7 @@ PackageReaderSummaryResult build_package_reader_summary(const Package &package) 
     PackageReaderSummaryResult result{
         .summary =
             PackageReaderSummary{
-                .format_version = std::string(kFormatVersion),
+                .format = std::string(kFormat),
                 .identity = package.metadata.identity,
                 .entry_target = package.metadata.entry_target,
                 .export_targets = package.metadata.export_targets,
@@ -1109,10 +1113,10 @@ PackageReaderSummaryResult build_package_reader_summary(const Package &package) 
     };
 
     if (result.summary.identity.has_value() &&
-        result.summary.identity->format_version != kFormatVersion) {
+        result.summary.identity->format != kFormat) {
         result.diagnostics.error()
-            .message("package reader summary encountered unsupported format_version '" +
-                     result.summary.identity->format_version + "'")
+            .message("package reader summary encountered unsupported format '" +
+                     result.summary.identity->format + "'")
             .emit();
     }
 
@@ -1309,10 +1313,10 @@ ExecutionPlanValidationResult validate_execution_plan(const ExecutionPlan &plan)
         .diagnostics = {},
     };
 
-    if (plan.format_version != kExecutionPlanFormatVersion) {
+    if (plan.format != kExecutionPlanFormat) {
         result.diagnostics.error()
-            .message("execution plan validation encountered unsupported format_version '" +
-                     plan.format_version + "'")
+            .message("execution plan validation encountered unsupported format '" +
+                     plan.format + "'")
             .emit();
     }
 
@@ -1358,7 +1362,7 @@ ExecutionPlanResult build_execution_plan(const Package &package) {
     };
 
     ExecutionPlan plan{
-        .format_version = std::string(kExecutionPlanFormatVersion),
+        .format = std::string(kExecutionPlanFormat),
         .source_package_identity = package.metadata.identity,
         .entry_workflow_canonical_name = std::nullopt,
         .workflows = {},

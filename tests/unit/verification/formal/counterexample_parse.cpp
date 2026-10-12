@@ -1,4 +1,5 @@
 #include "verification/formal/checker.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "verification/formal/counterexample.hpp"
 #include "verification/formal/counterexample_json.hpp"
 
@@ -6,6 +7,10 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <filesystem>
+#include <fstream>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -373,7 +378,7 @@ void test_report_includes_structured_explanation() {
     print_formal_verification_report(result, output);
 
     const auto text = output.str();
-    check(text.find("error: formal verification failed") != std::string::npos,
+    check(text.find("error: control-model verification failed") != std::string::npos,
           "report_explain.has_failure_header");
     check(text.find("counterexample explanation:") != std::string::npos,
           "report_explain.has_explanation_section");
@@ -1014,9 +1019,161 @@ void test_p2_contract_clause_graceful_without_mapping() {
           "p2.contract_nomap.kind_still_classified");
 }
 
+#if defined(AHFL_ENABLE_BACKEND_FORMAL)
+ahfl::ir::Program standalone_control_program() {
+    ahfl::ir::Program program;
+    ahfl::ir::AgentDecl agent;
+    agent.name = "Solo";
+    agent.states = {"Idle", "Done"};
+    agent.initial_state = "Idle";
+    agent.final_states = {"Done"};
+    agent.transitions = {{"Idle", "Done"}};
+    program.declarations.push_back(std::move(agent));
+    return program;
+}
+
+void test_control_model_targets_without_contract() {
+    auto program = standalone_control_program();
+    const auto model = ahfl::generate_program_smv(program);
+    check(model.specifications.size() == 4, "control.standalone_generated_targets");
+    check(model.text.find("init(agent__Solo__state) := Idle") != std::string::npos,
+          "control.standalone_fsm_exists");
+    check(model.text.find("LTLSPEC agent__Solo__state = Idle") != std::string::npos,
+          "control.initial_property_not_global");
+    for (std::size_t index = 0; index < model.specifications.size(); ++index) {
+        check(model.specifications[index].id == index, "control.numeric_ids");
+        check(model.specifications[index].origin == ahfl::SmvSpecificationOrigin::GeneratedControl,
+              "control.generated_origin");
+    }
+    // Keep the actual illegal final exit in the model so its absorbing-state
+    // obligation can expose the defect instead of repairing it during lowering.
+    std::get<ahfl::ir::AgentDecl>(program.declarations.front()).transitions.push_back({"Done", "Idle"});
+    const auto invalid = ahfl::generate_program_smv(program);
+    check(invalid.text.find("agent__Solo__state = Done : Idle;") != std::string::npos,
+          "control.final_exit_not_silently_repaired");
+}
+
+void test_control_verdict_categories_and_no_targets() {
+    const auto checker = std::filesystem::temp_directory_path() /
+        ("ahfl-control-checker-" + std::to_string(getpid()) + ".sh");
+    {
+        std::ofstream script(checker);
+        script << "#!/bin/sh\nfor model do :; done\n"
+                  "awk '/^LTLSPEC/ { print \"-- specification test is true\" }' \"$model\"\n";
+    }
+    chmod(checker.c_str(), 0700);
+    FormalCheckerOptions options;
+    options.checker_path = checker.string();
+    auto program = standalone_control_program();
+    ahfl::ir::ContractDecl contract;
+    contract.target_ref = ahfl::ir::SymbolRef{
+        .kind = ahfl::ir::SymbolRefKind::Agent, .canonical_name = "Solo", .local_name = "Solo",
+        .module_name = {}};
+    auto temporal = std::make_unique<ahfl::ir::TemporalExpr>();
+    temporal->node = ahfl::ir::InStateTemporalExpr{"Idle"};
+    ahfl::ir::ContractClause clause;
+    clause.kind = ahfl::ir::ContractClauseKind::Invariant;
+    clause.value = std::move(temporal);
+    contract.clauses.push_back(std::move(clause));
+    program.declarations.push_back(std::move(contract));
+    const auto complete = verify_program_with_smv_checker(program, options);
+    check(complete.status == FormalVerificationStatus::Passed, "control.complete_pass");
+    check(complete.generated_control_proven_count == 4, "control.generated_count");
+    check(complete.user_temporal_proven_count == 1, "control.user_temporal_count");
+    check(complete.checker_invoked, "control.checker_invoked");
+
+    auto &target = std::get<ahfl::ir::ContractDecl>(program.declarations.back()).clauses.front();
+    auto observed = std::make_unique<ahfl::ir::TemporalExpr>();
+    observed->node = ahfl::ir::EmbeddedTemporalExpr{
+        program.expr_arena.make(ahfl::ir::StringLiteralExpr{.spelling = "unmodeled"})};
+    target.value = std::move(observed);
+    ahfl::ir::recompute_formal_observations(program);
+    const auto conditional = verify_program_with_smv_checker(program, options);
+    check(conditional.user_temporal_conditional_count == 1, "control.observation_conditional");
+    check(conditional.user_temporal_proven_count == 0, "control.observation_not_proved");
+    check(conditional.proven_specifications.size() == 4, "control.only_complete_proofs_counted");
+    options.verify_data_contracts = true;
+    const auto strict = verify_program_with_smv_checker(program, options);
+    check(strict.status == FormalVerificationStatus::VerificationUnsupported,
+          "control.requested_unmodeled_target_fails");
+    check(!strict.checker_invoked, "control.unsupported_before_solver");
+
+    // No-failure control assumptions are not opaque business-data goals.
+    options.verify_data_contracts = true;
+    auto workflow_program = standalone_control_program();
+    ahfl::ir::WorkflowDecl workflow;
+    workflow.name = "ControlOnly";
+    ahfl::ir::WorkflowNode node;
+    node.name = "first";
+    node.target_ref = ahfl::ir::SymbolRef{
+        .kind = ahfl::ir::SymbolRefKind::Agent, .canonical_name = "Solo", .local_name = "Solo",
+        .module_name = {}};
+    workflow.nodes.push_back(std::move(node));
+    auto completed = std::make_unique<ahfl::ir::TemporalExpr>();
+    completed->node = ahfl::ir::CompletedTemporalExpr{"first", std::nullopt};
+    workflow.liveness.push_back(std::move(completed));
+    workflow_program.declarations.push_back(std::move(workflow));
+    const auto environmental = verify_program_with_smv_checker(workflow_program, options);
+    check(environmental.status == FormalVerificationStatus::Passed,
+          "control.environment_assumption_not_data_goal");
+    check(environmental.user_temporal_conditional_count == 1 &&
+          environmental.user_temporal_data_dependent_count == 0,
+          "control.environment_and_data_separate");
+
+    // Unsupported cross-node final-state correlations remain declared targets.
+    auto &agent = std::get<ahfl::ir::AgentDecl>(workflow_program.declarations.front());
+    agent.states.push_back("Rejected");
+    agent.final_states.push_back("Rejected");
+    auto &wf = std::get<ahfl::ir::WorkflowDecl>(workflow_program.declarations.back());
+    ahfl::ir::WorkflowNode other;
+    other.name = "second";
+    other.target_ref = wf.nodes.front().target_ref;
+    wf.nodes.push_back(std::move(other));
+    auto lhs = std::make_unique<ahfl::ir::TemporalExpr>();
+    lhs->node = ahfl::ir::CompletedTemporalExpr{"first", "Done"};
+    auto rhs = std::make_unique<ahfl::ir::TemporalExpr>();
+    rhs->node = ahfl::ir::RunningTemporalExpr{"second"};
+    auto correlated = std::make_unique<ahfl::ir::TemporalExpr>();
+    correlated->node = ahfl::ir::TemporalBinaryExpr{
+        ahfl::ir::TemporalBinaryOp::Implies, std::move(lhs), std::move(rhs)};
+    wf.safety.push_back(std::move(correlated));
+    const auto unsupported_model = ahfl::generate_program_smv(workflow_program);
+    bool found_unsupported = false;
+    for (const auto &specification : unsupported_model.specifications) {
+        if (specification.coverage == ahfl::SmvSpecificationCoverage::Unsupported) {
+            found_unsupported = true;
+            check(!specification.emitted, "control.unsupported_not_sent_to_solver");
+        }
+    }
+    check(found_unsupported, "control.unsupported_goal_not_discarded");
+    const auto unsupported = verify_program_with_smv_checker(workflow_program, options);
+    check(unsupported.status == FormalVerificationStatus::VerificationUnsupported &&
+          unsupported.user_temporal_unsupported_count == 1,
+          "control.requested_unsupported_goal_fails");
+
+    options.verify_data_contracts = false;
+    options.checker_path = "/missing/checker";
+    const auto empty = verify_program_with_smv_checker(ahfl::ir::Program{}, options);
+    check(empty.status == FormalVerificationStatus::Passed, "control.no_targets_success");
+    check(!empty.checker_invoked, "control.no_targets_not_run");
+    std::ostringstream report;
+    print_formal_verification_report(empty, report);
+    check(report.str().find("control_status: no_targets") != std::string::npos,
+          "control.no_targets_report");
+    check(report.str().find("checker_status: not_run") != std::string::npos,
+          "control.not_run_report");
+    std::filesystem::remove(checker);
+}
+
+#endif
+
 } // anonymous namespace
 
 int main() {
+#if defined(AHFL_ENABLE_BACKEND_FORMAL)
+    test_control_model_targets_without_contract();
+    test_control_verdict_categories_and_no_targets();
+#endif
     test_parse_mappings_basic();
     test_parse_mappings_no_source_location();
     test_parse_mappings_unknown_path();

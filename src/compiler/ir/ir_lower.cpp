@@ -46,6 +46,7 @@ class FormalObservationCollector final {
     [[nodiscard]] std::vector<ir::FormalObservation> collect(const ir::Program &program) {
         observations_.clear();
         observation_index_by_symbol_.clear();
+        contract_clause_index_.rebuild(program);
 
         for (const auto &declaration : program.declarations) {
             // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per Decl alternative,
@@ -109,6 +110,7 @@ class FormalObservationCollector final {
 
   private:
     std::vector<ir::FormalObservation> observations_;
+    ir::ContractClauseIndex contract_clause_index_;
     std::unordered_map<std::string, std::size_t> observation_index_by_symbol_;
 
     void collect_agent(const ir::AgentDecl &agent) {
@@ -121,6 +123,7 @@ class FormalObservationCollector final {
     }
 
     void collect_contract(const ir::ContractDecl &contract) {
+        const auto clause_begin = contract_clause_index_.clause_begin(contract);
         const auto target = std::string(ir::symbol_canonical_name(contract.target_ref));
         for (std::size_t clause_index = 0; clause_index < contract.clauses.size(); ++clause_index) {
             const auto expr = std::get_if<ir::ExprRef>(&contract.clauses[clause_index].value);
@@ -128,7 +131,7 @@ class FormalObservationCollector final {
                 add_embedded_observation(ir::FormalObservationScope{
                     .kind = ir::FormalObservationScopeKind::ContractClause,
                     .owner = target,
-                    .clause_index = clause_index,
+                    .clause_index = clause_begin + clause_index,
                     .atom_index = 0,
                 });
                 continue;
@@ -138,7 +141,7 @@ class FormalObservationCollector final {
                 std::get_if<ir::TemporalExprPtr>(&contract.clauses[clause_index].value);
             if (temporal != nullptr) {
                 std::size_t atom_index = 0;
-                collect_contract_formula(**temporal, target, clause_index, atom_index);
+                collect_contract_formula(**temporal, target, clause_begin + clause_index, atom_index);
             }
         }
     }

@@ -122,6 +122,7 @@ def main() -> int:
         run_checked(
             [
                 "ctest",
+                f"-j{os.cpu_count() or 1}",
                 "--test-dir",
                 str(build),
                 "--output-on-failure",

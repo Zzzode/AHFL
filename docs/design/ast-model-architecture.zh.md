@@ -97,7 +97,7 @@ struct Program {
 - `duplicate_visibility_modifier`
 - 该声明独有的语法字段
 
-`NodeKind` 不是与 variant 并存的第二个 tag。消费者需要兼容旧的 kind 分类语言时，通过 `decl_kind(const Decl&)` 从 active alternative 确定性派生，禁止存储可能与 variant 漂移的平行 tag。
+`NodeKind` 不是与 variant 并存的第二个 tag。消费者需要 declaration kind 分类时，通过 `decl_kind(const Decl&)` 从 active alternative 确定性派生，禁止存储可能与 variant 漂移的平行 tag。
 
 当前 `NodeKind` 已覆盖：
 
@@ -266,7 +266,7 @@ AST 里当前还有一组共享枚举：
 - `TemporalUnaryOp`
 - `TemporalBinaryOp`
 
-`NodeKind` 仅作为 declaration kind 的兼容分类结果，由 `decl_kind()` 派生。其他共享枚举的作用是：
+`NodeKind` 仅作为 declaration kind 的分类结果，由 `decl_kind()` 派生。其他共享枚举的作用是：
 
 1. 冻结语法形状分类。
 2. 让 typecheck / validate / printer / IR lowering 共享同一组分类语言。
@@ -318,7 +318,7 @@ AST 中不应该有：
 通常需要：
 
 1. 新增普通 declaration payload struct。
-2. 将 payload 加入 `Decl` variant，并同步 `NodeKind`/`decl_kind()` 兼容映射。
+2. 将 payload 加入 `Decl` variant，并同步 `NodeKind`/`decl_kind()` 分类映射。
 3. 更新 `ProgramBuilder`，在完成 concrete payload 构造后 move 进 flat store。
 4. 修复编译器报告的 exhaustive visitor 缺口。
 5. 更新 AST invariant validator、AST printer、resolver、sema、LSP 和相关测试。

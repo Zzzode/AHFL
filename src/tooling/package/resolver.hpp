@@ -50,7 +50,7 @@ class Resolver {
     [[nodiscard]] static SemVer parse_version(const std::string &version_str);
     [[nodiscard]] static bool satisfies(const SemVer &version, const std::string &constraint);
     [[nodiscard]] static int compare(const SemVer &a, const SemVer &b);
-    [[nodiscard]] static std::string format_version(const SemVer &v);
+    [[nodiscard]] static std::string format(const SemVer &v);
 
   private:
     std::unordered_map<std::string, std::vector<SemVer>> available_;

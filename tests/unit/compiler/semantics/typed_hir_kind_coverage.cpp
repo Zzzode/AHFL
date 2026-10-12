@@ -27,9 +27,11 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
+#include "base/json/json_value.hpp"
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -670,6 +672,298 @@ TEST_CASE_FIXTURE(
     ahfl::typed_visit(none_stmt, none_counter);
     CHECK(none_counter.counts["unknown"] == 1);
     CHECK(none_counter.counts.size() == 1);
+}
+
+// Declaration bounds are part of the current snapshot, including their order
+// and source ranges. Exercise the public writer/reader with multiple bounds so
+// dropping a clause or one of its trait names cannot pass a closed round-trip.
+template <typename Info>
+[[nodiscard]] ahfl::TypedProgram declaration_bounds_program(ahfl::ast::NodeKind kind) {
+    Info info{};
+    info.symbol = ahfl::SymbolId{1};
+    info.canonical_name = "snapshot::Bounded";
+    info.where_clause.bounds = {
+        ahfl::WhereBoundInfo{
+            .subject_name = "T",
+            .trait_names = {"snapshot::Display", "snapshot::Eq"},
+            .source_range = {21, 45},
+        },
+        ahfl::WhereBoundInfo{
+            .subject_name = "U",
+            .trait_names = {"snapshot::Clone"},
+            .source_range = {48, 66},
+        },
+    };
+    if constexpr (requires { info.type_param_names; }) {
+        info.type_param_names = {"T", "U"};
+    }
+    if constexpr (requires { info.return_type; }) {
+        info.return_type = ahfl::TypeContext::global().make(ahfl::TypeKind::Bool);
+    }
+    ahfl::TypedDecl declaration{};
+    declaration.kind = kind;
+    declaration.symbol = info.symbol;
+    declaration.payload = std::move(info);
+    ahfl::TypedProgram program;
+    program.declarations.push_back(std::move(declaration));
+    return program;
+}
+
+[[nodiscard]] ahfl::json::JsonValue &snapshot_declaration_value(ahfl::json::JsonValue &root) {
+    auto *declarations = root.get_mut("declarations");
+    REQUIRE(declarations != nullptr);
+    REQUIRE(declarations->array_items.size() == 1);
+    auto *payload = declarations->array_items.front()->get_mut("payload");
+    REQUIRE(payload != nullptr);
+    auto *value = payload->get_mut("value");
+    REQUIRE(value != nullptr);
+    return *value;
+}
+
+template <typename Info>
+void check_declaration_bounds_roundtrip(ahfl::ast::NodeKind kind) {
+    const auto program = declaration_bounds_program<Info>(kind);
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->declarations.size() == 1);
+    const auto &bounds = std::get<Info>(restored->declarations.front().payload).where_clause.bounds;
+    REQUIRE(bounds.size() == 2);
+    CHECK(bounds[0].subject_name == "T");
+    CHECK(bounds[0].trait_names == std::vector<std::string>{"snapshot::Display", "snapshot::Eq"});
+    CHECK(bounds[0].source_range.begin_offset == 21);
+    CHECK(bounds[0].source_range.end_offset == 45);
+    CHECK(bounds[1].subject_name == "U");
+    CHECK(bounds[1].trait_names == std::vector<std::string>{"snapshot::Clone"});
+    CHECK(bounds[1].source_range.begin_offset == 48);
+    CHECK(bounds[1].source_range.end_offset == 66);
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+
+    const auto rejects = [&](auto mutate) {
+        auto document = ahfl::json::parse_json(snapshot);
+        REQUIRE(document.has_value());
+        auto &value = snapshot_declaration_value(**document);
+        mutate(value);
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    };
+    rejects([](auto &value) {
+        std::erase_if(value.object_fields,
+                      [](const auto &field) { return field.first == "where_clause"; });
+    });
+    rejects([](auto &value) { value.set("where_clause", ahfl::json::JsonValue::make_null()); });
+    rejects([](auto &value) { value.set("where_clause", ahfl::json::JsonValue::make_object()); });
+    rejects([](auto &value) {
+        value.get_mut("where_clause")->array_items.front() = ahfl::json::JsonValue::make_null();
+    });
+    for (const std::string_view field : {"subject_name", "trait_names", "source_range"}) {
+        INFO("missing bound field: " << field);
+        rejects([&](auto &value) {
+            auto &bound = *value.get_mut("where_clause")->array_items.front();
+            std::erase_if(bound.object_fields,
+                          [&](const auto &item) { return item.first == field; });
+        });
+    }
+    rejects([](auto &value) {
+        value.get_mut("where_clause")->array_items.front()->set(
+            "trait_names", ahfl::json::JsonValue::make_null());
+    });
+    rejects([](auto &value) {
+        value.get_mut("where_clause")->array_items.front()->get_mut("trait_names")
+            ->array_items.front() = ahfl::json::JsonValue::make_int(7);
+    });
+}
+
+TEST_CASE("Typed HIR declaration where clauses preserve complete ordered bounds") {
+    SUBCASE("Struct") {
+        check_declaration_bounds_roundtrip<ahfl::StructTypeInfo>(ahfl::ast::NodeKind::StructDecl);
+    }
+    SUBCASE("Enum") {
+        check_declaration_bounds_roundtrip<ahfl::EnumTypeInfo>(ahfl::ast::NodeKind::EnumDecl);
+    }
+    SUBCASE("Capability") {
+        check_declaration_bounds_roundtrip<ahfl::CapabilityTypeInfo>(
+            ahfl::ast::NodeKind::CapabilityDecl);
+    }
+    SUBCASE("Fn") {
+        check_declaration_bounds_roundtrip<ahfl::FnTypeInfo>(ahfl::ast::NodeKind::FnDecl);
+    }
+    SUBCASE("Trait uses the same complete bounds reader") {
+        check_declaration_bounds_roundtrip<ahfl::TraitTypeInfo>(ahfl::ast::NodeKind::TraitDecl);
+    }
+}
+
+TEST_CASE("Typed HIR capability effect rejects missing and malformed objects safely") {
+    const auto program = declaration_bounds_program<ahfl::CapabilityTypeInfo>(
+        ahfl::ast::NodeKind::CapabilityDecl);
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    REQUIRE(ahfl::deserialize_typed_program_json(snapshot).has_value());
+
+    SUBCASE("missing effect") {
+        auto document = ahfl::json::parse_json(snapshot);
+        REQUIRE(document.has_value());
+        auto &value = snapshot_declaration_value(**document);
+        std::erase_if(value.object_fields,
+                      [](const auto &field) { return field.first == "effect"; });
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    }
+    SUBCASE("wrong effect shape") {
+        for (const std::string_view malformed : {"null", "[]", "true", "7", "\"read\"", "{}"}) {
+            INFO("effect: " << malformed);
+            auto document = ahfl::json::parse_json(snapshot);
+            auto effect = ahfl::json::parse_json(malformed);
+            REQUIRE(document.has_value());
+            REQUIRE(effect.has_value());
+            snapshot_declaration_value(**document).set("effect", std::move(*effect));
+            CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                            .has_value());
+        }
+    }
+    SUBCASE("wrong required effect member") {
+        auto document = ahfl::json::parse_json(snapshot);
+        REQUIRE(document.has_value());
+        snapshot_declaration_value(**document).get_mut("effect")->set(
+            "declared", ahfl::json::JsonValue::make_string("true"));
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    }
+}
+
+TEST_CASE("Typed HIR snapshots preserve a real definition zero and Flow agent ownership") {
+    ahfl::Frontend frontend;
+    const auto parsed = frontend.parse_text("symbol_presence.ahfl", R"AHFL(
+struct First { flag: Bool = false; }
+agent Worker {
+    input: First;
+    context: First;
+    output: First;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+contract for Worker { ensures: true; }
+flow for Worker {
+    state Init { goto Done; }
+    state Done { return input; }
+}
+)AHFL");
+    REQUIRE_FALSE(parsed.has_errors());
+    REQUIRE(parsed.program != nullptr);
+    ahfl::Resolver resolver;
+    const auto resolved = resolver.resolve(*parsed.program);
+    REQUIRE_FALSE(resolved.has_errors());
+    ahfl::TypeChecker checker;
+    const auto checked = checker.check(*parsed.program, resolved);
+    REQUIRE_FALSE(checked.has_errors());
+    const auto &program = checked.typed_program;
+    REQUIRE_FALSE(program.declarations.empty());
+    REQUIRE(program.declarations.front().symbol.has_value());
+    CHECK(program.declarations.front().symbol->value == 0);
+    REQUIRE(std::holds_alternative<ahfl::StructTypeInfo>(program.declarations.front().payload));
+
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    auto document = ahfl::json::parse_json(snapshot);
+    REQUIRE(document.has_value());
+    CHECK((*document)->get("declarations")->array_items.front()->get("symbol")->as_int() == 0);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+    REQUIRE(restored->declarations.front().symbol.has_value());
+    CHECK(restored->declarations.front().symbol->value == 0);
+
+    std::size_t flow_count = 0;
+    std::size_t contract_count = 0;
+    for (const auto &decl : restored->declarations) {
+        if (decl.kind == ahfl::ast::NodeKind::FlowDecl) {
+            ++flow_count;
+            CHECK_FALSE(decl.symbol.has_value());
+            REQUIRE(decl.associated_agent_symbol.has_value());
+            const auto &flow = std::get<ahfl::FlowTypeInfo>(decl.payload);
+            CHECK(decl.associated_agent_symbol == flow.target_symbol);
+            CHECK(flow.symbol == flow.target_symbol);
+        }
+        if (decl.kind == ahfl::ast::NodeKind::ContractDecl) {
+            ++contract_count;
+            CHECK_FALSE(decl.symbol.has_value());
+            REQUIRE(decl.associated_agent_symbol.has_value());
+            CHECK(decl.associated_agent_symbol ==
+                  std::get<ahfl::ContractTypeInfo>(decl.payload).target_symbol);
+        }
+    }
+    CHECK(flow_count == 1);
+    CHECK(contract_count == 1);
+
+    SUBCASE("named declaration requires a present symbol") {
+        auto *first = (*document)->get_mut("declarations")->array_items.front().get();
+        first->set("symbol", ahfl::json::JsonValue::make_null());
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    }
+    SUBCASE("symbol remains a mandatory field") {
+        auto *first = (*document)->get_mut("declarations")->array_items.front().get();
+        std::erase_if(first->object_fields,
+                      [](const auto &field) { return field.first == "symbol"; });
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    }
+}
+
+void check_metadata_symbol_null(ahfl::ast::NodeKind kind, ahfl::TypedDeclPayload payload) {
+    ahfl::TypedDecl decl{};
+    decl.kind = kind;
+    decl.symbol = std::nullopt;
+    if (kind == ahfl::ast::NodeKind::FlowDecl || kind == ahfl::ast::NodeKind::ContractDecl) {
+        decl.associated_agent_symbol = ahfl::SymbolId{0};
+    }
+    decl.payload = std::move(payload);
+    ahfl::TypedProgram program;
+    program.declarations.push_back(std::move(decl));
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->declarations.size() == 1);
+    CHECK_FALSE(restored->declarations.front().symbol.has_value());
+    CHECK(restored->declarations.front().associated_agent_symbol ==
+          program.declarations.front().associated_agent_symbol);
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+    auto document = ahfl::json::parse_json(snapshot);
+    REQUIRE(document.has_value());
+    auto &encoded = *(*document)->get_mut("declarations")->array_items.front();
+    REQUIRE(encoded.get("symbol") != nullptr);
+    CHECK(encoded.get("symbol")->is_null());
+    encoded.set("symbol", ahfl::json::JsonValue::make_int(0));
+    CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                    .has_value());
+    encoded.set("symbol", ahfl::json::JsonValue::make_int(7));
+    CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                    .has_value());
+    std::erase_if(encoded.object_fields,
+                  [](const auto &field) { return field.first == "symbol"; });
+    CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                    .has_value());
+}
+
+TEST_CASE("Typed HIR metadata requires explicit null instead of a definition identity") {
+    SUBCASE("Module") {
+        check_metadata_symbol_null(ahfl::ast::NodeKind::ModuleDecl, ahfl::ModuleDeclInfo{});
+    }
+    SUBCASE("Import") {
+        check_metadata_symbol_null(ahfl::ast::NodeKind::ImportDecl, ahfl::ImportDeclInfo{});
+    }
+    SUBCASE("Impl") {
+        ahfl::ImplTypeInfo impl{};
+        impl.target_type = ahfl::TypeContext::global().make(ahfl::TypeKind::Bool);
+        check_metadata_symbol_null(ahfl::ast::NodeKind::ImplDecl, std::move(impl));
+    }
+    SUBCASE("Contract") {
+        check_metadata_symbol_null(ahfl::ast::NodeKind::ContractDecl, ahfl::ContractTypeInfo{});
+    }
+    SUBCASE("Flow") {
+        check_metadata_symbol_null(ahfl::ast::NodeKind::FlowDecl, ahfl::FlowTypeInfo{});
+    }
 }
 
 } // namespace

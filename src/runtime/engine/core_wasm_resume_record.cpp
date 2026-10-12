@@ -28,10 +28,9 @@ using ir::core::CoreWorkflowNodeId;
 // Raw payload magic (distinct per authenticated artifact class; the domain
 // separator for the record's HMAC lives in these leading authenticated bytes).
 constexpr std::array<std::uint8_t, 6> kMagic = {'A', 'H', 'F', 'L', 'W', 'R'};
-constexpr std::uint8_t kFormatVersion = 1;
 constexpr std::uint8_t kAlgHmacSha256 = 1;
 
-// Fixed tail: auth_header (alg_version u8 + key_id 16 + generation u64-LE) = 25,
+// Fixed tail: auth_header (alg_id u8 + key_id 16 + generation u64-LE) = 25,
 // plus the 32-byte tag.
 constexpr std::size_t kKeyIdBytes = 16;
 constexpr std::size_t kGenerationBytes = 8;
@@ -39,17 +38,19 @@ constexpr std::size_t kAuthHeaderBytes = 1 + kKeyIdBytes + kGenerationBytes; // 
 constexpr std::size_t kTagBytes = 32;
 constexpr std::size_t kTailBytes = kAuthHeaderBytes + kTagBytes; // 57
 
-// Smallest possible body: magic(6) + format_version(1) + guarantees(>=1) +
+// Smallest possible body: magic(6) + guarantees(>=1) +
 // 3 * 64 hex digests + entry.kind(1) + entry.id(>=1) + entry_input_slot(>=1) +
 // suspended_node_id(>=1) + resume_state(1) + node_count(>=1). Used only as a coarse
 // pre-auth lower bound; the real structure is validated in pass 2 after
 // authentication.
-constexpr std::size_t kMinBodyBytes = 6 + 1 + 1 + (3 * 64) + 1 + 1 + 1 + 1 + 1 + 1;
+constexpr std::size_t kMinBodyBytes = 6 + 1 + (3 * 64) + 1 + 1 + 1 + 1 + 1 + 1;
 
 [[nodiscard]] CoreLowerDiagnostic error(std::string message) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
-                               std::string(ir::core::wire_schema::kInvalid), std::move(message),
-                               std::nullopt, {}};
+                               std::string(ir::core::wire_schema::kInvalid),
+                               std::move(message),
+                               std::nullopt,
+                               {}};
 }
 
 // A DigestHex is well-formed iff every byte is lowercase-hex ASCII ([0-9a-f]).
@@ -93,12 +94,22 @@ class Reader {
   public:
     explicit Reader(std::span<const std::uint8_t> data) noexcept : data_(data) {}
 
-    [[nodiscard]] bool failed() const noexcept { return failed_; }
-    [[nodiscard]] std::size_t pos() const noexcept { return pos_; }
-    [[nodiscard]] std::size_t remaining() const noexcept { return data_.size() - pos_; }
-    [[nodiscard]] bool at_end() const noexcept { return pos_ == data_.size(); }
+    [[nodiscard]] bool failed() const noexcept {
+        return failed_;
+    }
+    [[nodiscard]] std::size_t pos() const noexcept {
+        return pos_;
+    }
+    [[nodiscard]] std::size_t remaining() const noexcept {
+        return data_.size() - pos_;
+    }
+    [[nodiscard]] bool at_end() const noexcept {
+        return pos_ == data_.size();
+    }
 
-    void fail() noexcept { failed_ = true; }
+    void fail() noexcept {
+        failed_ = true;
+    }
 
     [[nodiscard]] std::uint8_t byte() noexcept {
         if (failed_ || pos_ >= data_.size()) {
@@ -162,9 +173,6 @@ class Reader {
 // fixed diagnostic on the first violation. Applied by the encoder (a caller cannot
 // mint an ill-formed record) and by the decoder after authentication.
 [[nodiscard]] std::optional<CoreLowerDiagnostic> validate_model(const CoreWasmResumeRecord &r) {
-    if (r.format_version != kFormatVersion) {
-        return error("resume record has an unsupported format version");
-    }
     // Enumerated allowed-set gates: an out-of-set enum value must never be minted
     // (so the encoder cannot produce a record the decoder would reject).
     if (r.entry_kind != EntryKind::Workflow) {
@@ -296,7 +304,6 @@ class Reader {
 
 void encode_body(std::vector<std::uint8_t> &out, const CoreWasmResumeRecord &r) {
     out.insert(out.end(), kMagic.begin(), kMagic.end());
-    out.push_back(kFormatVersion);
     write_u32(out, r.guarantees);
     write_hex(out, r.module_sha256);
     write_hex(out, r.wire_schema_sha256);
@@ -331,7 +338,7 @@ void encode_body(std::vector<std::uint8_t> &out, const CoreWasmResumeRecord &r) 
 }
 
 void encode_auth_header(std::vector<std::uint8_t> &out, const ResumeAuthHeader &h) {
-    out.push_back(h.alg_version);
+    out.push_back(h.alg_id);
     out.insert(out.end(), h.key_id.begin(), h.key_id.end());
     std::uint64_t gen = h.generation;
     for (std::size_t i = 0; i < kGenerationBytes; ++i) {
@@ -361,23 +368,21 @@ void encode_auth_header(std::vector<std::uint8_t> &out, const ResumeAuthHeader &
 } // namespace
 
 bool CoreWasmResumeEncodeResult::has_errors() const noexcept {
-    return std::any_of(diagnostics.begin(), diagnostics.end(),
-                       [](const CoreLowerDiagnostic &d) {
-                           return d.severity == CoreDiagnosticSeverity::Error;
-                       });
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [](const CoreLowerDiagnostic &d) {
+        return d.severity == CoreDiagnosticSeverity::Error;
+    });
 }
 
 bool CoreWasmResumeDecodeResult::has_errors() const noexcept {
-    return std::any_of(diagnostics.begin(), diagnostics.end(),
-                       [](const CoreLowerDiagnostic &d) {
-                           return d.severity == CoreDiagnosticSeverity::Error;
-                       });
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [](const CoreLowerDiagnostic &d) {
+        return d.severity == CoreDiagnosticSeverity::Error;
+    });
 }
 
 CoreWasmResumeEncodeResult encode_and_authenticate(const CoreWasmResumeRecord &record,
                                                    std::span<const std::uint8_t> key_bytes) {
     CoreWasmResumeEncodeResult result;
-    if (record.auth_header.alg_version != kAlgHmacSha256) {
+    if (record.auth_header.alg_id != kAlgHmacSha256) {
         result.diagnostics.push_back(error("resume record auth header alg is unsupported"));
         return result;
     }
@@ -406,16 +411,12 @@ decode_and_authenticate(std::span<const std::uint8_t> record_bytes,
         result.diagnostics.push_back(error("resume record is shorter than the minimum framing"));
         return result;
     }
-    // Magic + format version at the front.
+    // Artifact magic at the front.
     for (std::size_t i = 0; i < kMagic.size(); ++i) {
         if (record_bytes[i] != kMagic[i]) {
             result.diagnostics.push_back(error("resume record has a bad magic header"));
             return result;
         }
-    }
-    if (record_bytes[kMagic.size()] != kFormatVersion) {
-        result.diagnostics.push_back(error("resume record has an unsupported format version"));
-        return result;
     }
     // Fixed 57-byte tail located from EOF.
     const std::size_t total = record_bytes.size();
@@ -443,12 +444,10 @@ decode_and_authenticate(std::span<const std::uint8_t> record_bytes,
     // ---- PASS 2: trusted. The prefix is authenticated; decode the body. ----
     CoreWasmResumeRecord record;
     Reader reader(record_bytes.first(auth_off)); // body only
-    // magic + version (already checked; consume them so offsets line up)
+    // Artifact magic (already checked; consume it so offsets line up)
     for (std::size_t i = 0; i < kMagic.size(); ++i) {
         (void)reader.byte();
     }
-    (void)reader.byte(); // format_version
-    record.format_version = kFormatVersion;
     record.guarantees = reader.u32();
     if (!read_hex(reader, record.module_sha256) || !read_hex(reader, record.wire_schema_sha256) ||
         !read_hex(reader, record.exec_manifest_sha256)) {
@@ -550,7 +549,7 @@ decode_and_authenticate(std::span<const std::uint8_t> record_bytes,
 
     // Reconstruct the authenticated auth_header into the model.
     ResumeAuthHeader header;
-    header.alg_version = kAlgHmacSha256;
+    header.alg_id = kAlgHmacSha256;
     for (std::size_t i = 0; i < kKeyIdBytes; ++i) {
         header.key_id[i] = record_bytes[auth_off + 1 + i];
     }

@@ -1,0 +1,16 @@
+module try_operator::result;
+
+import std::result as result;
+
+fn divide(a: Int, b: Int, error: Int) -> result::Result<Int, Int> effect Pure decreases 0 {
+    if b == 0 {
+        return result::Result::Err(error);
+    }
+    return result::Result::Ok(a / b);
+}
+
+pub fn div_chain(a: Int, b: Int, c: Int) -> result::Result<Int, Int> effect Pure decreases 0 {
+    let q1: Int = divide(a, b, 1)?;
+    let q2: Int = divide(q1, c, 2)?;
+    return result::Result::Ok(q2);
+}

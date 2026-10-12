@@ -8,7 +8,7 @@
 // The emitter KAT asserts the section carries two placements
 // (tests/unit/runtime/engine/core_wasm_frame_module.cpp), and the Node
 // differential packs DISTINCT live elements into both lists and round-trips
-// them through the generic pack/runv/encode walker
+// them through the generic pack/run_frame/encode walker
 // (tests/conformance/cases/p6_frame_two_containers.case.json): a single shared
 // placement would make the walker read a's backing for b and the observed
 // output would collapse to `[90, 1]` (last-write-wins). Each guard below reads

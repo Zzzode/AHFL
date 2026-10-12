@@ -49,7 +49,12 @@ if [[ ! -f "build/release/build.ninja" ]]; then
   cmake --preset release
 fi
 
-cmake --build --preset build-release --target ahfl-lsp
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  BUILD_CORES="$(sysctl -n hw.ncpu)"
+else
+  BUILD_CORES="$(nproc)"
+fi
+cmake --build --preset build-release --target ahfl-lsp -j"$BUILD_CORES"
 
 RELEASE_LSP="build/release/src/tooling/lsp/ahfl-lsp"
 if [[ ! -x "$RELEASE_LSP" ]]; then

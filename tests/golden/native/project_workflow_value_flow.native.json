@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.native-package.v1",
+  "format": "ahfl.native-package",
   "metadata": {
     "identity": null,
     "entry_target": null,

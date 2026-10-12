@@ -1,0 +1,35 @@
+{
+  "format": "ahfl.conformance-case",
+  "source": "tests/golden/wasm/bounded_string.ahfl",
+  "kind": "agent",
+  "entry": "wasm::v2b::bounded_string::BoundedStringAgent",
+  "scenarios": [
+    {
+      "name": "some",
+      "input": {"_type":"wasm::v2b::bounded_string::In","flag":true},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2b::bounded_string::Out","label":"some"}
+      }
+    },
+    {
+      "name": "none",
+      "input": {"_type":"wasm::v2b::bounded_string::In","flag":false},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2b::bounded_string::Out","label":"none"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "string-frame computed final with a BOUNDED String(0,8) slot; the literals intern into the rodata pool like unbounded strings while the bound meters the frame; p6-frame module on the orchestration lane"
+    }
+  }
+}

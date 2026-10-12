@@ -2,7 +2,7 @@
 
 // RFC 0026 KR6.8 WH-4: the observation emitter for the wasm3 embedded host.
 //
-// Produces the canonical `ahfl.node-observation.v1` document that the
+// Produces the canonical `ahfl.node-observation` document that the
 // conformance comparator (observation_compare.hpp) diffs against the
 // engine observation. The field set, key order, and value formatting are
 // pinned EXACTLY to the JS oracle's `emitObservation` in
@@ -54,7 +54,7 @@ struct ObservationData {
     std::optional<std::uint32_t> workflow_completed_count;
 };
 
-// Emit the `ahfl.node-observation.v1` document with the exact JS field set
+// Emit the `ahfl.node-observation` document with the exact JS field set
 // and sorted keys. Pure and deterministic: the same ObservationData always
 // produces the same bytes.
 [[nodiscard]] std::string emit_observation(const ObservationData &data);

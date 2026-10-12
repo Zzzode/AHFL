@@ -19,7 +19,7 @@
 //      eligibility, two-pass TOTAL preflight); a Suspended record with no
 //      injected input is resumed via rc::supply_injected_result.
 //   4. engine.fresh_instance; L0 alloc/write of the verbatim entry frame.
-//   5. engine.invoke_run2; per synchronous import:
+//   5. engine.invoke_run_workflow; per synchronous import:
 //        read whole memory + borrow the L2 Param span -> rc::next_import;
 //        ReturnMemo       -> engine.alloc_then_write exact authenticated
 //                             bytes, reply (OK, ptr, len), no CAS, no live call;
@@ -41,7 +41,7 @@
 //                             SAME invoker seam and record the terminal on the
 //                             EXISTING Pending row (no redundant begin_effect);
 //                             an empty invoker keeps the fail-closed baseline.
-//   6. rc::finish_run(Run2Exit) -> FinishRunPlan:
+//   6. rc::finish_run(WorkflowRunExit) -> FinishRunPlan:
 //        MarkConsumedPlan -> store.mark_consumed -> rc::ack_mark_consumed
 //                             (ResumeCompleted, output frame forwarded);
 //        FormNewPendingCoordinatePlan -> store.publish_available ->
@@ -110,7 +110,7 @@ namespace host_codes = core_wasm_resume_host_codes;
 // REAL IntegrityPayloadStore this driver drives.
 
 // Packs the entry frame (wire JSON) into the entry node's P4-D I block and
-// returns the (ptr, len) pair for invoke_run2. The bridge lane requires the
+// returns the (ptr, len) pair for invoke_run_workflow. The bridge lane requires the
 // entry frame at the node's fixed input region, not a bump allocation.
 using EntryFramePacker = std::function<std::expected<std::pair<engine::GuestPointer, std::uint32_t>,
                                                      engine::EngineError>(
@@ -231,7 +231,7 @@ struct ResumeRequest {
     BridgeArgHasher bridge_arg_hasher{};
 };
 
-// A completed replay: the run2 raw status word and the verbatim forwarded
+// A completed replay: the run_workflow raw status word and the verbatim forwarded
 // output frame bytes (copied out of guest memory before the instance is torn
 // down), plus the final Consumed tombstone generation and the Available
 // generation it consumed.
@@ -275,7 +275,7 @@ struct DedupBackendFailure {
 enum class ResumeHostReason : std::uint8_t {
     // F3 declared memory != F1 fixed single page; the request's module bytes
     // do not hash to the verified handle's module_sha256(); or the engine
-    // returned a post-run2 page other than the fixed 64 KiB.
+    // returned a post-run_workflow page other than the fixed 64 KiB.
     ArtifactMemoryContractMismatch,
     ReadyForLiveBlocked, // no live_invoker (or no dedup authority to seal under):
                          // the live frontier stays fail-closed

@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/backends/smv.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
+#include <sstream>
 
 namespace ahfl {
 
@@ -22,8 +23,7 @@ void SmvPrinter::emit() {
     out_ << "-- AHFL restricted SMV backend v0.1\n";
     out_ << "-- This lowering preserves validated state-machine, flow, and workflow "
             "structure.\n";
-    out_ << "-- Bounded boolean/integer predicates are lowered directly; other data predicates "
-            "remain environment observation assumptions.\n";
+    out_ << "-- Control verification only; expression-valued data contracts use the opt-in SMT path.\n";
     out_ << "-- Capability calls/effects are bound to flow handler events where available.\n";
     for (const auto &mapping : symbol_mappings_) {
         out_ << "-- AHFL_MAP " << mapping << '\n';
@@ -61,6 +61,23 @@ void SmvPrinter::emit() {
     for (const auto &spec : specs_) {
         out_ << spec << '\n';
     }
+}
+
+void SmvPrinter::add_spec(std::string statement, SmvSpecificationOrigin origin,
+                          SmvSpecificationCoverage coverage, std::string description,
+                          SmvSpecificationAssumption assumption) {
+    model_.specifications.push_back({model_.specifications.size(), origin, coverage, true,
+                                     std::move(description), assumption});
+    specs_.push_back(std::move(statement));
+}
+
+SmvVerificationModel generate_program_smv(const ir::AhflIr &program) {
+    std::ostringstream out;
+    SmvPrinter printer(out);
+    printer.print(program);
+    auto model = printer.verification_model();
+    model.text = out.str();
+    return model;
 }
 
 void print_program_smv(const ir::AhflIr &program, std::ostream &out) {

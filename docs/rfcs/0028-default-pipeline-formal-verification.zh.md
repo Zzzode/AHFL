@@ -5,7 +5,7 @@ status: "stabilized"
 area: ["compiler", "tooling", "formal"]
 stability: "developer-facing"
 created: "2026-10-07"
-updated: "2026-10-11"
+updated: "2026-10-12"
 authors: ["zzzode"]
 shepherd: "zzzode"
 owners:
@@ -22,430 +22,151 @@ implementation_prs: ["e4fcecbd", "22fa727b", "8df39dfe", "952d814b"]
 
 ## Summary
 
-Formal verification moves from an opt-in command (`ahflc verify-formal`) into the
-default compilation pipeline as a first-class stage. A single `--verify=<off|on>`
-option controls the stage; `on` is the default for `ahflc check` and `ahflc run`,
-`off` for inspection/artifact commands. `on` runs structural verification, subset
-eligibility, SMT-BMC contract-data discharge, and full SMV model checking (BDD by
-default, BMC under `--bmc-depth`), all fail-closed: a missing solver, timeout,
-refutation, or unknown result FAILS the compilation. The `verify-formal` command is
-deleted in the same big-bang change (Principle 1): `ahflc check --verify=on` is its
-strict superset. A zero-spec fast path (no LTLSPECs / SMT goals) skips the checker
-launch entirely, keeping edit-compile-debug fast for programs without verifiable
-properties.
+`check`、`build`、`run` 默认 `--verify=on`，验证通用 Agent 状态与 workflow 执行控制模型。用户声明的纯控制 temporal clause 即验证请求。业务数据合同由用户使用 `--verify-data-contracts` 按需选择，普通数据条款不会自动启动 SMT。报告分别呈现生成义务、用户时序目标、环境前提、数据目标及运行时检查范围。
 
 ## Motivation
 
-Today formal verification is reachable only through `ahflc verify-formal`, a separate
-routed command. The default pipeline (`ahflc check` / bare `ahflc <file>`) runs
-`lower_verified_ir_or_report`, whose `verify_ir_program(BackendReady)` enforces
-structural IR invariants only — it is explicitly NOT model checking. A program with a
-refuted `ensures` clause or a violated workflow `safety` property compiles cleanly by
-default; the violation surfaces only when the user remembers to run a second,
-opt-in command.
-
-The project lead has directed that formal verification must be part of the default
-compilation flow: users should not need to be aware of it, but it must exist, and it
-must be configurable. Without this decision, "verified by default" is impossible: the
-two formal engines (SMT-BMC via Z3, SMV model checking via NuSMV/nuXmv) sit behind a
-command most users never invoke, and the default pipeline gives no feedback on the
-properties the language lets users write.
+默认提供稳定、通用的状态/控制检查，避免用户必须额外调用验证命令。用户可以逐步声明更细粒度业务规则，并明确请求证明，而不会把宿主 predicate 声明误当成已证明实现。
 
 ## Goals
 
-1. `ahflc check` (and bare `ahflc <file>`) runs a formal-verification stage by default,
-   after IR lowering and structural verification, before the command tail.
-2. A single `--verify=<off|on>` option controls the stage, parsed into an
-   index-based enum at the CLI boundary (Principle 2). Default: `on` for `check` /
-   `run`, `off` for every other command.
-3. `on` is fail-closed: a missing solver, timeout, refutation, or unknown result
-   FAILS the compilation. There is no graceful degradation — the stage either
-   verifies or fails.
-4. A zero-spec fast path (no LTLSPECs / SMT goals) skips the checker launch entirely,
-   keeping edit-compile-debug fast for programs without verifiable properties.
-5. A genuine refutation (SMT-BMC `Unsafe`, or an SMV `is false` specification) FAILS
-   the compilation with a counterexample.
-6. The `verify-formal` command, its routing, its option guards, and its dedicated
-   tests are deleted in the same change; `ahflc check --verify=on` is the migration
-   target (Principle 1: no coexistence).
-7. The existing formal flags (`--bmc-depth`, `--model-checker`,
-   `--checker-timeout-seconds`, `--formal-backend`, `--formal-model-out`, `--explain`,
-   `--bmc-boundary-invariants`) are relaxed from "verify-formal only" to "formal stage
-   active" (`--verify != off`).
+1. 复用已有 SMV 与 SMT 引擎，保持 `--verify=off|on`；不增加 control/full 模式或新 DSL 属性。
+2. 所请求检查 fail closed；报告不再笼统声称所有形式化验证通过。
+3. 所有 Agent（含 standalone）合成初始、合法转移和 final 吸收义务。
+4. 数据默认 not_requested，requires 是环境前提；显式选择后的 unsupported/unknown/反例均失败。
+5. runtime 合同检查当前 not_implemented，不伪造已执行。
 
 ## Non-Goals
 
-1. **No new verification engine.** This RFC wires the two existing engines
-   (SMT-BMC, SMV model checker) into the pipeline; it does not build the internal
-   IR→`BmcStateMachine` lowering that would make `run_bmc` the always-available
-   backbone. That is the constraint-removal end-state (see Design §Constraint).
-2. **No vendoring of additional solvers.** NuSMV 2.6.0 AND Z3 4.8.12 are both
-   vendored (see Design §Bundled Solver); no other solver (nuXmv, MathSAT, …)
-   is vendored. RFC 0018's dlopen library-mode is the separate track for
-   embedding solvers in-process.
-3. **No change to SMV model emission format.** `print_program_smv` output
-   (`AHFL_MAP` / `LTLSPEC`) is unchanged; `emit smv` is unaffected.
-4. **No change to the SMT-BMC engine semantics** (RFC 0017): loop-free data-predicate
-   fragment, single query per goal, `Unsupported` on no goals, `SolverUnavailable`
-   on missing Z3.
-5. **No new temporal fragment.** What the stage can prove is bounded by what the
-   existing SMV backend encodes; this RFC changes WHEN verification runs, not WHAT it
-   can prove.
-6. **No LSP integration** in this RFC. The stage is a CLI-pipeline concern; LSP
-   real-time verification is a follow-up that consumes the same stage.
+不引入新验证引擎、无限数据模型或 provider 真实性证明。不新增 runtime predicate executor。本次 SMT 只证明合同蕴含，不证明 flow 实现满足后置条件；详细约束见 [RFC 0017](./0017-bmc-contract-semantics.zh.md)。
 
 ## Design
 
-### Pipeline position
+### Pipeline and commands
 
-The formal stage is inserted in `CliDriver::run_analysis`
-(`src/tooling/cli/cli_driver.cpp:4019-4026`), immediately after
-`lower_verified_ir_or_report` (lower + `verify_ir_program(BackendReady)`) and before
-the command-specific tail (`RunWorkflow` dispatch at `:4028`, emit/backend dispatch at
-`:4124`/`:4174`). This is the verification boundary: the IR is well-formed, now check
-its properties before executing or emitting it.
+前端 parse/resolve/typecheck/validate → IR lowering/structural gate → verification stage → command tail。默认如下：
+
+| Command | Default verify |
+|---|---|
+| check / bare source / build / run | on |
+| inspection / artifact / other commands | off |
+
+显式 `--verify` 覆盖默认。`--verify-data-contracts` 要求 on，否则为 usage error。`verify-formal` 已删除；控制验证入口为 `check --verify=on`，请求数据验证再添加 `--verify-data-contracts`。
 
 ```mermaid
 flowchart TD
-    P["parse → resolve → typecheck → validate"] --> L["lower_program_ir"]
-    L --> SV["verify_ir_program(BackendReady) — structural"]
-    SV --> FV{"--verify mode?"}
-    FV -->|off| TAIL["command tail: run / emit / success summary"]
-    FV -->|on| ON["formal stage: eligibility + SMT-BMC + full SMV (fail-closed)"]
-    ON -->|refutation / missing solver / timeout / unknown| FAIL["ExitCode::CompileError + counterexample"]
-    ON -->|ok / zero-spec fast path| TAIL
+    IR[Validated IR] --> Mode{verify on?}
+    Mode -->|off| Tail[Command tail]
+    Mode -->|on| Control[Generated control and user temporal goals]
+    Control --> Selected{verify-data-contracts?}
+    Selected -->|no| Report[Scoped report]
+    Selected -->|yes| Data[Subset premise consistency and contract implication]
+    Data --> Report
+    Report -->|requested checks pass| Tail
+    Report -->|failure or unknown| Fail[Compile error]
 ```
 
-The stage is a STAGE, not a command: on success it falls through to the normal command
-tail (so `check --verify=on` prints the formal report AND the `ok: checked ...`
-summary; `run --verify=on` verifies then executes). On failure it returns
-`ExitCode::CompileError`, exactly as a typecheck failure would.
+### Control scope
 
-### The `--verify` option
+Agent 初始状态、合法转移、final 吸收性以及 workflow lifecycle/final/dependency、模型中的 call/effect/recovery 控制义务默认检查。基础控制义务不会自动声称终止、公平调度或 provider 返回。
 
-A new field on `CommandLineOptions`
-(`src/tooling/cli/command_catalog.hpp`):
+用户 temporal invariant/forbid 与 workflow safety/liveness 继续进入 SMV。模型中未编码的 embedded data observation 导致目标 conditional/unsupported，不能计为无条件用户证明。no-fault 或其他模型前提必须在报告中可见。默认 BDD 结论与 `--bmc-depth` 有界结论分别报告。
 
-```cpp
-enum class VerificationMode { Off, On };
-std::optional<VerificationMode> verify_mode; // nullopt = per-command default
-```
+### Data scope
 
-The CLI string (`off|on`) is parsed into the enum at the option-table boundary
-(`src/tooling/cli/option_table.cpp`); strings are user input, the enum is canonical
-identity (Principle 2). An unknown value is a usage error. The per-command default is
-resolved in `run_analysis`:
+普通数据 requires 列为环境前提；数据 ensures/invariant/forbid 默认 not_requested。未请求不发相关子集 warning、不启动 Z3。`--verify-data-contracts` 请求现有 package 数据目标；必要前提或目标超出子集须拒绝并定位源码。
 
-| Effective command | Default `--verify` |
-|---|---|
-| `Check` or bare (nullopt) | `on` |
-| `RunWorkflow` | `on` |
-| everything else (`emit *`, `dump *`, `fmt`, `package *`, `validate *`, ...) | `off` |
+先验证前提一致，再逐目标查询 requires ∧ ¬goal。invariant 不作为其自身或其他未证明目标的假设。报告 scope=contract_implication；SAT 是公式反例赋值而非执行轨迹。output 与 flow statement 没有赋值关系，因此不能宣称实现证明。
 
-An explicit `--verify=<mode>` overrides the per-command default on any command (so
-`ahflc emit-wasm --verify=on` is possible). The stage is active iff the resolved
-mode `!= Off`.
+### Fail-closed and reports
 
-### Stage behavior
+控制检查缺 checker、超时、反例、checker error、specification 结果不匹配必须失败。显式数据检查缺 solver、超时、unknown、unsupported、矛盾前提、反例必须失败。只有确实无义务/目标时可跳过 checker，不能把含 standalone Agent 的 package 当成 zero-spec。
 
-The stage replaces `verify_formal_program`
-(`src/tooling/cli/cli_analysis_helpers.cpp:273`) with a single
-`run_pipeline_formal_verification(const ir::Program&, const CommandLineOptions&,
-std::ostream& out, std::ostream& err) -> bool` (true = pass).
-`verify_formal_program` is deleted.
+报告分别呈现生成控制义务、用户时序目标及 conditional/unsupported、环境前提、数据目标状态、runtime contract checks=not_implemented。成功文案限定“控制模型验证”，不能保留全局 formal verification passed。状态空间估计仅是规模提示。
 
-**Always:**
+### Bundled solvers and artifacts
 
-1. Subset eligibility (`analyze_contract_subset_eligibility`) — pure, fast. Ineligible
-   clauses emit `warning[formal.NOT_IN_VERIFIED_SUBSET]` exactly as today.
+NuSMV 2.6.0 与 Z3 4.8.12 通过第三方 wrapper 随构建/安装提供。SMV 发现顺序：显式 --model-checker → AHFL_SMV_CHECKER → backend-specific 环境变量 → ahflc 同目录 → PATH；Z3：AHFL_Z3_PATH → bundled → PATH。
 
-**SMT-BMC path:**
+`--formal-backend nuxmv|nusmv` 支持当前验证；spin/tlaplus 只支持相关 artifact，不承诺外部验证。`--formal-model-out` 保存实际 SMV checker 输入，`--checker-timeout-seconds` 限制检查进程。`emit smv` / `emit smt` 是 artifact，生成 artifact 不是证明完成。
 
-2. `run_smt_bmc(program, options)`. The engine already returns `Unsupported` when there
-   are no encodable contract data-predicate goals — the fast path, no Z3 launch, silent.
-   When goals exist:
-   - Z3 present: each goal is one SMT query. `Unsafe` (refutation) → stage FAILS with
-     the counterexample assignment. `Safe`/`BoundedSafe` → pass.
-   - Z3 missing (`SolverUnavailable`): stage FAILS — formal verification requires Z3
-     when SMT goals exist.
-   - `Unknown`/`Timeout`: stage FAILS — fail-closed, no degradation.
+### Remaining implementation constraint
 
-**SMV path:**
-
-3. Generate the SMV model text (`print_program_smv`) — cheap text emission. Count
-   LTLSPECs (`count_expected_specifications`).
-4. **Zero-spec fast path:** if `expected_specification_count == 0` AND no SMT goals,
-   skip the NuSMV launch entirely and return pass (silent). A program with no contracts
-   and no workflows does NO external work.
-5. **Fail-closed verification:**
-   - BDD engine by default; BMC engine when `--bmc-depth` is given.
-   - NuSMV missing (`CheckerUnavailable`): stage FAILS
-     (`checker_status: missing_binary`).
-   - Timeout: stage FAILS. `CheckerError` / `VerificationUnsupported` → FAIL.
-   - Refutation (`failing_specifications` non-empty): stage FAILS with counterexample.
-   - Proven/bounded → pass.
-   - `expected > 0 && observed == 0`, or `observed < expected`, or inconclusive
-     invariants → FAIL (the existing fail-closed integration checks, unchanged).
-
-### Report shape
-
-- Success (zero-spec): silent — no output, no checker launch.
-- Success (with specs): the existing detailed reports
-  (`print_formal_verification_report`, `print_smt_bmc_report`), unchanged.
-- Failure: the existing detailed reports with counterexample, unchanged.
-
-### Flag guard relaxation
-
-The seven usage guards in `CliDriver::validate_options`
-(`src/tooling/cli/cli_driver.cpp:2395-2510`) that currently reject
-`--model-checker` / `--checker-timeout-seconds` / `--formal-backend` /
-`--formal-model-out` / `--bmc-depth` / `--bmc-boundary-invariants` / `--explain`
-outside `verify-formal` are re-pointed from `effective_command_ != VerifyFormal` to
-"formal stage inactive" (resolved `--verify == off`). `--bmc-depth` /
-`--bmc-boundary-invariants` keep their existing `emit smv` allowance.
-
-### Deleting `verify-formal` (big-bang)
-
-`ahflc check --verify=on` is a strict superset of `verify-formal`: it runs the same
-frontend → IR → SMV + SMT-BMC path with the same fail-closed semantics, plus the
-structural gate and the `ok: checked ...` summary. Per Principle 1 (no coexistence),
-the `verify-formal` command is deleted in the SAME change:
-
-- `CommandKind::VerifyFormal` removed from `command_catalog.hpp` (and the `_Count`
-  sentinel shifts).
-- The `routed_command(VerifyFormal, ...)` registration and the `ActionGroup::Verify`
-  routing in `command_registry.cpp` / `option_table.cpp` removed.
-- The two dispatch sites in `run_analysis` (`:4103`, `:4145`) removed.
-- `command_help.cpp`'s `verify` help block removed.
-- `verify_formal_program` and its header declaration removed.
-- Dedicated `ahflc.verify_formal.*` tests removed or migrated to
-  `ahflc.check.verify.*` equivalents (fake-checker pass/fail/timeout/error,
-  missing-binary, unsupported-backend, not-in-verified-subset, smt-bmc-refutation).
-- `docs/spec/assurance.zh.md` updated: the production gate is
-  `ahflc check --verify=on` (and `validate-assurance`).
-- `config/product-scope-freeze.json`'s `command_kinds` list drops `VerifyFormal` (the
-  gate lifts while RFC 0012 is `stabilized`, but the catalog is kept truthful).
-
-### Constraint (Principle 6)
-
-The original constraint — **NuSMV/nuXmv and Z3 are external, optional processes
-that AHFL does not vendor** — is **REMOVED**. NuSMV 2.6.0 is vendored in-tree
-(`third_party/nusmv/`) and built as part of the AHFL CMake build. Z3 4.8.12 is
-vendored in-tree (`third_party/z3/`) and built as part of the AHFL CMake build.
-Both binaries are installed to `bin/` alongside `ahflc` during `cmake --install`,
-and the runtime solver discovery checks the executable's own directory first
-(see Design §Bundled Solver). A default AHFL installation ALWAYS has a working
-SMV model checker AND a working SMT solver; the "missing solver" failure mode
-cannot occur in a default install for either engine.
-
-The internal `run_bmc` engine (`src/verification/formal/bmc.hpp`) remains
-REPL-only and is the longer-term constraint-removal track for a fully
-self-contained formal engine with zero external processes.
-
-### Bundled Solver
-
-NuSMV 2.6.0 (LGPL-2.1) is vendored in `third_party/nusmv/` and built from
-source as part of the AHFL CMake build, gated on `AHFL_ENABLE_BACKEND_FORMAL`
-(which is ON by default). The vendored source carries build-system patches for
-modern toolchains (CMake ≥ 3.5, Python 3, glibc `union wait` removal, MiniSat
-idempotent patch step); see `third_party/nusmv/VENDORING.md` for the patch
-manifest.
-
-**Build integration.** `third_party/nusmv/CMakeLists.txt` is a thin wrapper that
-sets NuSMV's batch-mode build options (no readline, no libxml2, no interactive
-help array) and calls `add_subdirectory(NuSMV)`. The wrapper follows the same
-pattern as the vendored ANTLR4 and doctest: directory-scoped flags do not leak
-to the parent project.
-
-**Install.** When `AHFL_INSTALL=ON`, the NuSMV binary is installed to `bin/`
-alongside `ahflc` (`install(TARGETS NuSMV RUNTIME DESTINATION bin)`). All other
-NuSMV install rules (headers, static libraries, docs) are stripped from the
-vendored CMakeLists — the binary is the sole runtime artifact. A POST_BUILD
-copy step places the NuSMV binary next to `ahflc` in the build tree so bundled
-discovery works without installation.
-
-**Runtime discovery.** The solver discovery chain in `nuxmv_backend.cpp`
-checks, in order:
-1. `--model-checker` flag (explicit user override)
-2. `AHFL_SMV_CHECKER` / `AHFL_NUXMV_PATH` / `AHFL_NUSMV_PATH` env vars
-3. **Bundled solver** — the executable's own directory (via
-   `/proc/self/exe` on Linux, `_NSGetExecutablePath` on macOS), checking
-   `nuXmv`, `nuxmv`, `NuSMV`, `nusmv` in order
-4. PATH lookup
-
-The bundled check is implemented in
-`src/verification/formal/bundled_solver.{hpp,cpp}` and shared with the SMT-BMC
-path (which checks for Z3 in the same way).
-
-**Test.** `ahflc.check.verify.bundled_solver` unsets all solver env vars, sets
-a solver-free PATH, and asserts that `ahflc check` finds the bundled NuSMV
-(`checker_status: available`, checker path is the binary in the executable's
-directory). This replaces the old `missing_binary` test, which asserted the
-opposite failure mode that can no longer occur in a default install.
-`ahflc.check.verify.bundled_smt_solver` does the same for the SMT-BMC path:
-unsets all solver env vars, sets a solver-free PATH, and asserts that
-`smt_bmc_status: safe` / `bounded_safe` is produced (proving the bundled Z3
-was found and ran, not just that the binary exists).
+完整业务实现证明需要 sound executable-IR transition relation。目前数据路径未建该关系，Core IR 也未保留可执行合同；host predicate 与 flow assert/requires 没有自动 runtime 执行。应以该真实限制描述当前能力，取得执行关系与一致性证据后通过新决策扩展，不增加永久兼容路径。
 
 ## User Impact
 
-- **Default `ahflc check` / `ahflc run`**: now runs a fail-closed formal stage.
-  Programs with no contracts/workflows see no output change and negligible overhead
-  (zero-spec fast path, no checker launch). Programs with verifiable properties get a
-  formal verification report; refutations now fail the build by default with a
-  counterexample (previously: compiled clean).
-- **NuSMV bundled**: NuSMV 2.6.0 is built from source and installed alongside
-  `ahflc`. A default AHFL installation always has a working SMV model checker;
-  no separate solver installation is required for LTL/safety verification.
-  The solver is discovered in the executable's own directory first, then env
-  vars, then PATH.
-- **Z3 bundled**: Z3 4.8.12 is built from source and installed alongside
-  `ahflc`. A default AHFL installation always has a working SMT solver;
-  programs with SMT-BMC contract-data goals no longer require a separate Z3
-  installation. The solver is discovered in the executable's own directory
-  first, then env vars, then PATH.
-- **`ahflc verify-formal`**: REMOVED. Migration: `ahflc verify-formal <file>` →
-  `ahflc check --verify=on <file>`. CI / release pipelines that called
-  `verify-formal` must update the invocation (breaking, documented in
-  Compatibility and Migration).
-- **New flag**: `--verify=<off|on>`. `--verify=off` restores the exact
-  pre-RFC behavior (structural only).
-- **Formal flags relaxed**: `--bmc-depth`, `--model-checker`,
-  `--checker-timeout-seconds`, `--formal-backend`, `--formal-model-out`, `--explain`,
-  `--bmc-boundary-invariants` now work with `check`/`run` (previously usage errors
-  outside `verify-formal`).
-- **Inspection commands** (`emit-ir`, `dump-*`, `fmt`, ...): unchanged (default `off`).
+- check/build/run 默认检查通用控制模型及用户纯控制目标。
+- 依赖旧默认 SMT 检查的脚本必须添加 --verify-data-contracts。
+- 原退款示例默认列三条环境前提与一条未请求数据目标，控制目标单独验证；显式请求数据验证会因未定义 host predicate 失败。
+- 退款规则 package 展示支持的数据合同蕴含与公式反例，不承诺退款执行实现等价。
+- --verify=off 保留关闭阶段的行为，与 --verify-data-contracts 同用为参数错误。
 
 ## Compatibility and Migration
 
-**BREAKING.** Two user-visible breaks:
-
-1. **`verify-formal` command removed.** Migration: `ahflc verify-formal <file>` →
-   `ahflc check --verify=on <file>`. The `ahflc verify formal` action routing is
-   removed with it. Impact: `docs/spec/assurance.zh.md` (production gate), CI scripts,
-   and any user muscle memory. The fake-checker test fixtures under
-   `tests/golden/formal/fake_smv_checker_*.sh` are reused by the migrated
-   `check --verify=on` tests.
-2. **Default `check`/`run` now verifies (fail-closed).** A program with a refuted
-   property that previously compiled clean now fails. Migration: fix the property, or
-   pass `--verify=off` to disable the formal stage entirely. NuSMV is bundled and
-   always available; a program that requires Z3 (SMT-BMC goals) but Z3 is missing
-   also fails — install Z3 or use `--verify=off`.
-
-No artifact-format change: SMV model text, SMT-LIB output, `VerificationSummary`, and
-`SmtBmcResult` are unchanged. No new env vars. The `AHFL_SMV_CHECKER` /
-`AHFL_NUXMV_PATH` / `AHFL_NUSMV_PATH` / `AHFL_Z3_PATH` resolution is unchanged.
+`--verify` 的 on/off 语法保留。原默认数据检查需显式添加 `--verify-data-contracts`；全局成功文案由分范围报告取代，不改变 runtime 数据格式。
 
 ## Implementation Plan
 
-1. **Option surface** — `command_catalog.hpp`: add `VerificationMode` enum +
-   `verify_mode` field. `option_table.cpp`: register `--verify` with a parser
-   (`off|on` → enum, else usage error). `command_help.cpp`: document it.
-2. **Stage function** — `cli_analysis_helpers.{hpp,cpp}`: add
-   `run_pipeline_formal_verification(...)` implementing the fail-closed behavior
-   above; delete `verify_formal_program`. Reuse `verify_program_with_smv_checker`,
-   `run_smt_bmc`, `analyze_contract_subset_eligibility`,
-   `count_expected_specifications`, and the existing report printers. Add the
-   zero-spec fast path.
-3. **Pipeline wiring** — `cli_driver.cpp` `run_analysis`: resolve the per-command
-   default mode, insert the stage after `lower_verified_ir_or_report`, return
-   `CompileError` on failure. Remove the two `VerifyFormal` dispatch sites.
-4. **Guard relaxation** — `cli_driver.cpp` `validate_options`: re-point the seven
-   formal-flag guards from `!= VerifyFormal` to "stage inactive".
-5. **Command deletion** — `command_catalog.hpp` (remove `VerifyFormal`),
-   `command_registry.cpp` (registration + `ActionGroup::Verify` routing),
-   `option_table.cpp` (`ActionGroup::Verify` branch), `command_help.cpp`. Update
-   `config/product-scope-freeze.json`.
-6. **Docs** — `docs/spec/assurance.zh.md`: production gate is
-   `ahflc check --verify=on`. `docs/design/formal-backend.zh.md`: note the pipeline
-   integration. `docs/reference/` CLI reference: document `--verify`.
-7. **Tests** — migrate `ahflc.verify_formal.*` to `ahflc.check.verify.*`; add
-   fail-closed tests (see Test Plan).
+1. CLI 请求选择和报告；2. SMV standalone 义务与分类；3. SMT 前提一致性和独立目标；4. docs/examples 与原生回归测试。
 
 ## Test Plan
 
-- **Unit** (`tests/unit/verification/formal/` or `tests/unit/tooling/cli/`):
-  `--verify` string→enum parsing (valid + invalid); per-command default resolution
-  (check/run→on, others→off); zero-spec fast path returns pass without launching;
-  fail-closed on `CheckerUnavailable` / `SolverUnavailable` / timeout / unknown.
-- **Golden / integration** (`tests/cmake/SingleFileCliTests.cmake`, fake checkers under
-  `tests/golden/formal/`):
-  - `ahflc.check.verify.fake_pass` / `fake_bmc_pass` / `fake_fail` /
-    `fake_timeout` / `fake_error` (migrated from `verify_formal.*`, reusing
-    `fake_smv_checker_*.sh`).
-  - `ahflc.check.verify.bundled_solver` → with all solver env vars unset and a
-    solver-free PATH, `ahflc check` finds the bundled NuSMV in the executable's
-    directory (`checker_status: available`). Replaces the old `missing_binary`
-    test (the failure mode it asserted can no longer occur in a default install).
-  - `ahflc.check.verify.bundled_smt_solver` → with all solver env vars unset and
-    a solver-free PATH, `ahflc check` finds the bundled Z3 in the executable's
-    directory and discharges SMT-BMC goals (`smt_bmc_status: safe` /
-    `bounded_safe`). Proves the bundled Z3 binary was found and ran, not just
-    that it exists on disk.
-  - `ahflc.check.verify.no_properties` → exit 0, no formal output, no NuSMV launch
-    (assert via a fake checker that records invocations).
-  - `ahflc.check.verify.refutation` (fake checker emitting `is false`) → exit non-zero
-    with counterexample.
-  - `ahflc.check.verify_off` → byte-identical to pre-RFC `check` output.
-  - `ahflc.check.formal_real_smv_control` / `formal_bounded_data_semantics` (existing)
-    still pass under the new default.
-  - SMT-BMC refutation: `ahflc.check.verify.smt_bmc_refutation` fails with a
-    counterexample when `AHFL_Z3_SOLVER` is set (gated on `AHFL_Z3_SOLVER`, mirroring
-    the existing `formal-smt-bmc` label).
-- **Negative**: `--verify=bogus` → usage error; `--model-checker` with `--verify=off`
-  → usage error (flag requires active stage).
-- **Regression**: `ctest --preset test-dev -j$(nproc)` full suite; the
-  `formal-model-checker` / `formal-smt-bmc` / `formal-integration` labels stay green.
-- **Performance budget gate**: a no-properties `check` adds <100ms vs `--verify=off`
-  (zero-spec fast path, no checker launch).
+使用 project-native 单元、golden、CLI integration 与真实 bundled checker/solver 验证：默认控制/standalone 义务；默认不启动 SMT；可证/反例/unsupported/unknown 数据目标；矛盾前提与循环 invariant；条件/有界报告；verify off 与选项错误；源位置。退款审核和退款规则 manifest 命令须真实运行。文档门禁和相关更广测试通过后才宣称完成。
 
 ## Rollout and Stabilization
 
-1. `draft` → `review`: this RFC; compiler/tooling/formal owner sign-off.
-2. `accepted` → `implementing`: land the Implementation Plan as one big-bang change
-   (command deleted in the same PR as the stage is added).
-3. `implemented`: code + migrated/new tests + `docs/spec/assurance.zh.md` landed;
-   `ctest` green.
-4. `stabilized`: `docs/reference/` CLI reference reflects `--verify`; both
-   solvers (NuSMV, Z3) are bundled so the missing-solver failure path is
-   unreachable in a default install. The internal BMC engine (`run_bmc`) or
-   RFC 0018 embedding remains as the longer-term track for a fully
-   self-contained formal engine with zero external processes.
+沿用现有默认管线，一次性替换请求/报告行为和相关调用方。验收证据包含真实 bundled solver、退款 manifest 命令与相关门禁；不保留旧默认 SMT 路径。
 
 ## Alternatives
 
-1. **Tiered light/full modes (original RFC 0028 design).** Superseded by the unified
-   `--verify=<off|on>` mode. The tiered approach added complexity (two code paths,
-   degradation logic, size gates) for a benefit (graceful degradation when solvers are
-   missing) that the project lead explicitly rejected: "默认就完备检查" (default to
-   complete verification). The unified mode is simpler, fail-closed, and matches the
-   project's correctness-first philosophy.
-2. **Structural verification only (status quo), keep `verify-formal` opt-in.** Rejected:
-   violates the directive — `verify_ir_program(BackendReady)` is structural, not model
-   checking; refuted properties compile clean by default.
-3. **SMT-BMC (Z3) only by default, no SMV in the default.** Rejected: covers only
-   contract data predicates, not the temporal/control properties (workflow
-   safety/liveness, state-machine reachability) that are the SMV backend's reason to
-   exist; and vacuous on machines without Z3.
-4. **Keep `verify-formal` AND add `--verify` (coexistence).** Rejected by Principle 1:
-   `check --verify=on` is a strict superset, so two entry points would drift. The
-   command is deleted, not deprecated.
-5. **Internal BMC (`run_bmc`) as the default backbone, wired to the IR.** The right
-   end-state (always-available, no external dependency), but requires a structured
-   IR→`BmcStateMachine` lowering that does not exist today (the engine is REPL-only).
-   Tracked as the constraint-removal trigger, not this RFC's scope.
+拒绝默认证明所有业务合同：混淆前提与目标，也让无实现 predicate 的存在变成自动证明请求。拒绝新 DSL 标记和 control/full 模式：既有合同与一个明确请求选项已足够，且 full 容易暗示尚不存在的完整实现证明。拒绝删除业务条款或隐藏所有诊断：应保留身份和范围，只有未请求的数据不作为 warning。
 
 ## Open Questions
 
-1. Should `emit-wasm` (and other execution-artifact commands) default to `on`
-   instead of `off`? This RFC defaults them to `off` (inspection/artifact commands);
-   the call is whether producing a deployable artifact should verify first. Leaning:
-   yes, in a follow-up.
-2. SMT-BMC launches Z3 per goal (N process launches for N clauses). Should
-   the default batch goals into a single solver session? Leaning: yes, as a
-   follow-up optimization, not a blocker.
+完整执行实现证明仍缺少 sound transition relation；取得该关系和实现一致性证据后，通过新决策修订范围。当前结论不得提前使用该保证。
 
 ## Decision History
+
+
+- 2026-10-12: Standalone-FSM acceptance supplement: generate initial-state,
+  legal-transition, and final-absorption obligations for every Agent, including
+  those not referenced by a workflow. These properties must observe the actual
+  lowered flow control relation so a final-state handler that leaves final, or a
+  mismatched flow transition, is exposed rather than hidden by normalization.
+  Generic verification does not request termination or provider-return proofs.
+  Packages with no verification targets report no_targets/not_run and must not
+  claim passed; data contracts with no selected goals similarly report no_targets.
+  This supplements the independent scope decision, without adding a parallel
+  engine or changing the required end-state for execution/data proofs.
+
+- 2026-10-12: The dedicated verification-scope decision agent selected default
+  control-model verification plus explicit `--verify-data-contracts`. Existing
+  `--verify=off|on` remains; `on` checks generic Agent/workflow control obligations
+  and user-declared control temporal targets. Data preconditions and goals are
+  reported separately and do not request SMT verification by their presence.
+  `--verify-data-contracts` selects package data contracts and fails on unsupported
+  selected clauses/dependencies, unavailable solver, unknown, or counterexample.
+  Using it with `--verify=off` is a usage error. Reports distinguish generated
+  obligations, user temporal goals, environment premises, requested data goals,
+  and runtime checks. Abstracted temporal goals are conditional/unsupported,
+  never counted as fully proved user properties. Runtime contract checks are
+  currently not implemented and must not be reported as executed.
+  Alternatives rejected: implicit verification of all contracts (confuses trust
+  premises with goals), new DSL attributes (unnecessary parser/HIR/persistence
+  changes), and `control/full` verification modes (break existing options and
+  imply an unsupported complete proof). The current SMT engine proves only
+  `requires => goal`, without flow execution semantics; its scope is explicitly
+  `contract_implication`. Inconsistent premises must fail, and unproved
+  invariants cannot be assumed to prove each other. The end-state implementation
+  proof requires a sound executable-IR transition relation; adding that relation
+  is the trigger for revising this documented limitation. No compatibility path
+  or alternate engine is introduced. Acceptance: default refund control checks,
+  explicit supported/unsupported/refuted data targets, honest conditional and
+  bounded reporting, no fabricated runtime checks, and preserved `--verify=off`.
+  **CLI migration:** scripts that relied on default SMT checks must add
+  `--verify-data-contracts`. This decision records the agent rationale, not
+  human sign-off.
 
 - 2026-10-07: Draft opened. Decision: tiered `--verify=<off|light|full>` with `light`
   default for `check`/`run`; formal stage inserted after IR structural verification;

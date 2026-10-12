@@ -24,14 +24,14 @@
 # wasm3-backed facade (wasm_agent_runner.cpp). The decoder is the host-side
 # reader for the guest-written state-entry trace ring (u32 count + 8-byte
 # (runner,state) records at the dynamic frame-section coords); the emitter
-# produces the canonical ahfl.node-observation.v1 document the conformance
+# produces the canonical ahfl.node-observation document the conformance
 # comparator consumes; the agent session drives a separate effects-free wasm3
 # instance through step()/current_state/transition_count to collect the
 # state-entry sequence; the workflow session runs a WORKFLOW module end-to-end
 # on the canonical instance, wrapping the WH-3 capability_import executor with
 # the D1 hook-firing discipline (import-boundary state_entered + post-run
 # node_completed); the agent runner drives an AGENT module with the D1
-# dual-mode discipline (step-walk on a separate instance + canonical runv);
+# dual-mode discipline (step-walk on a separate instance + canonical run_frame);
 # the workflow runtime is a thin facade over the workflow session that accepts
 # the shared WasmRuntimeHooks (hook signatures identical to WorkflowRuntimeConfig).
 #

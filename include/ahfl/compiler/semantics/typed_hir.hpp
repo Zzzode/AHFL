@@ -25,7 +25,7 @@ class TypeContext;
 
 // ----------------------------------------------------------------------------
 // AssertionKind — typed classifier for statements that produce ExecAssertFailed
-// at runtime (P4-01 / Wave-20 N-5). Replaces the legacy `std::string
+// at runtime (P4-01 / Wave-20 N-5). Replaces the ambiguous `std::string
 // failure_kind` field so downstream consumers (CLI failure report, LSP hover
 // counterexample, runtime journal structured logs) can dispatch on a stable
 // enum instead of string-parsing. The string form is provided by
@@ -40,7 +40,6 @@ enum class AssertionKind {
 };
 
 [[nodiscard]] const char *to_string(AssertionKind kind) noexcept;
-[[nodiscard]] AssertionKind parse_assertion_kind(std::string_view s) noexcept;
 
 // ----------------------------------------------------------------------------
 // TypedDeclPayload — self-contained structural data for a declaration.
@@ -412,6 +411,18 @@ struct TypedNarrowingFact {
     std::string variant_name;
 };
 
+enum class TypedTryKind : std::uint8_t { Option, Result };
+
+// Resolved failure-propagation facts. Lowering consumes these facts rather
+// than reclassifying nominal types or repeating assignability checks.
+struct TypedTryInfo {
+    TypedTryKind kind{TypedTryKind::Option};
+    TypePtr operand_enum_type{nullptr};
+    TypePtr return_enum_type{nullptr};
+    SymbolId owner;
+    std::optional<TypedAdjustmentPlan> failure_adjustment;
+};
+
 struct TypedExpr {
     ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::Group};
     SourceRange range;
@@ -470,7 +481,7 @@ struct TypedExpr {
     // fact must be carried explicitly rather than recovered from `type` or the
     // source spelling downstream. Empty for every non-variant-literal expr.
     std::optional<SymbolId> enum_variant_owner;      // owning enum's SymbolId
-    std::string enum_variant_owner_name;             // owning enum's canonical name (scan fallback)
+    std::string enum_variant_owner_name;             // display spelling, never owner identity
     std::string enum_variant_name;                   // variant name (declaration-stable)
     std::optional<EnumVariantPayloadKind> enum_variant_payload_kind;
     // KR3.5: flow-narrowing facts a boolean condition establishes on its
@@ -488,20 +499,22 @@ struct TypedExpr {
     // from the AST. Monomorphization clones must REMAP each index into the
     // instance's pattern store (never shallow-copy the pre-clone index).
     std::vector<std::uint32_t> match_arm_pattern_indexes{};
+    std::optional<TypedTryInfo> try_info{};
 };
 
 struct TypedDecl {
     ast::NodeKind kind{ast::NodeKind::Program};
-    SymbolId symbol;
+    // Identity defined by this declaration. Anonymous/module/import metadata
+    // has no symbol; SymbolId zero remains a valid identity for named declarations.
+    std::optional<SymbolId> symbol;
     SourceRange range;
     // Source owning this declaration. Set for SourceGraph-based typechecks;
     // left empty for single-program typechecks. The lowering pass uses this
     // to partition the flat TypedProgram::declarations list back into
     // per-source iteration (T1.4).
     std::optional<SourceId> source_id;
-    // For ContractDecl/FlowDecl: SymbolId of the owning agent. For all other
-    // declaration kinds (Struct/Enum/Agent/...) left empty: the `symbol` field
-    // already records the declaration's own id.
+    // For ContractDecl/FlowDecl: SymbolId of the owning agent. These declarations
+    // define no symbol of their own. Other declaration kinds leave this empty.
     std::optional<SymbolId> associated_agent_symbol;
     TypePtr type{nullptr};
 

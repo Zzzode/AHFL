@@ -141,10 +141,10 @@ PRODUCT_SURFACE_DOCUMENTS = (
     ROOT / "README.md",
     ROOT / "README.zh.md",
     ROOT / "docs" / "reference" / "cli-commands.zh.md",
-    ROOT / "docs" / "reference" / "user-guide-cli.zh.md",
-    ROOT / "docs" / "reference" / "user-guide-execution.zh.md",
-    ROOT / "docs" / "reference" / "user-guide-assurance.zh.md",
-    ROOT / "docs" / "reference" / "user-guide-overview.zh.md",
+    ROOT / "docs" / "tutorials" / "cli.zh.md",
+    ROOT / "docs" / "tutorials" / "execution.zh.md",
+    ROOT / "docs" / "tutorials" / "assurance.zh.md",
+    ROOT / "docs" / "tutorials" / "overview.zh.md",
     ROOT / "docs" / "reference" / "contributor-guide.zh.md",
     ROOT / "docs" / "reference" / "native-runtime-artifacts.zh.md",
     ROOT / "docs" / "design" / "native-runtime-architecture.zh.md",
@@ -171,7 +171,7 @@ RETIRED_PRODUCT_SURFACE_PATTERNS = (
     r"durable-store-import-(?:architecture|reference)\.zh\.md",
 )
 RETIRED_RUNTIME_FACT_PATTERNS = (
-    r"ahfl\.reference-provider-audit\.v1",
+    r"ahfl\.reference-provider-audit",
     r"(?:pre-crash-)?provider-audit\.json",
 )
 EXPECTED_PAYLOAD_ARITY = 19
@@ -599,6 +599,29 @@ def check_documented_product_surface(failures: list[str]) -> None:
             )
 
 
+def check_current_contract(failures: list[str]) -> None:
+    """AHFL artifacts identify kinds; no retired revision selectors survive."""
+    patterns = (
+        r"ahfl\.[A-Za-z0-9_.-]+\.v[0-9]+(?:\.[0-9]+)*",
+        r"\b(?:LegacyV[0-9]+|AHFL_ABI_VERSION|ahfl_abi_version|k\w*(?:FormatVersion|SchemaVersion))\b",
+        r'"(?:manifest_version|resolver_version|schema_version|format_version|key_version)"',
+    )
+    for root in (SRC, INCLUDE):
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in {".cpp", ".hpp", ".h"} or "generated" in path.parts:
+                continue
+            for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+                if line.lstrip().startswith(("//", "*")):
+                    continue
+                for pattern in patterns:
+                    match = re.search(pattern, line)
+                    if match:
+                        failures.append(f"{path.relative_to(ROOT)}:{line_number}: "
+                                        f"retired AHFL contract selector `{match.group(0)}`")
+    if (SRC / "tooling" / "abi").exists():
+        failures.append("src/tooling/abi: retired ABI compatibility module must be deleted")
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -642,6 +665,7 @@ def main() -> int:
     check_runtime_fact_source_shape(failures)
     # (g) Maintained docs cannot re-advertise the retired proxy product surface.
     check_documented_product_surface(failures)
+    check_current_contract(failures)
 
     if failures:
         print("architecture check failed:", file=sys.stderr)

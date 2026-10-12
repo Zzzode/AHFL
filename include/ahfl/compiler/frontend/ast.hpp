@@ -218,7 +218,7 @@ enum class StatementSyntaxKind {
     IfLet,       // if let Variant(x) = expr { ... } else { ... }
     Goto,        // goto StateName;
     Return,      // return expr;
-    Assert,      // assert(cond); / assert(cond, "msg"); / legacy: assert cond;
+    Assert,      // assert(cond); / assert(cond, "msg");
     Unwrap,      // unwrap(option_expr);
     Requires,    // requires(cond); / requires(cond, "msg");
     Unreachable, // unreachable; / unreachable("msg");
@@ -421,8 +421,7 @@ struct StructInitSyntax {
 // ----------------------------------------------------------------------------
 // Each expression maps to a dedicated struct, carried uniformly by the
 // ExprSyntaxNode variant.
-// Field names are semantic; they correspond to the generic fields of the legacy
-// ExprSyntax (first/second/name/text, etc.).
+// Field names represent each variant's semantic role.
 
 /// none literal
 
@@ -638,15 +637,9 @@ struct VariantPattern {
 /// Wildcard pattern: `_`. Always matches; binds nothing.
 struct WildcardPattern {};
 
-/// Binding pattern: `mut? name [@ nested]` (RFC §1.6).
-///
-/// `name` binds the scrutinee (or sub-value) to a local. `nested` is the
-/// optional `@`-bound inner pattern (`x @ Some(y)`). `is_mut` is reserved —
-/// accepted by the grammar for forward compatibility, but treated as immutable
-/// binding by the first version of the type system.
+/// Immutable binding, optionally bound to a nested pattern (`x @ Some(y)`).
 struct BindingPattern {
     std::string name;
-    bool is_mut{false};
     Owned<PatternSyntax> nested; // optional `@`-bound sub-pattern
 };
 
@@ -951,8 +944,6 @@ struct ReturnStmtSyntax {
 };
 
 /// Assertion statement: assert(condition[, "message"]);
-/// Legacy form `assert condition;` is normalized by the frontend to use the
-/// same struct with `message` left empty (nullptr).
 struct AssertStmtSyntax {
     ahfl::SourceRange range;
     Owned<ExprSyntax> condition; // assertion condition (required)
@@ -1031,8 +1022,7 @@ struct TemporalExprSyntax;
 // ----------------------------------------------------------------------------
 // Each temporal expression maps to a dedicated struct, carried uniformly by the
 // TemporalExprSyntaxNode variant.
-// Field names are semantic; they correspond to the generic fields of the legacy
-// TemporalExprSyntax (first/second/name, etc.).
+// Field names represent each temporal variant's semantic role.
 
 /// Embeds a plain expression
 struct EmbeddedTemporalExpr {
@@ -1665,7 +1655,7 @@ enum class ImplItemKind {
 /// Pointer semantics: the per-kind buckets (`methods` / `assoc_items` /
 /// `const_items` on `ImplDecl`) are the unique owners. `ImplItemSyntax` stores
 /// non-owning pointers so that the same data can be traversed either via the
-/// flat per-kind lists (stable surface for legacy semantic passes) or via the
+/// flat per-kind lists (typed semantic access) or via the
 /// unified `items` vector (visit-style dispatching). No manual deallocation is
 /// needed — the buckets outlive any reference through `items`.
 struct ImplItemSyntax {
@@ -1692,11 +1682,6 @@ struct ImplItemSyntax {
     };
     AssocConstDef *assoc_const{nullptr};
 };
-
-// Compatibility alias: historical consumer sites use `AssocItemDefSyntax`
-// for associated-type definitions inside impl blocks. Name is preserved so
-// existing semantic passes continue to compile unchanged.
-using AssocItemDefSyntax = ImplItemSyntax::AssocTypeDef;
 
 /// Impl block (RFC §3.2.2 / type-system §1.4):
 ///

@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/runtime/if_let_e2e.ahfl",
   "kind": "workflow",
   "entry": "runtime::if_let_e2e::IfLetWorkflow",
@@ -30,7 +30,7 @@
     "wasm": {
       "eligible": "orchestration",
       "node_observation_skip": "none",
-      "reason": "V2-D in-module scheduler computed-runner node: the packaged computed-final agent runs on its fixed I/C/scratch/O node block; the scheduler materializes the workflow input into the entry I frame and copies the constructed if-let response (branch String PtrLen via rodata) into the fixed workflow output slot"
+      "reason": "workflow-frame in-module scheduler computed-runner node: the packaged computed-final agent runs on its fixed I/C/scratch/O node block; the scheduler materializes the workflow input into the entry I frame and copies the constructed if-let response (branch String PtrLen via rodata) into the fixed workflow output slot"
     }
   }
 }

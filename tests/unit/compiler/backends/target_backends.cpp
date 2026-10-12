@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <stdexcept>
 #include <string>
 
 #include "ahfl/compiler/ir/ir.hpp"
@@ -52,9 +53,9 @@ int main() {
               "crd drops the invalid fully qualified plural name");
         check(contains(output.yaml, "ahfl.io/agent: \"infra::service_mesh::Router\""),
               "crd keeps the fully qualified agent name in an annotation");
-        check(contains(output.yaml, "enum: [Idle, Done]"), "crd enumerates states");
-        check(contains(output.yaml, "default: Idle"), "crd marks the initial state");
-        check(contains(output.yaml, "default: [infra::service_mesh::Classify]"),
+        check(contains(output.yaml, "enum: [\"Idle\", \"Done\"]"), "crd enumerates states");
+        check(contains(output.yaml, "default: \"Idle\""), "crd marks the initial state");
+        check(contains(output.yaml, "default: [\"infra::service_mesh::Classify\"]"),
               "crd emits the collected capabilities array");
         check(contains(output.yaml, "input:") && contains(output.yaml, "context:") &&
                   contains(output.yaml, "output:"),
@@ -419,6 +420,110 @@ int main() {
         check(output.plural.size() <= 63, "long crd plural is clamped to a 63-byte label");
         check(output.resource_name == output.plural + "." + config.api_group,
               "crd metadata.name stays plural + '.' + apiGroup");
+    }
+
+    // CRD schemas must inline references and reject shapes Kubernetes cannot
+    // represent instead of emitting an invalid or unconstrained artifact.
+    {
+        ahfl::backends::K8sCrdConfig config;
+        config.agent_name = "Schema";
+        config.input_schema.ref = "#/components/schemas/Request";
+        ahfl::backends::OpenApiSchema request;
+        request.type = "object";
+        ahfl::backends::OpenApiSchema label;
+        label.type = "string";
+        request.properties.emplace_back("label", std::move(label));
+        request.required = {"label"};
+        config.components.emplace("Request", std::move(request));
+        const auto output = ahfl::backends::generate_crd(config);
+        check(!contains(output.yaml, "$ref") && !contains(output.yaml, "definitions:"),
+              "crd expands nominal schemas without forbidden reference keywords");
+        check(contains(output.yaml, "\"label\":") && contains(output.yaml, "required: [\"label\"]"),
+              "crd reference expansion preserves fields and constraints");
+    }
+    {
+        ahfl::backends::K8sCrdConfig config;
+        config.agent_name = "Tagged";
+        for (const char *tag : {"Accepted", "Rejected"}) {
+            auto variant = ahfl::make_owned<ahfl::backends::OpenApiSchema>();
+            variant->type = "object";
+            variant->required = {tag};
+            ahfl::backends::OpenApiSchema payload;
+            payload.type = "string";
+            variant->properties.emplace_back(tag, std::move(payload));
+            config.input_schema.one_of.push_back(std::move(variant));
+        }
+        const auto output = ahfl::backends::generate_crd(config);
+        check(contains(output.yaml, "maxProperties: 1") &&
+                  contains(output.yaml, "- required: [\"Accepted\"]") &&
+                  contains(output.yaml, "- required: [\"Rejected\"]"),
+              "crd tagged enum branches enforce one exclusive required tag");
+        check(contains(output.yaml, "\"Accepted\":") && contains(output.yaml, "\"Rejected\":") &&
+                  !contains(output.yaml, "- schema:"),
+              "crd places typed enum structure outside oneOf without schema wrappers");
+    }
+    {
+        ahfl::backends::K8sCrdConfig config;
+        config.agent_name = "Set";
+        config.input_schema.type = "array";
+        config.input_schema.unique_items = true;
+        config.input_schema.max_items = 3;
+        config.input_schema.items = ahfl::make_owned<ahfl::backends::OpenApiSchema>();
+        config.input_schema.items->type = "integer";
+        const auto output = ahfl::backends::generate_crd(config);
+        check(contains(output.yaml, "x-kubernetes-list-type: set") &&
+                  contains(output.yaml, "maxItems: 3") && !contains(output.yaml, "uniqueItems"),
+              "crd scalar Set preserves uniqueness and capacity with Kubernetes list semantics");
+    }
+    {
+        ahfl::backends::K8sCrdConfig config;
+        config.agent_name = "Map";
+        config.input_schema.type = "object";
+        config.input_schema.max_properties = 4;
+        config.input_schema.additional_properties =
+            ahfl::make_owned<ahfl::backends::OpenApiSchema>();
+        config.input_schema.additional_properties->type = "integer";
+        const auto output = ahfl::backends::generate_crd(config);
+        check(contains(output.yaml, "additionalProperties:") &&
+                  contains(output.yaml, "maxProperties: 4"),
+              "crd preserves map value structure and capacity");
+    }
+    for (const int shape : {0, 1, 2, 3, 5, 6}) {
+        ahfl::backends::K8sCrdConfig config;
+        config.agent_name = "Invalid";
+        config.input_schema.type = "object";
+        ahfl::backends::OpenApiSchema field;
+        if (shape == 0) {
+            field.ref = "#/components/schemas/Missing";
+        } else if (shape == 1) {
+            field.type = "array";
+            field.tuple_items.push_back(ahfl::make_owned<ahfl::backends::OpenApiSchema>());
+        } else if (shape == 2) {
+            field.ref = "#/components/schemas/Loop";
+            ahfl::backends::OpenApiSchema loop;
+            loop.ref = field.ref;
+            config.components.emplace("Loop", std::move(loop));
+        } else if (shape == 5) {
+            auto variant = ahfl::make_owned<ahfl::backends::OpenApiSchema>();
+            variant->type = "object";
+            variant->required = {"None"};
+            variant->properties.emplace_back("None", ahfl::backends::OpenApiSchema{});
+            field.one_of.push_back(std::move(variant));
+        } else if (shape == 6) {
+            field.type = "array";
+            field.unique_items = true;
+            field.items = ahfl::make_owned<ahfl::backends::OpenApiSchema>();
+            field.items->type = "object";
+        }
+        // shape 3 deliberately leaves a contentless nested field.
+        config.input_schema.properties.emplace_back("value", std::move(field));
+        bool rejected = false;
+        try {
+            (void)ahfl::backends::generate_crd(config);
+        } catch (const std::invalid_argument &error) {
+            rejected = contains(error.what(), "input.value");
+        }
+        check(rejected, "crd rejects unsupported schema with the failing field path");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

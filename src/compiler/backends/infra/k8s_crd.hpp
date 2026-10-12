@@ -1,7 +1,9 @@
 #pragma once
 
+#include <expected>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "compiler/backends/infra/openapi_spec.hpp"
@@ -21,18 +23,14 @@ struct K8sCrdConfig {
     std::string initial_state;
     std::vector<std::string> final_states;
     std::vector<std::string> capabilities;
-    // KR7.4: real JSON Schema trees for the agent's input/context/output ports,
-    // mapped from the IR TypeRef via OpenApiTypeMapper. Scalar types render
-    // inline; struct/enum types render as $ref to the definitions table below.
-    // A schema without content (Unit / Any / Fn / Never / Unresolved) causes
-    // the port to be omitted entirely, matching the previous empty-canonical
-    // behavior.
+    // Port schemas are projected to the CRD structural subset before emission.
+    // Empty context denotes the omitted Unit context port only.
     OpenApiSchema input_schema;
     OpenApiSchema context_schema;
     OpenApiSchema output_schema;
-    // definitions/<key> entries for struct/enum types referenced by $ref from
-    // the port schemas. Sorted by key for deterministic output.
-    std::map<std::string, OpenApiSchema> definitions;
+    // Transient mapper components used for local reference expansion. This
+    // table is never emitted: Kubernetes forbids definitions and $ref.
+    std::map<std::string, OpenApiSchema> components;
 };
 
 struct K8sCrdOutput {
@@ -45,6 +43,13 @@ struct K8sCrdOutput {
     // deterministic qualified-name hash suffix.
     std::string plural;
 };
+
+// Expand mapper references and reject types without a faithful structural
+// representation. Errors identify the port/field path for CLI diagnostics.
+[[nodiscard]] std::expected<OpenApiSchema, std::string>
+project_crd_schema(const OpenApiSchema &schema,
+                   const std::map<std::string, OpenApiSchema> &components,
+                   std::string_view path);
 
 [[nodiscard]] K8sCrdOutput generate_crd(const K8sCrdConfig &config);
 

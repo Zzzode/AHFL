@@ -255,8 +255,15 @@ MaybeCRef<FlowTypeInfo> TypeEnvironment::get_flow(SymbolId id) const {
     return get_from_map(flows_, id);
 }
 
-MaybeCRef<ContractTypeInfo> TypeEnvironment::get_contract(SymbolId id) const {
-    return get_from_map(contracts_, id);
+MaybeCRef<ContractTypeInfo>
+TypeEnvironment::find_contract(std::optional<SourceId> source_id,
+                               SourceRange declaration_range) const {
+    for (const auto &contract : contracts_) {
+        if (contract.source_id == source_id && contract.declaration_range == declaration_range) {
+            return std::cref(contract);
+        }
+    }
+    return std::nullopt;
 }
 
 MaybeCRef<FnTypeInfo> TypeEnvironment::get_fn(SymbolId id) const {

@@ -15,8 +15,11 @@
 #include "ahfl/compiler/ir/types.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -28,6 +31,7 @@ namespace ir = ahfl::ir;
 
 int test_count = 0;
 int pass_count = 0;
+std::string fake_solver_path;
 
 void check(bool condition, const std::string &test_name) {
     ++test_count;
@@ -186,6 +190,92 @@ void test_divisor_obligation_becomes_goal() {
     check(has_divisor_goal, "a divisor-non-zero goal is present");
 }
 
+void test_unsupported_clauses_fail_closed() {
+    for (const auto kind : {ir::ContractClauseKind::Requires, ir::ContractClauseKind::Ensures}) {
+        ir::Program p;
+        add_contract(p, "Agent", {{kind, p.expr_arena.make(ir::CallExpr{
+            .callee = "host_predicate", .arguments = {}, .callee_ref = {}})},
+            {ir::ContractClauseKind::Ensures,
+             bin(p, ir::ExprBinaryOp::Equal, int_lit(p, "1"), int_lit(p, "1"))}});
+        auto r = run_smt_bmc(p, {});
+        check(r.status == SmtBmcStatus::Unsupported && r.unsupported_clauses.size() == 1,
+              "unsupported goal or precondition is recorded, never skipped into Safe");
+        check(smt_bmc_result_is_failure(r) && r.proven_count == 0,
+              "unsupported selected contract fails closed");
+    }
+    check(!smt_bmc_result_is_failure(run_smt_bmc(ir::Program{}, {})),
+          "no data goals is not applicable");
+}
+
+void test_cumulative_goal_ordinals() {
+    ir::Program p;
+    add_contract(p, "Agent", {{ir::ContractClauseKind::Requires,
+        bin(p, ir::ExprBinaryOp::Equal, int_lit(p, "1"), int_lit(p, "1"))}});
+    add_contract(p, "Agent", {{ir::ContractClauseKind::Ensures,
+        bin(p, ir::ExprBinaryOp::Equal, int_lit(p, "2"), int_lit(p, "2"))}});
+    for (auto &decl : p.declarations) {
+        std::get<ir::ContractDecl>(decl).target_ref.id = 7;
+    }
+    SmtBmcOptions options;
+    options.solver.solver_path = "/nonexistent/z3";
+    const auto r = run_smt_bmc(p, options);
+    check(r.goals.size() == 1 && r.goals.front().clause_index == 1,
+          "goal index is cumulative across Agent contract blocks");
+}
+
+void test_unresolved_results_fail_closed() {
+    for (const auto status : {SmtBmcStatus::Unknown, SmtBmcStatus::SolverUnavailable,
+                              SmtBmcStatus::InconsistentAssumptions}) {
+        SmtBmcResult r;
+        r.status = status;
+        check(smt_bmc_result_is_failure(r), "unresolved or inconsistent proof cannot succeed");
+    }
+}
+
+// The native test executable implements a deterministic solver child mode.
+// This tests the real process seam without an external solver or shell fixture.
+void test_solver_unknown_and_errors() {
+    for (const std::string scenario : {"unknown_assumption", "unknown_goal", "error_goal",
+                                       "unknown_step", "error_step", "error_verdict", "timeout_step"}) {
+        ir::Program p;
+        add_contract(p, "Agent", {
+            {ir::ContractClauseKind::Invariant,
+             bin(p, ir::ExprBinaryOp::Equal, int_path(p, scenario, {"x"}),
+                 int_path(p, scenario, {"x"}))}});
+        SmtBmcOptions options;
+        options.solver.solver_path = fake_solver_path;
+        options.use_k_induction = true;
+        if (scenario == "timeout_step") options.solver.timeout = std::chrono::seconds{1};
+        const auto r = run_smt_bmc(p, options);
+        check(r.status == SmtBmcStatus::Unknown && r.proven_count == 0,
+              "solver " + scenario + " is unproven, never Safe or BoundedSafe");
+        check(smt_bmc_result_is_failure(r), "solver " + scenario + " fails closed");
+    }
+}
+
+int fake_solver() {
+    const std::string query{std::istreambuf_iterator<char>{std::cin}, {}};
+    const bool goal_query = query.find("(assert (not ") != std::string::npos;
+    const bool induction_query = query.find("__1") != std::string::npos;
+    if (induction_query && query.find("timeout_step") != std::string::npos) {
+        std::this_thread::sleep_for(std::chrono::seconds{3});
+        std::cout << "unsat\n";
+    } else if (query.find("unknown_assumption") != std::string::npos ||
+        (goal_query && query.find("unknown_goal") != std::string::npos) ||
+        (induction_query && query.find("unknown_step") != std::string::npos)) {
+        std::cout << "unknown\n";
+    } else if (goal_query && query.find("error_verdict") != std::string::npos) {
+        std::cout << "(error \"rejected input\")\nunsat\n";
+    } else if ((goal_query && query.find("error_goal") != std::string::npos) ||
+               (induction_query && query.find("error_step") != std::string::npos)) {
+        std::cout << "(error \"injected solver failure\")\n";
+        return 2;
+    } else {
+        std::cout << (goal_query ? "unsat\n" : "sat\n");
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Real-solver proof semantics (only with AHFL_Z3_PATH)
 // ---------------------------------------------------------------------------
@@ -203,7 +293,96 @@ void test_real_ensures_proven() {
                    bin(p, ir::ExprBinaryOp::GreaterEqual, int_path(p, "input", {"x"}),
                        int_lit(p, "1"))}});
     auto r = run_smt_bmc(p, {});
+    check(r.assumption_checks.size() == 1 && r.assumption_checks.front().consistent,
+          "requires satisfiability is established before proving ensures");
     check(r.status == SmtBmcStatus::Safe, "provable ensures under a precondition is Safe");
+}
+
+void test_real_inconsistent_preconditions() {
+    if (!z3_available()) return;
+    ir::Program p;
+    add_contract(p, "Agent", {
+        {ir::ContractClauseKind::Requires,
+         bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))},
+        {ir::ContractClauseKind::Requires,
+         bin(p, ir::ExprBinaryOp::LessEqual, int_path(p, "input", {"x"}), int_lit(p, "0"))},
+        {ir::ContractClauseKind::Ensures,
+         bin(p, ir::ExprBinaryOp::Equal, int_lit(p, "1"), int_lit(p, "2"))}});
+    const auto r = run_smt_bmc(p, {});
+    check(r.status == SmtBmcStatus::InconsistentAssumptions && r.proven_count == 0,
+          "contradictory requires cannot prove an arbitrary goal by vacuity");
+    check(r.assumption_checks.size() == 1 && !r.assumption_checks.front().consistent,
+          "inconsistent premises are separately recorded");
+}
+
+void test_real_cross_block_contract_scope() {
+    if (!z3_available()) return;
+    for (const bool with_ids : {false, true}) {
+        for (const bool contradictory : {false, true}) {
+            ir::Program p;
+            // Embedding callers may omit IDs; the shared identity boundary
+            // still resolves both source references to this numeric Agent slot.
+            ir::AgentDecl agent;
+            agent.name = "Agent";
+            p.declarations.push_back(std::move(agent));
+            add_contract(p, "Agent", {{ir::ContractClauseKind::Requires,
+                bin(p, ir::ExprBinaryOp::Equal, int_path(p, "input", {"x"}), int_lit(p, "0"))}});
+            add_contract(p, "Agent", {{ir::ContractClauseKind::Ensures,
+                bin(p, ir::ExprBinaryOp::Equal, int_path(p, "input", {"x"}), int_lit(p, "0"))}});
+            if (contradictory) {
+                add_contract(p, "Agent", {{ir::ContractClauseKind::Requires,
+                    bin(p, ir::ExprBinaryOp::Equal, int_path(p, "input", {"x"}), int_lit(p, "1"))}});
+            }
+            if (with_ids) {
+                for (auto &decl : p.declarations) {
+                    if (auto *contract = std::get_if<ir::ContractDecl>(&decl)) {
+                        contract->target_ref.id = 7;
+                    }
+                }
+            }
+            const auto r = run_smt_bmc(p, {});
+            check(r.assumption_checks.size() == 1,
+                  "all contract blocks of one Agent share one premise consistency check");
+            check(r.status == (contradictory ? SmtBmcStatus::InconsistentAssumptions : SmtBmcStatus::Safe),
+                  contradictory ? "cross-block contradictory requires fail without vacuous proof"
+                                : "a goal uses requires from another contract of the same Agent");
+            check(r.proven_count == (contradictory ? 0U : 1U),
+                  "cross-block proof count reflects consistent Agent premises");
+        }
+    }
+}
+
+void test_unresolved_contract_scopes_do_not_alias() {
+    ir::Program p;
+    // No Agent declaration and no target IDs: identical display names alone
+    // must not establish canonical scope identity.
+    for (int i = 0; i < 2; ++i) {
+        add_contract(p, "Unresolved", {{ir::ContractClauseKind::Ensures,
+            bin(p, ir::ExprBinaryOp::Equal, int_lit(p, "1"), int_lit(p, "1"))}});
+    }
+    SmtBmcOptions options;
+    options.solver.solver_path = "/nonexistent/z3";
+    const auto r = run_smt_bmc(p, options);
+    check(r.assumption_checks.size() == 2,
+          "unresolved contract references cannot alias by display name");
+}
+
+void test_real_invariants_cannot_assume_each_other() {
+    if (!z3_available()) return;
+    ir::Program p;
+    // Identical invariants used to prove each other circularly.
+    add_contract(p, "Agent", {
+        {ir::ContractClauseKind::Invariant,
+         bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))},
+        {ir::ContractClauseKind::Invariant,
+         bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))},
+        {ir::ContractClauseKind::Ensures,
+         bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))}});
+    SmtBmcOptions options;
+    options.use_k_induction = true;
+    const auto r = run_smt_bmc(p, options);
+    check(r.status == SmtBmcStatus::Unsafe && r.proven_count == 0,
+          "independent invariants and ensures cannot use unproved invariants as premises");
 }
 
 void test_real_ensures_refuted() {
@@ -378,12 +557,22 @@ void test_k_induction_status_name() {
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+    if (argc == 2 && std::string{argv[1]} == "-in") return fake_solver();
+    fake_solver_path = std::filesystem::absolute(argv[0]).string();
     test_no_contracts_unsupported();
     test_unavailable_solver_never_safe();
     test_goal_metadata();
     test_divisor_obligation_becomes_goal();
 
+    test_unsupported_clauses_fail_closed();
+    test_cumulative_goal_ordinals();
+    test_unresolved_results_fail_closed();
+    test_solver_unknown_and_errors();
+    test_real_inconsistent_preconditions();
+    test_unresolved_contract_scopes_do_not_alias();
+    test_real_cross_block_contract_scope();
+    test_real_invariants_cannot_assume_each_other();
     test_real_ensures_proven();
     test_real_ensures_refuted();
     test_real_forall_proven();

@@ -221,7 +221,7 @@ void emit_workflow_events(WorkflowResult &result,
         // Capability lifecycle: project each collected call's aggregate
         // CapabilityCallResult into the event stream via the SHARED
         // capability_event_projection helper. The wasm lane projects
-        // post-run (events are buffered during invoke_run2 and projected
+        // post-run (events are buffered during invoke_run_workflow and projected
         // here, before the node terminal). The first invocation id is
         // allocated by the helper (the wasm lane has no pre-invocation
         // idempotency context).

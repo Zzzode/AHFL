@@ -709,7 +709,7 @@ class AssuranceJsonPrinter final : private PrettyJsonWriter {
 
     void print(const AssuranceBundle &bundle) {
         print_object(0, [&](const auto &field) {
-            field("format_version", [&]() { write_string(bundle.format_version); });
+            field("format", [&]() { write_string(bundle.format); });
             field("status", [&]() { write_string(bundle.status); });
             field("capabilities", [&]() {
                 print_array(1, [&](const auto &item) {

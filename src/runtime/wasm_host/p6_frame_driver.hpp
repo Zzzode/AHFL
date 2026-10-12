@@ -3,7 +3,7 @@
 // RFC 0026 KR6.8 WH-2: the thin P6-frame host driver. Composes the WH-1 wasm3
 // engine with the WH-2 packer + reader to execute a P6-frame module in-process:
 //
-//   fresh_instance -> mutable_whole_memory -> pack_p6_input -> invoke_runv
+//   fresh_instance -> mutable_whole_memory -> pack_p6_input -> invoke_run_frame
 //   -> status/trap check -> read_whole_memory -> encode_p6_output
 //
 // The driver is intentionally thin: it owns no layout logic, no region policy,
@@ -26,28 +26,28 @@
 #include <variant>
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 
 namespace ahfl::runtime::wasm_host {
 
-/// A runv execution failure, distinct from a frame pack/read failure. The
-/// driver classifies the RunvOutcome here so callers can distinguish a module
-/// trap, a host abort (the host's ImportAbort unwound runv), and a non-OK
+/// A run_frame execution failure, distinct from a frame pack/read failure. The
+/// driver classifies the FrameRunOutcome here so callers can distinguish a module
+/// trap, a host abort (the host's ImportAbort unwound run_frame), and a non-OK
 /// module status (which carries the raw status word for diagnostics).
-struct RunvError {
+struct FrameRunError {
     enum class Kind { Trapped, HostAborted, NonOkStatus };
     Kind kind{Kind::Trapped};
     /// The raw status word; meaningful only when kind == NonOkStatus.
     std::uint32_t raw_status{0};
 
-    [[nodiscard]] friend bool operator==(const RunvError &,
-                                         const RunvError &) noexcept = default;
+    [[nodiscard]] friend bool operator==(const FrameRunError &,
+                                         const FrameRunError &) noexcept = default;
 };
 
 /// The union of every typed error the P6-frame driver can fail with. The
 /// caller visits to classify; no error carries a diagnostic string.
 using P6FrameError =
-    std::variant<FramePackError, FrameReadError, RunvError,
+    std::variant<FramePackError, FrameReadError, FrameRunError,
                  core_wasm_resume_engine::EngineError>;
 
 /// Execute a P6-frame module in-process and return its canonical output JSON.
@@ -56,10 +56,10 @@ using P6FrameError =
 /// driver calls fresh_instance exactly once (a second call on the same engine
 /// is InvalidSequence). `section` + `input_binding` + `output_binding` are the
 /// admitted authorities from `admit_core_wasm_frame_sections`. `final_kind`
-/// selects the runv root authorization (identity -> input base, computed ->
+/// selects the run_frame root authorization (identity -> input base, computed ->
 /// output base); the caller sources it from the codegen descriptor's frame
 /// lane (decision doc section 11.2). `import_callback` is delivered
-/// synchronously for every ahfl_cap import the module invokes during runv
+/// synchronously for every ahfl_cap import the module invokes during run_frame
 /// (empty for import-free P6-frame modules).
 [[nodiscard]] std::expected<std::string, P6FrameError>
 execute_p6_frame(Wasm3ResumeEngine &engine,

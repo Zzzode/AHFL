@@ -656,7 +656,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
         // kInvalid is `field_nominal_types` (sparse navigation-only, §4).
         audit_required_ids(program);
         print_object(0, [&](const auto &field) {
-            field("format_version", [&]() { write_string(program.format_version); });
+            field("format", [&]() { write_string(program.format); });
             field("layer", [&]() { write_string("core"); });
             field("types", [&]() { print_types(program.types, 1); });
             field("value_types", [&]() { print_value_types(program.value_types, 1); });
@@ -1978,9 +1978,8 @@ class CoreJsonReader final {
 
     // Codes are namespaced `core.json.*` so a caller can distinguish them from
     // the `core.verify.*` a final verification emits (RFC 0026 P9 §7).
-    static constexpr std::string_view kNotJson = "core.json.NOT_JSON";
     static constexpr std::string_view kBadEnvelope = "core.json.BAD_ENVELOPE";
-    static constexpr std::string_view kBadFormatVersion = "core.json.BAD_FORMAT_VERSION";
+    static constexpr std::string_view kBadFormat = "core.json.BAD_FORMAT";
     static constexpr std::string_view kBadLayer = "core.json.BAD_LAYER";
     static constexpr std::string_view kMissingField = "core.json.MISSING_FIELD";
     static constexpr std::string_view kWrongType = "core.json.WRONG_TYPE";
@@ -2434,19 +2433,19 @@ bool CoreJsonReader::read(CoreProgram &program) {
 
 bool CoreJsonReader::read_envelope_fields(const JsonValue &obj, CoreProgram &program) {
     if (!check_fields(obj,
-                      {"format_version", "layer", "types", "value_types", "capabilities",
+                      {"format", "layer", "types", "value_types", "capabilities",
                        "agents", "flows", "workflows", "instances", "fns"},
                       "core envelope")) {
         return false;
     }
-    const auto format_version = req_string(obj, "format_version");
-    if (!format_version.has_value()) {
+    const auto format = req_string(obj, "format");
+    if (!format.has_value()) {
         return false;
     }
-    if (*format_version != kCoreFormatVersion) {
-        error(std::string(kBadFormatVersion),
-              "format_version must be '" + std::string(kCoreFormatVersion) + "', got '" +
-                  *format_version + "'",
+    if (*format != kCoreFormat) {
+        error(std::string(kBadFormat),
+              "format must be '" + std::string(kCoreFormat) + "', got '" +
+                  *format + "'",
               node_range(obj));
         return false;
     }
@@ -2478,7 +2477,7 @@ bool CoreJsonReader::read_envelope_fields(const JsonValue &obj, CoreProgram &pro
         return f;
     };
 
-    program.format_version = *format_version;
+    program.format = *format;
     // `value_types` is read FIRST (§6.2): its rebuilt index-remap must exist
     // before ANY value-type reference elsewhere in the document resolves —
     // including `CoreMemberTypeTemplateNode::concrete` inside `types`. Reading
@@ -3880,37 +3879,15 @@ bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
         for (const std::uint32_t param : *params) {
             decl.params.push_back(CoreValueId{param});
         }
-        // FB-3a1/FB-3a2 added the declared capture signature and the pre-bound
-        // env-slot value ids to the fn object WITHOUT bumping the pre-
-        // stabilization 'ahfl.core.v1' format. Both fields therefore default to
-        // empty when absent so an older v1 fn object still reads; the
-        // env_bindings.size()==captures.size() gate below rejects any partial /
-        // inconsistent pairing.
-        const auto captures_node = item->get("captures");
-        if (captures_node == nullptr) {
-            decl.captures.clear();
-        } else {
-            const auto captures = map_value_type_id_array(*item, "captures");
-            if (!captures.has_value()) {
-                return false;
-            }
-            decl.captures = *captures;
+        const auto captures = map_value_type_id_array(*item, "captures");
+        const auto env_bindings = req_u32_array(*item, "env_bindings");
+        if (!captures.has_value() || !env_bindings.has_value()) {
+            return false;
         }
-        const auto env_node = item->get("env_bindings");
-        if (env_node == nullptr) {
-            decl.env_bindings.clear();
-        } else {
-            // FB-3a2: env_bindings are body-local value ids (the same
-            // req_u32_array remap params use), parallel to the declared
-            // captures.
-            const auto env_bindings = req_u32_array(*item, "env_bindings");
-            if (!env_bindings.has_value()) {
-                return false;
-            }
-            decl.env_bindings.reserve(env_bindings->size());
-            for (const std::uint32_t slot : *env_bindings) {
-                decl.env_bindings.push_back(CoreValueId{slot});
-            }
+        decl.captures = *captures;
+        decl.env_bindings.reserve(env_bindings->size());
+        for (const std::uint32_t slot : *env_bindings) {
+            decl.env_bindings.push_back(CoreValueId{slot});
         }
         const auto value_count = req_u32(*item, "value_count");
         if (!value_count.has_value()) {
@@ -5052,7 +5029,7 @@ bool core_program_equal(const CoreProgram &a, const CoreProgram &b) noexcept {
     // R2). `CoreValueTypeId` equality is same-owner-arena equality, so the two
     // programs must share arena numbering — which parse(print(p)) guarantees via
     // §6.2's identity remap.
-    if (a.format_version != b.format_version) {
+    if (a.format != b.format) {
         return false;
     }
     if (a.types != b.types || a.value_types != b.value_types ||

@@ -1,0 +1,32 @@
+[package]
+name = "try-operator"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "try_operator"
+root = "."
+
+[exports]
+modules = ["option", "result", "boundaries", "execution"]
+
+[targets.option]
+kind = "library"
+entry = "option.ahfl"
+
+[targets.result]
+kind = "library"
+entry = "result.ahfl"
+
+[targets.boundaries]
+kind = "library"
+entry = "boundaries.ahfl"
+
+[targets.workflow]
+kind = "handoff"
+entry = "try_operator::execution::TryWorkflow"
+exports = [{ kind = "workflow", name = "try_operator::execution::TryWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }

@@ -37,10 +37,9 @@ namespace {
 // Custom section names (payloads begin with the magics below). Kept in sync with
 // the E4-B1 writer / a future B2-C emitter; this reader validates the observed name
 // against these constants.
-constexpr std::string_view kExecManifestSectionName = "ahfl.wasm-exec-manifest.v1";
-constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
+constexpr std::string_view kExecManifestSectionName = "ahfl.execution-manifest";
+constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema";
 constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 'X', 'M'};
-constexpr std::uint8_t kExecManifestVersion = 2;
 
 // The exact capability import contract (mirrors the C3 inspector).
 constexpr std::string_view kCapabilityImportModule = "ahfl_cap";
@@ -69,8 +68,10 @@ constexpr std::uint8_t kEntryKindAgent = 1;
 // fixed message that echoes no observed byte, name, digest, or manifest field.
 [[nodiscard]] CoreLowerDiagnostic error(std::string message) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
-                               std::string(ir::core::wire_schema::kInvalid), std::move(message),
-                               std::nullopt, {}};
+                               std::string(ir::core::wire_schema::kInvalid),
+                               std::move(message),
+                               std::nullopt,
+                               {}};
 }
 
 // A bounds-checked forward cursor with a canonical u32 LEB reader (same discipline
@@ -80,8 +81,12 @@ class ByteCursor {
   public:
     explicit ByteCursor(std::span<const std::uint8_t> bytes) noexcept : bytes_(bytes) {}
 
-    [[nodiscard]] std::size_t remaining() const noexcept { return bytes_.size() - offset_; }
-    [[nodiscard]] bool at_end() const noexcept { return offset_ == bytes_.size(); }
+    [[nodiscard]] std::size_t remaining() const noexcept {
+        return bytes_.size() - offset_;
+    }
+    [[nodiscard]] bool at_end() const noexcept {
+        return offset_ == bytes_.size();
+    }
 
     [[nodiscard]] std::optional<std::uint8_t> byte() noexcept {
         if (remaining() == 0) {
@@ -225,8 +230,8 @@ struct ModuleFraming {
     ParsedMemorySection memory;                        // valid only when have_memory_section
     std::span<const std::uint8_t> exec_manifest_bytes; // raw payload after the name framing
     std::span<const std::uint8_t> wire_schema_bytes;   // raw payload after the name framing
-    ArtifactDigest module_sha256{};       // whole emitted module
-    ArtifactDigest wire_schema_sha256{};  // raw AHFLWS payload (no custom-name framing)
+    ArtifactDigest module_sha256{};                    // whole emitted module
+    ArtifactDigest wire_schema_sha256{};   // raw AHFLWS payload (no custom-name framing)
     ArtifactDigest exec_manifest_sha256{}; // raw AHFLXM payload (no custom-name framing)
 };
 
@@ -234,9 +239,8 @@ struct ModuleFraming {
 // capability import must use this 2-result shape; anything else is rejected.
 // Parallel copy of the C3 predicate per the "no speculative shared framer"
 // ruling.
-[[nodiscard]] bool
-spans_are_bridge_signature(std::span<const std::uint8_t> params,
-                           std::span<const std::uint8_t> results) noexcept {
+[[nodiscard]] bool spans_are_bridge_signature(std::span<const std::uint8_t> params,
+                                              std::span<const std::uint8_t> results) noexcept {
     static constexpr std::array<std::uint8_t, 1> kParams{kValueTypeI32};
     static constexpr std::array<std::uint8_t, 2> kResults{kValueTypeI32, kValueTypeI32};
     if (params.size() != kParams.size() || results.size() != kResults.size()) {
@@ -392,15 +396,15 @@ spans_are_bridge_signature(std::span<const std::uint8_t> params,
 
 // Walk the module: header + Type/Import/Memory (exact-consume, in wasm section
 // order) + size-skip every other non-custom section. The exec-manifest custom section
-// (`ahfl.wasm-exec-manifest.v1`) must appear EXACTLY ONCE IMMEDIATELY BEFORE the
-// wire-schema custom section (`ahfl.wire-schema.v1`), which must be the module's
+// (`ahfl.execution-manifest`) must appear EXACTLY ONCE IMMEDIATELY BEFORE the
+// wire-schema custom section (`ahfl.wire-schema`), which must be the module's
 // FINAL section at EOF. A missing, duplicated, misordered, misnamed, or
 // bytes-after-target section fails closed.
 [[nodiscard]] std::optional<ModuleFraming>
 frame_module(std::span<const std::uint8_t> module_bytes,
              std::vector<CoreLowerDiagnostic> &diagnostics) {
-    static constexpr std::array<std::uint8_t, 8> kModuleHeader{0x00, 0x61, 0x73, 0x6d,
-                                                              0x01, 0x00, 0x00, 0x00};
+    static constexpr std::array<std::uint8_t, 8> kModuleHeader{
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     ByteCursor cursor(module_bytes);
     if (!cursor.match(kModuleHeader)) {
         diagnostics.push_back(error("module header is not wasm v1"));
@@ -607,7 +611,7 @@ struct ManifestNode {
     // One entry per capability call site on this node (cap_call_count entries).
     // A P6 bridge node can call multiple capabilities across different branches.
     std::vector<ManifestCapability> capabilities;
-    // WH-5b.2 (manifest v2): the node's in-runner bridge call sites. A P6 bridge
+    // WH-5b.2 : the node's in-runner bridge call sites. A P6 bridge
     // node has cap_call_count == 0 (its scheduler completion is a tag-0 identity
     // event) and accounts its in-handler bridge imports here. Empty for an opaque
     // cap site or a pure identity node.
@@ -627,8 +631,7 @@ struct DecodedAgentManifest {
 // The decoded exec-manifest, tagged by entry kind. The factory visits the
 // variant to build the module payload (workflow: nodes + call sites; agent:
 // call sites directly from the capability list).
-using DecodedManifest =
-    std::variant<DecodedWorkflowManifest, DecodedAgentManifest>;
+using DecodedManifest = std::variant<DecodedWorkflowManifest, DecodedAgentManifest>;
 
 // Decode + canonically re-encode-check the exec-manifest payload (AHFLXM). Mirrors
 // the wire-schema / resume-record discipline: canonical ULEB, count-before-reserve,
@@ -644,11 +647,6 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
         diagnostics.push_back(error("exec-manifest has a bad magic header"));
         return std::nullopt;
     }
-    const auto version = cursor.byte();
-    if (!version.has_value() || *version != kExecManifestVersion) {
-        diagnostics.push_back(error("exec-manifest has an unsupported version"));
-        return std::nullopt;
-    }
     const auto entry_kind = cursor.byte();
     if (!entry_kind.has_value() ||
         (*entry_kind != kEntryKindWorkflow && *entry_kind != kEntryKindAgent)) {
@@ -657,7 +655,7 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
     }
 
     if (*entry_kind == kEntryKindAgent) {
-        // Agent arm: magic + version + entry_kind=1 + agent_id(4) +
+        // Agent arm: magic + entry_kind=1 + agent_id(4) +
         // capability_count(4) + capabilities[] { capability_id(4) +
         // source_symbol(8) }.
         const auto agent_id = cursor.u32();
@@ -686,25 +684,21 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
         seen_caps.reserve(*cap_count);
         for (std::uint32_t i = 0; i < *cap_count; ++i) {
             const auto capability = cursor.u32();
-            if (!capability.has_value() ||
-                *capability == CoreCapabilityId::kInvalid) {
-                diagnostics.push_back(error(
-                    "exec-manifest capability is missing or the invalid sentinel"));
+            if (!capability.has_value() || *capability == CoreCapabilityId::kInvalid) {
+                diagnostics.push_back(
+                    error("exec-manifest capability is missing or the invalid sentinel"));
                 return std::nullopt;
             }
             if (!seen_caps.insert(*capability).second) {
-                diagnostics.push_back(
-                    error("exec-manifest capability is not unique"));
+                diagnostics.push_back(error("exec-manifest capability is not unique"));
                 return std::nullopt;
             }
             const auto source_symbol = cursor.u64();
             if (!source_symbol.has_value()) {
-                diagnostics.push_back(
-                    error("exec-manifest source symbol is malformed"));
+                diagnostics.push_back(error("exec-manifest source symbol is malformed"));
                 return std::nullopt;
             }
-            manifest.capabilities.push_back(
-                {CoreCapabilityId{*capability}, *source_symbol});
+            manifest.capabilities.push_back({CoreCapabilityId{*capability}, *source_symbol});
         }
         if (!cursor.at_end()) {
             diagnostics.push_back(error("exec-manifest has trailing bytes"));
@@ -771,8 +765,7 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
         // most one capability in this byte. Reject anything else rather than
         // silently reading a capability table the scheduler cannot model.
         if (*cap_call_count > 1) {
-            diagnostics.push_back(
-                error("exec-manifest cap_call_count must be 0 or 1"));
+            diagnostics.push_back(error("exec-manifest cap_call_count must be 0 or 1"));
             return std::nullopt;
         }
         node.cap_call_count = *cap_call_count;
@@ -792,7 +785,7 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
             node.capabilities.push_back(
                 ManifestCapability{CoreCapabilityId{*capability}, *source_symbol});
         }
-        // WH-5b.2 (manifest v2): the in-runner bridge-site table.
+        // WH-5b.2 : the in-runner bridge-site table.
         const auto bridge_site_count = cursor.byte();
         if (!bridge_site_count.has_value()) {
             diagnostics.push_back(error("exec-manifest bridge_site_count is out of range"));
@@ -806,8 +799,7 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
                 // per_node_counters_ assigns them in execution order; a gap or
                 // duplicate would make the (node, ordinal) -> call_site_id join
                 // ambiguous).
-                diagnostics.push_back(
-                    error("exec-manifest bridge site ordinal is not dense"));
+                diagnostics.push_back(error("exec-manifest bridge site ordinal is not dense"));
                 return std::nullopt;
             }
             const auto call_site_id = cursor.u32();
@@ -816,8 +808,7 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
                 return std::nullopt;
             }
             if (!seen_bridge_call_site_ids.insert(*call_site_id).second) {
-                diagnostics.push_back(
-                    error("exec-manifest bridge call_site_id is not unique"));
+                diagnostics.push_back(error("exec-manifest bridge call_site_id is not unique"));
                 return std::nullopt;
             }
             const auto capability = cursor.u32();
@@ -831,9 +822,8 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
                 diagnostics.push_back(error("exec-manifest bridge source symbol is malformed"));
                 return std::nullopt;
             }
-            node.bridge_sites.push_back(
-                ManifestBridgeSite{*ordinal, *call_site_id,
-                                   CoreCapabilityId{*capability}, *source_symbol});
+            node.bridge_sites.push_back(ManifestBridgeSite{
+                *ordinal, *call_site_id, CoreCapabilityId{*capability}, *source_symbol});
         }
         // P2-7: a node is either an opaque capability call (cap_call_count 1, no
         // in-runner bridge sites) or a P6 bridge node (cap_call_count 0 + a
@@ -842,8 +832,8 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
         // declare capability calls on the same node, or the resume classifier
         // could not tell which authority owns the node's completion.
         if (node.cap_call_count != 0 && !node.bridge_sites.empty()) {
-            diagnostics.push_back(error(
-                "exec-manifest node mixes an opaque capability call with bridge sites"));
+            diagnostics.push_back(
+                error("exec-manifest node mixes an opaque capability call with bridge sites"));
             return std::nullopt;
         }
         manifest.nodes.push_back(node);
@@ -932,7 +922,6 @@ void encode_exec_manifest(std::vector<std::uint8_t> &out, const DecodedManifest 
         } while (v != 0);
     };
     out.insert(out.end(), kExecManifestMagic.begin(), kExecManifestMagic.end());
-    out.push_back(kExecManifestVersion);
     std::visit(
         [&](const auto &arm) {
             using T = std::decay_t<decltype(arm)>;
@@ -956,7 +945,7 @@ void encode_exec_manifest(std::vector<std::uint8_t> &out, const DecodedManifest 
                         put_u32(cap.capability.value);
                         put_u64(cap.source_symbol);
                     }
-                    // WH-5b.2 (manifest v2): the in-runner bridge-site table.
+                    // WH-5b.2 : the in-runner bridge-site table.
                     out.push_back(static_cast<std::uint8_t>(node.bridge_sites.size()));
                     for (const ManifestBridgeSite &site : node.bridge_sites) {
                         out.push_back(site.ordinal);
@@ -982,8 +971,12 @@ namespace {
 }
 } // namespace
 
-bool VerifiedCoreWasmNodeResult::has_errors() const noexcept { return any_error(diagnostics); }
-bool VerifiedCoreWasmCallSiteResult::has_errors() const noexcept { return any_error(diagnostics); }
+bool VerifiedCoreWasmNodeResult::has_errors() const noexcept {
+    return any_error(diagnostics);
+}
+bool VerifiedCoreWasmCallSiteResult::has_errors() const noexcept {
+    return any_error(diagnostics);
+}
 bool VerifiedCoreWasmSchemaModuleResult::has_errors() const noexcept {
     return any_error(diagnostics);
 }
@@ -1137,8 +1130,7 @@ struct SchemaModuleFactory {
         std::vector<std::uint8_t> reencoded;
         encode_exec_manifest(reencoded, *manifest);
         if (reencoded.size() != framing->exec_manifest_bytes.size() ||
-            !std::equal(reencoded.begin(), reencoded.end(),
-                        framing->exec_manifest_bytes.begin())) {
+            !std::equal(reencoded.begin(), reencoded.end(), framing->exec_manifest_bytes.begin())) {
             result.diagnostics.push_back(error("exec-manifest is not canonical"));
             return result;
         }
@@ -1148,7 +1140,8 @@ struct SchemaModuleFactory {
         //    one-to-one.
         const std::size_t cap_import_count = framing->imports.size();
         if (cap_import_count == 0) {
-            result.diagnostics.push_back(error("module has a wire-schema section but no capability imports"));
+            result.diagnostics.push_back(
+                error("module has a wire-schema section but no capability imports"));
             return result;
         }
         if (table.capabilities.empty()) {
@@ -1156,7 +1149,8 @@ struct SchemaModuleFactory {
             return result;
         }
         if (cap_import_count != table.capabilities.size()) {
-            result.diagnostics.push_back(error("module capability import count does not match the table"));
+            result.diagnostics.push_back(
+                error("module capability import count does not match the table"));
             return result;
         }
         // Every import must use the bridge (i32)->(i32,i32) functype; the
@@ -1166,10 +1160,9 @@ struct SchemaModuleFactory {
         for (const auto &imported : framing->imports) {
             const bool type_in_range =
                 imported.type_index < framing->type_is_bridge_signature.size();
-            if (!type_in_range ||
-                !framing->type_is_bridge_signature[imported.type_index]) {
-                result.diagnostics.push_back(error(
-                    "module capability import does not use the ahfl_cap bridge signature"));
+            if (!type_in_range || !framing->type_is_bridge_signature[imported.type_index]) {
+                result.diagnostics.push_back(
+                    error("module capability import does not use the ahfl_cap bridge signature"));
                 return result;
             }
             if (imported.source_symbol != table.capabilities[cap_i].source_symbol) {
@@ -1209,13 +1202,15 @@ struct SchemaModuleFactory {
         // Resolve one capability identity against the authority set and mint its
         // Param{0} + Result bindings through the shared authority. On any authority
         // violation the diagnostic is pushed and false returned.
-        auto resolve_capability_call_site =
-            [&](CoreCapabilityId capability, std::uint64_t source_symbol,
-                std::size_t node_index) -> bool {
+        auto resolve_capability_call_site = [&](CoreCapabilityId capability,
+                                                std::uint64_t source_symbol,
+                                                std::size_t node_index) -> bool {
             // Locate the capability by IDENTITY in the (strictly increasing, unique)
             // table via lower_bound; the ordinal is its position.
             const auto it = std::lower_bound(
-                table.capabilities.begin(), table.capabilities.end(), capability,
+                table.capabilities.begin(),
+                table.capabilities.end(),
+                capability,
                 [](const CoreWireCapabilitySchema &entry, CoreCapabilityId target) noexcept {
                     return entry.capability.value < target.value;
                 });
@@ -1229,8 +1224,7 @@ struct SchemaModuleFactory {
                     error("exec-manifest source symbol does not match the capability entry"));
                 return false;
             }
-            const auto ordinal =
-                static_cast<std::uint32_t>(it - table.capabilities.begin());
+            const auto ordinal = static_cast<std::uint32_t>(it - table.capabilities.begin());
             referenced.insert(capability.value);
 
             // The bridge lane carries multi-argument capabilities (the control
@@ -1239,14 +1233,13 @@ struct SchemaModuleFactory {
             // Param{0} binding minted here is sufficient (it is only used to
             // access the shared table, not as the sole arg descriptor).
             if (it->params.empty()) {
-                result.diagnostics.push_back(
-                    error("exec-manifest capability has no parameters"));
+                result.diagnostics.push_back(error("exec-manifest capability has no parameters"));
                 return false;
             }
-            const CoreWireRootSelector param_selector{capability, source_symbol,
-                                                      CoreWireRootKind::Param, 0};
-            const CoreWireRootSelector result_selector{capability, source_symbol,
-                                                       CoreWireRootKind::Result, 0};
+            const CoreWireRootSelector param_selector{
+                capability, source_symbol, CoreWireRootKind::Param, 0};
+            const CoreWireRootSelector result_selector{
+                capability, source_symbol, CoreWireRootKind::Result, 0};
             std::vector<CoreLowerDiagnostic> mint_diags;
             auto param = ir::core::make_wire_binding_from_verified_table(
                 *verified_table.table, param_selector, mint_diags);
@@ -1268,10 +1261,12 @@ struct SchemaModuleFactory {
                 }
                 return false;
             }
-            payload->call_sites.push_back(
-                detail::CallSiteRecord{node_index, CapabilityImportOrdinal{ordinal},
-                                       std::move(*param), std::move(*result_binding),
-                                       capability, source_symbol});
+            payload->call_sites.push_back(detail::CallSiteRecord{node_index,
+                                                                 CapabilityImportOrdinal{ordinal},
+                                                                 std::move(*param),
+                                                                 std::move(*result_binding),
+                                                                 capability,
+                                                                 source_symbol});
             return true;
         };
 
@@ -1289,8 +1284,7 @@ struct SchemaModuleFactory {
                     payload->is_agent = true;
                     payload->agent_id = arm.agent_id;
                     for (const ManifestCapability &cap : arm.capabilities) {
-                        if (!resolve_capability_call_site(cap.capability,
-                                                          cap.source_symbol, 0)) {
+                        if (!resolve_capability_call_site(cap.capability, cap.source_symbol, 0)) {
                             call_sites_ok = false;
                             return;
                         }
@@ -1304,8 +1298,8 @@ struct SchemaModuleFactory {
                     for (std::size_t n = 0; n < arm.nodes.size(); ++n) {
                         const ManifestNode &node = arm.nodes[n];
                         for (const ManifestCapability &cap : node.capabilities) {
-                            if (!resolve_capability_call_site(cap.capability,
-                                                              cap.source_symbol, n)) {
+                            if (!resolve_capability_call_site(
+                                    cap.capability, cap.source_symbol, n)) {
                                 call_sites_ok = false;
                                 return;
                             }
@@ -1323,8 +1317,8 @@ struct SchemaModuleFactory {
                             if (!seen_bridge_caps.insert(site.capability.value).second) {
                                 continue;
                             }
-                            if (!resolve_capability_call_site(site.capability,
-                                                              site.source_symbol, n)) {
+                            if (!resolve_capability_call_site(
+                                    site.capability, site.source_symbol, n)) {
                                 call_sites_ok = false;
                                 return;
                             }

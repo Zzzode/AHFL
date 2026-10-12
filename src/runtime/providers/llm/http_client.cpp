@@ -54,36 +54,48 @@ HttpClient::HttpClient(std::string base_url,
 HttpClient::HttpClient(std::string base_url,
                        std::string api_key,
                        int timeout_seconds,
-                       ChatCompletionsTransport transport)
+                       RequestTransport transport)
     : base_url_(std::move(base_url)), api_key_(std::move(api_key)),
       timeout_seconds_(timeout_seconds), transport_(std::move(transport)) {}
 
 HttpClient::HttpClient(std::string base_url,
                        std::string api_key,
                        int timeout_seconds,
-                       ChatCompletionsTransport transport,
+                       RequestTransport transport,
                        HttpAuthConfig auth_config)
     : base_url_(std::move(base_url)), api_key_(std::move(api_key)),
       timeout_seconds_(timeout_seconds), transport_(std::move(transport)),
       auth_config_(std::move(auth_config)) {}
 
 HttpResponse HttpClient::chat_completions(const std::string &request_json) {
-    const auto headers = chat_completion_headers(api_key_, auth_config_);
-    if (transport_) {
-        return transport_(base_url_, headers, timeout_seconds_, request_json);
-    }
+    return send("POST", "/chat/completions", request_json);
+}
 
+HttpResponse HttpClient::get(std::string_view relative_path) {
+    return send("GET", relative_path, std::nullopt);
+}
+
+HttpResponse HttpClient::send(std::string_view method,
+                              std::string_view relative_path,
+                              std::optional<std::string> body) {
     ahfl::support::HttpRequest request;
-    request.method = "POST";
-    request.url = base_url_ + "/chat/completions";
-    request.headers = headers;
-    request.body = request_json;
+    request.method = method;
+    auto endpoint = base_url_;
+    while (!endpoint.empty() && endpoint.back() == '/') {
+        endpoint.pop_back();
+    }
+    request.url = endpoint + std::string(relative_path);
+    request.headers = chat_completion_headers(api_key_, auth_config_);
+    request.body = std::move(body);
     request.timeout_seconds = timeout_seconds_;
     request.tls_client_certificate_path = auth_config_.mtls_client_cert_path;
     request.tls_client_key_path = auth_config_.mtls_client_key_path;
     request.tls_ca_certificate_path = auth_config_.mtls_ca_cert_path;
     request.verify_tls = auth_config_.mtls_verify_tls;
 
+    if (transport_) {
+        return transport_(request);
+    }
     const auto response = ahfl::support::execute_http(request);
     if (response.status_code == 0 && !response.error.empty()) {
         return HttpResponse{0, response.error};

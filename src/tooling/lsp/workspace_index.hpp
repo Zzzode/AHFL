@@ -190,8 +190,8 @@ struct IndexDiagnosticFact {
 
 struct NavigationIndexMetadata {
     std::uint64_t revision{0};
-    std::string index_schema_version;
-    std::string index_identity_schema_version;
+    std::string index_format;
+    std::string index_identity_format;
 };
 
 struct NavigationIndexReuseStats {

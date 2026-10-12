@@ -10,7 +10,7 @@ PackageGraph；frontend loader 只消费 PackageGraph 下发的 module root tabl
 - [module-resolution-rules.zh.md](./module-resolution-rules.zh.md)
 - [source-graph.zh.md](./source-graph.zh.md)
 - [semantics-architecture.zh.md](./semantics-architecture.zh.md)
-- [project-usage.zh.md](../reference/project-usage.zh.md)
+- [packages.zh.md](../tutorials/packages.zh.md)
 - [RFC 0005：Package Configuration System](../rfcs/0005-package-configuration-system.zh.md)
 
 适用范围：

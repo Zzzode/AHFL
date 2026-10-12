@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "ahfl/compiler/backends/smv.hpp"
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
@@ -39,11 +40,13 @@ class SmvPrinter final {
     // internal indexing / collection helpers below continue to take
     // `const ir::Program &` (same type) — only the layer boundary is annotated.
     void print(const ir::AhflIr &program);
+    [[nodiscard]] const SmvVerificationModel &verification_model() const { return model_; }
 
   private:
     std::ostream &out_;
     const ir::Program *program_{nullptr};
     ir::ProgramIndex index_;
+    ir::ContractClauseIndex contract_clause_index_;
     std::vector<std::reference_wrapper<const ir::ContractDecl>> contracts_;
     std::vector<std::reference_wrapper<const ir::WorkflowDecl>> workflows_;
     std::vector<std::string> state_variables_;
@@ -54,12 +57,18 @@ class SmvPrinter final {
     std::vector<std::string> defines_;
     std::vector<std::string> assignments_;
     std::vector<std::string> specs_;
+    SmvVerificationModel model_;
+    void add_spec(std::string statement,
+                  SmvSpecificationOrigin origin = SmvSpecificationOrigin::GeneratedControl,
+                  SmvSpecificationCoverage coverage = SmvSpecificationCoverage::Complete,
+                  std::string description = "generated control invariant",
+                  SmvSpecificationAssumption assumption = SmvSpecificationAssumption::None);
+    void collect_agent_control_specs();
 
     // --- Indexing (smv_indexing.cpp) ---
     void index_declarations(const ir::Program &program);
     void index_observations(const ir::Program &program);
     [[nodiscard]] MaybeCRef<ir::AgentDecl> find_agent(std::string_view canonical_name) const;
-    [[nodiscard]] bool agent_has_contract(const ir::AgentDecl &agent) const;
     [[nodiscard]] std::unordered_map<std::string, SmvWorkflowNodeInfo>
     build_workflow_node_map(const ir::WorkflowDecl &workflow) const;
     [[nodiscard]] MaybeCRef<ir::FlowDecl> find_flow(std::string_view canonical_name) const;
@@ -158,12 +167,6 @@ class SmvPrinter final {
                          std::size_t clause_index,
                          std::size_t &atom_index,
                          std::vector<std::string> &observation_assumptions) const;
-    [[nodiscard]] std::optional<std::string>
-    render_contract_expr_clause(const ir::ContractDecl &contract,
-                                const ir::AgentDecl &agent,
-                                ir::ContractClauseKind kind,
-                                const ir::Expr &expr,
-                                std::size_t clause_index);
     [[nodiscard]] std::string
     render_workflow_formula(const ir::TemporalExpr &expr,
                             const ir::WorkflowDecl &workflow,

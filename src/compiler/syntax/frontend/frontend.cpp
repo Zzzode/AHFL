@@ -1384,24 +1384,30 @@ class ProgramBuilder {
         if (group.inner == nullptr)
             return expr;
 
-        // The LHS of the inner `<` (the type argument expression) must be a PathExpr
-        // (a simple identifier path, possibly qualified, that we can reinterpret as a
-        // NamedType in the type-argument slot).
-        if (inner.rhs == nullptr || !inner.rhs->is<ast::PathExpr>())
+        // A single type argument can parse as a simple path or a qualified
+        // value. Preserve every segment when reconstructing its NamedType.
+        if (inner.rhs == nullptr)
             return expr;
-        auto &type_path = inner.rhs->as<ast::PathExpr>();
-        if (type_path.path == nullptr)
-            return expr;
-
-        // Convert the PathSyntax into a NamedType.
         auto type_syntax = make_owned<ast::TypeSyntax>();
         type_syntax->range = inner.rhs->range;
         ast::NamedType named;
         named.name = make_owned<ast::QualifiedName>();
         named.name->range = inner.rhs->range;
-        named.name->segments.push_back(type_path.path->root_name);
-        for (const auto &seg : type_path.path->members) {
-            named.name->segments.push_back(seg);
+        if (inner.rhs->is<ast::PathExpr>()) {
+            const auto &type_path = inner.rhs->as<ast::PathExpr>();
+            if (type_path.path == nullptr)
+                return expr;
+            named.name->segments.push_back(type_path.path->root_name);
+            for (const auto &seg : type_path.path->members) {
+                named.name->segments.push_back(seg);
+            }
+        } else if (inner.rhs->is<ast::QualifiedValueExpr>()) {
+            const auto &qualified = inner.rhs->as<ast::QualifiedValueExpr>();
+            if (qualified.name == nullptr)
+                return expr;
+            named.name->segments = qualified.name->segments;
+        } else {
+            return expr;
         }
         type_syntax->node = std::move(named);
 
@@ -2354,9 +2360,6 @@ class ProgramBuilder {
         pattern->text = source_text(source_, pattern->range);
         pattern->node = ast::BindingPattern{};
         auto &binding_node = std::get<ast::BindingPattern>(pattern->node);
-        binding_node.is_mut =
-            !context.children.empty() &&
-            require(context.children.front(), "binding prefix is missing").getText() == "mut";
         binding_node.name = text_of(require(context.IDENT(), "binding name is missing"));
 
         // Optional `@`-bound nested pattern.
@@ -2619,11 +2622,7 @@ class ProgramBuilder {
         auto statement = make_owned<ast::AssertStmtSyntax>();
         statement->range = context_range(context, source_);
 
-        // Two grammatical forms share this builder (grammar AHFL.g4 assertStmt):
-        //   (a) 'assert' '(' exprList? ')' ';'   -- new arity-2 form
-        //   (b) 'assert' expr ';'                -- legacy arity-1 form (backward-compat)
-        // Both normalize to AssertStmtSyntax; arity-validation is deferred to the
-        // typechecker so a single, stable `typecheck.WRONG_ARITY` code is produced.
+        // Preserve the source arity for semantic diagnostics.
         if (const auto list = borrow(context.exprList())) {
             const auto exprs = list->get().expr();
             statement->raw_arg_count = exprs.size();
@@ -2638,10 +2637,6 @@ class ProgramBuilder {
             // 3+ arguments are intentionally preserved as-is (via raw_arg_count)
             // so the typechecker emits a WrongArity diagnostic referencing the
             // real user-visible count.
-        } else if (const auto bare = borrow(context.expr())) {
-            // Legacy `assert cond;` form (no parens).
-            statement->condition = build_expr_syntax(bare->get());
-            statement->raw_arg_count = 1;
         }
         return statement;
     }

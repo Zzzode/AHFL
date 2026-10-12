@@ -89,7 +89,7 @@ static_assert(std::variant_size_v<rc::AdmitOutcome> == 2, "AdmitOutcome has 2 ar
 static_assert(std::variant_size_v<rc::ImportStepDecision> == 6,
               "ImportStepDecision has 6 arms (ReturnMemo/NeedInjectedSlot/ReadyForLive + "
               "D2b-4 DedupReplay/DedupReplayFailure/RecoverPending)");
-static_assert(std::variant_size_v<rc::Run2Exit> == 2, "Run2Exit has 2 arms");
+static_assert(std::variant_size_v<rc::WorkflowRunExit> == 2, "WorkflowRunExit has 2 arms");
 static_assert(std::variant_size_v<rc::FinishRunPlan> == 2,
               "FinishRunPlan has 2 arms (MarkConsumed/FormNewPendingCoordinate)");
 // Reason enums are compact (u8), carry no bytes.
@@ -218,7 +218,6 @@ int main(int argc, char **argv) {
     // Build a Suspended record for the shared module (frontier node 41).
     const auto make_suspended = [&](std::uint64_t pending_arg_hash) {
         CoreWasmResumeRecord r;
-        r.format_version = 1;
         set_matching_digests(r, mod);
         r.entry_id = wf;
         r.entry_input_slot = PayloadSlotId{9};
@@ -385,10 +384,10 @@ int main(int argc, char **argv) {
                   "A.entry_frame_stable_after_transitions");
 
             // finish OK (cursor advanced past the only call site) -> consume.
-            rc::Run2Returned ret;
+            rc::WorkflowRunReturned ret;
             ret.raw_status = AHFL_CAP_OK;
             ret.whole_linear_memory = std::span<const std::uint8_t>(mem2);
-            auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+            auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
             check(mc.has_value(), "A.finish_ok");
             if (mc.has_value()) {
                 const auto consumed_from = std::visit(
@@ -571,7 +570,6 @@ int main(int argc, char **argv) {
         // of the first checks). A1 validity: identity(40) + cap(41 memo) + cap(42 pending).
         {
             CoreWasmResumeRecord r;
-            r.format_version = 1;
             set_matching_digests(r, mod); // digests of the 2-node module (so phase-1 digest ok)
             r.entry_id = wf;
             r.entry_input_slot = PayloadSlotId{9};
@@ -626,7 +624,6 @@ int main(int argc, char **argv) {
                 const std::uint64_t ah1 = param_arg_hash(m3, 1, kIntParamJson);
                 const auto base_three = [&]() {
                     CoreWasmResumeRecord r;
-                    r.format_version = 1;
                     set_matching_digests(r, m3);
                     r.entry_id = wf;
                     r.entry_input_slot = PayloadSlotId{9};
@@ -761,7 +758,6 @@ int main(int argc, char **argv) {
                                                 kStringResultJson.end());
             const auto bpri_record = [&](bool coord_fault) {
                 CoreWasmResumeRecord r;
-                r.format_version = 1;
                 set_matching_digests(r, m3);
                 r.entry_id = wf;
                 r.entry_input_slot = PayloadSlotId{9};
@@ -894,7 +890,6 @@ int main(int argc, char **argv) {
                                                    std::uint64_t sym,
                                                    std::uint32_t ord) {
                                 CoreWasmResumeRecord r;
-                                r.format_version = 1;
                                 set_matching_digests(r, bridge_mod);
                                 r.entry_id = wf;
                                 r.entry_input_slot = PayloadSlotId{9};
@@ -976,7 +971,6 @@ int main(int argc, char **argv) {
                 check(store.has_value(), "AC14.wrong_ord.store");
                 if (store.has_value()) {
                     CoreWasmResumeRecord r;
-                    r.format_version = 1;
                     set_matching_digests(r, bridge_mod);
                     r.entry_id = wf;
                     r.entry_input_slot = PayloadSlotId{9};
@@ -1040,7 +1034,6 @@ int main(int argc, char **argv) {
             // A record: node 41 committed (memo, result_slot 5), frontier node 42 pending.
             const auto make_c_record = [&](const std::vector<std::uint8_t> & /*unused*/) {
                 CoreWasmResumeRecord r;
-                r.format_version = 1;
                 set_matching_digests(r, m3);
                 r.entry_id = wf;
                 r.entry_input_slot = PayloadSlotId{9};
@@ -1262,7 +1255,6 @@ int main(int argc, char **argv) {
             const std::vector<std::uint8_t> good_result(kStringResultJson.begin(),
                                                         kStringResultJson.end());
             CoreWasmResumeRecord r;
-            r.format_version = 1;
             set_matching_digests(r, m4);
             r.entry_id = wf;
             r.entry_input_slot = PayloadSlotId{9};
@@ -1387,7 +1379,6 @@ int main(int argc, char **argv) {
     };
     const auto d_record = [&](const VerifiedCoreWasmSchemaModule &m3, std::uint64_t ah) {
         CoreWasmResumeRecord r;
-        r.format_version = 1;
         set_matching_digests(r, m3);
         r.entry_id = wf;
         r.entry_input_slot = PayloadSlotId{9};
@@ -1487,26 +1478,37 @@ int main(int argc, char **argv) {
         }
     }
     {
-        // D4: capacity exact-fit vs +1 boundary. Compute the total the preflight sums, then
-        // set capacity to total-1 (reject) and total (accept). This proves the frontier is
-        // counted once (heap_base + entry + injected + future-bound), no double count.
-        // heap_base for 3 nodes = 1152; entry = 3; injected "\"ok\"" = 4; frontier is the
-        // Suspended pending (counted via injected only, its callsite_memo is absent); the
-        // future bound (bounded String max 8) = 2 + 6*8 = 50. total = 1152+3+4+50 = 1209.
+        // D4: exact allocation boundary, including per-allocation padding. heap_base(3)
+        // is aligned at 1152. Entry 3 reserves 8; injected "ok"(4) reserves 8; future
+        // bounded String max 8 has a 50-byte bound and reserves 56. Total is 1224.
+        // The pending frontier is counted once via injected actual, not as a memo.
         std::vector<CoreWireSchemaNode> extra;
         extra.push_back(bounded_string_node(8));
         extra.push_back(bounded_string_node(8));
         auto m3 = build_three_node(std::move(extra));
         check(m3.has_value(), "D.fit_module");
         if (m3.has_value()) {
-            const std::uint64_t expect_total = 1152 + 3 + 4 + 50;
-            auto reject = d_preflight_error("fit_minus1", *m3,
-                                            rc::LinearMemoryCapacityBytes{expect_total - 1});
+            const std::uint64_t raw_total = 1152 + 3 + 4 + 50;
+            const std::uint64_t expect_total = 1152 + 8 + 8 + 56;
+            auto missing_padding = d_preflight_error(
+                "fit_missing_padding", *m3, rc::LinearMemoryCapacityBytes{raw_total});
+            check(
+                missing_padding.has_value() &&
+                    is_prepare_reason(*missing_padding, rc::ResumePrepareReason::ResourceExhausted),
+                "D.capacity_without_allocation_padding_rejects");
+            auto partial_padding = d_preflight_error(
+                "fit_partial_padding", *m3, rc::LinearMemoryCapacityBytes{raw_total + 7});
+            check(
+                partial_padding.has_value() &&
+                    is_prepare_reason(*partial_padding, rc::ResumePrepareReason::ResourceExhausted),
+                "D.capacity_with_partial_allocation_padding_rejects");
+            auto reject = d_preflight_error(
+                "fit_minus1", *m3, rc::LinearMemoryCapacityBytes{expect_total - 1});
             check(reject.has_value() &&
                       is_prepare_reason(*reject, rc::ResumePrepareReason::ResourceExhausted),
                   "D.capacity_exact_minus1_rejects");
-            auto accept = d_preflight_error("fit_exact", *m3,
-                                            rc::LinearMemoryCapacityBytes{expect_total});
+            auto accept =
+                d_preflight_error("fit_exact", *m3, rc::LinearMemoryCapacityBytes{expect_total});
             check(!accept.has_value(), "D.capacity_exact_fit_accepts");
         }
     }
@@ -1620,8 +1622,8 @@ int main(int argc, char **argv) {
         // D8: memo-multiplicity exact boundary with a REPEATED result_slot. A 4-node module
         // (identity 40, committed caps 41+42 whose memos BOTH reference slot 5, frontier cap
         // 43 pending). One admitted payload backs both occurrences, yet the total must add
-        // its actual length TWICE. heap_base(4)=1192 + entry 3 + memo "ok"(4)*2 + injected
-        // "ok"(4) = 1207. capacity 1207 accepts; 1206 rejects.
+        // its aligned actual extent TWICE. heap_base(4)=1192 + entry extent 8 + two
+        // memo extents 8 each + injected extent 8 = 1224. 1224 accepts; 1223 rejects.
         ModuleSpec spec;
         spec.entry_id = 7;
         spec.extra_schema_nodes = {bounded_string_node(8)};
@@ -1641,7 +1643,6 @@ int main(int argc, char **argv) {
                                                 kStringResultJson.end());
             const auto d8_record = [&]() {
                 CoreWasmResumeRecord r;
-                r.format_version = 1;
                 set_matching_digests(r, m4);
                 r.entry_id = wf;
                 r.entry_input_slot = PayloadSlotId{9};
@@ -1681,9 +1682,9 @@ int main(int argc, char **argv) {
                 r.nodes = {n0, n1, n2, n3};
                 return r;
             };
-            const std::uint64_t d8_total = 1192 + 3 + 4 + 4 + 4; // heap + entry + 2*memo + injected
-            const auto run_d8 = [&](std::uint64_t capacity_bytes)
-                -> std::optional<rc::ResumePrepareError> {
+            const std::uint64_t d8_total = 1192 + 8 + 8 + 8 + 8; // heap + entry + 2*memo + injected
+            const auto run_d8 =
+                [&](std::uint64_t capacity_bytes) -> std::optional<rc::ResumePrepareError> {
                 const fs::path work = base / ("d8-" + std::to_string(capacity_bytes));
                 auto store = open_store(work);
                 std::optional<rc::ResumePrepareError> err;
@@ -1694,10 +1695,12 @@ int main(int argc, char **argv) {
                     auto gated = publish_and_gate(*store, d8_record(), slots, m4);
                     check(gated.has_value() && gated->has_value(), "D8.gated");
                     if (gated.has_value() && gated->has_value()) {
-                        auto outcome = rc::admit_and_preflight(
-                            std::move(**gated), id_span, key,
-                            std::span<const std::uint8_t>(injected),
-                            rc::LinearMemoryCapacityBytes{capacity_bytes});
+                        auto outcome =
+                            rc::admit_and_preflight(std::move(**gated),
+                                                    id_span,
+                                                    key,
+                                                    std::span<const std::uint8_t>(injected),
+                                                    rc::LinearMemoryCapacityBytes{capacity_bytes});
                         if (!outcome.has_value()) {
                             err = outcome.error();
                         }
@@ -1706,6 +1709,11 @@ int main(int argc, char **argv) {
                 nuke(work);
                 return err;
             };
+            auto missing_padding = run_d8(1192 + 3 + 4 + 4 + 4);
+            check(
+                missing_padding.has_value() &&
+                    is_prepare_reason(*missing_padding, rc::ResumePrepareReason::ResourceExhausted),
+                "D.repeated_memo_allocation_padding_rejects");
             auto reject = run_d8(d8_total - 1);
             check(reject.has_value() &&
                       is_prepare_reason(*reject, rc::ResumePrepareReason::ResourceExhausted),
@@ -1717,9 +1725,9 @@ int main(int argc, char **argv) {
     {
         // D9: Injected-frontier committed-memo counted-once exact boundary. A 3-node Injected
         // record (identity 40, committed cap 41 slot 5, frontier cap 42 committed slot 6, no
-        // pending, NO injected input). heap_base(3)=1152 + entry 3 + memo41 "ok"(4) + memo42
-        // "ok"(4) = 1163. No injected_actual is added (Injected path). capacity 1163 accepts;
-        // 1162 rejects -- proving the frontier committed memo is counted once, not doubled.
+        // pending, NO injected input). heap_base(3)=1152 + aligned entry 8 + memo41 extent 8
+        // + memo42 extent 8 = 1176. No injected_actual is added (Injected path). 1176
+        // accepts; 1175 rejects, proving the frontier committed memo is counted once.
         ModuleSpec spec;
         spec.entry_id = 7;
         spec.extra_schema_nodes = {bounded_string_node(8)};
@@ -1737,7 +1745,6 @@ int main(int argc, char **argv) {
                                                 kStringResultJson.end());
             const auto d9_record = [&]() {
                 CoreWasmResumeRecord r;
-                r.format_version = 1;
                 set_matching_digests(r, m3);
                 r.entry_id = wf;
                 r.entry_input_slot = PayloadSlotId{9};
@@ -1772,9 +1779,9 @@ int main(int argc, char **argv) {
                 r.nodes = {n0, n1, n2};
                 return r;
             };
-            const std::uint64_t d9_total = 1152 + 3 + 4 + 4; // heap + entry + memo41 + memo42
-            const auto run_d9 = [&](std::uint64_t capacity_bytes)
-                -> std::optional<rc::ResumePrepareError> {
+            const std::uint64_t d9_total = 1152 + 8 + 8 + 8; // heap + entry + memo41 + memo42
+            const auto run_d9 =
+                [&](std::uint64_t capacity_bytes) -> std::optional<rc::ResumePrepareError> {
                 const fs::path work = base / ("d9-" + std::to_string(capacity_bytes));
                 auto store = open_store(work);
                 std::optional<rc::ResumePrepareError> err;
@@ -1787,9 +1794,12 @@ int main(int argc, char **argv) {
                     check(gated.has_value() && gated->has_value(), "D9.gated");
                     if (gated.has_value() && gated->has_value()) {
                         // Injected record admits NO new input -> empty injected span.
-                        auto outcome = rc::admit_and_preflight(
-                            std::move(**gated), id_span, key, std::span<const std::uint8_t>(),
-                            rc::LinearMemoryCapacityBytes{capacity_bytes});
+                        auto outcome =
+                            rc::admit_and_preflight(std::move(**gated),
+                                                    id_span,
+                                                    key,
+                                                    std::span<const std::uint8_t>(),
+                                                    rc::LinearMemoryCapacityBytes{capacity_bytes});
                         if (!outcome.has_value()) {
                             err = outcome.error();
                         }
@@ -1798,12 +1808,39 @@ int main(int argc, char **argv) {
                 nuke(work);
                 return err;
             };
+            auto missing_padding = run_d9(1152 + 3 + 4 + 4);
+            check(
+                missing_padding.has_value() &&
+                    is_prepare_reason(*missing_padding, rc::ResumePrepareReason::ResourceExhausted),
+                "D.injected_frontier_memo_allocation_padding_rejects");
             auto reject = run_d9(d9_total - 1);
             check(reject.has_value() &&
                       is_prepare_reason(*reject, rc::ResumePrepareReason::ResourceExhausted),
                   "D.injected_frontier_memo_minus1_rejects");
             auto accept = run_d9(d9_total);
             check(!accept.has_value(), "D.injected_frontier_memo_exact_fit_accepts");
+        }
+    }
+
+    {
+        // D10: the future bound itself and cursor addition fit u64, but rounding
+        // the resulting cursor to eight bytes would overflow. The rejection must
+        // occur before the later wasm32/capacity checks can admit wrapped bytes.
+        constexpr std::uint64_t max = std::numeric_limits<std::uint64_t>::max();
+        constexpr std::uint64_t max_length = (max - 1170u) / 6u;
+        constexpr std::uint64_t unaligned_end = 1170u + 6u * max_length;
+        static_assert(unaligned_end <= max && unaligned_end > max - 7u);
+        std::vector<CoreWireSchemaNode> extra;
+        extra.push_back(bounded_string_node(8));
+        extra.push_back(bounded_string_node(static_cast<std::int64_t>(max_length)));
+        auto module = build_three_node(std::move(extra));
+        check(module.has_value(), "D.alignment_overflow_module");
+        if (module.has_value()) {
+            auto error = d_preflight_error(
+                "alignment_overflow", *module, rc::LinearMemoryCapacityBytes{max});
+            check(error.has_value() &&
+                      is_prepare_reason(*error, rc::ResumePrepareReason::ResourceExhausted),
+                  "D.alignment_rounding_overflow_rejects");
         }
     }
 
@@ -1966,10 +2003,10 @@ int main(int argc, char **argv) {
                 auto prepared = reach_live(work, store);
                 check(prepared.has_value(), "E1c.reach_live");
                 if (prepared.has_value()) {
-                    rc::Run2Returned ret;
+                    rc::WorkflowRunReturned ret;
                     ret.raw_status = AHFL_CAP_OK;
                     ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p3);
-                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    auto fin = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                     check(fin.has_value(), "E.awaiting_live_finish_accepted");
                 }
                 nuke(work);
@@ -2052,10 +2089,10 @@ int main(int argc, char **argv) {
                 auto prepared = reach_live(work, store);
                 check(prepared.has_value(), "E1h.reach_live");
                 if (prepared.has_value()) {
-                    rc::Run2Returned ret;
+                    rc::WorkflowRunReturned ret;
                     ret.raw_status = AHFL_CAP_PENDING;
                     ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p2);
-                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    auto fin = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                     check(fin.has_value(), "E1h.pending_accepted");
                     if (fin.has_value()) {
                         check(std::holds_alternative<rc::FormNewPendingCoordinatePlan>(*fin),
@@ -2100,10 +2137,10 @@ int main(int argc, char **argv) {
                 auto prepared = reach_live(work, store);
                 check(prepared.has_value(), "E1i.reach_live");
                 if (prepared.has_value() && store.has_value()) {
-                    rc::Run2Returned ret;
+                    rc::WorkflowRunReturned ret;
                     ret.raw_status = AHFL_CAP_PENDING;
                     ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p2);
-                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    auto fin = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                     check(fin.has_value(), "E1i.pending_accepted");
                     if (fin.has_value() &&
                         std::holds_alternative<rc::FormNewPendingCoordinatePlan>(*fin)) {
@@ -2145,10 +2182,10 @@ int main(int argc, char **argv) {
                 auto prepared = reach_live(work, store);
                 check(prepared.has_value(), "E1j.reach_live");
                 if (prepared.has_value()) {
-                    rc::Run2Returned ret;
+                    rc::WorkflowRunReturned ret;
                     ret.raw_status = AHFL_CAP_PENDING;
                     ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p3);
-                    auto fin = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                    auto fin = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                     check(!fin.has_value() &&
                               is_step_reason(fin.error(),
                                              rc::ResumeStepReason::CoordinateMismatch),
@@ -2291,7 +2328,6 @@ int main(int argc, char **argv) {
                 check(store.has_value(), "E7.store");
                 if (store.has_value()) {
                     CoreWasmResumeRecord r;
-                    r.format_version = 1;
                     set_matching_digests(r, m3);
                     r.entry_id = wf;
                     r.entry_input_slot = PayloadSlotId{9};
@@ -2404,7 +2440,6 @@ int main(int argc, char **argv) {
                 check(store.has_value(), "E10.store");
                 if (store.has_value()) {
                     CoreWasmResumeRecord r;
-                    r.format_version = 1;
                     set_matching_digests(r, m3);
                     r.entry_id = wf;
                     r.entry_input_slot = PayloadSlotId{9};
@@ -2635,7 +2670,6 @@ int main(int argc, char **argv) {
             check(store.has_value(), "F5.store");
             if (store.has_value()) {
                 CoreWasmResumeRecord r;
-                r.format_version = 1;
                 set_matching_digests(r, m3);
                 r.entry_id = wf;
                 r.entry_input_slot = PayloadSlotId{9};
@@ -2792,10 +2826,10 @@ int main(int argc, char **argv) {
         auto prepared = make_prepared(work, store);
         check(prepared.has_value(), "G.immediate_prepared");
         if (prepared.has_value()) {
-            rc::Run2Returned ret;
+            rc::WorkflowRunReturned ret;
             ret.raw_status = AHFL_CAP_OK;
             ret.whole_linear_memory = std::span<const std::uint8_t>(mem2);
-            auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+            auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
             check(!mc.has_value() &&
                       is_step_reason(mc.error(), rc::ResumeStepReason::TransitionInvalid),
                   "G.immediate_finish_invalid");
@@ -2828,10 +2862,10 @@ int main(int argc, char **argv) {
             std::optional<ps::IntegrityPayloadStore> store;
             auto prepared = make_prepared(work, store);
             if (prepared.has_value() && drive_to_live(*prepared, *store)) {
-                rc::Run2Returned ret;
+                rc::WorkflowRunReturned ret;
                 ret.raw_status = raw;
                 ret.whole_linear_memory = std::span<const std::uint8_t>(mem2);
-                auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                 check(!mc.has_value() && is_step_reason(mc.error(), want), "G." + name);
             } else {
                 check(false, "G." + name + ".setup");
@@ -2846,7 +2880,7 @@ int main(int argc, char **argv) {
             std::optional<ps::IntegrityPayloadStore> store;
             auto prepared = make_prepared(work, store);
             if (prepared.has_value() && drive_to_live(*prepared, *store)) {
-                auto mc = rc::finish_run(*prepared, rc::Run2Exit{rc::Run2Trapped{}});
+                auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{rc::WorkflowRunTrapped{}});
                 check(!mc.has_value() &&
                           is_step_reason(mc.error(), rc::ResumeStepReason::ModuleTrap),
                       "G.trap_module_trap");
@@ -2865,10 +2899,10 @@ int main(int argc, char **argv) {
                 std::vector<ManifestNodeSpec> tampered = base_nodes;
                 tampered[0].workflow_node_id = 4040;
                 const auto bad_mem = event_memory(tampered, 2);
-                rc::Run2Returned ret;
+                rc::WorkflowRunReturned ret;
                 ret.raw_status = AHFL_CAP_OK;
                 ret.whole_linear_memory = std::span<const std::uint8_t>(bad_mem);
-                auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                 check(!mc.has_value() &&
                           is_step_reason(mc.error(), rc::ResumeStepReason::CoordinateMismatch),
                       "G.full_prefix_mismatch");
@@ -2883,10 +2917,10 @@ int main(int argc, char **argv) {
             std::optional<ps::IntegrityPayloadStore> store;
             auto prepared = make_prepared(work, store);
             if (prepared.has_value() && drive_to_live(*prepared, *store)) {
-                rc::Run2Returned ret;
+                rc::WorkflowRunReturned ret;
                 ret.raw_status = AHFL_CAP_OK;
                 ret.whole_linear_memory = std::span<const std::uint8_t>(mem2);
-                auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                 check(mc.has_value(), "G.consume_err_finish");
                 if (mc.has_value()) {
                     std::expected<std::uint64_t, ps::PayloadStoreError> fail =
@@ -2958,10 +2992,10 @@ int main(int argc, char **argv) {
                                     check(rc::ack_publish_injected(*prepared, pub).has_value(),
                                           "G5.ack");
                                     // cursor now 1, call_site_count 2: a partial finish.
-                                    rc::Run2Returned ret;
+                                    rc::WorkflowRunReturned ret;
                                     ret.raw_status = AHFL_CAP_OK;
                                     ret.whole_linear_memory = std::span<const std::uint8_t>(mem_p3);
-                                    auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                                    auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                                     check(!mc.has_value() &&
                                               is_step_reason(
                                                   mc.error(),
@@ -2984,10 +3018,10 @@ int main(int argc, char **argv) {
             if (prepared.has_value() && drive_to_live(*prepared, *store)) {
                 std::vector<std::uint8_t> bad = mem2;
                 bad[kEventLogBase + 4] = 0x01; // header pad nonzero -> decoder BadHeaderPad
-                rc::Run2Returned ret;
+                rc::WorkflowRunReturned ret;
                 ret.raw_status = AHFL_CAP_OK;
                 ret.whole_linear_memory = std::span<const std::uint8_t>(bad);
-                auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                 check(!mc.has_value() &&
                           is_step_reason(mc.error(), rc::ResumeStepReason::EventMalformed),
                       "G.full_prefix_decoder_malformed");
@@ -3019,10 +3053,10 @@ int main(int argc, char **argv) {
             std::optional<ps::IntegrityPayloadStore> store;
             auto prepared = make_prepared(work, store);
             if (prepared.has_value() && drive_to_live(*prepared, *store)) {
-                rc::Run2Returned ret;
+                rc::WorkflowRunReturned ret;
                 ret.raw_status = AHFL_CAP_OK;
                 ret.whole_linear_memory = std::span<const std::uint8_t>(mem2);
-                auto mc = rc::finish_run(*prepared, rc::Run2Exit{ret});
+                auto mc = rc::finish_run(*prepared, rc::WorkflowRunExit{ret});
                 check(mc.has_value(), "G8.finish");
                 if (mc.has_value()) {
                     std::expected<std::uint64_t, ps::PayloadStoreError> wrong(99); // expected 3
@@ -3356,21 +3390,21 @@ int main(int argc, char **argv) {
                 }
                 nuke(work);
             }
-            // (h) legacy: no authority bound (nullptr) always yields ReadyForLive
+            // (h) no authority bound (nullptr) always yields ReadyForLive
             // even when a same-token row exists in a backend the controller never
             // consults.
             {
-                const fs::path work = base / "h-legacy-null";
+                const fs::path work = base / "h-no-authority";
                 std::optional<ps::IntegrityPayloadStore> store;
                 auto backend = make_in_memory_durable_effect_backend();
                 DurableEffectAuthority dedup{backend};
                 static_cast<void>(dedup.begin_effect(mint_live(auth_id, digest_p1)));
                 auto prepared = drive_h(work, store, nullptr, auth_id);
-                check(prepared.has_value(), "H.legacy_prepared");
+                check(prepared.has_value(), "H.no_authority_prepared");
                 if (prepared.has_value()) {
                     auto d = consult1(*prepared);
                     check(d.has_value() && std::holds_alternative<rc::ReadyForLive>(*d),
-                          "H.legacy_null_authority_ready_for_live");
+                          "H.null_authority_ready_for_live");
                 }
                 nuke(work);
             }

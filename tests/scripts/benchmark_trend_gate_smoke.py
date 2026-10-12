@@ -3,7 +3,7 @@
 
 `benchmark_trend_gate.py` is a release gate, so its *own* behaviour under the
 conditions it exists to catch must be pinned. The gate drives two bench binaries
-through their `ahfl.bench-report.v1` report, so this test substitutes tiny stub
+through their `ahfl.bench-report` report, so this test substitutes tiny stub
 "binaries" (shell scripts writing a fixed report) and exercises the contract the
 gate promises:
 
@@ -44,7 +44,7 @@ def make_stub(path: Path, kind: str, budgets: dict[str, dict[str, int]]) -> None
         rows.append(f'    {{"name": "{name}", {fields}}}')
     document = (
         "{\n"
-        f'  "schema": "ahfl.bench-report.v1",\n'
+        f'  "format": "ahfl.bench-report",\n'
         f'  "kind": "{kind}",\n'
         '  "budgets": [\n' + ",\n".join(rows) + "\n  ]\n}\n"
     )
@@ -56,7 +56,7 @@ def make_stub(path: Path, kind: str, budgets: dict[str, dict[str, int]]) -> None
 def write_baseline(path: Path, budgets: dict[str, dict[str, int]]) -> None:
     path.write_text(
         json.dumps(
-            {"schema": "ahfl.benchmark-baseline.v1",
+            {"format": "ahfl.benchmark-baseline",
              "budgets": {n: {"metrics": m} for n, m in budgets.items()}},
             indent=2,
             sort_keys=True,

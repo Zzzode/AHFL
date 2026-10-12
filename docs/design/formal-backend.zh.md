@@ -1,389 +1,80 @@
 # AHFL Formal Backend Boundary
 
-本文冻结 AHFL Core 在 formal backend 方向的当前边界，作为 `emit-smv`、后续 model-check-oriented backend，以及 `tests/formal/*` golden 的统一约束。
+规范以 [Assurance Spec](../spec/assurance.zh.md) 为准。本设计说明默认控制验证与按需数据验证的边界；[RFC 0028](../rfcs/0028-default-pipeline-formal-verification.zh.md) 记录管线决策，[RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md) 记录合同蕴含语义。
 
-适用范围：
+## 所属模块与处理链路
 
-- `include/ahfl/compiler/ir/ir.hpp`
-- `src/compiler/ir/ir_lower.cpp`
-- `include/ahfl/compiler/backends/driver.hpp`
-- `src/compiler/backends/driver.cpp`
-- `include/ahfl/compiler/backends/smv.hpp`
-- `src/compiler/backends/smv/smv.cpp`
-- `src/tooling/cli/ahflc.cpp`
-- `tests/formal/*`
-- `docs/plans/project-status.zh.md`
-- `docs/design/compiler-phase-boundaries.zh.md`
+- `src/compiler/backends/smv/`：从验证后的 IR 发射有限控制模型和有来源的 specification。
+- `src/verification/formal/`：SMV checker 进程集成、数据表达式 SMT 编码与合同蕴含求解。
+- `src/tooling/cli/`：请求选择、fail-closed 判定和分范围报告。
 
-## 目标
+```mermaid
+flowchart TD
+    Frontend[Parse resolve typecheck validate] --> IR[Validated IR]
+    IR --> Mode{verify on?}
+    Mode -->|No| Tail[Command result]
+    Mode -->|Yes| Control[Generic control obligations and user temporal goals]
+    Control --> SMV[SMV checker]
+    SMV --> Data{verify-data-contracts?}
+    Data -->|No| Report[Scoped verification report]
+    Data -->|Yes| Premises[Check subset and premise consistency]
+    Premises --> SMT[Contract implication SMT queries]
+    SMT --> Report
+    Report --> Tail
+```
 
-1. 明确当前哪些 AHFL 语义会被 lower 到 formal backend
-2. 明确当前哪些语义会被抽象成 observation
-3. 明确当前 formal backend 明确不承诺的语义
-4. 给出 Issue 16-20 的实现顺序，避免在 `emit-smv` 上继续 ad-hoc 扩张
+`check`、`build`、`run` 默认开启控制阶段；其他命令默认关闭。`emit smv` / `emit smt` 生成可检查 artifact，不独自执行证明。`--verify-data-contracts` 选择现有合同而不引入新 DSL 属性或第二套合同实现，且要求控制阶段开启。
 
-## 当前 backend 边界
+## 通用控制验证
 
-当前仓库中的 formal backend 入口是：
+每个 Agent 都有状态变量和初始/转移/final 吸收义务，包括 standalone Agent。flow handler summary 限定合法终结控制流；状态分支可以抽象为 nondeterministic 选择。模型不包含完整 `let`、赋值、返回值或 provider 数据关系。
 
-- `ahflc emit-smv <file>`
-- `ahflc check --verify=on [--model-checker <path>] [--formal-model-out <model.smv>] <file>` (RFC 0028; 旧 `check --verify=on` 已删除)
+workflow node 包含 Agent state 与 lifecycle phase。基础 phase 为 idle、running、completed；recovery 可以扩展 failed、recovering、recovered、compensating、compensated、terminal_failed。生成义务保证模型中的 final membership、依赖顺序和 lifecycle 一致性。默认义务不会自动声称 Agent 终止或 provider 返回；用户声明完成性时需明示模型假设。
 
-其处理链路固定为：
+`called(k)` 派生自 flow handler 的 capability call summary，而非任意 environment input。call/effect event 的 committed、failed 子事件互斥；effect profile 产生有限 audit、receipt、approval、idempotency、compensation 义务。它们验证模型中的关系，不证明真实支付或服务内部行为。
 
-1. `parse`
-2. `ast`
-3. `resolve`
-4. `typecheck`
-5. `validate`
-6. `emit-smv`
+用户的纯控制 `invariant`、`forbid`、workflow `safety`/`liveness` 声明本身即验证请求。其 temporal formula 进入 SMV `LTLSPEC`。若嵌入数据 expression 不能编码，observation 仍为抽象环境变量；报告必须将目标标为 conditional/unsupported 并列出假设，不得计作无条件证明。
 
-`check --verify=on` 在同一条前置链路之后生成 SMV 文件，并把该文件传给 SMV 兼容 model checker。默认情况下模型文件位于临时目录并在 checker 返回后删除；如果传入 `--formal-model-out <model.smv>`，则模型写入该路径并保留，供 CI artifact 或本地复现使用。`--formal-backend` 选择 backend capability matrix 条目；当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证，`spin` / `tlaplus` 会以 `checker_status: verification_unsupported` 退出。nuXmv/NuSMV checker 由 `--model-checker`、`AHFL_SMV_CHECKER`、backend-specific 环境变量和 PATH 中的 `NuSMV`、`nuXmv`、`nuxmv`、`nusmv` 选择。
+SMV model 为 `MODULE main`，包含 `VAR`、`IVAR`、`DEFINE`、`ASSIGN` 与 `LTLSPEC`。`AHFL_MAP` 注释关联 specification/symbol 和 IR owner；counterexample 映射回 workflow node、Agent state、call/effect event 以及可用 source range。状态空间估计只是启动前提示。
 
-`emit-smv` 不直接消费 parse tree，也不直接从源码字符串做二次解析；它只基于 validate 通过后的语义模型和稳定 IR 做 lowering。
+## 按需数据验证
 
-当前输出目标固定为：
+普通数据 `requires` 表示环境前提；数据 `ensures`、`invariant`、`forbid` 默认报告 not_requested，不触发 SMT 或未请求的子集告警。使用 `--verify-data-contracts` 后，package 中这些数据目标交给同一现有 SMT 编码器。
 
-- 单个 `MODULE main`
-- `VAR`
-- `IVAR`
-- `DEFINE`
-- `ASSIGN`
-- `LTLSPEC`
+当前证明范围为 **contract_implication**。令 P 为类型约束与 `requires`，G 为目标，求解 P ∧ ¬G。UNSAT 表示 P ⇒ G；SAT 表示有公式反例。输出字段与输入字段只是符号，没有 flow 执行关系，因此不能把合同蕴含叫做实现正确性证明。反例赋值也不表示该值必定能由 flow 产生。
 
-`check --verify=on` 不改变 SMV lowering 语义；它只把 `emit-smv` 的产物交给外部 checker，并把 `is true` / `is false` 的 specification 结果转成 CLI success 或 failure。若生成的模型包含 `LTLSPEC`，但 checker 没有返回任何 specification 结果，或者返回结果数量少于生成的 `LTLSPEC` 数量，则该情况视为 checker integration error，而不是验证成功。CLI/report 会输出稳定 `checker_status`：`missing_binary`、`verification_unsupported`、`checker_error` 或成功/失败路径上的 `available`。同一报告还会输出 `state_space_estimate`、`state_space_agents`、`state_space_transitions` 与 tractability 判断；该估计来自 IR `AgentDecl` 的 states/transitions/capabilities，是验证前的规模预警，不是 checker 的完整 reachable-state 统计。NuSMV/nuXmv 输出 parser 以 fixture matrix 覆盖 true、false/counterexample、parse/type error 和 timeout；CLI 外部进程路径通过 `--checker-timeout-seconds` 强制 timeout，卡死的 checker 会被杀掉并以 `checker_status: checker_error`、`checker_timed_out: true` 报告，不会被折叠成普通 unknown output。
+在逐目标检查前必须证明 P 可满足；P 矛盾应失败。各 invariant 与其他数据目标同等处理，未获证 invariant 不能进入 P，否则将产生循环证明。所选目标及其必要前提有不支持构造时，拒绝验证并报告源位置；missing solver、unknown、timeout、counterexample 同样失败。
 
-当前逻辑边界固定为：
+当前编码子集包括 Bool/Int 标量、可编码字段 path、算术比较及布尔组合。`Int(lo,hi)` 附加边界约束；数学整数模型不自动证明运行时 machine integer 溢出安全。host predicate、provider 调用、字符串内容、无界或不可编码的集合量化等不能凭声明获得证明。decreases/ranking 与完整 transition relation 也不能被合同蕴含替代。
 
-- 只处理 LTL 方向的公式 lowering
-- 保留 validate 后的状态机、flow 终结控制流与 workflow 启动/完成结构
-- 不尝试把 AHFL 解释成完整 runtime
+有界量化属于已实现子集：[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md) / [RFC 0025](../rfcs/0025-bounded-collection-types.zh.md) 允许带静态容量（capacity）的 `List<T>(N)` / `Set<T>(N)` / `Map<K,V>(N)`，编码器按 N 个符号槽有限展开 `forall` 为合取（全部成立）、`exists` 为析取（至少一项成立）；N=0 分别为 true/false。非零容量展开时，元素（Map 的键和值）需为 Bool/Int/BoundedInt，量化体和集合操作数也必须可编码；无静态容量、无法映射 SMT 标量类型或量化体不支持时拒绝。已有真实 Z3 测试证明 `List<Int>(3)` 上 `forall x: x > 0` 蕴含 `forall x: x >= 1`，并反驳无前提的后者。该符号槽模型不包含 flow 操作集合或实际动态长度的执行关系。
 
-## Contract Export 增量冻结
+退款金额规则示例 [refund-rules](../../examples/refund-rules/README.md) 使用有界整数最小货币单位，展示 amount ≤ total 蕴含 total − amount ≥ 0；[退款审核](../../examples/refund/audit.ahfl) 的 host predicate 仍属于无实现定义的业务声明。
 
-当前在 formal backend 方向只正式新增一类能力：
+## 进程集成和报告
 
-- contract clause export 的受限扩张
+NuSMV、Z3 随默认安装提供。SMV checker 解析顺序：`--model-checker` → `AHFL_SMV_CHECKER` → backend-specific 环境变量 → executable 同目录 → PATH。Z3 使用 `AHFL_Z3_PATH` → bundled Z3 → PATH。[RFC 0018](../rfcs/0018-nusmv-library-mode.zh.md) 将 library-mode 决策为 no-go；当前使用进程隔离。
 
-这次扩张不改变 backend 的总体定位。当前 `emit-smv` 仍然是：
+缺 checker、timeout、进程错误、返回 specification 数与模型义务数不匹配、反例均失败。`--formal-model-out` 保存实际 checker 输入。BDD 检查为默认路径；`--bmc-depth` 的有界结论必须保留 bound，不能写成无界证明。
 
-- project-aware Core 的 restricted formal exporter
+报告分别展示：
 
-而不是：
+1. generated control obligations；
+2. user temporal goals 及 conditional/unsupported；
+3. environment premises；
+4. user data goals 的 not_requested/proved/refuted/unsupported/unknown；
+5. runtime contract checks = not_implemented。
 
-- 完整 runtime / statement / data semantics 的 model checker backend
+“控制模型验证通过”只限定控制范围。即使请求的数据目标全通过，也仅有合同蕴含证据。
 
-当前正式保留的 contract/export 语义：
+## 未实现的保证与移除条件
 
-1. `requires`
-   - 保留为 contract precondition 边界。
-   - 作为 environment assumption 记录，不再作为独立 guarantee 证明。
-2. `ensures`
-   - 保留为 final-state obligation 边界。
-   - bounded boolean/integer expression 会生成 final-state obligation。
-   - 若仍是 unbounded/provider embedded data predicate，当前只记录为抽象 data guarantee，不伪装成可证明的 SMV `LTLSPEC`。
-3. `invariant`
-   - 保留为现有 temporal exporter 可表达的 agent contract 公式。
-4. `forbid`
-   - 保留为现有 temporal exporter 可表达的禁止型 temporal 公式。
-5. workflow `safety` / `liveness`
-   - 继续保留为 workflow lifecycle 上的 LTL 公式。
+Core IR 当前擦除可执行合同，runtime 不执行 host predicate 合同；flow `assert` / `requires` statement 尚无运行时支持。报告不得声称已经进行了这些检查。真实边界数据检查仍需在业务实现中执行。
 
-当前继续抽象的 contract/export 语义：
+完整实现证明需要从 executable IR 构造 sound transition relation，连接 input/context/output、flow 赋值与 capability 结果，且对外部调用有明确可信模型。只有该关系及其对应回归证据具备后，才可修订 contract_implication 范围；本次不添加兼容开关、平行验证引擎或模拟运行时合同机制。
 
-1. `requires` / `ensures` 内部涉及 path、provider return、predicate/capability call、集合/结构体等未界定数据域的值计算与数据依赖
-2. output 值如何由 flow statement 逐步构造
-3. capability 参数、返回值、调用次数与调用顺序
-4. flow 中 `let` / 赋值 / `assert` 的 transition-relation 编码
-5. retry / timeout / quota / exception / richer scheduling 语义
+## 结果字段
 
-因此，contract/export 边界必须按下面的二分法理解：
+控制报告使用 `verification_scope: control_model`、`control_status`，并分别列出 `generated_control_proven` / `generated_control_bounded` 与 `user_temporal_proven` / `user_temporal_bounded` / `user_temporal_conditional` / `user_temporal_unsupported`。无目标时报告 no_targets/not_run，不能声称证明通过。
 
-- 保留语义
-  - clause 的约束边界与何时应成立。
-- 抽象语义
-  - clause 内部的具体数据求值和 runtime 机制。
-
-## Flow Summary Boundary Freeze
-
-在不把 `emit-smv` 扩张成完整 statement executor 的前提下，正式新增一层 flow statement 摘要边界：
-
-- `flow.state_handlers[].summary.goto_targets`
-- `flow.state_handlers[].summary.may_return`
-- `flow.state_handlers[].summary.may_fallthrough`
-- `flow.state_handlers[].summary.assigned_paths`
-- `flow.state_handlers[].summary.called_targets`
-- `flow.state_handlers[].summary.assert_count`
-
-这层边界的定位不是“把每条语句直接 lower 成 transition relation”，而是把 backend 之前在内部临时推导的 flow 控制/副作用摘要提升成稳定 IR 契约。
-
-### 当前保留的 flow 语义
-
-1. handler 可能跳转到哪些 `goto` 目标
-2. handler 是否可能 `return`
-3. handler 是否可能 fallthrough 到后续语句
-4. handler 内显式写入了哪些 path
-5. handler 内出现了哪些 call target
-6. handler 内出现了多少个 `assert`
-
-### 当前继续抽象的 flow 语义
-
-1. `let` / assignment / `assert` 的逐步求值顺序
-2. path 写入之间的先后关系与数据依赖
-3. call target 的执行时点、次数、参数值、返回值与因果关系
-4. `assert` 条件本身对 transition relation 的直接约束
-5. 多分支路径上的精确 path-sensitive 数据语义
-
-### backend 当前如何消费
-
-当前 `emit-smv` 只正式消费 flow summary 里的控制摘要：
-
-1. `goto_targets`
-2. `may_return`
-3. `may_fallthrough`
-4. `called_targets`
-
-`called_targets` 只进入 call/effect event 边界，不承诺参数值、返回值、调用次数或 provider 执行语义。`assigned_paths`、`assert_count` 当前作为稳定导出信息保留在 IR / JSON IR 中，供后续 backend 或 tooling 消费，但 `emit-smv` 还不会把它们直接编码成状态迁移或值语义。
-
-## Workflow Value Summary Boundary Freeze
-
-同时把 workflow 值流里最关键的读取来源提升成稳定 IR 字段：
-
-- `workflow.nodes[].input_summary.reads`
-- `workflow.return_summary.reads`
-
-其语义只覆盖：
-
-1. 读取 `workflow_input`
-2. 读取 `workflow_node_output`
-
-当前 `emit-smv` 仍然不会把这些 value summary 直接 lower 成值语义或数据通道语义；它们的作用是为后续 formal/backend/tooling 保留统一消费入口，而不是提前承诺完整 workflow dataflow execution semantics。
-
-## 当前保留的语义
-
-### 1. Agent 状态机
-
-对带 contract 的 agent，当前 formal backend 会生成一个枚举状态变量：
-
-- 变量名形如 `agent__<agent>__state`
-- 枚举成员来自 agent 的 `states`
-- `init(...)` 来自 agent 的 `initial_state`
-- `next(...)` 来自 agent 的显式 `transition`
-
-没有 contract 的 agent 不再额外生成全局 agent 状态变量；workflow node 会作为独立 agent instance 建模，避免 workflow-only 模型里出现一套未绑定到具体节点的重复 agent 状态。
-
-当前 lowering 规则：
-
-1. 默认后继集合来自 agent declaration 里的显式 `transition`
-2. 若存在 `flow for <agent>`，则对每个 handler 状态，formal backend 会收集所有可达控制路径上的 `goto` 目标，并用这些目标覆盖 declaration-level 后继集合
-3. final-state handler 的 `return` 会把该状态视为控制流终结点，因此对应状态在 SMV 中保持自循环
-4. 若某状态没有可达后继，则该状态自循环
-
-### 2. Workflow 节点状态
-
-对每个 workflow node，当前 formal backend 会生成一个目标 agent 状态变量，以及一个显式 lifecycle phase：
-
-- 变量名形如 `workflow__<workflow>__node__<node>__state`
-- `workflow__<workflow>__node__<node>__phase`
-- 节点状态集合直接复用目标 agent 的 `states`
-- 节点初始状态复用目标 agent 的 `initial_state`
-- 节点状态转移图复用目标 agent 的 flow-aware 状态机 lowering
-
-`phase` 的取值固定为：
-
-- `AHFL_NODE_IDLE`
-- `AHFL_NODE_RUNNING`
-- `AHFL_NODE_COMPLETED`
-- `AHFL_NODE_FAILED`
-- `AHFL_NODE_RECOVERING`
-- `AHFL_NODE_RECOVERED`
-- `AHFL_NODE_COMPENSATING`
-- `AHFL_NODE_COMPENSATED`
-- `AHFL_NODE_TERMINAL_FAILED`
-
-`started`、`running`、`completed`、`failed`、`recovering`、`recovered` 不再是可独立组合的状态位，而是从 `phase` 和 node state 派生出的 `DEFINE`：
-
-- `started(n)` 表示 node phase 不是 `AHFL_NODE_IDLE`
-- `completed(n)` 表示 node phase 已经是 `AHFL_NODE_COMPLETED`，或 node 正在运行且已进入目标 agent final state
-- `running(n)` 表示 node phase 是 `AHFL_NODE_RUNNING`，且当前 node state 还不是目标 agent final state
-- `failed(n)` 覆盖 `AHFL_NODE_FAILED` / `AHFL_NODE_TERMINAL_FAILED`
-- `recovering(n)` 覆盖 `AHFL_NODE_RECOVERING` / `AHFL_NODE_COMPENSATING`
-- `recovered(n)` 覆盖 `AHFL_NODE_RECOVERED` / `AHFL_NODE_COMPENSATED`
-
-若节点带有 `after` 依赖，则当前 lowering 会编码显式启动门控：
-
-1. 无依赖节点的 `phase` 初始为 `AHFL_NODE_RUNNING`
-2. 有依赖节点的 `phase` 初始为 `AHFL_NODE_IDLE`，直到所有 `after` 依赖节点都 `completed`
-3. 在 `phase != AHFL_NODE_RUNNING` 时，节点停留在当前 agent state，不沿目标 agent 的状态机前进
-4. `completed(n)` 在节点进入 final state 的同一离散步即可为真，下一步起 `phase` 锁存为 `AHFL_NODE_COMPLETED`
-5. 当前不会把 workflow 调度细化成更丰富的调度协议或消息传递语义
-
-formal backend 会为 workflow control 自动合成基础证明义务：
-
-1. 每个 node 都有 `G(completed(node) -> node_state in final_states)`。
-2. 每个带 `after` 依赖的 node 都有 `G((running(node) | completed(node)) -> all_dependencies_completed)`。
-
-这些义务用于证明 backend 生成的 lifecycle/dependency 控制模型本身没有产生非法节点状态。
-
-### 3. Temporal 原子映射
-
-当前 formal backend 对受支持的 temporal atom 采用如下映射：
-
-| AHFL 原子 | 当前 SMV 映射 |
-|------|------|
-| `called(k)` | `agent__<agent>__called__<capability>`，由 flow handler call event 派生的 `DEFINE` |
-| `in_state(S)` | `(agent__<agent>__state = S)` |
-| `running(n)` | `workflow__<workflow>__node__<node>__running` |
-| `completed(n)` | `workflow__<workflow>__node__<node>__completed` |
-| `completed(n, S)` | `(workflow__<workflow>__node__<node>__completed & (workflow__<workflow>__node__<node>__state = S))` |
-
-其中：
-
-1. `completed(n)` 当前是从 node lifecycle phase 和 final-state membership 派生的 `DEFINE`
-2. `running(n)` 当前通过 `DEFINE` 展开为 `phase = AHFL_NODE_RUNNING` 且 node state 尚未进入 final state
-3. `called(k)` 当前绑定到目标 agent flow handler 的 `summary.called_targets`，当 workflow node 正在运行且 node state 等于对应 handler state 时成立
-4. `called(k)` 仍不承诺参数值、返回值、调用次数、调用顺序或 provider 执行语义
-
-### 4. Temporal 连接词映射
-
-当前支持以下时序连接词映射：
-
-| AHFL | SMV |
-|------|-----|
-| `always` | `G` |
-| `eventually` | `F` |
-| `next` | `X` |
-| `not` / `!` | `!` |
-| `and` | `&` |
-| `or` | `|` |
-| `implies` | `->` |
-| `until` | `U` |
-
-当前 `emit-smv` 只输出 `LTLSPEC`，不输出 CTL 或公平性约束。
-
-### 5. Contract `requires` / `ensures` 导出
-
-当前 formal backend 对 expr-shaped contract clause 采用受限导出：
-
-- `requires: <pure-bool-expr>`
-- `ensures: <pure-bool-expr>`
-
-其规则固定为：
-
-1. bounded boolean/integer expression 会直接 lower 到 SMV expression。
-2. `requires` 当前被视为 precondition assumption，只作为 comment 进入 SMV，不作为独立 guarantee。
-3. bounded `ensures` 会生成 final-state implication；unbounded/provider `ensures` 仍记录为抽象 data guarantee，不生成可被 checker 误判的独立 `LTLSPEC`。
-4. contract temporal 公式若包含 bounded embedded expr，会直接内联；若包含 unbounded/provider embedded data predicate，会把这些 predicate 放到公式外层的 observation assumption guard。
-5. 该导出保留的是 contract 边界，不是 output/dataflow 的完整执行语义。
-6. `invariant` / `forbid` 的 temporal lowering 规则保持不变，仍按现有 temporal exporter 路径处理。
-
-## Observation Abstraction
-
-当前最重要的抽象边界是：
-
-- contract 语境中的纯布尔 `Expr`
-- temporal formula 中内嵌的纯布尔 `Expr`
-
-例如：
-
-- `always (not called(Decide) or ready(input.id))`
-
-其中 `ready(input.id)` 涉及 predicate call 和 input path，当前不会被 lower 成可求值的符号表达式树，而会被抽象为新的布尔 observation 变量。相对地，`true`、`1 + 1 == 2`、`2 > 1` 这类 bounded boolean/integer expression 会直接进入 SMV，不再生成未使用的 observation `IVAR`。
-
-当前规则固定为：
-
-1. 每个 embedded pure boolean expr 都会先进入共享的 `formal_observations` 模型，再由 backend-specific emitter 决定如何消费
-2. observation scope 当前显式区分 `contract_clause`、`workflow_safety_clause`、`workflow_liveness_clause`
-3. observation 名字由 scope 所属 owner、clause 索引和遍历顺序稳定决定
-4. 当前不会跨 clause、跨 contract、跨 workflow 做语义去重；同一 scope 内的同一 atom 位置只生成一个 observation symbol
-5. 当前 observation 仅表示“环境可观察的布尔事实”，并不自动附带语义约束
-6. bounded expr 在 SMV 中直接求值；unbounded embedded observation 在 SMV 中是 environment assumption，不再被单独当作 guarantee 证明；只有控制谓词、workflow lifecycle、bounded expr、flow call event 和 effect obligation 会进入可证明的 `LTLSPEC`
-
-当前命名来源：
-
-- agent capability / `called(k)` observation
-- contract `requires` / `ensures` expr
-- contract temporal clause 内的 embedded expr
-- workflow safety/liveness clause 内的 embedded expr
-
-当前仓库里，这套 observation 模型已经被：
-
-1. `emit-ir-json` 作为 `formal_observations` 顶层字段输出
-2. `emit-smv` 用来生成 embedded observation `IVAR`、called observation `DEFINE` 和稳定 symbol 名字
-
-## Call / Effect / Recovery Event 边界
-
-当前 `emit-smv` 会消费 `flow.state_handlers[].summary.called_targets`：
-
-1. 对每个 workflow node 和 capability call 生成 `workflow__<workflow>__node__<node>__call__<capability>`。
-2. call event 在 node `running` 且 node state 等于包含该 call 的 handler state 时成立。
-3. `called(k)` 不再是自由 observation，而是这些 call event 在对应 agent 上的合取/析取派生。
-4. 对声明了 effect profile 的 capability，backend 会生成 `workflow__<workflow>__node__<node>__effect__<kind>`。
-5. 每个 call/effect event 派生 `__committed` / `__failed` 子事件；二者互斥，且都蕴含原始 event。
-6. 对 external / durable / financial effect，backend 会把已声明的 policy / recovery obligation 降成 `G(call_event -> TRUE/FALSE)` 形式的有限控制证明义务。
-7. 对 durable / financial effect，backend 会额外证明 failed effect event 会进入 recovery/resume lifecycle 的有限控制路径。
-
-没有声明 effect profile、effect 为 `unknown`、或 call target 不是 capability 的情况，仍由 `validate-assurance` 作为 production gate 处理；SMV backend 只在 profile 可解释时检查 effect/recovery obligation。
-
-failure / recovery lifecycle 当前以 node phase 枚举、环境 fault input 和派生谓词形式进入模型，用于承载后续 provider failure injection 与 recovery transition relation。当前实现只建模 generic fault request，不把具体外部 provider failure semantics 当作已证明事实。
-
-当前实现会为每个 workflow node 暴露一个 generic environment input：
-
-- `workflow__<workflow>__node__<node>__failure_requested`
-
-当 node 正在运行且该 input 为真时，phase 可以进入 `AHFL_NODE_FAILED`，随后按有限生命周期自动进入 `RECOVERING`、`RECOVERED` 并恢复 `RUNNING`。用户 workflow safety/liveness 条款默认在 `G(!failure_requested...)` 的 no-fault assumption 下证明；recovery lifecycle 本身有独立的 compiler-generated `LTLSPEC`。
-
-## Counterexample Source Mapping
-
-`emit-smv` 会在模型头部输出 `-- AHFL_MAP <symbol> => <AHFL description>` 注释。`check --verify=on` 解析 checker 反例时，会把出现在 counterexample trace 中的 SMV symbol 映射回 workflow node、agent state、call event、effect event 或 observation owner。若 IR 节点携带 source range，description 会附带 source offset 范围，例如 `@ <source>:begin-end`。
-
-在 contract/export 冻结下，shared observation model 的职责也已经固定：
-
-1. 承载 contract `requires` / `ensures`
-2. 承载 contract temporal clause 内嵌纯布尔 expr
-3. 承载 workflow safety/liveness 内嵌纯布尔 expr
-4. 为 backend emitter 提供统一的 clause ownership 和稳定命名
-
-## 当前不承诺的语义
-
-以下能力当前明确不属于 `emit-smv` 的语义承诺范围：
-
-1. bounded boolean/integer 之外的 `requires` / `ensures` 数据求值或 output/value semantics 编码
-2. `let`、赋值、`assert`、表达式求值对 transition relation 的直接编码
-3. `goto` / final-state `return` 之外的更细粒度 statement 执行语义
-4. capability provider 调用次数、参数值、返回值和精确语句级顺序
-5. workflow 输入表达式、返回值表达式、数据依赖与值流
-6. provider failure injection、retry、timeout、quota、exception 的完整运行时语义
-7. LLM/tool/native body 语义
-8. CTL、公平性、部分顺序并发或分布式事务语义
-
-换句话说，当前 `emit-smv` 是：
-
-- 一个受限的 state-machine / flow-termination / workflow-lifecycle / temporal exporter
-
-而不是：
-
-- AHFL 完整执行语义的 model checker backend
-
-## 对后续实现的约束
-
-Issue 16 之后，formal backend 相关实现必须遵守以下约束：
-
-1. 新增 lowering 能力时，必须明确写出“保留语义”还是“抽象语义”
-2. 若采用 observation abstraction，必须说明 observation 的作用域、命名和是否去重
-3. 任何 formal backend 都不得重新读取 parse tree 或原始源码切片
-4. backend-specific emitter 必须消费 validate 后的语义模型或稳定 IR
-5. 若 `emit-smv` 继续扩张，必须先更新本文档，再新增 golden
-
-## 当前状态
-
-截至当前实现：
-
-1. `emit-smv` 已覆盖受限的 state-machine / workflow-lifecycle / temporal / contract export 子集
-2. bounded boolean/integer expression 已直接 lower 到 SMV，unbounded embedded observation 已收敛为 environment assumption
-3. `called(k)` 已绑定到 flow call event，call/effect event 已派生 committed/failed 子事件
-4. effect event、effect/recovery obligation、failure/recovery phase hook 已进入 SMV 有限控制模型
-5. `check --verify=on` 已能从 counterexample trace 映射回 AHFL symbol owner 和可用 source offset
-6. `check --verify=on` 已把 IR state-space estimator 接入用户可见报告，输出 agent 数、状态空间估计、transition 数和 tractability warning
-7. NuSMV/nuXmv 输出 parser 已有 true/false/error/timeout fixture matrix，CLI 外部 checker 进程 timeout 已有 fake checker 回归，timeout 会进入确定 failure path
-8. `emit-ir` / `emit-ir-json` / `emit-smv` 已通过统一 backend driver 分发
+数据报告使用 `data_contract_status`（not_requested、proved、bounded、refuted、inconsistent_assumptions、unknown、unsupported、solver_unavailable、no_targets）、`data_contract_scope: contract_implication`、`data_contract_assumptions` 和 `data_contract_goals`；逐条目标保留来源。`runtime_contract_checks: not_implemented` 表示当前没有自动 runtime 合同检查。

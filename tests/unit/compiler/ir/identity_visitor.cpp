@@ -25,6 +25,7 @@
 #include <fstream>
 #include <ios>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <variant>
 
@@ -53,37 +54,42 @@ class CountingVisitor final : public ahfl::ir::ProgramVisitor {
     int workflow_node_count{0};
 
   private:
-    void on_expr(const ahfl::ir::Expr & /*expr*/) override {
+    ahfl::ir::VisitAction visit_expr_pre(const ahfl::ir::Expr & /*expr*/) override {
         expression_count += 1;
+
+        return ahfl::ir::VisitAction::Continue;
     }
-    void on_workflow_node(const ahfl::ir::WorkflowNode & /*node*/) override {
+    ahfl::ir::VisitAction
+    visit_workflow_node_pre(const ahfl::ir::WorkflowNode & /*node*/) override {
         workflow_node_count += 1;
+
+        return ahfl::ir::VisitAction::Continue;
     }
 };
 
 class RenameCallRewriter final : public ahfl::ir::ProgramRewriter {
   private:
-    bool on_expr(ahfl::ir::Expr &expr) override {
+    ahfl::ir::RewriteAction rewrite_expr_pre(ahfl::ir::Expr &expr) override {
         auto *call = std::get_if<ahfl::ir::CallExpr>(&expr.node);
         if (call == nullptr || call->callee == "pkg::CanonicalCall") {
-            return false;
+            return {ahfl::ir::VisitAction::Continue, false};
         }
 
         call->callee = "pkg::CanonicalCall";
-        return true;
+        return {ahfl::ir::VisitAction::Continue, true};
     }
 };
 
 class RenameTemporalCalledRewriter final : public ahfl::ir::ProgramRewriter {
   private:
-    bool on_temporal_expr(ahfl::ir::TemporalExpr &expr) override {
+    ahfl::ir::RewriteAction rewrite_temporal_expr_pre(ahfl::ir::TemporalExpr &expr) override {
         auto *called = std::get_if<ahfl::ir::CalledTemporalExpr>(&expr.node);
         if (called == nullptr || called->capability == "pkg::NewCall") {
-            return false;
+            return {ahfl::ir::VisitAction::Continue, false};
         }
 
         called->capability = "pkg::NewCall";
-        return true;
+        return {ahfl::ir::VisitAction::Continue, true};
     }
 };
 
@@ -476,6 +482,16 @@ flow for HirAgent {
 
 TEST_CASE("Typed HIR lowering preserves SymbolRef ids across declarations and references") {
     const std::string source = R"AHFL(
+agent SymbolAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Echo];
+}
+
 struct Request {
     value: String;
 }
@@ -489,16 +505,6 @@ struct Response {
 }
 
 capability Echo(value: String) -> Response;
-
-agent SymbolAgent {
-    input: Request;
-    context: Context;
-    output: Response;
-    states: [Done];
-    initial: Done;
-    final: [Done];
-    capabilities: [Echo];
-}
 
 flow for SymbolAgent {
     state Done {
@@ -541,6 +547,7 @@ workflow SymbolWorkflow {
     REQUIRE(response_symbol.has_value());
     REQUIRE(echo_symbol.has_value());
     REQUIRE(agent_symbol.has_value());
+    CHECK(agent_symbol->get().id.value == 0);
     REQUIRE(workflow_symbol.has_value());
 
     const auto typed_ir =
@@ -594,6 +601,24 @@ workflow SymbolWorkflow {
     CHECK(workflow_decl->input_type_ref.canonical_name == request_symbol->get().canonical_name);
     CHECK(workflow_decl->output_type_ref.kind == ahfl::ir::TypeRefKind::Struct);
     CHECK(workflow_decl->output_type_ref.canonical_name == response_symbol->get().canonical_name);
+
+    std::size_t agent_instances = 0;
+    for (const auto &decl : typed_ir.declarations) {
+        const auto *instance = std::get_if<ahfl::ir::InstanceDecl>(&decl);
+        if (instance == nullptr || instance->kind != ahfl::ir::InstanceKind::Agent) {
+            continue;
+        }
+        ++agent_instances;
+        REQUIRE(instance->symbol_ref.id.has_value());
+        CHECK(*instance->symbol_ref.id == 0);
+        CHECK(instance->symbol_ref.canonical_name == agent_symbol->get().canonical_name);
+        CHECK(instance->agent_input_type_ref.canonical_name ==
+              request_symbol->get().canonical_name);
+        CHECK(instance->agent_output_type_ref.canonical_name ==
+              response_symbol->get().canonical_name);
+        REQUIRE(instance->type_args.size() == 3);
+    }
+    CHECK(agent_instances == 1);
 }
 
 TEST_CASE("IR lowering prefers Typed HIR expression types for inferred let bindings") {
@@ -667,7 +692,7 @@ flow for HirAgent {
     CHECK(let_statement->type_ref.display_name == "Int");
 }
 
-TEST_CASE("Typed HIR lowering can consume detached typed expressions without legacy result") {
+TEST_CASE("Typed HIR lowering uses the canonical typed expression record") {
     const std::string source = R"AHFL(
 struct Request {
     value: String;
@@ -722,10 +747,9 @@ flow for DetachedHirAgent {
         }
     }
     REQUIRE(struct_literal != nullptr);
-    // Force lowering off the TypedProgram::find_expr(node_id) fast path so this
-    // regression specifically proves lower_typed_program rebuilds the legacy
-    // range-indexed expression type side table from detached TypedExpr records.
-    struct_literal->node_id = 0;
+    // Detached records retain canonical node identity; source ranges do not
+    // replace that identity when checking the AST/Typed HIR boundary.
+    REQUIRE(struct_literal->node_id != 0);
     struct_literal->type = ahfl::TypeContext::global().make(ahfl::TypeKind::Int);
 
     const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
@@ -1063,7 +1087,7 @@ agent HigherOrderAgent {
 
 flow for HigherOrderAgent {
     state Done {
-        let mapped = collections::map<Int, Int>(collections::list_from_array<Int>(1, 2), \x: Int -> x + 1);
+        let mapped = (collections::list_from_array<Int>(1, 2)).map<Int>(\x: Int -> x + 1);
         return Response { value: mapped[0] };
     }
 }
@@ -1103,16 +1127,18 @@ flow for HigherOrderAgent {
         &flow->state_handlers.front().body.statements.front()->node);
     REQUIRE(let != nullptr);
     REQUIRE(let->initializer != nullptr);
-    const auto *call = std::get_if<ahfl::ir::CallExpr>(&let->initializer->node);
+    const auto *call = std::get_if<ahfl::ir::MethodCallExpr>(&let->initializer->node);
     REQUIRE(call != nullptr);
-    CHECK(call->callee == "std::collections::map");
-    REQUIRE(call->arguments.size() == 2);
+    CHECK(call->method.starts_with("impl#"));
+    CHECK(call->method.ends_with("::map"));
+    REQUIRE(call->receiver != nullptr);
+    REQUIRE(call->arguments.size() == 1);
 
-    const auto *source_list = std::get_if<ahfl::ir::CallExpr>(&call->arguments[0]->node);
+    const auto *source_list = std::get_if<ahfl::ir::CallExpr>(&call->receiver->node);
     REQUIRE(source_list != nullptr);
     CHECK(source_list->callee == "list_from_array");
 
-    const auto *lambda = std::get_if<ahfl::ir::LambdaExpr>(&call->arguments[1]->node);
+    const auto *lambda = std::get_if<ahfl::ir::LambdaExpr>(&call->arguments[0]->node);
     REQUIRE(lambda != nullptr);
     CHECK(lambda->params == std::vector<std::string>{"x"});
     REQUIRE(lambda->body != nullptr);
@@ -1296,6 +1322,36 @@ contract for MethodCallAgent {
     REQUIRE(receiver != nullptr);
     CHECK(receiver->path.root_kind == ahfl::ir::PathRootKind::Input);
     CHECK(receiver->path.root_name == "input");
+
+    SUBCASE("resolved dispatch references a missing impl") {
+        auto corrupted = type_result.typed_program;
+        auto method_expr = std::find_if(
+            corrupted.expressions.begin(), corrupted.expressions.end(), [](const auto &expr) {
+                return expr.kind == ahfl::ast::ExprSyntaxKind::MethodCall;
+            });
+        REQUIRE(method_expr != corrupted.expressions.end());
+        REQUIRE(method_expr->dispatch_target.has_value());
+        method_expr->dispatch_target->impl_index = corrupted.declarations.size();
+        CHECK_THROWS_WITH_AS(
+            static_cast<void>(ahfl::lower_typed_program(corrupted, *parse_result.program)),
+            "resolved method dispatch references a missing impl",
+            std::logic_error);
+    }
+
+    SUBCASE("resolved dispatch references a missing impl method") {
+        auto corrupted = type_result.typed_program;
+        auto method_expr = std::find_if(
+            corrupted.expressions.begin(), corrupted.expressions.end(), [](const auto &expr) {
+                return expr.kind == ahfl::ast::ExprSyntaxKind::MethodCall;
+            });
+        REQUIRE(method_expr != corrupted.expressions.end());
+        REQUIRE(method_expr->dispatch_target.has_value());
+        method_expr->dispatch_target->method_name = "missing_method";
+        CHECK_THROWS_WITH_AS(
+            static_cast<void>(ahfl::lower_typed_program(corrupted, *parse_result.program)),
+            "resolved method dispatch references a missing impl method",
+            std::logic_error);
+    }
 }
 
 TEST_CASE("Typed HIR lowering prefers resolved struct target metadata over AST references") {
@@ -2108,6 +2164,146 @@ impl Show for Widget {
     CHECK(reout.str() == json);
 }
 
+TEST_CASE("Typed HIR enum constructors require canonical numeric owner metadata") {
+    const std::string source = R"AHFL(
+module typed::enum_identity;
+enum Packet<T> {
+    Pair(T),
+    Data { value: T, label: String = "ok" },
+}
+type IntPacket = Packet<Int>;
+const Record: IntPacket = Packet::Data { value: 7 };
+fn tuple() -> IntPacket effect Pure decreases 0 { return Packet::Pair(9); }
+fn inferred() -> Int effect Pure decreases 0 {
+    let record = Packet::Data { value: 5 };
+    let tuple = Packet::Pair(6);
+    return 0;
+}
+)AHFL";
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("enum_identity.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    const ahfl::TypeChecker checker;
+    const auto checked = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(checked.has_errors());
+    const auto owner = resolve.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
+                                                           "typed::enum_identity::Packet");
+    REQUIRE(owner.has_value());
+    CHECK(owner->get().id.value == 0);
+    REQUIRE_FALSE(checked.typed_program.declarations.empty());
+    CHECK(checked.typed_program.declarations.front().kind == ahfl::ast::NodeKind::ModuleDecl);
+    CHECK_FALSE(checked.typed_program.declarations.front().symbol.has_value());
+    const auto enum_decl =
+        std::find_if(checked.typed_program.declarations.begin(),
+                     checked.typed_program.declarations.end(),
+                     [](const auto &decl) { return decl.kind == ahfl::ast::NodeKind::EnumDecl; });
+    REQUIRE(enum_decl != checked.typed_program.declarations.end());
+    REQUIRE(enum_decl->symbol.has_value());
+    CHECK(*enum_decl->symbol == owner->get().id);
+    bool found_inferred_record = false;
+    bool found_inferred_tuple = false;
+    for (const auto &expr : checked.typed_program.expressions) {
+        const auto *variant_type =
+            expr.type != nullptr ? expr.type->get_if<ahfl::types::EnumVariantT>() : nullptr;
+        if (variant_type == nullptr) {
+            continue;
+        }
+        CHECK(variant_type->symbol == owner->get().id);
+        found_inferred_record = found_inferred_record || variant_type->variant_name == "Data";
+        found_inferred_tuple = found_inferred_tuple || variant_type->variant_name == "Pair";
+    }
+    REQUIRE(found_inferred_record);
+    REQUIRE(found_inferred_tuple);
+    auto typed = checked.typed_program;
+    auto record =
+        std::find_if(typed.expressions.begin(), typed.expressions.end(), [](const auto &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral;
+        });
+    REQUIRE(record != typed.expressions.end());
+    REQUIRE(record->enum_variant_owner == owner->get().id);
+    REQUIRE(record->enum_variant_name == "Data");
+    bool expect_failure = false;
+    std::string failure;
+
+    SUBCASE("missing owner cannot be recovered from the intact type or display name") {
+        record->enum_variant_owner.reset();
+        expect_failure = true;
+        failure = "enum variant constructor is missing its resolved owner";
+    }
+    SUBCASE("unknown owner cannot be recovered from the intact display name") {
+        record->enum_variant_owner = ahfl::SymbolId{0xffffffff};
+        expect_failure = true;
+        failure = "enum variant constructor references a missing owner declaration";
+    }
+    SUBCASE("type alias symbol cannot replace the canonical enum symbol") {
+        const auto alias = resolve.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
+                                                               "typed::enum_identity::IntPacket");
+        REQUIRE(alias.has_value());
+        record->enum_variant_owner = alias->get().id;
+        expect_failure = true;
+        failure = "enum variant constructor owner is not its canonical enum declaration";
+    }
+    SUBCASE("missing variant cannot be recovered from source spelling") {
+        record->enum_variant_name.clear();
+        expect_failure = true;
+        failure = "enum variant constructor is missing its resolved variant";
+    }
+    SUBCASE("unknown variant is rejected") {
+        record->enum_variant_name = "Absent";
+        expect_failure = true;
+        failure = "enum variant constructor references a missing variant";
+    }
+    SUBCASE("tuple variant cannot replace a struct variant") {
+        record->enum_variant_name = "Pair";
+        expect_failure = true;
+        failure = "enum struct constructor references a non-struct variant";
+    }
+    SUBCASE("display name does not participate in owner identity") {
+        record->enum_variant_owner_name = "unrelated::Packet";
+    }
+
+    if (expect_failure) {
+        CHECK_THROWS_WITH_AS(static_cast<void>(ahfl::lower_typed_program(typed, *parse.program)),
+                             failure.c_str(),
+                             std::logic_error);
+        return;
+    }
+    const auto lowered = ahfl::lower_typed_program(typed, *parse.program);
+    const ahfl::ir::StructLiteralExpr *record_value = nullptr;
+    const ahfl::ir::CallExpr *tuple_value = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *constant = std::get_if<ahfl::ir::ConstDecl>(&decl);
+            constant != nullptr && constant->name == "typed::enum_identity::Record" &&
+            constant->value != nullptr) {
+            record_value = std::get_if<ahfl::ir::StructLiteralExpr>(&constant->value->node);
+        } else if (const auto *function = std::get_if<ahfl::ir::FnDecl>(&decl);
+                   function != nullptr && function->name == "typed::enum_identity::tuple") {
+            REQUIRE(function->body != nullptr);
+            REQUIRE(function->body->statements.size() == 1);
+            const auto *returned =
+                std::get_if<ahfl::ir::ReturnStatement>(&function->body->statements.front()->node);
+            REQUIRE(returned != nullptr);
+            REQUIRE(returned->value != nullptr);
+            tuple_value = std::get_if<ahfl::ir::CallExpr>(&returned->value->node);
+        }
+    }
+    REQUIRE(record_value != nullptr);
+    CHECK(record_value->is_enum_variant);
+    CHECK(record_value->enum_name == "typed::enum_identity::Packet");
+    CHECK(record_value->variant_name == "Data");
+    REQUIRE(record_value->fields.size() == 2);
+    CHECK(record_value->fields[0].name == "value");
+    CHECK(record_value->fields[1].name == "label");
+    REQUIRE(record_value->fields[1].value != nullptr);
+    REQUIRE(tuple_value != nullptr);
+    CHECK(tuple_value->callee == "typed::enum_identity::Packet::Pair");
+    CHECK(tuple_value->callee_ref.id == owner->get().id.value);
+}
+
 // RFC 0026 (3)-3b: the BackendReady verifier enforces typed pattern identity —
 // a match arm / if-let root pattern must carry a resolved matched-enum, and a
 // variant pattern a resolved owner-enum + non-empty variant name.
@@ -2159,6 +2355,42 @@ flow for A {
 }
 
 } // namespace
+
+TEST_CASE("Typed HIR lowering rejects a match node identity mismatch despite equal source ranges") {
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("match_identity_mismatch.ahfl", kMatchIdentitySource);
+    REQUIRE_FALSE(parse.has_errors());
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    const ahfl::TypeChecker checker;
+    auto typecheck = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(typecheck.has_errors());
+    auto found = std::find_if(
+        typecheck.typed_program.expressions.begin(),
+        typecheck.typed_program.expressions.end(),
+        [](const auto &expr) { return expr.kind == ahfl::ast::ExprSyntaxKind::Match; });
+    REQUIRE(found != typecheck.typed_program.expressions.end());
+    found->node_id = 0;
+    CHECK_THROWS_AS((void)ahfl::lower_typed_program(typecheck.typed_program, *parse.program),
+                    std::logic_error);
+}
+
+TEST_CASE("Typed HIR lowering rejects absent expression metadata") {
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("missing_typed_metadata.ahfl", "const X: Int = 1;");
+    REQUIRE_FALSE(parse.has_errors());
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    const ahfl::TypeChecker checker;
+    auto typecheck = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(typecheck.has_errors());
+    typecheck.typed_program.expressions.clear();
+    typecheck.typed_program.rebuild_indices();
+    CHECK_THROWS_AS((void)ahfl::lower_typed_program(typecheck.typed_program, *parse.program),
+                    std::logic_error);
+}
 
 TEST_CASE("Semantic IR backend-ready verifier accepts a match carrying typed pattern identity") {
     const auto ir = lower_match_identity_program();
@@ -2220,7 +2452,8 @@ TEST_CASE("Semantic IR backend-ready verifier rejects a match root pattern missi
                                        "resolved matched type nominal identity disagrees with matched_nominal"));
 }
 
-TEST_CASE("Semantic IR backend-ready verifier rejects a variant whose owner enum differs from the scrutinee") {
+TEST_CASE("Semantic IR backend-ready verifier rejects a variant whose owner enum differs from the "
+          "scrutinee") {
     // Both matched_nominal and owner_enum resolve, but to DIFFERENT enums — a
     // corrupted pairing that the presence-only check would miss.
     auto ir = lower_match_identity_program();
@@ -2450,9 +2683,9 @@ TEST_CASE("derived ExprNode child edges: the mutating rewriter reaches the same 
         std::vector<std::string> *labels{nullptr};
 
       private:
-        bool on_expr(ahfl::ir::Expr &expr) override {
+        ahfl::ir::RewriteAction rewrite_expr_pre(ahfl::ir::Expr &expr) override {
             labels->push_back(label_of(expr));
-            return false;
+            return {ahfl::ir::VisitAction::Continue, false};
         }
     };
 
@@ -2550,7 +2783,10 @@ TEST_CASE("derived ExprNode child edges: ProgramVisitor and ProgramRewriter reco
         int exprs{0};
 
       private:
-        void on_expr(const ahfl::ir::Expr &) override { ++exprs; }
+        ahfl::ir::VisitAction visit_expr_pre(const ahfl::ir::Expr &) override {
+            ++exprs;
+            return ahfl::ir::VisitAction::Continue;
+        }
     };
     CountingVisitor visitor;
     visitor.visit(*arena_program);
@@ -2565,10 +2801,10 @@ TEST_CASE("derived ExprNode child edges: ProgramVisitor and ProgramRewriter reco
         int seen{0};
 
       private:
-        bool on_expr(ahfl::ir::Expr &expr) override {
+        ahfl::ir::RewriteAction rewrite_expr_pre(ahfl::ir::Expr &expr) override {
             ++seen;
             expr.id += 1;
-            return false;
+            return {ahfl::ir::VisitAction::Continue, false};
         }
     };
     CountAndStamp rewriter;

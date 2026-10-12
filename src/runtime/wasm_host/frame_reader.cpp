@@ -603,7 +603,7 @@ encode_p6_output(std::span<const std::uint8_t> page,
                  const ir::core::CoreFrameLayoutSection &section,
                  const ir::core::VerifiedWireSchemaBinding &output_binding,
                  std::uint32_t value_ptr, P6FinalKind final_kind) {
-    // Runv root authorization: a computed or capability final's value_ptr must
+    // FrameRun root authorization: a computed or capability final's value_ptr must
     // equal the output base; an identity final's the input base. The
     // discriminator comes from the admitted descriptor/frame section, never
     // inferred.
@@ -612,7 +612,7 @@ encode_p6_output(std::span<const std::uint8_t> page,
             ? ir::core::kP6AggregateInputBase
             : ir::core::kP6AggregateOutputBase;
     if (value_ptr != authorized_base) {
-        return std::unexpected(FrameReadError::RunvRootUnauthorized);
+        return std::unexpected(FrameReadError::FrameRunRootUnauthorized);
     }
 
     FrameWalkContext ctx(section, output_binding.table());

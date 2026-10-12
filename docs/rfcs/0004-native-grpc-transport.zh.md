@@ -89,7 +89,7 @@ Keep native gRPC off by default until benchmark, platform, and fallback evidence
 - 2026-06-28: Initial draft created during Wave 18 planning.
 - 2026-07-02: Canonicalized as RFC 0004.
 - 2026-07-08: Added a machine gate (`scripts/check-native-grpc-gate.py`) to prevent native gRPC implementation markers from entering the repository before the owner Go/No-Go decision, benchmark evidence, build matrix, dependency policy, feature flag, and fallback semantics are complete.
-- 2026-07-08: Added `ahfl.native_grpc_decision_evidence.v1` as the machine-readable evidence contract for RFC status transitions; `accepted` now requires owner Go evidence, while `implementing` and later statuses require all native transport gates to be complete.
+- 2026-07-08: Added `ahfl.native_grpc_decision_evidence` as the machine-readable evidence contract for RFC status transitions; `accepted` now requires owner Go evidence, while `implementing` and later statuses require all native transport gates to be complete.
 - 2026-07-09: Reconciled the RFC with live code and industry practice: current `grpc_json_transcoding` is explicitly not native gRPC, current `ProviderRegistry` is not a transport scheme router, optimized HTTP/2 JSON/SSE is now a required benchmark baseline, Protobuf schema guidance no longer requires field-level JSON mirroring, fallback defaults to fail-closed, and native implementation remains forbidden while the RFC is draft.
 - 2026-10-04: **No-Go decision (postponed)**. Decision agent (autonomous, per CLAUDE.md autonomous decision-making) concluded native gRPC/Protobuf transport does NOT enter near-term goals. Rationale: (1) RFC 0020 north-star positioning (embeddable verifiable workflow DSL, capabilities via host, single-binary, vendored-only deps) fundamentally conflicts with vendoring gRPC C++ (grpc + protobuf + abseil + re2 + cares + openssl, ~100-300MB, protoc codegen, three-platform build matrix); (2) the capability embedding ABI (RFC 0021) is the designed escape hatch — hosts that need native gRPC implement it host-side in any language; (3) WASM as the sole execution engine (RFC 0020) further relegates transport to a host-side concern; (4) the benchmark evidence required by this RFC's own gate (native must beat optimized HTTP/2 JSON baseline) does not exist, and the current JSON path has unexploited optimization headroom (subprocess curl to in-process HTTP/2). Status `draft` → `postponed`. The `grpc_json_transcoding` path continues as the AHFL-native gRPC-shaped transport. Machine gate (`scripts/check-native-grpc-gate.py`) continues to forbid native gRPC implementation markers. Revisit trigger: concrete evidenced user requirement (e.g., a major provider exposing only native gRPC endpoints with no HTTP/JSON transcoding, or benchmark evidence that the optimized HTTP/2 JSON path cannot meet a concrete latency requirement).
 
@@ -247,16 +247,16 @@ fn answer(q: str) -> str =
 
 ### 3.3 Interface Skeleton（接口骨架）
 
-**3.3.1 Proto 定义（`proto/ahfl/runtime/v1/llm_transport.proto`）**
+**3.3.1 Proto 定义（`proto/ahfl/runtime/llm_transport.proto（提议路径，当前未实现）`）**
 
 ```proto3
 syntax = "proto3";
 
-package ahfl.runtime.v1;
+package ahfl.runtime;
 
 import "google/protobuf/struct.proto";
 
-// 通用：proto 是版本化 wire contract；JSON 只是 compatibility mapping。
+// 提议的 Protobuf wire contract；JSON transcoding 由明确的 transport binding 选择。
 // 语义必须可逆并有测试证明，但不要求字段级 1:1 复制 JSON。
 message LlmMessage { Role role = 1; string content = 2; repeated ToolCall tool_calls = 3; }
 enum Role { ROLE_UNSPECIFIED = 0; SYSTEM = 1; USER = 2; ASSISTANT = 3; TOOL = 4; }
@@ -405,25 +405,16 @@ class GrpcClientFacade {
 
 ---
 
-## 6 Migration / Backward Compatibility（迁移与向后兼容）
+## 6 Contract and Rollout（契约与落地）
 
-### 6.1 Compatibility Strategy（兼容策略）
+当前 RFC 为 `postponed`；没有原生 gRPC 实现或迁移期开关。现有 HTTP/JSON 和
+显式 gRPC JSON transcoding 是当前传输能力，不能按 URL scheme 宣称存在原生 facade。
 
-- **默认 behavior 不变**：`AHFL_ENABLE_GRPC_NATIVE=OFF` 为默认，所有现有 capability binding、`ahflc run`、`ahflc verify` 的 CLI 输出、diagnostic taxonomy 全部与 0.x 基线字节级一致。
-- **binding scheme 分层解析**：
-  - `http://` / `https://` → 旧 `HttpTransport`，完全原路径；
-  - `http+json://` / `grpc+json://`（别名） → 现有 gRPC JSON transcoding（`GrpcTransport`）；
-  - `grpc://` / `grpcs://` → **未来**原生 gRPC facade（仅当 feature-flag ON、依赖可用且 binding 明确支持时启用；否则默认 fail closed，只有满足 §3.4 的显式条件才可 fallback）。
-- **Diagnostic 兼容**：所有原生 gRPC 产生的 `LlmProviderError` 映射到现有枚举（`auth_fail / timeout / schema_mismatch / retry_exhausted / unavailable`），并在 `additional_info` 中附加 `grpc_status_code` 与 `grpc_status_details`，**不新增顶层 error kind**，保证下游 `ahflc` formatter、LSP、golden 测试不破。
-
-### 6.2 Deprecation Path（弃用路径，至少 2 个 release cycle）
-
-| 阶段 | Release | 行为 |
-|---|---|---|
-| Alpha（默认 OFF） | 待 Go 决策后另定 | `grpc://` 仅在 opt-in build/runtime flag 下启用；未启用时 fail closed 并发出 `runtime.grpc_native.disabled`，不悄悄改走 JSON path。 |
-| Beta（opt-in canary） | 待 Alpha 证据稳定后另定 | 仍不对公开默认构建打开；选定 CI / 企业内网部署可以启用。native 失败默认 fail closed；只有满足 §3.4 的 unary/idempotent/equivalence/config 四条件时才可显式 fallback。 |
-| Stable（证据完整后） | 待 release evidence 后另定 | 只对支持 native endpoint 的 capability / provider 打开；`grpc+json://` 保留为显式 JSON transcoding path，不因 native 稳定而自动弃用。 |
-| 删除期 | 本 RFC 不安排 | 是否移除 `grpc+json://` alias 需要独立 owner decision；RFC0004 不用 native gRPC 作为强制迁移理由。 |
+如果重新接受原生 gRPC 设计，必须以实际协议和 transport 能力定义明确契约，
+同步更新 binding、provider、诊断、测试及文档；不引入历史 alias、弃用周期或
+旧新实现共存。网络协议本身需要遵守对端的实际 Protobuf/gRPC 契约；这与
+AHFL 内部 artifact 的历史兼容无关。native 调用失败保持 fail closed，
+不得静默改成不同协议调用。
 
 ### 6.3 Automated Tooling（自动化迁移工具）
 
@@ -460,7 +451,7 @@ class GrpcClientFacade {
 
 **AC-5（安全 / 鲁棒性）**：基于 `libFuzzer` 的 `grpc_facade_proto_fuzzer`（随机合法 / 非法 proto 字节流喂给 facade 的 mock channel）在 CI nightly 任务上 **连续 14 天零 crash**，累计 corpus 大小 ≥ 1 MiB，累计执行次数 ≥ 2^28。
 
-**AC-6（向后兼容）**：使用 0.22.x（引入 gRPC JSON transcoding 的基线版本）所有 capability 用例与 30 条官方示例，在 feature-flag ON 时对 human 输出、stderr 和 exit code做语义回归，并对版本化 JSON/JSONL 使用 schema-aware subset diff。允许的新增 transport 字段必须复用 canonical execution serializer。
+**AC-6（行为回归）**：在获准实现后的真实 transport 路径上运行 capability 用例与官方示例，验证 human 输出、stderr 和 exit code 的语义，并严格校验当前 JSON/JSONL 完整结构。新增 transport 字段必须复用 canonical execution serializer；不通过旧格式读端或兼容开关验收。
 
 ### 7.3 Decision Gate（决策门）
 
@@ -516,7 +507,7 @@ class GrpcClientFacade {
 
 ### Change history / 变更记录
 
-- 2026-06-28 (V1.1): Added Decision Block §8; Consult / Decision Due / Blocking Items; cross-RFC refs
-- 2026-06-28 (V1.0): Initial DRAFT
+- 2026-06-28 （Decision Block update）: Added Decision Block §8; Consult / Decision Due / Blocking Items; cross-RFC refs
+- 2026-06-28 （Initial draft）: Initial DRAFT
 - 2026-07-07: Added explicit decision-gate plan covering owner sign-off, benchmark evidence, build matrix, dependency policy, feature flag, fallback semantics and test strategy.
 - 2026-07-09: Reconciled RFC0004 with live code: current `grpc_json_transcoding` is not native gRPC, `ProviderRegistry` is not a scheme router, native gRPC stays draft-only, benchmark evidence now requires HTTP/JSON and optimized HTTP/2 JSON baselines, fallback defaults to fail-closed, and proto governance follows Protobuf compatibility rules.

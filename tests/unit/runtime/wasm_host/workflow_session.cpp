@@ -1193,10 +1193,6 @@ void test_capability_ordinal_oor_fail_closed(
             // P2-8 multi-capability path: corrupt the first ordinal.
             node.all_capabilities[0].first =
                 static_cast<std::uint32_t>(corrupted_desc.imports.size() + 1);
-        } else {
-            // Legacy single-capability path.
-            node.capability_ordinal =
-                static_cast<std::uint32_t>(corrupted_desc.imports.size() + 1);
         }
     }
 
@@ -2580,13 +2576,13 @@ struct UlebReader {
     }
 };
 
-// Extract the `ahfl.wasm-exec-manifest.v1` custom section payload from a wasm
+// Extract the `ahfl.execution-manifest` custom section payload from a wasm
 // module. Mirrors the A2 framing: skip the 8-byte header, then walk sections
 // (id + ULEB size + payload); a custom section (id 0) carries a name-length +
 // name + data. Returns the data of the first matching section.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 extract_exec_manifest(std::span<const std::uint8_t> module_bytes) {
-    static constexpr std::string_view kManifestName = "ahfl.wasm-exec-manifest.v1";
+    static constexpr std::string_view kManifestName = "ahfl.execution-manifest";
     if (module_bytes.size() < 8) {
         return std::nullopt;
     }
@@ -2626,7 +2622,7 @@ extract_exec_manifest(std::span<const std::uint8_t> module_bytes) {
 }
 
 // Decode the workflow-arm exec-manifest payload (mirrors the A2 grammar:
-// magic(6) + version(1) + entry_kind=0 + workflow_id(4) + node_count(4) +
+// magic(6) + entry_kind=0 + workflow_id(4) + node_count(4) +
 // nodes[] { node_id(4) + schedule_pos(4) + cap_call_count(1) +
 // capabilities[] { cap_id(4) + source_symbol(8) } + bridge_site_count(1) +
 // bridge_sites[] { ordinal(1) + call_site_id(4) + capability(4) +
@@ -2636,16 +2632,12 @@ extract_exec_manifest(std::span<const std::uint8_t> module_bytes) {
 decode_workflow_manifest(std::span<const std::uint8_t> payload) {
     static constexpr std::array<std::uint8_t, 6> kMagic = {
         'A', 'H', 'F', 'L', 'X', 'M'};
-    if (payload.size() < 8 ||
+    if (payload.size() < 7 ||
         !std::equal(kMagic.begin(), kMagic.end(), payload.begin())) {
         return std::nullopt;
     }
     UlebReader r{payload};
     r.pos = 6; // magic
-    const auto version = r.byte();
-    if (!version.has_value() || *version != 2) {
-        return std::nullopt;
-    }
     const auto entry_kind = r.byte();
     if (!entry_kind.has_value() || *entry_kind != 0) {
         return std::nullopt; // workflow arm only
@@ -2905,7 +2897,6 @@ void test_wh5b2_case4_unknown_callsite_id(
         corrupted_bytes.data() + manifest_offset,
         corrupted_bytes.size() - manifest_offset)};
     r.pos = 6; // magic
-    const auto version = r.byte();
     const auto entry_kind = r.byte();
     const auto entry_id = r.u32();
     const auto node_count = r.u32();
@@ -2916,7 +2907,6 @@ void test_wh5b2_case4_unknown_callsite_id(
     const auto ordinal = r.byte();
     const auto callsite_id_offset = r.pos;
     const auto callsite_id = r.u32();
-    check(version.has_value() && *version == 2, "case4.version");
     check(entry_kind.has_value() && *entry_kind == 0, "case4.entry_kind");
     check(entry_id.has_value(), "case4.entry_id");
     check(node_count.has_value() && *node_count == 1, "case4.node_count");
@@ -2973,7 +2963,7 @@ void test_wh5b2_case4_unknown_callsite_id(
 // without the agent-driver verifier gate, so its bridge-site placements are
 // trusted only after the admission-time cross-check in run_workflow_session.
 // A forged section that places a bridge result frame (or its String payload
-// arena) beyond the fixed 64 KiB page must be rejected before run2, with the
+// arena) beyond the fixed 64 KiB page must be rejected before run_workflow, with the
 // module's manifest left valid so only the frame-section check can fire.
 
 void test_wh5b2_case3_bridge_site_oob_fail_closed(
@@ -3056,7 +3046,7 @@ void test_wh5b2_case3_bridge_site_oob_fail_closed(
 // from its runner's O_k block via read_value_at. A corrupt O_k block MUST
 // fail closed with kOutputDecodeFailed -- never a silent NoneValue. This
 // pin corrupts the P6 compute node's O_k bytes via the
-// post_run2_memory_mutator test seam and asserts the host decodes the
+// post_run_workflow_memory_mutator test seam and asserts the host decodes the
 // corruption as a hard failure.
 //
 // Fixture: wh5b_hybrid_rich_fidelity (P6 compute + opaque echo). The P6
@@ -3111,10 +3101,10 @@ void test_gap4_p6_ok_corruption_fail_closed(
     config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
         return "Echo";
     };
-    // Corrupt the P6 node's O_k block after run2 returns. The host reads
+    // Corrupt the P6 node's O_k block after run_workflow returns. The host reads
     // the O_k block in the post-run per-node output join; 0xFF bytes make
     // the Bool field's word 0xFFFFFFFF (not 0/1) -> BoolWordInvalid.
-    config.post_run2_memory_mutator =
+    config.post_run_workflow_memory_mutator =
         [ok_base, ok_size](std::span<std::uint8_t> mem) {
             if (ok_base < mem.size()) {
                 const auto n =
@@ -3198,7 +3188,7 @@ void check_wh5c6_failure_diagnostic(
 }
 
 // Workflow-level failure check (EvaluationFailed: every node completed during
-// run2 but the workflow still failed -- e.g. the P6 O_k output-decode
+// run_workflow but the workflow still failed -- e.g. the P6 O_k output-decode
 // fail-closed path). No NodeFailed event is emitted; the WorkflowFailed event
 // references a single ranged bag entry.
 void check_wh5c6_workflow_only_failure(
@@ -3475,7 +3465,7 @@ void test_wh5c6_decode_node_range(
     };
     config.node_range_resolver = resolvers.node;
     config.capability_range_resolver = resolvers.capability;
-    config.post_run2_memory_mutator =
+    config.post_run_workflow_memory_mutator =
         [ok_base, ok_size](std::span<std::uint8_t> mem) {
             if (ok_base < mem.size()) {
                 const auto n =
@@ -3491,7 +3481,7 @@ void test_wh5c6_decode_node_range(
         return;
     }
     // The O_k corruption is a workflow-level EvaluationFailed (all nodes
-    // completed during run2; the decode fail-closed fires afterward), so no
+    // completed during run_workflow; the decode fail-closed fires afterward), so no
     // NodeFailed event is emitted -- the WorkflowFailed references the single
     // ranged wasm.output-decode-failed bag entry.
     check_wh5c6_workflow_only_failure(result->result,
@@ -3787,11 +3777,155 @@ void test_wh5c9_string_construct_fail_closed(
     check(found, "wh5c9_fc.diagnostic_present");
 }
 
+// An injected frontier and subsequent live successes must survive a later suspension.
+void test_repeated_pending_frontier(const std::filesystem::path &repo_root) {
+    auto wf = emit_workflow(repo_root / "tests/golden/wasm/session_three_bridge_calls.ahfl");
+    check(wf.has_value(), "session_resume.emit_three_calls");
+    if (!wf)
+        return;
+    auto input = value_from_json(R"({"_type":"wasm::session_three_bridge_calls::Frame","n":42})");
+    check(input.has_value(), "session_resume.input");
+    if (!input)
+        return;
+    auto success = [](const std::vector<Value> &args) {
+        CapabilityCallResult result;
+        result.status = CapabilityCallStatus::Success;
+        std::unordered_map<std::string, Value> fields;
+        fields.emplace("n", ahfl::runtime::clone_value(args.front()));
+        result.value = ahfl::runtime::make_struct("wasm::session_three_bridge_calls::Frame",
+                                                  std::move(fields));
+        return result;
+    };
+    auto originate = [&]() {
+        wh::WorkflowSessionConfig config;
+        config.invoker = [](const CapabilityInvocationContext &,
+                            const std::string &,
+                            const std::vector<Value> &) {
+            CapabilityCallResult result;
+            result.status = CapabilityCallStatus::Pending;
+            result.automatically_resumable = true;
+            return result;
+        };
+        return wh::run_workflow_session(
+            wf->module_bytes, wf->descriptor, *input, std::move(config));
+    };
+    auto first = originate();
+    check(first && first->result.suspended, "session_resume.first_snapshot");
+    if (!first || !first->result.suspended)
+        return;
+    check(first->result.automatically_resumable_pending, "session_resume.auto_hint");
+    int live_calls = 0;
+    int resumed_calls = 0;
+    wh::WorkflowSessionConfig second_config;
+    second_config.recovery_snapshot = std::move(*first->result.suspended);
+    second_config.pending_capability_resolver =
+        [&](const CapabilityInvocationContext &context,
+            const std::string &,
+            const std::vector<Value> &args) -> std::optional<CapabilityCallResult> {
+        ++resumed_calls;
+        check(context.workflow_coordinate && context.workflow_coordinate->ordinal == 0,
+              "session_resume.numeric_coordinate");
+        check(context.module_digest != ahfl::support::Sha256Digest{},
+              "session_resume.module_binding");
+        return success(args);
+    };
+    second_config.invoker = [&](const CapabilityInvocationContext &,
+                                const std::string &,
+                                const std::vector<Value> &args) {
+        ++live_calls;
+        if (live_calls == 1)
+            return success(args);
+        CapabilityCallResult pending;
+        pending.status = CapabilityCallStatus::Pending;
+        return pending;
+    };
+    auto second = wh::run_workflow_session(
+        wf->module_bytes, wf->descriptor, *input, std::move(second_config));
+    check(second && second->result.suspended, "session_resume.second_snapshot");
+    if (!second || !second->result.suspended)
+        return;
+    check(resumed_calls == 1 && live_calls == 2, "session_resume.first_live_dispatches");
+    check(second->result.suspended->suspended->memo.size() == 2,
+          "session_resume.frontier_and_post_frontier_memo");
+    wh::WorkflowSessionConfig third_config;
+    third_config.recovery_snapshot = std::move(*second->result.suspended);
+    third_config.pending_capability_resolver =
+        [&](const CapabilityInvocationContext &context,
+            const std::string &,
+            const std::vector<Value> &args) -> std::optional<CapabilityCallResult> {
+        ++resumed_calls;
+        check(context.workflow_coordinate && context.workflow_coordinate->ordinal == 2,
+              "session_resume.second_coordinate");
+        return success(args);
+    };
+    third_config.invoker = [&](const CapabilityInvocationContext &,
+                               const std::string &,
+                               const std::vector<Value> &args) {
+        ++live_calls;
+        return success(args);
+    };
+    auto third =
+        wh::run_workflow_session(wf->module_bytes, wf->descriptor, *input, std::move(third_config));
+    check(third && third->result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "session_resume.completed");
+    check(live_calls == 2 && resumed_calls == 2, "session_resume.no_repeated_effects");
+
+    // A resolver without a matching provider session preserves the generic refusal.
+    auto missing_first = originate();
+    wh::WorkflowSessionConfig missing;
+    missing.recovery_snapshot = std::move(*missing_first->result.suspended);
+    missing.pending_capability_resolver =
+        [](const CapabilityInvocationContext &,
+           const std::string &,
+           const std::vector<Value> &) -> std::optional<CapabilityCallResult> {
+        return std::nullopt;
+    };
+    missing.invoker = [&](const CapabilityInvocationContext &,
+                          const std::string &,
+                          const std::vector<Value> &args) {
+        ++live_calls;
+        return success(args);
+    };
+    auto refused =
+        wh::run_workflow_session(wf->module_bytes, wf->descriptor, *input, std::move(missing));
+    check(!refused || refused->result.has_errors(), "session_resume.missing_refused");
+    check(live_calls == 2, "session_resume.missing_zero_effects");
+
+    auto guarded_first = originate();
+    wh::WorkflowSessionConfig guarded;
+    guarded.recovery_snapshot = std::move(*guarded_first->result.suspended);
+    std::vector<Value> guard_args;
+    guard_args.push_back(ahfl::runtime::make_int(42));
+    guarded.resume_pending_result = success(guard_args).value;
+    int guard_calls = 0;
+    guarded.pending_injection_guard =
+        [&](const CapabilityInvocationContext &context,
+            const std::string &,
+            const std::vector<Value> &) -> std::optional<std::string> {
+        ++guard_calls;
+        check(context.workflow_coordinate && context.workflow_coordinate->ordinal == 0,
+              "session_resume.guard_coordinate");
+        return "active provider session owns this result";
+    };
+    guarded.invoker = [&](const CapabilityInvocationContext &,
+                          const std::string &,
+                          const std::vector<Value> &args) {
+        ++live_calls;
+        return success(args);
+    };
+    auto guard_result =
+        wh::run_workflow_session(wf->module_bytes, wf->descriptor, *input, std::move(guarded));
+    check(!guard_result || guard_result->result.has_errors(),
+          "session_resume.manual_guard_refused");
+    check(guard_calls == 1 && live_calls == 2, "session_resume.guard_zero_effects");
+}
+
 } // namespace
 
 int main() {
     const auto repo_root = ahfl::test_support::repo_root_from_source_file(__FILE__);
 
+    test_repeated_pending_frontier(repo_root);
     test_p6_trace_workflow(repo_root);
     test_p6_capability_workflow(repo_root);
     test_p6_trace_low_branch(repo_root);

@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 
 namespace ahfl::runtime::wasm_host {
 

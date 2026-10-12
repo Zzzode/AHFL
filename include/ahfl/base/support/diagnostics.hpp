@@ -94,16 +94,7 @@ enum class DiagnosticCategory {
 }
 
 // ============================================================================
-// Legacy Diagnostic Code (for backward compatibility)
-// ============================================================================
-
-struct DiagnosticCode {
-    DiagnosticCategory category{DiagnosticCategory::Validation};
-    std::string value;
-};
-
-// ============================================================================
-// Structured Error Code (new API)
+// Structured Error Code
 // ============================================================================
 
 template <DiagnosticCategory Cat> struct ErrorCode {

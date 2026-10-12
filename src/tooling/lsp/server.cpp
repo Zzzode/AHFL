@@ -5713,7 +5713,9 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
         if (snapshot->type_check_result) {
             for (const auto &decl :
                  snapshot->type_check_result->typed_program.declarations) {
-                decl_by_symbol.emplace(decl.symbol.value, &decl);
+                if (decl.symbol.has_value()) {
+                    decl_by_symbol.emplace(decl.symbol->value, &decl);
+                }
             }
         }
         for (const auto &symbol : snapshot->resolve_result->symbol_table.symbols()) {
@@ -7587,11 +7589,14 @@ resolve_type_hierarchy_symbol(const LspAnalysisSnapshot &snapshot, const std::st
             // Find the SymbolId by scanning declarations for a matching DefId.
             if (const auto *program = snapshot.typed_program(); program != nullptr) {
                 for (const auto &decl : program->declarations) {
-                    const auto def = snapshot.workspace_def_for_symbol(decl.symbol);
+                    if (!decl.symbol.has_value()) {
+                        continue;
+                    }
+                    const auto def = snapshot.workspace_def_for_symbol(*decl.symbol);
                     if (def.has_value() && *def == *def_id) {
                         return ResolvedTypeHierarchySymbol{
                             .kind = fact->kind,
-                            .symbol_id = decl.symbol,
+                            .symbol_id = *decl.symbol,
                             .def_id = def_id,
                             .symbol_id_valid = true,
                         };
@@ -7748,7 +7753,10 @@ void LspServer::handle_call_hierarchy_incoming(const JsonRpcRequest &req) {
 
     auto result = json::JsonValue::make_array();
     for (const auto &group : groups) {
-        const auto caller_symbol = program->find_symbol(group.decl->symbol);
+        if (!group.decl->symbol.has_value()) {
+            continue;
+        }
+        const auto caller_symbol = program->find_symbol(*group.decl->symbol);
         if (!caller_symbol.has_value()) {
             continue;
         }

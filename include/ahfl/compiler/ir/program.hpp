@@ -118,7 +118,7 @@ enum class ProgramPhase {
 
 /// IR program — complete IR representation of a compilation unit
 struct Program {
-    std::string format_version{std::string(kFormatVersion)};
+    std::string format{std::string(kFormat)};
     ProgramPhase phase{ProgramPhase::Lowered};
     std::uint64_t analysis_revision{0};
     std::vector<Decl> declarations; // All top-level declarations

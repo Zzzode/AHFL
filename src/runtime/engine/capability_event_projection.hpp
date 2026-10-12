@@ -2,7 +2,7 @@
 
 // RFC 0026 KR6.8 WH-5c.8 (GAP 8): the SINGLE host-side projection of ONE
 // aggregate CapabilityCallResult into the lifecycle event stream. The wasm
-// lanes collect the aggregate result during invoke_run2 and project it
+// lanes collect the aggregate result during invoke_run_workflow and project it
 // post-run. This helper produces the event stream (same event kinds, same
 // order, same payload fields) regardless of which execution engine produced
 // the result.

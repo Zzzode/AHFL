@@ -1,4 +1,4 @@
-ahfl.ir.v2
+ahfl.ir
 formal_observations {
   observation agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide: called_capability(agent=ir::expr_temporal::ExprAgent, capability=ir::expr_temporal::Decide)
   observation contract_ir_expr_temporal_ExprAgent_0_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::expr_temporal::ExprAgent, clause=0, atom=0)

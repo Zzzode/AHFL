@@ -61,7 +61,7 @@ def sections(data: bytes) -> tuple[dict[int, bytes], list[str]]:
     # custom sections (core-layout + wire-schema) follow Code.
     if order != [1, 3, 5, 6, 7, 10, 0, 0]:
         fail(f"non-canonical E1 section order: {order}")
-    if custom_names != ["ahfl.core-layout.v1", "ahfl.wire-schema.v1"]:
+    if custom_names != ["ahfl.core-layout", "ahfl.wire-schema"]:
         fail(f"unexpected E1 custom sections: {custom_names}")
     return result, custom_names
 
@@ -177,33 +177,28 @@ def main(argv: list[str]) -> int:
         "memory",
         "alloc",
         "dealloc",
-        "run",
         "step",
         "current_state",
         "transition_count",
-        "ahfl_abi_version",
-        "runv",
+        "run_frame",
     ]
     if export_names(parsed[7]) != expected_exports:
         fail("E1 export catalogue/order mismatch")
     # Fixture declaration order is [Done, Start] with initial Start (id 1).
     # The first global must therefore initialize to i32.const 1, proving the
     # encoder did not silently assume state zero.
-    if not parsed[6].startswith(b"\x05\x7f\x01\x41\x01\x0b"):
+    if not parsed[6].startswith(b"\x04\x7f\x01\x41\x01\x0b"):
         fail("current_state global does not use the non-zero Core initial state id")
 
-    # Fixed E1 function index 5 is run. This is deliberately structural proof,
-    # not real-wasmtime execution evidence.
-    run = code_body(parsed[10], 5)
-    if not run.endswith(b"\x20\x00\x0b"):
-        fail("identity run does not end in local.get 0; end")
-    if any(0x28 <= byte <= 0x3E for byte in run):
-        fail("identity run contains a frame load/store opcode")
+    # The frame entry returns the current status and value pointer.
+    frame = code_body(parsed[10], 5)
+    if not frame.endswith(b"\x0b"):
+        fail("frame entry is missing its end opcode")
 
-    # RFC 0026 P6-7 frame-bridge v2: a computed final carrying a String is
-    # legal since V2-B (rodata PtrLen construction), so the old String-output
-    # reject fixture was promoted to v2b_string_passthrough. The still-failing
-    # shape here is a workflow value projection, which remains V2-D work.
+    # RFC 0026 P6-7 frame bridge: a computed final carrying a String is
+    # legal since string-frame (rodata PtrLen construction), so the old String-output
+    # reject fixture was promoted to string_passthrough. The still-failing
+    # shape here is a workflow value projection, which remains workflow-frame work.
     expect_unsupported(ahflc, tests_dir / "golden" / "ir" / "ok_workflow_value_flow.ahfl")
 
     print("all KR6.5 E1 binary/structural gates passed (not execution evidence)")

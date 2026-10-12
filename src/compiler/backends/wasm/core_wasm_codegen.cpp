@@ -156,7 +156,7 @@ constexpr std::uint8_t kSectionExport = 7;
 // active funcref initializers table[0..N) -> wasm funcidx.
 constexpr std::uint8_t kSectionElement = 9;
 constexpr std::uint8_t kSectionCode = 10;
-// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the ONE active rodata segment.
+// RFC 0026 P6-7 frame bridge D1 (rung string-frame): the ONE active rodata segment.
 constexpr std::uint8_t kSectionData = 11;
 // The funcref reftype encoding (wasm spec reftype space).
 constexpr std::uint8_t kFuncRefType = 0x70;
@@ -166,13 +166,13 @@ constexpr std::uint8_t kFuncRefType = 0x70;
 // custom section, keyed by this canonical name, at the module's EOF. E1 no-import
 // agents and E3 no-capability identity workflows never carry it; E2 agents and
 // B2-C capability workflows carry the EOF AHFLWS section.
-constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
+constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema";
 
 // RFC 0026 P6-7 rung A: a P6-frame module (one whose handler projects the raw
 // P4-D input frame) carries, immediately BEFORE the EOF wire-schema section, the
 // deterministic P4-D layout table plus the boundary roots and the disjoint
 // backing placements / payload-arena span. The host physical-layout authority.
-constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout.v1";
+constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout";
 
 // RFC 0026 E4-B2-C capability-workflow (seam doc §4.4): a capability-bearing
 // workflow module carries a compiler-emitted execution manifest custom section
@@ -180,9 +180,8 @@ constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout.v1";
 // section. The byte grammar is the exact mirror of the A2 decoder
 // (src/runtime/engine/core_wasm_schema_module.cpp); no runtime code is linked
 // or shared here.
-constexpr std::string_view kExecManifestSectionName = "ahfl.wasm-exec-manifest.v1";
+constexpr std::string_view kExecManifestSectionName = "ahfl.execution-manifest";
 constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 'X', 'M'};
-constexpr std::uint8_t kExecManifestVersion = 2;
 constexpr std::uint8_t kExecManifestEntryKindWorkflow = 0;
 // RFC 0026 KR6.8 WH-4 fix-forward D-C: the agent entry kind. A capability
 // AGENT module carries a flat capability-list manifest (no workflow schedule /
@@ -246,7 +245,6 @@ constexpr std::uint8_t kOpI32Eq = 0x46;
 // exact signed byte for the operand's P4-D scalar repr.
 constexpr std::uint8_t kOpI32Ne = 0x47;
 constexpr std::uint8_t kOpI32LtS = 0x48;
-constexpr std::uint8_t kOpI32LtU = 0x49;
 constexpr std::uint8_t kOpI32GtS = 0x4a;
 constexpr std::uint8_t kOpI32GtU = 0x4b;
 constexpr std::uint8_t kOpI32LeS = 0x4c;
@@ -311,30 +309,26 @@ constexpr std::uint8_t kSubOpMemoryCopy = 0x0a;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
 constexpr std::uint32_t kGlobalTransitionCount = 1;
-constexpr std::uint32_t kGlobalAbiVersion = 2;
-constexpr std::uint32_t kGlobalHeapNext = 3;
-constexpr std::uint32_t kGlobalPendingLatched = 4;
+constexpr std::uint32_t kGlobalHeapNext = 2;
 
 constexpr std::uint32_t kDefinedAlloc = 0;
 constexpr std::uint32_t kDefinedDealloc = 1;
 constexpr std::uint32_t kDefinedCurrentState = 2;
 constexpr std::uint32_t kDefinedIsFinal = 3;
 constexpr std::uint32_t kDefinedStep = 4;
-constexpr std::uint32_t kDefinedRun = 5;
-// RFC 0026 dual-track elimination: run2 is gone from the agent lane (runv is
+// RFC 0026 dual-track elimination: run_workflow is gone from the agent lane (run_frame is
 // the sole entry point), so compiled per-state handler FUNCTIONS follow the
 // six fixed ABI functions directly.
-constexpr std::uint32_t kDefinedHandlerBase = 6;
+constexpr std::uint32_t kDefinedHandlerBase = 5;
 
 constexpr std::uint32_t kTypeNoArgsI32 = 0;
 constexpr std::uint32_t kTypeI32ToI32 = 1;
 constexpr std::uint32_t kTypeTwoI32ToVoid = 2;
-constexpr std::uint32_t kTypeTwoI32ToI32 = 3;
-constexpr std::uint32_t kTypeWorkflowRun2 = 4; // (i32,i32)->(i32,i32,i32): workflow scheduler entry + node runners
-// RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): the additive capability
+constexpr std::uint32_t kTypeWorkflowWorkflowRun = 4; // (i32,i32)->(i32,i32,i32): workflow scheduler entry + node runners
+// RFC 0026 P6-7 frame bridge D3 (rung capability-bridge): the additive capability
 // BRIDGE functype `(block_ptr:i32) -> (status:i32, result_root_ptr:i32)`. It is
 // appended at the very end of the agent module's type table (after every fixed
-// type, per-fn type, closure type, and the runv type), so no existing index
+// type, per-fn type, closure type, and the run_frame type), so no existing index
 // moves on a non-bridge module. The host derives its index from the descriptor;
 // an old host that meets the unknown functype fails closed at instantiation.
 
@@ -361,7 +355,6 @@ struct ComputedGotoAction {
     std::vector<CoreStateId> targets;
 };
 struct IdentityAction {
-    [[nodiscard]] friend bool operator==(IdentityAction, IdentityAction) noexcept = default;
 };
 struct CapabilityAction {
     CoreCapabilityId capability{};
@@ -377,18 +370,15 @@ struct CapabilityAction {
     // ordinal (is_construct only). Set during the emit loop when the
     // computed-final handler is compiled.
     std::uint32_t construct_function{0};
-    [[nodiscard]] friend bool operator==(CapabilityAction, CapabilityAction) noexcept = default;
 };
-// RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL. The state's
+// RFC 0026 P6-7 frame bridge rung computed-final: a COMPUTED FINAL. The state's
 // handler is a real `() -> (i32,i32)` wasm function (status, value_ptr) in the
 // P6 subset; it materializes its result into the fixed output frame
-// (kP6AggregateOutputBase) and runv returns (AHFL_CAP_OK, output_base). Like
+// (kP6AggregateOutputBase) and run_frame returns (AHFL_CAP_OK, output_base). Like
 // ComputedGotoAction, `function` is the handler ordinal in the module's
 // compiled-handler table (FunctionTable::handler).
 struct ComputedReturnAction {
     std::uint32_t function{0};
-    [[nodiscard]] friend bool operator==(ComputedReturnAction,
-                                         ComputedReturnAction) noexcept = default;
 };
 using StateAction =
     std::variant<GotoAction, ComputedGotoAction, IdentityAction, CapabilityAction,
@@ -422,18 +412,7 @@ struct ClosureCallType {
                                          const ClosureCallType &) noexcept = default;
 };
 
-// Stable structural key for a call_indirect functype: the flat param type bytes
-// (env + args, closures expanded to two i32) followed by the result byte.
-[[nodiscard]] inline std::string
-closure_call_type_key(const ClosureCallType &t) {
-    std::string key;
-    key.reserve(t.params.size() + 1);
-    key.append(reinterpret_cast<const char *>(t.params.data()), t.params.size());
-    key.push_back(static_cast<char>(t.result));
-    return key;
-}
-
-// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String literal
+// RFC 0026 P6-7 frame bridge D1 (rung string-frame): the module-wide String literal
 // pool. Every reachable String literal's DECODED UTF-8 bytes are interned here
 // during planning (Principle 3: hash-cons by byte content), then frozen once
 // into the deterministic rodata image: unique byte sequences sorted by their
@@ -493,7 +472,7 @@ class RodataLiteralPool {
 
     [[nodiscard]] bool empty() const noexcept { return unique_.empty(); }
 
-    // V2-C fix-forward: replace the pool's internee set with the reachable
+    // capability-bridge fix-forward: replace the pool's internee set with the reachable
     // builders' literals (reachability compaction dropped the dead handlers
     // that interned the old contents). The supplied bytes are a subset of what
     // a prior successful planning round interned, so every length bound and
@@ -536,7 +515,7 @@ class RodataLiteralPool {
     [[nodiscard]] std::uint32_t extent() const noexcept { return extent_; }
     [[nodiscard]] const std::string &image() const noexcept { return image_; }
 
-    // V2-D: the frozen literal byte strings, for merging several per-agent
+    // workflow-frame: the frozen literal byte strings, for merging several per-agent
     // pools into one workflow-module pool.
     [[nodiscard]] std::vector<std::string> frozen_literals() const {
         std::vector<std::string> literals;
@@ -573,7 +552,7 @@ struct FrameSectionPlan;
 [[nodiscard]] ir::core::CoreFrameLayoutSection
 frame_section_to_layout_section(const FrameSectionPlan &plan);
 
-// RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): one planned capability
+// RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): one planned capability
 // bridge call site. `param_vt` / `result_vt` are the argument/result value
 // types in the flow-storage arena; the physical planner resolves their P4-D
 // roots. `spill_bytes` is the site's private scalar/PtrLen spill slot size in
@@ -584,7 +563,7 @@ struct BridgeCallPlan {
     CoreCapabilityId capability{};
     /// The handler state this bridge call belongs to (reachability filtering).
     CoreStateId state{};
-    /// V2-D: the packaged workflow runner that owns this site. kInvalid on the
+    /// workflow-frame: the packaged workflow runner that owns this site. kInvalid on the
     /// direct-agent lane, where the module has one registry with no runner tag.
     std::uint32_t runner{std::numeric_limits<std::uint32_t>::max()};
     std::vector<CoreValueTypeId> param_vt;
@@ -594,7 +573,7 @@ struct BridgeCallPlan {
     std::uint32_t spill_base{0};
     std::uint32_t result_base{0};
     /// RFC 0026 dual-track elimination: true when this site is a capability
-    /// FINAL (runv / P6 workflow runner emits the bridge call at the terminal
+    /// FINAL (run_frame / P6 workflow runner emits the bridge call at the terminal
     /// state), false for an in-handler bridge call. The frame-section planner
     /// skips disjoint result-region allocation for a final (the result is
     /// placed at the output base / O_k by the host).
@@ -615,30 +594,29 @@ struct AgentPlan {
     std::vector<CoreCapabilityId> imports;
     // KR6.7 (RFC 0026 P7): true when a compiled handler projects raw bytes out
     // of the P4-D input frame (or an input-reached bounded collection), so the
-    // run2 boundary does not carry canonical wire-JSON output and canonical
+    // run_workflow boundary does not carry canonical wire-JSON output and canonical
     // observation conformance awaits the P6-7 frame decision.
     bool reads_raw_input_frame{false};
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: true when at least one final
+    // RFC 0026 P6-7 frame bridge rung computed-final: true when at least one final
     // state is a ComputedReturnAction. Such an agent is a P6-frame module whose
-    // runv returns the fixed output base; mixing it with capability finals (or a
+    // run_frame returns the fixed output base; mixing it with capability finals (or a
     // second final kind in one agent) is rejected by build_agent_plan.
     bool has_computed_final{false};
     // RFC 0026 KR6.6 P6 frame lane: true when at least one final state is an
     // IdentityAction (the canonical `let in = input; return in;` passthrough).
-    // runv returns the borrowed input base for such finals, so an identity
+    // run_frame returns the borrowed input base for such finals, so an identity
     // final is a first-class p6-frame terminal. Without this flag the planner
     // cannot distinguish identity finals from unplanned (default-IdentityAction)
-    // states at the needs_frame_section checkpoint.
+    // states before physical frame planning.
     bool has_identity_final{false};
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: true when at least
+    // RFC 0026 P6-7 frame bridge rung workflow-frame fix-forward: true when at least
     // one NON-FINAL state is a ComputedGotoAction (a scalar computed-goto
     // preamble, with or without a capability final behind it). A workflow
-    // packaging such an agent must take the (pending) V2-D computed-runner
+    // packaging such an agent must take the (pending) workflow-frame computed-runner
     // lane and is fail-closed rejected until that emission lands.
     bool has_computed_goto{false};
     // RFC 0026 P6-2: compiled handler functions in ascending function-index
-    // order. Empty for a pure E1-E3 agent, so its function/code sections keep
-    // their byte-identical 7-entry shape.
+    // order. Identity-only agents need no compiled handlers.
     std::vector<CompiledHandler> handlers;
     // RFC 0026 FB-1: outlined pure fn bodies reachable from the entry handlers
     // (and from other reachable fns) via direct CoreCallExpr, in the fixed
@@ -648,8 +626,8 @@ struct AgentPlan {
     // FB-1 fix-forward: when true, an aggregate-returning reachable fn bumps the
     // runtime heap per activation; kGlobalHeapNext is initialized to
     // `construct_heap_base` (relocated above every reserved frame/backing
-    // region) and every computed handler resets it on entry. False keeps the
-    // legacy initial heap (kNodeEventLogBase) and byte-identical modules.
+    // region) and every computed handler resets it on entry. Without constructs,
+    // the initial heap is kNodeEventLogBase.
     bool construct_heap_enabled{false};
     std::uint32_t construct_heap_base{0};
     // RFC 0026 dual-track elimination: the worst-case per-step bump budget
@@ -671,7 +649,7 @@ struct AgentPlan {
     // descriptor is the full functype (params already prefixed by the env i32
     // and with closure args expanded to two i32 words).
     std::vector<ClosureCallType> closure_signatures;
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the frozen String literal
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): the frozen String literal
     // pool. Non-empty iff at least one reachable handler constructs a String
     // literal; then the module emits exactly ONE active Data(11) section
     // initializing [kP6RodataBase, +rodata_extent). Empty modules gain no Data
@@ -684,23 +662,23 @@ struct AgentPlan {
     // diagnostic carries a SourceRange (Principle 5); empty when the agent
     // interns no String literal.
     ir::SourceRangeOpt rodata_first_literal_range;
-    // RFC 0026 P6-7 frame-bridge v2 D5/D6 (rung V2-D): maximum construct-scratch
+    // RFC 0026 P6-7 frame bridge D5/D6 (rung workflow-frame): maximum construct-scratch
     // high-water across this agent's planned handlers (relative bytes). A
     // workflow packager sizes the per-node scratch node sub-block from it.
     std::uint32_t p6_scratch_high{0};
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the dense, ANF-ordered
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): the dense, ANF-ordered
     // capability bridge call sites planned from non-final handlers. Empty on
     // every non-bridge module, whose bytes stay identical. The physical
     // frame-region planner fills each site's block/result coordinates BEFORE
     // the handler bodies are emitted.
     std::vector<BridgeCallPlan> bridge_calls;
     // RFC 0026 dual-track elimination: the bridge control-page base address,
-    // copied from the frame-section plan so make_runv_body can compute the
+    // copied from the frame-section plan so make_run_frame_body can compute the
     // capability-final control-block pointer (control_base + block_offset)
     // without the FrameSectionPlan (which is moved before encode_module).
     std::uint32_t bridge_control_base{0};
     // RFC 0026 dual-track elimination: true when this agent is packaged as a
-    // workflow node runner (the workflow lane). make_runv_body uses this to
+    // workflow node runner (the workflow lane). make_run_frame_body uses this to
     // select the correct pending-latch global (kWorkflowGlobalPendingLatched)
     // and the graceful PENDING arm for a capability-final bridge call. On the
     // agent lane (false) a PENDING capability-final traps, matching the sealed
@@ -716,7 +694,7 @@ struct AgentPlan {
     };
     std::vector<ConstructCapabilityTerminal> construct_capability_terminals;
     // The physical P6-frame section plan (boundary table, placements, payload
-    // arena, rodata span, V2-C bridge page frame) populated when this agent
+    // arena, rodata span, capability-bridge bridge page frame) populated when this agent
     // emits on the frame lane. After the dual-track elimination every agent
     // is P6-frame, so this is always populated; it stays a unique_ptr because
     // FrameSectionPlan is defined later in this translation unit. Owned by
@@ -754,14 +732,14 @@ class BridgeCallRegistry {
         return id;
     }
 
-    // V2-D: install the workflow-packaging context before a relocated runner's
+    // workflow-frame: install the workflow-packaging context before a relocated runner's
     // handlers plan: every site reserved until the matching finish call is
     // tagged with `runner`. kInvalid runner restores direct-agent mode.
     void begin_workflow_runner(std::uint32_t runner) noexcept {
         workflow_runner_ = runner;
     }
 
-    // V2-D: after one relocated runner's REACHABILITY compaction inputs are
+    // workflow-frame: after one relocated runner's REACHABILITY compaction inputs are
     // known, filter this runner's sites (a contiguous tail appended after every
     // earlier runner) to its reachable handlers, renumber the survivors to
     // GLOBAL dense ids (the site-id base of prior runners plus the local dense
@@ -818,7 +796,7 @@ class BridgeCallRegistry {
                            });
     }
 
-    // V2-D: whether ONE packaged runner bridges a capability (the global table
+    // workflow-frame: whether ONE packaged runner bridges a capability (the global table
     // is shared across runners, so the per-runner predicates scope by runner).
     [[nodiscard]] bool uses_capability_for_runner(CoreCapabilityId capability,
                                                   std::uint32_t runner) const noexcept {
@@ -835,7 +813,7 @@ class BridgeCallRegistry {
                           [&](const BridgeCallPlan &site) { return site.runner == runner; }));
     }
 
-    // V2-D: the ACTUAL (reachability-compacted) spill window extent one runner
+    // workflow-frame: the ACTUAL (reachability-compacted) spill window extent one runner
     // occupies in the merged page frame: the top of its last site's spill
     // window relative to `runner_spill_base`. Zero when the runner has no
     // surviving site. The D6 capacity family reserves a conservative bound per
@@ -868,26 +846,38 @@ class BridgeCallRegistry {
 
   private:
     std::vector<BridgeCallPlan> sites_;
-    // V2-D: runner tag installed for one relocated workflow build at a time.
+    // workflow-frame: runner tag installed for one relocated workflow build at a time.
     std::uint32_t workflow_runner_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t control_base_{0};
     std::uint32_t block_stride_{0};
     std::uint32_t spill_base_{0};
 };
 
+// Frozen function placement for one emitted module. Semantic Core IDs map
+// to module ordinals once; handlers and outlined bodies share that authority.
+struct ModuleFnPlacement {
+    std::vector<std::uint32_t> instance_to_ordinal;
+    std::uint32_t function_base{0};
+    std::uint32_t type_base{0};
+    std::uint32_t fn_count{0};
+    std::unordered_map<std::uint32_t, std::uint32_t> fn_to_table_slot;
+    std::vector<CoreFnId> closure_table;
+    std::vector<ClosureCallType> closure_signatures;
+};
+
 struct AgentPlanPolicy {
     std::string_view unsupported_code{core_wasm_diag::kUnsupportedOrchestration};
     bool allow_capability{true};
-    // Workflow node packaging (frame-bridge v2 D5, rung V2-D) flips both gates
+    // Workflow node packaging (frame bridge D5, rung workflow-frame) flips both gates
     // to true: a packaged agent passes the SAME per-handler region/SSA/safety
     // gates a direct agent passes, with no weakened second subset.
     bool allow_computed_goto{true};
-    // RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): direct-agent emission
+    // RFC 0026 P6-7 frame bridge D3 (rung capability-bridge): direct-agent emission
     // admits an ORDERED capability bridge statement in a non-final frame
     // computation region.
     bool allow_bridge{true};
     std::string_view slice{"E2"};
-    // V2-D RETURN: true ONLY for the single packaged runner whose bare
+    // workflow-frame RETURN: true ONLY for the single packaged runner whose bare
     // host-packed entry frame the workflow scheduler rewrites in place into
     // module pointer-tree form before that runner executes (the first
     // scheduled node, with a non-constructed Input-sourced input region). The
@@ -897,28 +887,28 @@ struct AgentPlanPolicy {
     // leaves this false, and direct-agent builds leave it false: no scheduler
     // normalizes those frames, so the input-inline rejection stands.
     bool admit_normalized_entry_frame{false};
-    // V2-D: true for a packaged agent: do not build the agent-level frame
+    // workflow-frame: true for a packaged agent: do not build the agent-level frame
     // section (the workflow packager owns the module-level section) and gather
     // the per-agent facts (scratch high-water, rodata extent, bridge sites) the
     // workflow D6 capacity family needs.
     bool skip_frame_section{false};
-    // V2-D fix-forward: true on BOTH workflow packaging builds (fact gathering
+    // workflow-frame fix-forward: true on BOTH workflow packaging builds (fact gathering
     // and relocated emit). It lets the input-inline provenance gate fire on a
     // non-final computed-goto preamble too: only the single entry runner's
     // host-packed I_k is pointer-tree normalized, so every other packaged
     // handler receives an inline scheduler-materialized frame. Direct-agent
     // builds leave this false and keep the historic final-only predicate.
     bool workflow_packaging_lane{false};
-    // V2-D emission: when non-null, every frame handler is emitted with its
+    // workflow-frame emission: when non-null, every frame handler is emitted with its
     // fixed frame regions and state globals relocated onto a P6 node's
     // node block inside a workflow module. Null on the direct-agent lane.
     const struct P6FrameRelocation *frame_relocation{nullptr};
-    // V2-D emission: when non-null, every frame handler interns its String
+    // workflow-frame emission: when non-null, every frame handler interns its String
     // literals into the workflow module's shared rodata pool instead of a
     // private per-agent pool. The caller freezes it after every packaged agent
     // is emitted.
     RodataLiteralPool *shared_rodata_pool{nullptr};
-    // V2-D emission half 2: when non-null, bridge statements planned by this
+    // workflow-frame emission half 2: when non-null, bridge statements planned by this
     // build record into the WORKFLOW-module shared dense registry (instead of a
     // private agent registry). `wf_runner` is this build's packaged-runner
     // index; `wf_site_id_base` is the global dense-id base of its first site;
@@ -927,17 +917,18 @@ struct AgentPlanPolicy {
     std::uint32_t wf_runner{0};
     std::uint32_t wf_site_id_base{0};
     std::uint32_t wf_runner_spill_base{0};
-    // V2-D: module-global bridge control-page coordinates the relocated
+    // workflow-frame: module-global bridge control-page coordinates the relocated
     // handlers' bridge emit reads (block pointer = control_base + global site
     // id * block_stride).
     std::uint32_t wf_control_base{0};
     std::uint32_t wf_block_stride{0};
-    // V2-D: the workflow module's global sorted-unique capability import table
+    // workflow-frame: the workflow module's global sorted-unique capability import table
     // (a relocated build emits bridge calls at these module ordinals).
     const std::vector<CoreCapabilityId> *wf_imports{nullptr};
+    const ModuleFnPlacement *wf_fn_placement{nullptr};
 };
 
-// V2-D: relocation of a packaged agent's frame-lane handler bytes from the
+// workflow-frame: relocation of a packaged agent's frame-lane handler bytes from the
 // direct-agent fixed regions onto one P6 node's node-frame block in
 // a workflow module. Installed on each P6ComputationHandlerBuilder before emit.
 struct P6FrameRelocation {
@@ -1011,10 +1002,10 @@ struct WorkflowRegionPlan {
     // The frame source the region yields (workflow input or an upstream node
     // output).
     WorkflowFrameSource source;
-    // True for a V2-D projected/constructed P4-D region the scheduler must
+    // True for a workflow-frame projected/constructed P4-D region the scheduler must
     // materialize with in-module word copies (a field projection, or an
     // aggregate construct such as a two-upstream node input). False for the
-    // legacy E3 exact bare-frame forwarding shape (one let + one yield of an
+    // exact bare-frame forwarding shape (one let + one yield of an
     // unprojected input/node-output path), which forwards the source verbatim.
     bool constructed{false};
     // The yield value (the region's final frame root).
@@ -1026,7 +1017,7 @@ struct WorkflowRegionPlan {
     std::uint32_t construct_scratch{0};
 };
 
-// V2-D fact-gathering facts per packaged instance (agent-lane coordinates;
+// workflow-frame fact-gathering facts per packaged instance (agent-lane coordinates;
 // the workflow relocation is applied during module emission).
 struct WorkflowP6GatherFacts {
     std::uint32_t scratch_high{0};
@@ -1067,7 +1058,7 @@ struct WorkflowPlan {
     std::vector<AgentPlan> agent_plans;
     std::vector<WorkflowNodePlan> nodes;
     WorkflowFrameSource output;
-    // V2-D: the validated input region per node (indexed by node id) and the
+    // workflow-frame: the validated input region per node (indexed by node id) and the
     // validated return region; only consulted on the P6 frame lane.
     std::vector<WorkflowRegionPlan> node_regions;
     WorkflowRegionPlan return_region;
@@ -1085,7 +1076,7 @@ struct WorkflowPlan {
     std::vector<WorkflowNodeBlock> node_blocks;
     // The P6-dense workflow node ids (node-id order), parallel to node_blocks.
     std::vector<CoreWorkflowNodeId> p6_nodes;
-    // V2-D module-level physical coordinates (all compile-time constants).
+    // workflow-frame module-level physical coordinates (all compile-time constants).
     std::uint32_t bridge_control_base{0};
     std::uint32_t bridge_block_stride{0};
     std::uint32_t bridge_control_extent{0};
@@ -1093,12 +1084,12 @@ struct WorkflowPlan {
     std::uint32_t bridge_spill_extent{0};
     std::uint32_t node_blocks_base{0};
     std::uint32_t node_blocks_extent{0};
-    // V2-D: the in-module scheduler's construct-scratch region for projected /
+    // workflow-frame: the in-module scheduler's construct-scratch region for projected /
     // constructed node inputs and the workflow return (zero on a bare-forward
     // workflow).
     std::uint32_t region_scratch_base{0};
     std::uint32_t region_scratch_extent{0};
-    // V2-D: fixed scratch the scheduler uses to turn an INLINE frame into the
+    // workflow-frame: fixed scratch the scheduler uses to turn an INLINE frame into the
     // module pointer-tree form the packaged handlers read (every inline
     // aggregate child gets its own addressed window). Covers the host-packed
     // entry frame AND every scheduler-materialized non-entry node frame.
@@ -1118,13 +1109,14 @@ struct WorkflowPlan {
     std::uint32_t wf_output_base{0};
     std::uint32_t wf_output_size{0};
     std::uint32_t wf_heap_base{0};
-    // V2-D emission half 2: the fixed state-entry trace ring the packaged
+    bool construct_heap_enabled{false};
+    // workflow-frame emission half 2: the fixed state-entry trace ring the packaged
     // runners append real (runner, state) evidence to (8-byte count header +
     // one 8-byte record per agent state, sized for the maximum possible single
     // run: every declared state of every packaged agent exactly once).
     std::uint32_t state_trace_base{0};
     std::uint32_t state_trace_capacity{0};
-    // V2-D workflow output boundary value type (sizes the workflow output
+    // workflow-frame workflow output boundary value type (sizes the workflow output
     // slot in the D6 capacity family).
     CoreValueTypeId wf_output_vt{};
     // WH-5c.2: relocated frame-handler bodies per P6 NODE (P6-dense, parallel
@@ -1132,11 +1124,13 @@ struct WorkflowPlan {
     // build_agent_plan pass in the emit driver. Two nodes reusing one packaged
     // instance each get their own relocated copy (Approach B).
     std::vector<std::vector<CompiledHandler>> relocated_handlers;
-    // V2-D emission: the merged, frozen module-wide rodata pool (one Data
+    ModuleFnPlacement fn_placement;
+    std::vector<CompiledFn> fns;
+    // workflow-frame emission: the merged, frozen module-wide rodata pool (one Data
     // section image across every packaged agent).
     RodataLiteralPool workflow_rodata;
     std::uint32_t workflow_rodata_extent{0};
-    // V2-D emission: dense frame-layout table roots per runner (indices into
+    // workflow-frame emission: dense frame-layout table roots per runner (indices into
     // the workflow core-layout section's dense table) and the workflow output
     // root, plus the owned section/wire tables the descriptor mirrors.
     std::vector<ir::core::CoreLayoutId> dense_node_input_layouts;
@@ -1145,7 +1139,7 @@ struct WorkflowPlan {
     ir::core::CoreLayoutId dense_wf_output_layout{};
     ir::core::CoreFrameLayoutSection frame_section;
     ir::core::CoreWireSchemaTable frame_wire_table;
-    // V2-D emission half 2: the flattened, runner-grouped dense bridge call
+    // workflow-frame emission half 2: the flattened, runner-grouped dense bridge call
     // sites across every packaged runner (global call_site_id order == control
     // block dense order).
     std::vector<BridgeCallPlan> workflow_bridge_sites;
@@ -1178,9 +1172,6 @@ struct FunctionTable {
     [[nodiscard]] std::uint32_t step() const noexcept {
         return import_count + kDefinedStep;
     }
-    [[nodiscard]] std::uint32_t run() const noexcept {
-        return import_count + kDefinedRun;
-    }
     [[nodiscard]] std::uint32_t handler(std::uint32_t index) const noexcept {
         return import_count + kDefinedHandlerBase + index;
     }
@@ -1200,19 +1191,13 @@ struct WorkflowFunctionTable {
     // Identity workflows have import_count == 0, so their indices are unchanged.
     std::uint32_t import_count{0};
     std::uint32_t runner_count{0};
-    // V2-D: total relocated frame-handler functions across every P6
-    // node, appended AFTER run2 (each is a `() -> i32` handler). Zero only on
+    // workflow-frame: total relocated frame-handler functions across every P6
+    // node, appended AFTER run_workflow (each is a `() -> i32` handler). Zero only on
     // a workflow with no nodes; after the dual-track elimination every node
     // is P6-frame, so every node contributes its handlers.
     std::uint32_t handler_count{0};
-    // RFC 0026 FB-1: outlined fn bodies follow runner/run2/handlers (§6.1 agent
-    // ordering discipline). A workflow module's node-input/return regions
-    // accept only workflow frames and its packaged agents disallow computed
-    // handlers, so no outlined fn is ever reachable from a workflow MODULE (a
-    // packaged agent's direct calls are compiled into that agent's own
-    // module). The field stays 0; the projection exists for index-space
-    // symmetry with the agent FunctionTable and the FB-3 closure/indirect
-    // slice.
+    // Outlined bodies follow the workflow's relocated handlers and are shared
+    // by every node that reaches the same Core function.
     std::uint32_t fn_count{0};
     [[nodiscard]] std::uint32_t alloc() const noexcept {
         return import_count + 0u;
@@ -1229,39 +1214,33 @@ struct WorkflowFunctionTable {
     [[nodiscard]] std::uint32_t runner(std::uint32_t index) const noexcept {
         return import_count + 4u + index;
     }
-    [[nodiscard]] std::uint32_t run() const noexcept {
+    [[nodiscard]] std::uint32_t run_workflow() const noexcept {
         return import_count + 4u + runner_count;
     }
-    [[nodiscard]] std::uint32_t run2() const noexcept {
-        return import_count + 5u + runner_count;
-    }
-    // V2-D: absolute index of relocated handler `handler_index` (the sum of the
+    // workflow-frame: absolute index of relocated handler `handler_index` (the sum of the
     // earlier runner handler counts plus this one's local index).
     [[nodiscard]] std::uint32_t handler(std::uint32_t handler_index) const noexcept {
-        return import_count + 6u + runner_count + handler_index;
+        return import_count + 5u + runner_count + handler_index;
     }
-    // RFC 0026 FB-1: outlined fn ordinal -> absolute function index. Fn bodies
-    // follow runner/run2/handlers; fn_count is 0 for a workflow module in FB-1
-    // (see the field note), keeping the module byte-identical.
+    // Module-wide outlined fn ordinal -> absolute function index.
     [[nodiscard]] std::uint32_t fn(std::uint32_t ordinal) const noexcept {
-        return import_count + 6u + runner_count + handler_count + ordinal;
+        return import_count + 5u + runner_count + handler_count + ordinal;
     }
     [[nodiscard]] std::uint32_t defined_count() const noexcept {
-        return 6u + runner_count + handler_count + fn_count;
+        return 5u + runner_count + handler_count + fn_count;
     }
 };
 
 constexpr std::uint32_t kWorkflowGlobalTransitionCount = 0;
-constexpr std::uint32_t kWorkflowGlobalAbiVersion = 1;
-constexpr std::uint32_t kWorkflowGlobalHeapNext = 2;
-constexpr std::uint32_t kWorkflowGlobalNodeCount = 3;
-constexpr std::uint32_t kWorkflowGlobalCompletedCount = 4;
+constexpr std::uint32_t kWorkflowGlobalHeapNext = 1;
+constexpr std::uint32_t kWorkflowGlobalNodeCount = 2;
+constexpr std::uint32_t kWorkflowGlobalCompletedCount = 3;
 // RFC 0026 E4-B2-C: a capability-workflow module adds this private global as its
 // suspend latch. It is emitted ONLY on the capability-workflow lane (see
 // encode_workflow_module); identity workflows keep the 5-global section and its
 // bytes unchanged. A function import never shifts global indices, so this global
 // index is stable regardless of import_count.
-constexpr std::uint32_t kWorkflowGlobalPendingLatched = 5;
+constexpr std::uint32_t kWorkflowGlobalPendingLatched = 4;
 
 // kr68 §12.16: RAII scope that sets the result's ambient owning module for
 // every diagnostic emitted through add_diag while the scope is live.
@@ -1525,8 +1504,8 @@ validate_canonical_input_let(const CoreProgram &program,
 
 // Pure, side-effect-free twin of the identity-final shape check: is this final the
 // canonical `let in = input; return in;` passthrough (with matching input/output
-// nominals)? Used to route a capability-free final between the v1 identity lane
-// and the V2-A computed-final lane WITHOUT emitting diagnostics or marking the
+// nominals)? Used to route a capability-free final between the identity lane
+// and the computed-final lane WITHOUT emitting diagnostics or marking the
 // used-expr/value arenas (those belong to validate_identity_final on whichever
 // path actually runs).
 [[nodiscard]] bool is_identity_final_shape(const CoreAgentDecl &agent,
@@ -1858,7 +1837,7 @@ validate_capability_final(const CoreProgram &program,
                 // return stay on the KR6.5 orchestration lane.
                 [](const CoreStoreStmt &) { return true; },
                 [allow_bridge_calls](const CoreCapabilityCallStmt &) {
-                    // RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): an ORDERED
+                    // RFC 0026 P6-7 frame bridge D3 (rung capability-bridge): an ORDERED
                     // bridge capability call is admitted in a non-final frame
                     // computation region; an opaque / final capability call keeps
                     // its canonical KR6.5 E2 shape and stays false.
@@ -1883,13 +1862,13 @@ validate_capability_final(const CoreProgram &program,
     return is_p6_subset_region(region, allow_bridge_calls);
 }
 
-// RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL region is the P6
+// RFC 0026 P6-7 frame bridge rung computed-final: a COMPUTED FINAL region is the P6
 // subset (scalar lets, structured if, match, ctx store, ordered pure-fn calls)
 // whose terminator is a value-bearing CoreReturnStmt instead of a goto/trap.
 // A match stays structurally admitted; its arms/fallback consume returns the
 // same way the computed-goto lane consumes gotos (per-arm fail-closed planning
 // in the builder). A capability effect keeps the region off this lane (the
-// capability final has its own opaque E2 shape; in-handler bridging is V2-C).
+// capability final has its own opaque E2 shape; in-handler bridging is capability-bridge).
 [[nodiscard]] bool is_p6_computed_final_region(const CoreRegion &region) {
     for (const CoreStmt &statement : region.statements) {
         const bool in_subset = std::visit(
@@ -1993,7 +1972,7 @@ enum class P6ScalarKind {
     // scalar/aggregate slot; only `CoreClosureExpr` (constructor),
     // `CoreCallClosureExpr` (indirect call), and a callable parameter / binding
     // touch it.
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a STRING value. Its whole
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): a STRING value. Its whole
     // runtime representation is the eight-byte PtrLen word pair
     // `(payload_ptr:i32, byte_len:i32)` (P4-D `CoreLayoutPtrLen`, the only
     // PtrLen family). Like a Closure it occupies TWO consecutive i32 locals /
@@ -2371,7 +2350,7 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
             layouts.layouts[layout_id.value].shape)) {
         return P6ScalarKind::Closure;
     }
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String's whole physical
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): a String's whole physical
     // representation is the eight-byte CoreLayoutPtrLen word pair
     // (payload_ptr, byte_len). PtrLen is the String-only layout family, so this
     // mapping is total. It is a TWO-word inline value: never an aggregate
@@ -2441,13 +2420,13 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
                    ? std::optional{P6ScalarKind::F64}
                    : std::nullopt;
     }
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a Decimal / Duration literal
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): a Decimal / Duration literal
     // is embedded as its compile-time i64 word (mantissa / bare milliseconds),
     // so on the physical P6 word model both ride the IntI64 kind — a constant
     // i64.const, never an arithmetic operand (plan_binary/unary require a real
     // CoreVtInt). Such a final DOES emit a frame section: there is deliberately
-    // NO output-frame gate rejecting Decimal/Duration leaves (frame-bridge v2
-    // section 0 non-goals and section 10 V2-B — "i64 字面量, 无语差分 fixture,
+    // NO output-frame gate rejecting Decimal/Duration leaves (frame bridge
+    // section 0 non-goals and section 10 string-frame — "i64 字面量, 无语差分 fixture,
     // 仅词法/行走单测"). The certified embedded host keeps their wire nodes
     // outside the rung-E walk subset (node_embedded_host.mjs packValue/readValue
     // reject 'decimal'/'duration'), so the i64 word is produced but intentionally
@@ -2481,7 +2460,7 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
 //                  unchanged layout, e.g. an unbounded phantom argument); a
 //                  projection that changes the shape fails closed, because
 //                  performing it would need the child plan's own effects.
-//   StringWiden  : since frame-bridge v2 V2-B a `CoreVtString` IS a first-class
+//   StringWiden  : since frame bridge string-frame a `CoreVtString` IS a first-class
 //                  two-word PtrLen P6 value, so a strict length widening whose
 //                  endpoints share the layout-identical PtrLen shape is a
 //                  same-bytes no-op: the two inline words move unchanged. It is
@@ -2575,8 +2554,10 @@ p6_coercion_effect(const CoreProgram &program,
 // statement because everything after a terminator is unreachable: a trailing
 // if must diverge on BOTH branches, and a trailing goto/trap diverges outright.
 // A region ending in let / match / fall-through keeps the handler on a later
-// slice.
-[[nodiscard]] bool p6_region_always_diverges(const CoreRegion &region) {
+// slice. Match emission in a value-returning function or final handler also
+// permits value returns, propagated through the same all-paths proof.
+[[nodiscard]] bool p6_region_always_diverges(const CoreRegion &region,
+                                               bool allow_value_return = false) {
     if (region.statements.empty()) {
         return false;
     }
@@ -2590,24 +2571,27 @@ p6_coercion_effect(const CoreProgram &program,
 #define P6_REGION_DIVERGE_CoreGotoStmt(Name) [](const Name &) { return true; },
 #define P6_REGION_DIVERGE_CoreTrapStmt(Name) [](const Name &) { return true; },
 #define P6_REGION_DIVERGE_CoreIfStmt(Name)                                                         \
-    [](const Name &s) {                                                                            \
-        return s.then_region && s.else_region && p6_region_always_diverges(*s.then_region) &&      \
-               p6_region_always_diverges(*s.else_region);                                          \
+    [allow_value_return](const Name &s) {                                                          \
+        return s.then_region && s.else_region &&                                                   \
+               p6_region_always_diverges(*s.then_region, allow_value_return) &&                    \
+               p6_region_always_diverges(*s.else_region, allow_value_return);                      \
     },
 #define P6_REGION_DIVERGE_CoreMatchStmt(Name)                                                      \
-    [](const Name &s) {                                                                            \
-        if (!s.fallback_region || !p6_region_always_diverges(*s.fallback_region)) {                \
+    [allow_value_return](const Name &s) {                                                          \
+        if (!s.fallback_region ||                                                                  \
+            !p6_region_always_diverges(*s.fallback_region, allow_value_return)) {                  \
             return false;                                                                          \
         }                                                                                          \
-        return std::ranges::all_of(s.arms, [](const CoreMatchArm &arm) {                           \
-            return arm.body && p6_region_always_diverges(*arm.body);                               \
+        return std::ranges::all_of(s.arms, [allow_value_return](const CoreMatchArm &arm) {         \
+            return arm.body && p6_region_always_diverges(*arm.body, allow_value_return);           \
         });                                                                                        \
     },
 #define P6_REGION_DIVERGE_CoreLetStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreCapabilityCallStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreCallStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreStoreStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
-#define P6_REGION_DIVERGE_CoreReturnStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define P6_REGION_DIVERGE_CoreReturnStmt(Name)                                                     \
+    [allow_value_return](const Name &s) { return allow_value_return && s.has_value; },
 #define P6_REGION_DIVERGE_CoreYieldStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define HANDLE_CORE_STMT_NODE(Name, Wire) P6_REGION_DIVERGE_##Name(Name)
     return std::visit(
@@ -2715,7 +2699,7 @@ class P6ComputationHandlerBuilder {
           instance_to_fn_ordinal_(instance_to_fn_ordinal),
           fn_function_base_(fn_function_base) {}
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: put this HANDLER builder in
+    // RFC 0026 P6-7 frame bridge rung computed-final: put this HANDLER builder in
     // computed-final mode. A computed-final handler is a `() -> i32` function
     // like a computed-goto handler (step() calls it and it yields the stable
     // final state id), but every path ends in a value-bearing CoreReturnStmt
@@ -2730,13 +2714,13 @@ class P6ComputationHandlerBuilder {
         final_state_id_ = final_state_id;
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): install the module-wide
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): install the module-wide
     // String literal pool a frame handler's literals are interned into during
     // planning and read from at emit time. Null outside a P6-frame agent, where
     // String literals keep failing closed (no rodata region is planned there).
     void install_rodata_pool(RodataLiteralPool *pool) { rodata_pool_ = pool; }
 
-    // V2-C fix-forward: the String literal bytes THIS builder interned while
+    // capability-bridge fix-forward: the String literal bytes THIS builder interned while
     // planning. Reachability compaction rebuilds the module-wide pool from the
     // surviving builders so dead-handler literals cannot pin rodata space.
     [[nodiscard]] const std::vector<std::string> &rodata_literals() const noexcept {
@@ -2750,14 +2734,14 @@ class P6ComputationHandlerBuilder {
         return rodata_first_literal_range_;
     }
 
-    // V2-D: the construct-scratch high-water this builder planned (relative
+    // workflow-frame: the construct-scratch high-water this builder planned (relative
     // bytes; the workflow packager sizes the per-node scratch sub-block
     // from the maximum across an agent's handlers).
     [[nodiscard]] std::uint32_t scratch_high_water() const noexcept {
         return scratch_addr_cursor_;
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): install the module-wide
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): install the module-wide
     // bridge call-site registry. Null on every non-frame builder, where an
     // in-handler capability call keeps its canonical KR6.5 final shape and is
     // rejected. When installed, a non-final handler may plan ORDERED bridge
@@ -2768,7 +2752,7 @@ class P6ComputationHandlerBuilder {
         bridge_state_ = state;
     }
 
-    // V2-C fix-forward: renumber this builder's bridge statement ids after
+    // capability-bridge fix-forward: renumber this builder's bridge statement ids after
     // unreachable call sites were filtered out of the dense module table.
     // Returns false (a compiler-internal inconsistency the caller must reject
     // on) when a retained statement names a filtered-away id: an emitted bridge
@@ -2838,6 +2822,16 @@ class P6ComputationHandlerBuilder {
                             std::uint32_t fn_function_base) {
         instance_to_fn_ordinal_ = instance_to_fn_ordinal;
         fn_function_base_ = fn_function_base;
+    }
+
+    void install_fn_placement(const ModuleFnPlacement &placement) {
+        set_fn_call_tables(&placement.instance_to_ordinal, placement.function_base);
+        install_closure_tables(placement.fn_to_table_slot, placement.closure_signatures,
+                               placement.type_base + placement.fn_count);
+    }
+
+    void install_construct_heap_global(std::uint32_t global) {
+        construct_heap_global_ = global;
     }
 
     // FB-1 fix-forward (handler mode): emit a `heap_next = heap_base` reset as
@@ -2914,9 +2908,11 @@ class P6ComputationHandlerBuilder {
     // emit().
     void install_closure_tables(
         const std::unordered_map<std::uint32_t, std::uint32_t> &fn_to_table_slot,
-        std::unordered_map<std::string, std::uint32_t> closure_type_index) {
+        std::vector<ClosureCallType> closure_signatures,
+        std::uint32_t closure_type_base) {
         fn_to_table_slot_ = &fn_to_table_slot;
-        closure_type_index_ = std::move(closure_type_index);
+        closure_signatures_ = std::move(closure_signatures);
+        closure_type_base_ = closure_type_base;
         closure_tables_installed_ = true;
     }
 
@@ -2935,7 +2931,7 @@ class P6ComputationHandlerBuilder {
     // KR6.7 (RFC 0026 P7): true when this handler projects a field out of the
     // raw P4-D INPUT frame (or reads a bounded collection reached through the
     // input frame) using the fixed reserved-region addressing. Such a handler
-    // consumes RAW frame bytes, not the opaque canonical wire-JSON the run2
+    // consumes RAW frame bytes, not the opaque canonical wire-JSON the run_workflow
     // boundary otherwise forwards, so a canonical output observation awaits the
     // P6-7 frame decision. Context-only stores and construct/local-rooted
     // projections do not set this: the output boundary stays the borrowed wire
@@ -2983,17 +2979,17 @@ class P6ComputationHandlerBuilder {
         // CORE-GAPS: the three Map-KeyGet scan scratch i32s, appended after the
         // bump temporaries (absent when no KeyGet is planned).
         const std::uint32_t keyget_count = keyget_scratch_needed_ ? 3u : 0u;
-        // V2-A: the computed-final materializer's one source-address scratch
+        // computed-final: the computed-final materializer's one source-address scratch
         // i32, appended after the KeyGet temps (absent outside a computed
         // final).
         const std::uint32_t final_count = final_return_mode_ ? final_src_count_ : 0u;
-        // V2-B: one temp holding a String ctx-store slot address for its two
+        // string-frame: one temp holding a String ctx-store slot address for its two
         // PtrLen stores (absent without such a store).
         const std::uint32_t ctx_store_count = ptrlen_ctx_store_needed_ ? 1u : 0u;
-        // V2-B: one temp holding a projection slot address while reading the
+        // string-frame: one temp holding a projection slot address while reading the
         // String PtrLen leaf's two words (absent without such a read).
         const std::uint32_t ptrlen_read_count = ptrlen_read_needed_ ? 1u : 0u;
-        // V2-C: a bridge call (handler-level OR in-fn-body) needs two trailing
+        // capability-bridge: a bridge call (handler-level OR in-fn-body) needs two trailing
         // i32 scratch locals (status, result_root_ptr) for the
         // (i32)->(i32,i32) import result.
         const std::uint32_t bridge_count =
@@ -3180,7 +3176,7 @@ class P6ComputationHandlerBuilder {
     const CoreRegion &region_;
     std::string_view state_name_;
     bool fn_mode_{false};
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: handler-mode computed final.
+    // RFC 0026 P6-7 frame bridge rung computed-final: handler-mode computed final.
     // Every path ends in a value-bearing CoreReturnStmt materialized into the
     // fixed output frame; `final_return_type_` is the agent's output value type.
     bool final_return_mode_{false};
@@ -3259,19 +3255,19 @@ class P6ComputationHandlerBuilder {
     std::uint32_t keyget_found_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t keyget_addr_local_{std::numeric_limits<std::uint32_t>::max()};
 
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String ctx store needs the
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): a String ctx store needs the
     // walked slot address twice (the PtrLen is two i32 stores), so it is teed
     // into ONE trailing i32 temp local. Allocated only when such a store is
     // planned; lives in the second i32 group after the f64 group.
     bool ptrlen_ctx_store_needed_{false};
     std::uint32_t ctx_store_addr_local_{std::numeric_limits<std::uint32_t>::max()};
-    // V2-B: one temp holding the walked slot address while reading a String
+    // string-frame: one temp holding the walked slot address while reading a String
     // PtrLen leaf's two words through a projection. Allocated only when such a
     // read is planned.
     bool ptrlen_read_needed_{false};
     std::uint32_t ptrlen_read_addr_local_{std::numeric_limits<std::uint32_t>::max()};
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a computed-final aggregate /
+    // RFC 0026 P6-7 frame bridge rung computed-final: a computed-final aggregate /
     // collection materialization needs ONE trailing i32 scratch local holding
     // the root value's source address (a scratch-constructed aggregate or an
     // input-reached collection header). Scalar roots materialize straight from
@@ -3333,13 +3329,14 @@ class P6ComputationHandlerBuilder {
     // aggregate-returning fn, which then stays byte-identical.
     bool reset_construct_heap_{false};
     std::uint32_t reset_heap_base_{0};
+    std::uint32_t construct_heap_global_{kGlobalHeapNext};
     // Emit-time absolute local indices for the fn-mode inline checked bump:
     // A = the fresh base (the construct's result address), B = cursor + size.
     // Set in emit() when the fn body contains at least one dynamic construct.
     std::uint32_t alloc_temp_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t alloc_new_local_{std::numeric_limits<std::uint32_t>::max()};
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): set when a builder
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): set when a builder
     // plans at least one capability bridge call (handler-level OR in-fn-body).
     // emit() reserves two trailing i32 scratch locals (status, result_root_ptr)
     // for the (i32)->(i32,i32) bridge import result. They share the second
@@ -3377,7 +3374,8 @@ class P6ComputationHandlerBuilder {
     // occupy the low function indices). Null in handler mode; set on every
     // builder before an effectful fn body is emitted.
     const std::vector<CoreCapabilityId> *imports_{nullptr};
-    std::unordered_map<std::string, std::uint32_t> closure_type_index_{};
+    std::vector<ClosureCallType> closure_signatures_;
+    std::uint32_t closure_type_base_{0};
     bool closure_tables_installed_{false};
     // Every fn whose address a CoreClosureExpr takes in THIS body (unique,
     // first-seen order); the driver seeds funcref-table reachability.
@@ -3405,7 +3403,7 @@ class P6ComputationHandlerBuilder {
     // reads_raw_input_frame().
     bool reads_raw_input_frame_{false};
 
-    // V2-D RETURN: true when the workflow scheduler normalizes the host-packed
+    // workflow-frame RETURN: true when the workflow scheduler normalizes the host-packed
     // INLINE entry frame into module pointer-tree form before this handler's
     // runner executes. The computed-final input-inline provenance gate then
     // admits aggregate projections/payload-enum leaves off `input` (they are
@@ -3413,7 +3411,7 @@ class P6ComputationHandlerBuilder {
     // false.
     bool normalized_entry_frame_admitted_{false};
 
-    // V2-D fix-forward: true on BOTH workflow packaging builds (fact gathering
+    // workflow-frame fix-forward: true on BOTH workflow packaging builds (fact gathering
     // and relocated emit). It lets the input-inline provenance gate fire on a
     // non-final computed-goto preamble too: only the single entry runner's
     // host-packed I_k is pointer-tree normalized, so every OTHER packaged
@@ -3422,7 +3420,7 @@ class P6ComputationHandlerBuilder {
     // false and keep the historic final-only predicate.
     bool workflow_packaging_lane_{false};
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-B: module-wide String literal pool
+    // RFC 0026 P6-7 frame bridge rung string-frame: module-wide String literal pool
     // (null outside a P6-frame agent). A String literal SSA value is the PtrLen
     // immediate pair naming this pool; the pool is frozen between plan and emit.
     RodataLiteralPool *rodata_pool_{nullptr};
@@ -3437,7 +3435,7 @@ class P6ComputationHandlerBuilder {
     ir::SourceRangeOpt rodata_first_literal_range_;
 
     // Fixed P6 frame regions (single named authority for every emit/plan site).
-    // The V2-D workflow packager RELOCATES these onto one P6 node's
+    // The workflow-frame workflow packager RELOCATES these onto one P6 node's
     // fixed node-frame block (I_k/C_k/scratch_k/O_k) and rebases the two state
     // globals a handler touches onto the workflow module's global indices via
     // install_frame_relocation(); until then the canonical agent-lane constants
@@ -3445,22 +3443,23 @@ class P6ComputationHandlerBuilder {
   public:
     using FrameRelocation = P6FrameRelocation;
 
-    // V2-D: relocate every fixed frame region this builder emits onto one
+    // workflow-frame: relocate every fixed frame region this builder emits onto one
     // P6 node's node-frame block and rebase the state globals onto
     // the workflow module's global section. Called once, after plan() and
     // before emit(), by the workflow packager.
     void install_frame_relocation(FrameRelocation relocation) {
+        construct_heap_global_ = relocation.heap_next_global;
         relocation_ = std::move(relocation);
     }
 
-    // V2-D RETURN: the workflow scheduler rewrites the INLINE entry frame into
+    // workflow-frame RETURN: the workflow scheduler rewrites the INLINE entry frame into
     // pointer-tree form before this handler runs, so input-frame aggregate
     // projections are dereferenceable here.
     void admit_normalized_entry_frame() {
         normalized_entry_frame_admitted_ = true;
     }
 
-    // V2-D fix-forward: mark this builder as compiled on the workflow
+    // workflow-frame fix-forward: mark this builder as compiled on the workflow
     // packaging lane (fact gathering or relocated emit), so the inline-input
     // provenance gate applies to non-final handlers as well.
     void mark_workflow_packaging_lane() {
@@ -3502,15 +3501,15 @@ class P6ComputationHandlerBuilder {
         return relocation_ ? relocation_->transition_count_global : kGlobalTransitionCount;
     }
     [[nodiscard]] std::uint32_t handler_heap_next_global() const noexcept {
-        return relocation_ ? relocation_->heap_next_global : kGlobalHeapNext;
+        return construct_heap_global_;
     }
 
-    // V2-D: null on the direct-agent lane (canonical fixed regions); installed
+    // workflow-frame: null on the direct-agent lane (canonical fixed regions); installed
     // by the workflow packager for a relocated per-node handler emission.
   private:
     std::optional<FrameRelocation> relocation_;
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the module-wide bridge
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): the module-wide bridge
     // call-site registry (null outside a frame-lane handler). A planned bridge
     // statement reserves its dense id here; statement identity is the stable
     // address of its variant node, so emit maps the same node back to its id.
@@ -3527,7 +3526,7 @@ class P6ComputationHandlerBuilder {
     // the expr that defines it.
     std::unordered_map<std::uint32_t, std::uint32_t> let_value_exprs_;
 
-    // RFC 0026 P6-7 frame-bridge v2 V2-A fix-forward: the computed-final
+    // RFC 0026 P6-7 frame bridge computed-final fix-forward: the computed-final
     // materializer expands the MODULE aggregate pointer tree, so it must never
     // be handed an aggregate that names the host-packed INLINE input frame
     // (whose fields are in place with no child-address slots). The birth-site
@@ -3579,7 +3578,7 @@ class P6ComputationHandlerBuilder {
         return value_names_input_inline_aggregate(value, seen);
     }
 
-    // V2-C provenance: true when `root` is itself a bridge result, or a path
+    // capability-bridge provenance: true when `root` is itself a bridge result, or a path
     // projection whose root local (transitively) is one. A String PtrLen read
     // out of such an aggregate names a host-packed, disjoint result placement
     // that never aliases and outlives the goto graph, so it is all-run-stable
@@ -3797,7 +3796,7 @@ class P6ComputationHandlerBuilder {
     // Latch one arm binding's value into its scratch local from its SITE: a
     // scalar is loaded, and an aggregate (a `Ptr` site) has its ADDRESS copied
     // (the binding then reads fields through that address later). A String site
-    // (V2-B) latches the TWO inline PtrLen words: from the two local slots for a
+    // (string-frame) latches the TWO inline PtrLen words: from the two local slots for a
     // whole-String scrutinee, or by two i32 loads from the payload slot address.
     [[nodiscard]] bool emit_binding_latch(std::uint32_t scrutinee_local,
                                           std::uint32_t dest,
@@ -4137,7 +4136,7 @@ class P6ComputationHandlerBuilder {
             if (std::holds_alternative<ir::core::CoreLayoutClosure>(layout.shape)) {
                 return P6ScalarKind::Closure;
             }
-            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the eight-byte
+            // RFC 0026 P6-7 frame bridge D1 (rung string-frame): the eight-byte
             // inline (ptr,len) String word pair. It is NOT an aggregate address
             // (the words ARE the value, inline in its struct slot) and not a
             // scalar; only literal construction, frame-slot copy, ctx store and
@@ -4212,7 +4211,7 @@ class P6ComputationHandlerBuilder {
     }
 
     // Whether a P4-D layout edge is the inline eight-byte PtrLen String slot
-    // (RFC 0026 P6-7 frame-bridge v2 D1). The ONE predicate every String-slot
+    // (RFC 0026 P6-7 frame bridge D1). The ONE predicate every String-slot
     // path (constructor copy, ctx store, final materialization, enum payload
     // binding) consults.
     [[nodiscard]] bool edge_is_ptr_len(CoreLayoutId id) const {
@@ -4268,7 +4267,7 @@ class P6ComputationHandlerBuilder {
         }
         if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(
                 layouts_.layouts[edge.value].shape)) {
-            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String payload
+            // RFC 0026 P6-7 frame bridge D1 (rung string-frame): a String payload
             // slot is the inline two-word PtrLen; a binding latches both words
             // from the payload address.
             return P6PatternSite{
@@ -4533,7 +4532,7 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): plan an ORDERED
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): plan an ORDERED
     // capability BRIDGE statement inside a non-final frame computation region.
     // The module passes a control-block pointer and receives
     // (status, result_root_ptr); the host walks P4-D -> wire JSON, invokes the
@@ -4877,7 +4876,7 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         case CoreLiteralKind::String: {
-            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B) + WH-5c.3 (GAP 5):
+            // RFC 0026 P6-7 frame bridge D1 (rung string-frame) + WH-5c.3 (GAP 5):
             // a String literal is the two-word PtrLen (rodata ptr, byte len),
             // constructible on the frame lane where the module owns a rodata
             // Data section. WH-5c.3 extended the pool to EVERY P6 handler
@@ -4935,7 +4934,7 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         case CoreLiteralKind::Decimal: {
-            // V2-B: the compile-time i64 mantissa word; the host renders the
+            // string-frame: the compile-time i64 mantissa word; the host renders the
             // builtin `s<scale>:<mantissa>` spelling at encode. Literal only —
             // no Decimal arithmetic crosses the P6 lane.
             if (*kind != P6ScalarKind::IntI64) {
@@ -5017,7 +5016,7 @@ class P6ComputationHandlerBuilder {
                 }
                 return true;
             }
-            // V2-C: a bare INPUT frame root in a frame handler is the whole
+            // capability-bridge: a bare INPUT frame root in a frame handler is the whole
             // aggregate's fixed base address (1024) — a legal stable P4-D span
             // for a capability bridge argument. Only an aggregate root is
             // admitted (a scalar bare root is never a memory address), and the
@@ -5039,17 +5038,17 @@ class P6ComputationHandlerBuilder {
             return reject("a bare input/context root is not a memory read in the P6 subset", range);
         }
         // Resolve the final slot once; the edge and the intermediate
-        // dereference chain decide both the V2-B PtrLen gate and the
+        // dereference chain decide both the string-frame PtrLen gate and the
         // computed-final input-inline provenance gate below.
         const auto leaf =
             resolve_projection_slot(path.projection, path.root_type, range);
         if (leaf == std::nullopt) {
             return false;
         }
-        // V2-B: a leaf that lands on a String PtrLen slot is read as the two
+        // string-frame: a leaf that lands on a String PtrLen slot is read as the two
         // inline words. A two-word String pair is realizable inside a computed
         // final materializer (the output-frame lane that carries rodata) or,
-        // from V2-C, inside a non-final HANDLER that serves a capability
+        // from capability-bridge, inside a non-final HANDLER that serves a capability
         // bridge (the pair is spilled into the call site's control-block slot
         // and walked by the host). WH-5c.9 lifts the last restriction: a
         // non-final goto handler without either lane may now read the pair
@@ -5061,7 +5060,7 @@ class P6ComputationHandlerBuilder {
         if (edge_is_ptr_len(leaf->edge) || edge_is_closure(leaf->edge)) {
             ptrlen_read_needed_ = true;
         }
-        // V2-A fix-forward: the projection address walk DEREFERENCES every
+        // computed-final fix-forward: the projection address walk DEREFERENCES every
         // intermediate aggregate field (an i32.load chain) and reads an
         // aggregate LEAF as the child address its slot stores. That is the
         // MODULE runtime representation, but the host packs the INPUT frame
@@ -5071,7 +5070,7 @@ class P6ComputationHandlerBuilder {
         // word as an address) or lands on a struct/payload-enum leaf (the slot
         // words ARE the inline value, not a pointer).
         //
-        // V2-D RETURN: on the workflow packaging lane the scheduler rewrites
+        // workflow-frame RETURN: on the workflow packaging lane the scheduler rewrites
         // the host-packed INLINE entry frame into module POINTER-TREE form
         // before the entry runner executes, so both shapes are dereferenceable
         // and the two rejections below are lifted for a relocated entry
@@ -5124,13 +5123,13 @@ class P6ComputationHandlerBuilder {
                         "a computed final reads a struct/enum field directly off the host-packed "
                         "INPUT frame, whose aggregate bytes are packed inline rather than stored "
                         "as a child address; materializing that value awaits the deferred "
-                        "inline-input-frame expansion of the frame-bridge v2 (construct the "
+                        "inline-input-frame expansion of the frame bridge (construct the "
                         "aggregate in-module on this rung instead)",
                         range);
                 }
             }
         }
-        // V2-C: latch the raw-frame fact at PLAN time too, so the frame section
+        // capability-bridge: latch the raw-frame fact at PLAN time too, so the frame section
         // (which must be built before handler emission for the bridge
         // coordinates) knows this handler projects the raw P4-D input frame.
         // The emit pass re-latches the identical fact from the load bytes.
@@ -5245,7 +5244,7 @@ class P6ComputationHandlerBuilder {
         // the checked bump heap (design §6.3): static scratch would alias
         // across repeated/nested native calls; entry handlers keep the
         // compile-time static arena.
-        const std::uint64_t size = aggregate_size(construct.type_id);
+        const std::uint64_t size = aggregate_size(storage_.exprs[id.value].result_type);
         if (fn_mode_) {
             if (size == 0 || size > std::numeric_limits<std::uint32_t>::max()) {
                 return reject("an fn aggregate constructor has an invalid size", range);
@@ -5270,7 +5269,7 @@ class P6ComputationHandlerBuilder {
 
     // Validate ONE constructor operand against its P4-D SLOT edge: a scalar slot
     // takes an i32/i64/f64 operand of the same width, an addressable-aggregate
-    // slot takes a `Ptr` operand, a String PtrLen slot (V2-B) takes the two-word
+    // slot takes a `Ptr` operand, a String PtrLen slot (string-frame) takes the two-word
     // String operand, and any other slot (bytes / an inline tag-only enum
     // the P6 model cannot address) fails closed.
     [[nodiscard]] bool
@@ -5314,7 +5313,7 @@ class P6ComputationHandlerBuilder {
                 return reject("constructor operand is not an aggregate for its aggregate slot",
                               range);
             }
-            // V2-A fix-forward: an aggregate field is stored as the child's
+            // computed-final fix-forward: an aggregate field is stored as the child's
             // i32 ADDRESS in the module representation, but an operand sourced
             // from the host-packed INPUT frame names inline bytes with no such
             // address. Fail closed unless the slot is an inline-copyable enum
@@ -5431,7 +5430,7 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // V2-B: true iff an expression is a Decimal/Duration literal (its i64 word
+    // string-frame: true iff an expression is a Decimal/Duration literal (its i64 word
     // is a compile-time constant, never an integer-arithmetic operand).
     [[nodiscard]] bool is_decimal_duration_expr(const CoreExpr &expr) const {
         const auto *literal = std::get_if<CoreLiteralExpr>(&expr.node);
@@ -6105,9 +6104,11 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // The P4-D size of an aggregate nominal (0 when the layout is missing).
-    [[nodiscard]] std::uint64_t aggregate_size(CoreTypeId type) const {
-        return p6_nominal_size(program_, layouts_, type).value_or(0);
+    // Storage belongs to a materialized value type: distinct instantiations of
+    // one generic nominal declaration can have different payload layouts.
+    [[nodiscard]] std::uint64_t aggregate_size(CoreValueTypeId type) const {
+        const auto *layout = p6_value_layout(program_, layouts_, type);
+        return layout != nullptr ? layout->size : 0;
     }
 
     // 0: unit payload, 1: tuple payload, 2: struct payload, -1: no metadata.
@@ -6176,22 +6177,21 @@ class P6ComputationHandlerBuilder {
             dynamic_constructs_[id.value]) {
             return reject("qualified variant is planned more than once", range);
         }
-        const std::uint64_t size = aggregate_size(q.type_id);
+        const std::uint64_t size = aggregate_size(storage_.exprs[id.value].result_type);
         if (fn_mode_) {
             if (size == 0 || size > std::numeric_limits<std::uint32_t>::max()) {
                 return reject("an fn aggregate qualified variant has an invalid size", range);
             }
             dynamic_constructs_[id.value] = true;
-            dynamic_construct_bytes_ += static_cast<std::uint32_t>(size);
+            dynamic_construct_bytes_ += static_cast<std::uint32_t>(align_up(size, 8));
             return true;
         }
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
         if (start + size > scratch_capacity() ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
-            return reject_with_code(
-                core_wasm_diag::kResourceExhausted,
-                "constructor scratch arena is exhausted",
-                range);
+            return reject_with_code(core_wasm_diag::kResourceExhausted,
+                                    "constructor scratch arena is exhausted",
+                                    range);
         }
         construct_addrs_[id.value] = static_cast<std::uint32_t>(start);
         scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
@@ -6556,7 +6556,7 @@ class P6ComputationHandlerBuilder {
                     }
                     const auto kind = scalar_kind(bound.result_type);
                     if (kind == std::nullopt) {
-                        // V2-C: on the frame-bridge lane an unrepresentable let
+                        // capability-bridge: on the frame-bridge lane an unrepresentable let
                         // value is a capability-FRAME rejection (the expression
                         // cannot name a bridge argument/result), not the generic
                         // P6-scalar scaffold classification.
@@ -6709,7 +6709,7 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         if (lit.kind == CoreLiteralKind::String) {
-            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): leave the PtrLen
+            // RFC 0026 P6-7 frame bridge D1 (rung string-frame): leave the PtrLen
             // pair (rodata_ptr:i32, byte_len:i32) on the operand stack. The
             // planner interned the bytes into the frozen pool, so both words
             // are compile-time immediates.
@@ -6732,7 +6732,7 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         if (lit.kind == CoreLiteralKind::Decimal) {
-            // V2-B: the i64 mantissa word the compile-time parser derived.
+            // string-frame: the i64 mantissa word the compile-time parser derived.
             if (kind != P6ScalarKind::IntI64) {
                 return reject("decimal literal has a non-i64 type", std::move(range));
             }
@@ -6899,11 +6899,11 @@ class P6ComputationHandlerBuilder {
                 return reject("closure env allocation temp local was not reserved",
                               expr.source_range);
             }
-            const std::uint32_t env_size =
-                static_cast<std::uint32_t>(align_up(env_layout->size, 8));
             // Bump the module arena; emit_dynamic_construct_alloc leaves
             // NOTHING on the stack and holds the fresh base in alloc_temp_local_.
-            emit_dynamic_construct_alloc(env_size);
+            if (!emit_dynamic_construct_alloc(env_layout->size, expr.source_range)) {
+                return false;
+            }
             for (std::uint32_t i = 0; i < c.env.size(); ++i) {
                 if (env_struct->field_layouts.size() <= i) {
                     return reject("environment layout has too few slots", expr.source_range);
@@ -6960,8 +6960,8 @@ class P6ComputationHandlerBuilder {
                           expr.source_range);
         }
         descriptor.result = *result_byte;
-        const auto type_it = closure_type_index_.find(closure_call_type_key(descriptor));
-        if (type_it == closure_type_index_.end()) {
+        const auto type_it = std::ranges::find(closure_signatures_, descriptor);
+        if (type_it == closure_signatures_.end()) {
             return reject("indirect call functype was not assigned a type index",
                           expr.source_range);
         }
@@ -6973,7 +6973,8 @@ class P6ComputationHandlerBuilder {
         }
         emit_local_get(*callee_local); // func_index -> table slot
         body_.byte(kOpCallIndirect);
-        body_.u32(type_it->second);
+        body_.u32(closure_type_base_ + static_cast<std::uint32_t>(
+            std::distance(closure_signatures_.begin(), type_it)));
         body_.u32(0); // the single declared funcref table
         return true;
     }
@@ -7047,7 +7048,7 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): emit one ORDERED
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): emit one ORDERED
     // capability bridge statement in a non-final handler. The module (1) writes
     // the fixed control block `{call_site_id, arg_count, (ptr,len)[*]}` at its
     // dense block address, spilling scalar / PtrLen arguments into the call
@@ -7070,7 +7071,7 @@ class P6ComputationHandlerBuilder {
         if (id_it == bridge_call_ids_.end()) {
             return reject("bridge capability call has no planned call-site id", range);
         }
-        // V2-C fix-forward: never index the dense site table without proving
+        // capability-bridge fix-forward: never index the dense site table without proving
         // the remapped id is in range. The plan-time reachability compaction
         // renumbers retained statements and rejects when a retained id is
         // absent, so a hit here is defense in depth, not a normal path.
@@ -7205,7 +7206,7 @@ class P6ComputationHandlerBuilder {
         // A Pending bridge capability latches kWorkflowGlobalPendingLatched
         // and returns a dummy i32 from this `() -> i32` handler; the workflow
         // P6 runner checks the latch after the handler call and returns
-        // (PENDING,0,0) to the scheduler, which converts it into a run2-level
+        // (PENDING,0,0) to the scheduler, which converts it into a run_workflow-level
         // suspend. On the agent lane there is no runner/scheduler to suspend,
         // so PENDING traps (the sealed single-run contract). ERROR (and any
         // other non-OK status) traps on BOTH lanes, matching the runtime's
@@ -7301,7 +7302,7 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] bool emit_path(const CorePathExpr &path, ir::SourceRangeOpt range) {
         if (path.projection.empty()) {
             if (!path.has_local) {
-                // V2-C: a bare INPUT aggregate root in a frame handler is the
+                // capability-bridge: a bare INPUT aggregate root in a frame handler is the
                 // fixed input-frame base address (a legal bridge argument
                 // span). A context root or a scalar root stays fail-closed.
                 if (path.root == ir::core::CorePathRoot::Input &&
@@ -7330,7 +7331,7 @@ class P6ComputationHandlerBuilder {
         }
         // KR6.7: a non-empty projection rooted at the input frame reads raw P4-D
         // input bytes. A context projection or an aggregate-LOCAL projection
-        // (constructor / binding scratch) leaves the run2 wire-frame boundary
+        // (constructor / binding scratch) leaves the run_workflow wire-frame boundary
         // intact.
         if (!path.has_local && path.root == ir::core::CorePathRoot::Input) {
             reads_raw_input_frame_ = true;
@@ -7345,7 +7346,7 @@ class P6ComputationHandlerBuilder {
         }
         // A projected LEAF must be a single-word P6 value (a scalar, a tag-only
         // enum discriminant, an addressable aggregate, a bounded collection) OR
-        // the two-word String PtrLen pair (V2-B). Bytes / f64 leaves fail closed.
+        // the two-word String PtrLen pair (string-frame). Bytes / f64 leaves fail closed.
         const bool slot_ptr_len = edge_is_ptr_len(slot->edge);
         const bool slot_closure = edge_is_closure(slot->edge);
         if (!place_is_p6_value(slot->edge) && !slot_ptr_len) {
@@ -7353,7 +7354,7 @@ class P6ComputationHandlerBuilder {
                           std::move(range));
         }
         if (slot_ptr_len) {
-            // V2-B: the two inline PtrLen words. The walked slot address is
+            // string-frame: the two inline PtrLen words. The walked slot address is
             // teed into the reserved read temp so both loads address the same
             // slot; the stack ends with (payload_ptr, byte_len).
             body_.byte(kOpLocalTee);
@@ -7433,11 +7434,12 @@ class P6ComputationHandlerBuilder {
             (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value())) {
             return reject("qualified variant has no planned scratch address", std::move(range));
         }
-        const std::uint64_t size = aggregate_size(q.type_id);
-        const std::uint32_t address =
-            dynamic ? 0u : scratch_base() + *construct_addrs_[id.value];
+        const std::uint64_t size = aggregate_size(storage_.exprs[id.value].result_type);
+        const std::uint32_t address = dynamic ? 0u : scratch_base() + *construct_addrs_[id.value];
         if (dynamic) {
-            emit_dynamic_construct_alloc(static_cast<std::uint32_t>(size));
+            if (!emit_dynamic_construct_alloc(size, range)) {
+                return false;
+            }
             emit_local_get(alloc_temp_local_);
             emit_const_i32(static_cast<std::int32_t>(q.variant.value));
             body_.byte(kOpI32Store);
@@ -7471,10 +7473,21 @@ class P6ComputationHandlerBuilder {
     // operand stack: the fresh base is held in alloc_temp_local_ and the
     // advanced cursor in alloc_new_local_. The cursor global is module-level
     // and monotonically increases across nested/repeated native calls, so two
-    // live results never alias. Bumping past `arena_limit_` traps (RESOURCE
-    // fail-closed); a compile-time depth-aware budget guarantees the worst-case
-    // chain fits, making the trap a defensive guard only.
-    void emit_dynamic_construct_alloc(std::uint32_t size) {
+    // live results never alias. The arena keeps its cursor for the run and
+    // traps before exceeding the fixed page capacity. Compile-time planning
+    // accounts for bounded constructor chains; runtime allocation remains
+    // checked independently of that budget.
+    [[nodiscard]] bool emit_dynamic_construct_alloc(std::uint64_t size,
+                                                   ir::SourceRangeOpt range) {
+        // Keep layout geometry wide through validation. The same aligned
+        // extent is charged by the planner and advanced by every allocator.
+        if (size > kCoreWasmFixedLinearMemoryCapacityBytes ||
+            size > std::numeric_limits<std::uint32_t>::max()) {
+            return reject_with_code(core_wasm_diag::kResourceExhausted,
+                                    "dynamic allocation exceeds the fixed linear-memory page",
+                                    range);
+        }
+        const auto aligned_size = align_up(size, 8);
         const auto global_get = [&](std::uint32_t g) {
             body_.byte(kOpGlobalGet);
             body_.u32(g);
@@ -7497,7 +7510,7 @@ class P6ComputationHandlerBuilder {
         };
         global_get(handler_heap_next_global());
         local_tee(alloc_temp_local_);
-        emit_const_i32(static_cast<std::int32_t>(size));
+        emit_const_i32(static_cast<std::int32_t>(aligned_size));
         body_.byte(kOpI32Add);
         local_set(alloc_new_local_);
         local_get(alloc_new_local_);
@@ -7510,6 +7523,7 @@ class P6ComputationHandlerBuilder {
         body_.byte(kOpEnd);
         local_get(alloc_new_local_);
         global_set(handler_heap_next_global());
+        return true;
     }
 
     // Emit a constructor: allocate its scratch bytes and store every operand at
@@ -7525,13 +7539,15 @@ class P6ComputationHandlerBuilder {
             (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value())) {
             return reject("constructor has no planned scratch address", std::move(range));
         }
-        const std::uint64_t dyn_size = aggregate_size(construct.type_id);
+        const std::uint64_t dyn_size = aggregate_size(storage_.exprs[id.value].result_type);
         const std::uint32_t static_address =
             dynamic ? 0u : scratch_base() + *construct_addrs_[id.value];
         if (dynamic) {
             // Allocate a fresh per-activation aggregate; its base is held in the
             // allocation temp local while the fields are written.
-            emit_dynamic_construct_alloc(static_cast<std::uint32_t>(dyn_size));
+            if (!emit_dynamic_construct_alloc(dyn_size, range)) {
+                return false;
+            }
         }
         if (!construct.is_enum_variant) {
             const auto *structure = p6_nominal_struct_layout(program_, layouts_, construct.type_id);
@@ -7628,7 +7644,7 @@ class P6ComputationHandlerBuilder {
         if (kind == std::nullopt || local == std::nullopt) {
             return reject("constructor operand is not a readable value", std::move(range));
         }
-        // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String slot holds the
+        // RFC 0026 P6-7 frame bridge D1 (rung string-frame): a String slot holds the
         // PtrLen INLINE (8 bytes at the slot offset). Copy both words straight
         // from the operand's two i32 locals (a literal's two immediates, a
         // projection's, or a match binding's). The payload pointer names a
@@ -7777,11 +7793,11 @@ class P6ComputationHandlerBuilder {
         if (slot == std::nullopt) {
             return false;
         }
-        // RFC 0026 P6-7 frame-bridge v2 §2.3 (rung V2-B): a PtrLen-valued ctx
+        // RFC 0026 P6-7 frame bridge §2.3 (rung string-frame): a PtrLen-valued ctx
         // store IS admitted, but only when the payload pointer names an
         // all-run-stable region. Three provenances are provable here: a rodata
-        // String LITERAL (V2-B), a String projected from a CAPABILITY BRIDGE
-        // result (V2-C), and — from WH-5c.9 — a String projected from the
+        // String LITERAL (string-frame), a String projected from a CAPABILITY BRIDGE
+        // result (capability-bridge), and — from WH-5c.9 — a String projected from the
         // INPUT frame (its payload lives in the entry payload arena
         // [1024,4096) or an upstream O_k block [12288,16384), both
         // whole-run-stable, immutable-after-init regions). A String value
@@ -7805,7 +7821,7 @@ class P6ComputationHandlerBuilder {
                 is_rodata_literal =
                     literal != nullptr && literal->kind == CoreLiteralKind::String;
             }
-            // V2-C: a String projected out of a CAPABILITY BRIDGE result is
+            // capability-bridge: a String projected out of a CAPABILITY BRIDGE result is
             // also all-run-stable: the host packed it into that call site's
             // disjoint result placement, which never aliases and outlives the
             // goto graph. Prove provenance by following the store value's path
@@ -7853,7 +7869,7 @@ class P6ComputationHandlerBuilder {
         }
         // A store leaf must be a single-word P6 value (a scalar or an
         // addressable aggregate) OR the eight-byte inline String PtrLen pair
-        // (V2-B). A bytes leaf still fails closed.
+        // (string-frame). A bytes leaf still fails closed.
         const bool slot_ptr_len = edge_is_ptr_len(slot->edge);
         if (!place_is_p6_value(slot->edge) && !slot_ptr_len) {
             return reject("store destination is not a P6 frame value", std::move(range));
@@ -7896,7 +7912,7 @@ class P6ComputationHandlerBuilder {
             body_.u32(slot->offset);
             return true;
         }
-        // RFC 0026 P6-7 frame-bridge v2 rung V2-D (emission half 2): scalar
+        // RFC 0026 P6-7 frame bridge rung workflow-frame (emission half 2): scalar
         // ctx-store kind agreement. A tag-only-enum (Index) destination is a
         // single inline i32 discriminant word, so an Index VALUE stores with
         // the width-exact i32.store the P6-4 rule reserved for Int slots; that
@@ -7920,7 +7936,7 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // --- RFC 0026 P6-7 frame-bridge v2 rung V2-A: computed-final materialization
+    // --- RFC 0026 P6-7 frame bridge rung computed-final: computed-final materialization
     //
     // A final handler ends in `return v`; the planner validates v against the
     // agent output nominal and the emitter materializes it into the fixed output
@@ -7934,7 +7950,7 @@ class P6ComputationHandlerBuilder {
     //   * a bounded-collection root -> its 8-byte inline (ptr,len) header is
     //     copied; the backing elements stay in the stable input-backed placement.
     //
-    // V2-B: a String (PtrLen) slot is copied as its two inline words (the
+    // string-frame: a String (PtrLen) slot is copied as its two inline words (the
     // payload pointer stays a rodata / input-arena pointer — the payload is
     // never copied). Bytes16 (Uuid), closures, and uninhabited slots still
     // fail closed. Decimal/Duration i64 literal words pass the scalar gate but
@@ -7942,7 +7958,7 @@ class P6ComputationHandlerBuilder {
     // later rung). WH-5c.7 mechanism (a): f64 rides the IntI64 kind as a
     // copy-only 8-byte word (bit-identical i64.load/i64.store).
 
-    // Validate one P4-D layout edge is entirely in the v2 output-frame walk
+    // Validate one P4-D layout edge is entirely in the computed output-frame walk
     // subset (scalars i32/i64, inline structs/enums, bounded containers, and the
     // String PtrLen pair).
     [[nodiscard]] bool
@@ -7960,7 +7976,7 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [](const ir::core::CoreLayoutBytes &) { return false; },
-                // V2-B: the String PtrLen inline pair.
+                // string-frame: the String PtrLen inline pair.
                 [](const ir::core::CoreLayoutPtrLen &) { return true; },
                 [](const ir::core::CoreLayoutFnRef &) { return false; },
                 [](const ir::core::CoreLayoutClosure &) { return false; },
@@ -7997,7 +8013,7 @@ class P6ComputationHandlerBuilder {
     }
 
     // Plan a computed-final return: the value must match the agent output
-    // nominal and every physical word it materializes must be in the v1 subset.
+    // nominal and every physical word it materializes must be in the computed-final subset.
     // Reserves the one source-address scratch local for an aggregate/collection
     // root.
     [[nodiscard]] bool plan_final_return(const CoreReturnStmt &s, ir::SourceRangeOpt range) {
@@ -8030,8 +8046,8 @@ class P6ComputationHandlerBuilder {
         case P6ScalarKind::Closure:
         case P6ScalarKind::String:
             // A closure never crosses; a bare-String ROOT output is also not
-            // materialized by V2-B (String rides inline inside an aggregate
-            // output — the five V2-E cases all return structs).
+            // materialized by string-frame (String rides inline inside an aggregate
+            // output — the five frame-case cases all return structs).
             return reject("a closure or bare String value cannot be the computed-final frame root",
                           range);
         case P6ScalarKind::Collection:
@@ -8157,7 +8173,7 @@ class P6ComputationHandlerBuilder {
                 continue;
             }
             if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape)) {
-                // V2-B: copy the String PtrLen's two inline words from the
+                // string-frame: copy the String PtrLen's two inline words from the
                 // source aggregate slot straight into the output frame slot.
                 // The payload pointer is preserved verbatim (rodata / input
                 // arena); the payload bytes themselves are never copied.
@@ -8217,7 +8233,7 @@ class P6ComputationHandlerBuilder {
                 std::holds_alternative<ir::core::CoreLayoutPending>(field.shape)) {
                 return reject("computed final copies a pending/uninhabited field", range);
             }
-            return reject("computed final copies a non-v1 frame field", range);
+            return reject("computed final copies a unsupported frame field", range);
         }
         return true;
     }
@@ -8350,7 +8366,7 @@ class P6ComputationHandlerBuilder {
 
     // Emit the computed-final terminator: materialize the result into the output
     // frame, then leave the handler's result-i32 block yielding the final state
-    // id (runv invokes this handler explicitly and discards the word).
+    // id (run_frame invokes this handler explicitly and discards the word).
     [[nodiscard]] bool emit_final_return(const CoreReturnStmt &s, ir::SourceRangeOpt range) {
         const auto kind = s.value.value < storage_.value_types.size()
                               ? p6_scalar_kind(program_, layouts_,
@@ -8468,7 +8484,7 @@ class P6ComputationHandlerBuilder {
             break;
         }
         }
-        // The handler was invoked explicitly by runv; yield the stable final
+        // The handler was invoked explicitly by run_frame; yield the stable final
         // state id through its result-i32 block (no global latch, no transition
         // bump: current_state already names this final state).
         emit_const_i32(static_cast<std::int32_t>(final_state_id_));
@@ -8558,14 +8574,31 @@ class P6ComputationHandlerBuilder {
             body_.u32(string_concat_len_a_local_);
             body_.byte(kOpLocalSet);
             body_.u32(string_concat_ptr_a_local_);
-            // Runtime bump alloc(total_len = len_a + len_b). The fresh base
+            // Runtime bump alloc(align8(total_len = len_a + len_b)). The fresh base
             // is held in alloc_temp_local_; the advanced cursor in
-            // alloc_new_local_. Bumping past the linear-memory capacity traps
-            // (RESOURCE fail-closed); the compile-time construct-heap budget
-            // makes the trap a defensive guard only.
+            // alloc_new_local_. String lengths and repeated concatenations are
+            // runtime quantities; allocation traps before exceeding the fixed
+            // linear-memory page independently of constructor planning.
             body_.byte(kOpGlobalGet);
             body_.u32(handler_heap_next_global());
-            body_.byte(kOpLocalTee);
+            body_.byte(kOpLocalSet);
+            body_.u32(alloc_temp_local_);
+            // Bound each input word before any addition. With all three at
+            // most one page, their sum cannot wrap an i32; the end check below
+            // then rejects oversized payloads before rounding the cursor.
+            for (const auto local : {alloc_temp_local_, string_concat_len_a_local_,
+                                     string_concat_len_b_local_}) {
+                body_.byte(kOpLocalGet);
+                body_.u32(local);
+                emit_const_i32(static_cast<std::int32_t>(
+                    kCoreWasmFixedLinearMemoryCapacityBytes));
+                body_.byte(kOpI32GtU);
+                body_.byte(kOpIf);
+                body_.byte(kEmptyBlock);
+                body_.byte(kOpUnreachable);
+                body_.byte(kOpEnd);
+            }
+            body_.byte(kOpLocalGet);
             body_.u32(alloc_temp_local_);
             body_.byte(kOpLocalGet);
             body_.u32(string_concat_len_a_local_);
@@ -8584,6 +8617,10 @@ class P6ComputationHandlerBuilder {
             body_.byte(kOpEnd);
             body_.byte(kOpLocalGet);
             body_.u32(alloc_new_local_);
+            emit_const_i32(7);
+            body_.byte(kOpI32Add);
+            emit_const_i32(-8);
+            body_.byte(kOpI32And);
             body_.byte(kOpGlobalSet);
             body_.u32(handler_heap_next_global());
             // memory.copy(result_ptr, ptr_a, len_a) — stack: d, s, n.
@@ -9066,17 +9103,11 @@ class P6ComputationHandlerBuilder {
                 return false;
             }
         }
-        // A computed-final arm/fallback ends in a value return; its terminator
-        // branches past the match to the handler's result block, so it diverges
-        // from this region the same way a goto/trap arm does. Use the SAME
-        // structural all-paths predicate the handler-level plan gate uses
-        // (`p6_region_always_returns`): a trailing return OR a trailing if/match
-        // whose every branch returns — a bare `statements.back()` test wrongly
-        // rejected an if-let arm whose final `if` returned on both branches
-        // even though the whole region provably returns.
-        const bool final_return =
-            final_return_mode_ && p6_region_always_returns(region);
-        if (!final_return && !p6_region_always_diverges(region)) {
+        // Outlined functions and computed-final handlers support value returns.
+        // Admit them alongside goto/trap in the recursive all-paths exit proof,
+        // including branches that mix return and trap; partial exits still
+        // require a yield from the continuing path.
+        if (!p6_region_always_diverges(region, fn_mode_ || final_return_mode_)) {
             return reject("match region must yield or diverge on every path", default_range);
         }
         return true;
@@ -10152,7 +10183,7 @@ struct AssignedFramePlacements {
 };
 
 // Design section 6.2 sum-of-prior-backing rule, the single SSOT for both the
-// emitted `ahfl.core-layout.v1` placements and the construct/closure heap
+// emitted `ahfl.core-layout` placements and the construct/closure heap
 // relocation: every INPUT-REACHED fixed container occurrence, in boundary DFS
 // order, receives its own placement at
 // align_up(kP6CollectionBackingBase + sum of prior aligned backing extents,
@@ -10228,7 +10259,7 @@ input_frame_backing_high_water(const CoreProgram &program,
     return assigned->payload_arena_base;
 }
 // ---------------------------------------------------------------------------
-// RFC 0026 P6-7 rung A: the `ahfl.core-layout.v1` section plan.
+// RFC 0026 P6-7 rung A: the `ahfl.core-layout` section plan.
 //
 // A P6-frame agent's boundary roots are its input/output value types. The plan
 // enumerates every input-reached bounded CONTAINER in a depth-first,
@@ -10252,10 +10283,10 @@ struct FrameSectionPlan {
     std::vector<ir::core::CoreFrameBackingPlacement> placements;
     std::uint32_t payload_arena_base{0};
     std::uint32_t payload_arena_capacity{0};
-    /// V2-B: rodata literal-pool span carried to the section payload.
+    /// string-frame: rodata literal-pool span carried to the section payload.
     std::uint32_t rodata_base{0};
     std::uint32_t rodata_extent{0};
-    /// V2-C: the capability bridge control page frame (zero for a non-bridge
+    /// capability-bridge: the capability bridge control page frame (zero for a non-bridge
     /// module) and the dense per-call-site section records.
     std::uint32_t bridge_control_base{0};
     std::uint32_t bridge_block_stride{0};
@@ -10280,14 +10311,13 @@ frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
 // Build the canonical frame-layout SECTION payload structure (the one the
 // custom-section encoder and the host admitter consume) from the physical
 // plan. One SSOT for the boundary roots, placements, payload arena, rodata
-// span and the V2-C bridge page frame / call sites.
+// span and the capability-bridge bridge page frame / call sites.
 [[nodiscard]] ir::core::CoreFrameLayoutSection
 frame_section_to_layout_section(const FrameSectionPlan &plan) {
     ir::core::CoreFrameLayoutSection section;
-    // v3: per-call-site private spill windows (frame-bridge v2 fix-forward).
+    // Per-call-site private spill windows (frame bridge fix-forward).
     // v4: the construct-heap base (KR6.6 String concat); a module without
-    // String concat keeps v3 bytes exactly (presence-gated extension).
-    section.format_version = 5u;
+    // String concat uses the required construct-heap field.
     section.table = plan.table;
     section.input_layout = plan.input_layout;
     section.output_layout = plan.output_layout;
@@ -10306,7 +10336,7 @@ frame_section_to_layout_section(const FrameSectionPlan &plan) {
     return section;
 }
 
-// RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): walk the INPUT boundary's dense
+// RFC 0026 P6-7 frame bridge D6 (rung string-frame): walk the INPUT boundary's dense
 // P4-D layout and its wire schema IN LOCKSTEP (the same shape correspondence
 // verify_frame_layout_wire_consistency proves), metering every String slot:
 // a bounded String contributes its schema upper bound, and the first unbounded
@@ -10321,7 +10351,7 @@ frame_section_to_layout_section(const FrameSectionPlan &plan) {
 // one element is multiplied by the container capacity here (a Map multiplies
 // the summed key+value subtree once). The design formula is per-occurrence:
 // "align8(sum 各 String 槽 schema 上界)" with size/stride/capacity the
-// compile-time inputs (frame-bridge v2 section 7.1). The unbounded-String pool
+// compile-time inputs (frame bridge section 7.1). The unbounded-String pool
 // is a SINGLE shared reservation per boundary and is intentionally NOT
 // multiplied: it is a conservative fallback ceiling, not a per-slot budget.
 [[nodiscard]] bool accumulate_input_string_arena(
@@ -10618,7 +10648,7 @@ build_frame_section_plan(const CoreProgram &program,
     }
     plan.placements = assigned->placements;
     plan.payload_arena_base = assigned->payload_arena_base;
-    // RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the input frame's packed
+    // RFC 0026 P6-7 frame bridge D6 (rung string-frame): the input frame's packed
     // String payloads need a REAL arena now (it was hardcoded 0 at rung A).
     // Bounded String slots are metered exactly from their schema upper bound
     // times their occurrence multiplicity (a bounded collection multiplies its
@@ -10658,11 +10688,11 @@ build_frame_section_plan(const CoreProgram &program,
         return std::nullopt;
     }
     plan.payload_arena_capacity = static_cast<std::uint32_t>(arena_capacity);
-    // V2-B: rodata span (always names the fixed [256,1024) region).
+    // string-frame: rodata span (always names the fixed [256,1024) region).
     plan.rodata_base = kP6RodataBase;
     plan.rodata_extent = rodata_extent;
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4/D6 (rung V2-C): plan the capability
+    // RFC 0026 P6-7 frame bridge D3/D4/D6 (rung capability-bridge): plan the capability
     // bridge control page frame and the disjoint per-call-site result
     // placements. They continue the same sum cursor after the input frame
     // payload arena: control blocks (fixed-stride dense blocks), the scalar /
@@ -10697,7 +10727,7 @@ build_frame_section_plan(const CoreProgram &program,
         const std::uint64_t block_stride = align8(8u + 8u * max_arity);
         const std::uint64_t blocks_extent =
             block_stride * static_cast<std::uint64_t>(bridge_calls.size());
-        // V2-C fix-forward: every bridge coordinate is a u32 wasm32 immediate,
+        // capability-bridge fix-forward: every bridge coordinate is a u32 wasm32 immediate,
         // so narrow the u64 stride/extent math only after a checked comparison
         // against the uint32 domain. The fixed-page checks below bound the
         // FINAL sum cursor but would let an intermediate wrap slip through.
@@ -10790,7 +10820,7 @@ build_frame_section_plan(const CoreProgram &program,
             }
             record.block_offset = site.block_offset;
             record.is_final = site.is_final;
-            // The site's private scalar/PtrLen spill window (v3 section): the
+            // The site's private scalar/PtrLen spill window (frame section): the
             // host membership-tests every spilled descriptor against exactly
             // this [base, +extent) span.
             record.spill_base = site.spill_base;
@@ -11265,13 +11295,11 @@ struct PlannedFn {
         targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
         closure_table_out = std::move(targets);
     }
-    std::unordered_map<std::string, std::uint32_t> closure_type_index_by_key;
     {
         std::vector<ClosureCallType> signatures;
         const auto add_signatures = [&](const std::vector<ClosureCallType> &types) {
             for (const ClosureCallType &type : types) {
-                std::string key = closure_call_type_key(type);
-                if (closure_type_index_by_key.try_emplace(key, 0).second) {
+                if (std::ranges::find(signatures, type) == signatures.end()) {
                     signatures.push_back(type);
                 }
             }
@@ -11283,10 +11311,6 @@ struct PlannedFn {
         }
         for (const PlannedFn &planned : planned_fns_out) {
             add_signatures(planned.closure_call_types);
-        }
-        for (std::uint32_t i = 0; i < signatures.size(); ++i) {
-            closure_type_index_by_key[
-                closure_call_type_key(signatures[i])] = i;
         }
         closure_signatures_out = std::move(signatures);
     }
@@ -11333,9 +11357,8 @@ struct PlannedFn {
         // containers' DISJOINT per-edge backing placements and the frame-payload
         // arena, because input containers stay live for the whole run. The floor
         // is the same sum-of-prior-backing high-water the emitted
-        // ahfl.core-layout.v1 section carries (single SSOT); the legacy
-        // max(base + backing_size) shortcut would relocate the heap into a
-        // second simultaneously-live input container's backing. The predicate
+        // ahfl.core-layout section carries, keeping the heap above every
+        // simultaneously-live input container's backing. The predicate
         // mirrors frame-lane eligibility in emit_core_wasm: no capability
         // import and an entry handler that projects the raw input frame.
         // Outlined fns and closures no longer disqualify: the P6 frame lane
@@ -11355,7 +11378,7 @@ struct PlannedFn {
             backing_high =
                 input_frame_backing_high_water(program, layouts, *frame_input_nominal);
         } else {
-            // Legacy lane (identity/capability/FB): every container layout
+            // Computed identity/capability inputs: every container layout
             // names the same region-relative base, so the high-water is the
             // max(base + backing_size) over the storages reachable in a step.
             const auto account_storage = [&](const CoreBodyStorage &storage) {
@@ -11446,7 +11469,8 @@ struct PlannedFn {
     const std::vector<ClosureCallType> &closure_signatures,
     const std::vector<CoreCapabilityId> *imports,
     CoreWasmCodegenResult &result,
-    std::vector<CompiledFn> &out) {
+    std::vector<CompiledFn> &out,
+    const ModuleFnPlacement *placement = nullptr) {
     out.clear();
     out.reserve(planned_fns.size());
     // Rebuild the callee-instance -> ordinal table from the planned fns (the
@@ -11468,18 +11492,17 @@ struct PlannedFn {
     for (std::uint32_t slot = 0; slot < closure_table.size(); ++slot) {
         fn_to_table_slot.emplace(closure_table[slot].value, slot);
     }
-    std::unordered_map<std::string, std::uint32_t> absolute_closure_type_index;
-    absolute_closure_type_index.reserve(closure_signatures.size());
-    for (std::uint32_t i = 0; i < closure_signatures.size(); ++i) {
-        absolute_closure_type_index.emplace(
-            closure_call_type_key(closure_signatures[i]), closure_type_base + i);
-    }
     for (PlannedFn &planned : planned_fns) {
         planned.builder->set_fn_call_tables(&instance_to_ordinal, fn_function_base);
-        planned.builder->install_closure_tables(fn_to_table_slot, absolute_closure_type_index);
+        planned.builder->install_closure_tables(fn_to_table_slot, closure_signatures,
+                                                closure_type_base);
         // FB-4: give each outlined fn builder the module import table so an
         // in-body capability call emits at the correct ahfl_cap ordinal.
         planned.builder->install_import_table(imports);
+        if (placement != nullptr) {
+            planned.builder->install_fn_placement(*placement);
+            planned.builder->install_construct_heap_global(kWorkflowGlobalHeapNext);
+        }
     }
     for (std::uint32_t ordinal = 0; ordinal < planned_fns.size(); ++ordinal) {
         PlannedFn &planned = planned_fns[ordinal];
@@ -11528,14 +11551,14 @@ struct PlannedFn {
     // builder). A non-empty PATTERN arena is admitted past this gate only when
     // some handler is a pure P6 computation region actually containing a match —
     // otherwise canonical E1-E3 shapes that merely carry leftover pattern
-    // artifacts keep the exact legacy rejection. The admitted flow still fails
+    // artifacts are rejected. The admitted flow still fails
     // closed per-handler below for any pattern kind or expression node outside
     // the landed subset.
     //
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL region (if-let
+    // RFC 0026 P6-7 frame bridge rung computed-final: a COMPUTED FINAL region (if-let
     // lowers to a match ending in a value return) is the second region kind that
     // legitimately owns a non-empty pattern arena.
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-C fix-forward: the ANY-of admits
+    // RFC 0026 P6-7 frame bridge rung capability-bridge fix-forward: the ANY-of admits
     // not only a pure computation region and a computed-final region but ALSO
     // a BRIDGE computation region — a region that contains both a match and an
     // ordered bridge statement ("route then call"). The predicate must carry
@@ -11586,7 +11609,7 @@ struct PlannedFn {
     // input / context struct does not FIT its region would silently read or
     // write into the neighbouring region (or past the page) with no diagnostic.
     // Fail closed with the same RESOURCE-class rejection the constructor scratch
-    // arena uses, BEFORE any handler byte is emitted. A V2-D relocated build
+    // arena uses, BEFORE any handler byte is emitted. A workflow-frame relocated build
     // gates against the P6 node's node-block sub-spans (each sized by
     // the D6 capacity family from these same finalized layouts) instead of the
     // direct-agent fixed regions.
@@ -11621,7 +11644,7 @@ struct PlannedFn {
         std::unique_ptr<P6ComputationHandlerBuilder> builder;
         std::vector<CoreStateId> targets;
         bool reads_raw_input_frame{false};
-        // V2-A: a COMPUTED FINAL handler materializes into the output frame and
+        // computed-final: a COMPUTED FINAL handler materializes into the output frame and
         // is published as ComputedReturnAction rather than ComputedGotoAction.
         bool is_final_return{false};
     };
@@ -11644,13 +11667,13 @@ struct PlannedFn {
     // also carries in-handler bridge sites is rejected with a ranged diag).
     ir::SourceRangeOpt construct_terminal_range;
 
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): the module-wide String
     // literal pool every ENTRY-HANDLER builder interns into while planning.
     // It is frozen before handler bodies are emitted and, when non-empty, the
     // module gains exactly ONE active Data(11) section initializing the rodata
     // region. Outlined fn builders never see it (a String crosses no fn
     // boundary), so an fn String literal keeps failing closed.
-    // V2-D: a workflow-module relocated build shares ONE pool across every
+    // workflow-frame: a workflow-module relocated build shares ONE pool across every
     // packaged agent (the packager pre-freezes the union before emission); the
     // build then neither owns nor moves it.
     RodataLiteralPool owned_rodata_pool;
@@ -11658,12 +11681,12 @@ struct PlannedFn {
         policy.shared_rodata_pool != nullptr ? *policy.shared_rodata_pool
                                              : owned_rodata_pool;
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the module-wide bridge
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): the module-wide bridge
     // call-site registry every frame-lane HANDLER builder registers into. It is
     // populated during planning and physically laid out (control blocks,
     // disjoint result placements) before handler bodies are emitted.
     BridgeCallRegistry bridge_registry;
-    // V2-D emission half 2: a relocated workflow build records every bridge
+    // workflow-frame emission half 2: a relocated workflow build records every bridge
     // site into the packager's shared dense registry; a direct-agent (or
     // fact-gathering) build keeps its private one.
     BridgeCallRegistry &effective_bridge_registry =
@@ -11835,7 +11858,7 @@ struct PlannedFn {
                     // RFC 0026 dual-track elimination: the construct terminal's
                     // state action is the CapabilityAction (not a
                     // ComputedReturnAction). The emit loop sets
-                    // construct_function when the handler is compiled; runv()
+                    // construct_function when the handler is compiled; run_frame()
                     // calls the construct handler then the bridge import.
                     plan.actions[state] = *action;
                     continue;
@@ -11843,11 +11866,11 @@ struct PlannedFn {
                 plan.actions[state] = *action;
                 continue;
             }
-            // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a capability-free final
-            // is either the canonical identity passthrough (v1) or a COMPUTED
+            // RFC 0026 P6-7 frame bridge rung computed-final: a capability-free final
+            // is either the canonical identity passthrough or a COMPUTED
             // FINAL — a P6-subset region ending in a value-bearing return that
             // materializes into the fixed output frame. The exact identity
-            // shape is routed first so the v1 byte path and diagnostic survive;
+            // shape is routed first to select its passthrough emission;
             // every other return-bearing region takes the computed-final lane.
             const bool identity_shape =
                 is_identity_final_shape(agent, *flow, handler->body);
@@ -11873,7 +11896,7 @@ struct PlannedFn {
                 // (kP6AggregateOutputBase 12288, cap 4096). The output nominal
                 // may be larger than the input, so it is gated independently of
                 // the 3072-byte input region before any handler byte is emitted.
-                // A V2-D relocated build gates against the P6 node's
+                // A workflow-frame relocated build gates against the P6 node's
                 // O_k node-block sub-span instead.
                 const std::uint32_t effective_output_capacity =
                     policy.frame_relocation != nullptr
@@ -11940,7 +11963,7 @@ struct PlannedFn {
         // terminators, never a capability effect) enters the per-handler scalar
         // builder and compiles to its own function (P6-2: Literal/ValueRef/
         // Unary/Binary + structured if + goto/trap). All effect-bearing or
-        // otherwise out-of-subset regions keep the legacy rejections below.
+        // otherwise out-of-subset regions are rejected below.
         const bool single_goto =
             statements.size() == 1 && std::holds_alternative<CoreGotoStmt>(statements.front().node);
         if (!single_goto) {
@@ -11963,11 +11986,11 @@ struct PlannedFn {
                                                                   used_exprs,
                                                                   used_values,
                                                                   result);
-                // V2-C: a direct-agent frame handler may plan ordered capability
+                // capability-bridge: a direct-agent frame handler may plan ordered capability
                 // bridge calls; the workflow packaging policy keeps this off. The
                 // registry is installed ONLY into a handler whose region actually
                 // reaches a capability statement: a pure goto handler stays on
-                // the closed V2-A lane. Reaching a capability in an allow_bridge
+                // the closed computed-final lane. Reaching a capability in an allow_bridge
                 // builder is what makes this a bridge handler.
                 // WH-5c.3 (GAP 5): the rodata pool is installed into EVERY P6
                 // handler builder (not just bridge handlers), so a String literal
@@ -12064,7 +12087,7 @@ struct PlannedFn {
     // successor SET (a reachable back edge on any path is rejected), not the
     // E1 single-successor walk.
     //
-    // V2-C fix-forward: a planned computed handler's ComputedGotoAction is
+    // capability-bridge fix-forward: a planned computed handler's ComputedGotoAction is
     // published into plan.actions only during the emit loop BELOW. Reading
     // plan.actions here would therefore see the default IdentityAction for
     // every computed handler: a state reached only through another computed
@@ -12143,12 +12166,12 @@ struct PlannedFn {
         }
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a computed final is a P6-frame
-    // contract. The runv descriptor names exactly ONE authorized value_ptr base
+    // RFC 0026 P6-7 frame bridge rung computed-final: a computed final is a P6-frame
+    // contract. The run_frame descriptor names exactly ONE authorized value_ptr base
     // (input for identity finals, output for computed finals), so one agent
     // cannot mix the two final kinds; a capability final likewise stays on its
-    // own run2 lane and cannot share an agent with a computed final (the raw
-    // P4-D and frame lanes never mix; in-handler bridging is the V2-C rung).
+    // own run_workflow lane and cannot share an agent with a computed final (the raw
+    // P4-D and frame lanes never mix; in-handler bridging is the capability-bridge rung).
     const bool has_planned_computed_final =
         std::any_of(planned_handlers.begin(), planned_handlers.end(),
                     [](const PlannedComputedHandler &planned) {
@@ -12202,7 +12225,7 @@ struct PlannedFn {
         }
     }
     // RFC 0026 dual-track elimination: every reachable capability final is
-    // planned as a bridge call site (is_final=true). The runv() / P6 workflow
+    // planned as a bridge call site (is_final=true). The run_frame() / P6 workflow
     // runner emits the bridge call at the terminal state. Construct terminals
     // now carry their CapabilityAction (is_construct=true), so the loop above
     // already imports their capability.
@@ -12252,7 +12275,7 @@ struct PlannedFn {
             spill_bytes, CoreStateId{state});
         auto &site = effective_bridge_registry.sites()[call_site_id];
         site.is_final = true;
-        // Precompute the argument frame (ptr, len) for the runv() emitter.
+        // Precompute the argument frame (ptr, len) for the run_frame() emitter.
         const auto arg_layout_id = layouts.value_layouts[capability.param_types[0].value];
         site.final_arg_ptr = cap->is_construct ? kP6AggregateOutputBase : kP6AggregateInputBase;
         site.final_arg_len = layouts.layouts[arg_layout_id.value].size;
@@ -12303,7 +12326,7 @@ struct PlannedFn {
             }
         }
     }
-    // V2-C fix-forward: now that reachability is exact (it sees the planned
+    // capability-bridge fix-forward: now that reachability is exact (it sees the planned
     // computed-handler targets), compact the planned handlers DOWN to the
     // reachable set BEFORE any bridge-site table, import table, fn fixed point
     // or frame section is built. Previously every planned handler — including
@@ -12338,7 +12361,7 @@ struct PlannedFn {
         }
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): every REACHABLE planned
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): every REACHABLE planned
     // bridge call site contributes its capability import and survives into the
     // dense call-site table; a call planned in a handler reachability proved
     // dead is filtered out and the surviving sites are renumbered to a dense
@@ -12347,7 +12370,7 @@ struct PlannedFn {
     // retained id is REQUIRED to resolve within the dense table — an emitted
     // bridge statement must never index sites() out of bounds.
     //
-    // V2-D emission half 2: a relocated WORKFLOW build shares one dense
+    // workflow-frame emission half 2: a relocated WORKFLOW build shares one dense
     // registry across every packaged runner. Its sites are compacted as a
     // contiguous per-runner tail onto GLOBAL dense ids (the prior runners'
     // sites keep theirs), the per-runner remap is forwarded to this build's
@@ -12511,7 +12534,7 @@ struct PlannedFn {
         }
     }
 
-    // V2-D emission half 2: a relocated workflow build emits at the WORKFLOW
+    // workflow-frame emission half 2: a relocated workflow build emits at the WORKFLOW
     // module's global sorted-unique import ordinals (one low table shared by
     // every packaged runner), never a per-agent table. Replacing the local
     // table after the fn-import merge keeps every downstream builder
@@ -12537,13 +12560,13 @@ struct PlannedFn {
             runner_reachable_imports.end());
     }
 
-    // V2-A fail-closed gate: a computed final that ALSO reaches an OPAQUE
+    // computed-final fail-closed gate: a computed final that ALSO reaches an OPAQUE
     // capability final (or an effectful outlined fn) is the forbidden
-    // raw-P4-D/wire-JSON mix. V2-C lifts this for the FRAME BRIDGE: a
+    // raw-P4-D/wire-JSON mix. capability-bridge lifts this for the FRAME BRIDGE: a
     // computed-final agent may reach in-handler bridge capabilities, whose
     // results live in the same disjoint frame placements and are materialized
-    // through runv. The remaining opaque imports must therefore all be
-    // bridge-mode. On the V2-D workflow lane only THIS runner's reached
+    // through run_frame. The remaining opaque imports must therefore all be
+    // bridge-mode. On the workflow-frame workflow lane only THIS runner's reached
     // capabilities are tested (a later runner's site cannot legitimize or
     // incriminate an import here); a capability the runner bridges is found
     // through the per-runner site predicate.
@@ -12692,16 +12715,10 @@ struct PlannedFn {
     for (std::uint32_t slot = 0; slot < plan.closure_table.size(); ++slot) {
         fn_to_table_slot.emplace(plan.closure_table[slot].value, slot);
     }
-    std::unordered_map<std::string, std::uint32_t> entry_closure_type_index;
-    for (std::uint32_t i = 0; i < plan.closure_signatures.size(); ++i) {
-        entry_closure_type_index.emplace(
-            closure_call_type_key(plan.closure_signatures[i]), agent_closure_type_base + i);
-    }
-
-    // V2-B: every reachable entry-handler String literal has been interned;
+    // string-frame: every reachable entry-handler String literal has been interned;
     // freeze the deterministic pool (byte-sorted, 8-aligned) before any body is
     // emitted so PtrLen immediates read stable offsets. The frozen image moves
-    // onto the plan for the Data(11) section emitter. A V2-D relocated build
+    // onto the plan for the Data(11) section emitter. A workflow-frame relocated build
     // shares the workflow module's PRE-FROZEN pool, so it neither refreezes nor
     // owns the image.
     const bool owns_rodata_pool = policy.shared_rodata_pool == nullptr;
@@ -12723,7 +12740,7 @@ struct PlannedFn {
         }
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): a module that projects
+    // RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): a module that projects
     // the raw P4-D input frame, materializes a computed final, OR carries an
     // in-handler capability bridge is a P6-frame module. Build its physical
     // section plan HERE (after the import table and the reachable bridge sites
@@ -12732,13 +12749,11 @@ struct PlannedFn {
     // RFC 0026 dual-track elimination: every agent builds a frame section.
     // The WireJson lane is gone, so there is no sectionless fallback — a
     // missing boundary or wire-representability failure is a hard error.
-    const bool needs_frame_section = true;
-    const bool frame_section_required = true;
-    // V2-D: a packaged agent keeps the same per-handler subset gates but the
+    // workflow-frame: a packaged agent keeps the same per-handler subset gates but the
     // WORKFLOW packager builds the module-level core-layout section; the agent
     // plan itself must not carry one.
     const bool build_agent_frame_section = !policy.skip_frame_section;
-    if (needs_frame_section && build_agent_frame_section) {
+    if (build_agent_frame_section) {
         const CoreAgentDecl &agent_decl = program.agents[target.value];
         auto candidate_boundary = [&]()
             -> std::optional<std::pair<ir::core::CoreValueTypeId,
@@ -12751,16 +12766,14 @@ struct PlannedFn {
             return std::pair{*input_vt, *output_vt};
         }();
         if (!candidate_boundary.has_value()) {
-            if (frame_section_required) {
-                add_diag(result, core_wasm_diag::kInvalidLayout,
-                         "a P6-frame agent boundary nominal has no finalized argument-less value "
-                         "type");
-                return std::nullopt;
-            }
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame agent boundary nominal has no finalized argument-less value "
+                     "type");
+            return std::nullopt;
         } else {
             // The wire projection covers BOTH the capability imports and the
             // agent boundary roots, in one table, so the bridge argument/result
-            // roots and the runv pack/encode roots share a single verified
+            // roots and the run_frame pack/encode roots share a single verified
             // schema.
             auto projection = ir::core::project_core_wire_schema(
                 program, plan.imports, candidate_boundary);
@@ -12768,7 +12781,6 @@ struct PlannedFn {
                                  projection.table->frame_roots.has_value();
             bool physical_ok = false;
             std::optional<FrameSectionPlan> frame_section;
-            const std::size_t planner_diags_before = result.diagnostics.size();
             if (projection_ok) {
                 frame_section = build_frame_section_plan(
                     program, layouts, agent_decl, plan.rodata_extent,
@@ -12840,7 +12852,7 @@ struct PlannedFn {
                 // The rodata pool itself moves onto the plan only AFTER every
                 // handler body has been emitted below (the builders hold a
                 // non-owning pointer to it).
-            } else if (frame_section_required) {
+            } else {
                 // Surface the real diagnostic when the wire projection, the
                 // physical planner, or the admission-side bridge-site verifier
                 // added one; otherwise give the explicit frame rejection.
@@ -12857,35 +12869,10 @@ struct PlannedFn {
                              core_wasm_diag::kUnsupportedCapabilityFrame,
                              "a P6-frame computed-final or capability-bridge agent is not "
                              "representable on the P6-7 frame lane (its boundary or capability "
-                             "ABI must project to the v1 wire-schema frame roots)");
+                             "ABI must project to the current wire-schema frame roots)");
                 }
                 return std::nullopt;
-            } else {
-                // A raw-projecting-only agent (frame section not required)
-                // normally keeps the legacy sectionless fallback when its
-                // boundary does not project. But a HARD planner failure
-                // (RESOURCE_EXHAUSTED: the fixed 64 KiB page genuinely cannot
-                // hold the backing geometry) must NEVER downgrade to that
-                // fallback — the whole point of the section is page
-                // accounting, and emitting a sectionless module would hide a
-                // real resource ceiling. Only an expressibility rejection
-                // (unsupported-orchestration / unsupported-frame) is a soft
-                // skip to the legacy lane.
-                bool hard_planner_failure = false;
-                for (std::size_t i = planner_diags_before;
-                     i < result.diagnostics.size(); ++i) {
-                    if (result.diagnostics[i].code ==
-                        core_wasm_diag::kResourceExhausted) {
-                        hard_planner_failure = true;
-                        break;
-                    }
-                }
-                if (hard_planner_failure) {
-                    return std::nullopt;
-                }
             }
-            // A raw-projecting-only agent with an unprojectable boundary keeps
-            // the legacy sectionless fallback: no frame plan is attached.
         }
     }
 
@@ -12902,7 +12889,8 @@ struct PlannedFn {
     // control blocks and spill windows; on the workflow lane fn-body bridge
     // calls were rejected at plan time (fn_bridge_registry == nullptr), so
     // the emitted bodies carry no bridge reads.
-    if (!emit_reachable_fn_bodies(program,
+    if (policy.wf_fn_placement == nullptr &&
+        !emit_reachable_fn_bodies(program,
                                   planned_fns,
                                   agent_fn_base,
                                   plan.closure_table,
@@ -12926,18 +12914,22 @@ struct PlannedFn {
         std::vector<CoreStateId> targets = planned.targets;
         std::unique_ptr<P6ComputationHandlerBuilder> builder = std::move(planned.builder);
         builder->set_fn_call_tables(&instance_to_ordinal, handler_fn_base);
-        builder->install_closure_tables(fn_to_table_slot, entry_closure_type_index);
-        // V2-C: a frame handler's bridge call emits the ahfl_cap import at its
+        builder->install_closure_tables(fn_to_table_slot, plan.closure_signatures,
+                                        agent_closure_type_base);
+        if (policy.wf_fn_placement != nullptr) {
+            builder->install_fn_placement(*policy.wf_fn_placement);
+        }
+        // capability-bridge: a frame handler's bridge call emits the ahfl_cap import at its
         // sorted-table ordinal; fn handlers already receive this in the
         // reachable-fn driver.
         builder->install_import_table(&plan.imports);
-        // V2-D: relocate this handler's fixed frame regions and state globals
+        // workflow-frame: relocate this handler's fixed frame regions and state globals
         // onto a P6 node's node-frame block inside the workflow
         // module (no-op on the direct-agent lane).
         if (policy.frame_relocation != nullptr) {
             builder->install_frame_relocation(*policy.frame_relocation);
         }
-        if (plan.construct_heap_enabled) {
+        if (plan.construct_heap_enabled && policy.wf_fn_placement == nullptr) {
             builder->reset_construct_heap_on_entry(plan.construct_heap_base);
         }
         auto body = builder->emit({});
@@ -12947,7 +12939,7 @@ struct PlannedFn {
         // reads_raw_input_frame_ is latched during EMIT (an input-frame
         // projection emits a fixed-region load), so read it after emit().
         const bool reads_raw = builder->reads_raw_input_frame();
-        // V2-D: the workflow packager sizes the per-node scratch node block
+        // workflow-frame: the workflow packager sizes the per-node scratch node block
         // from the maximum construct-scratch high-water across handlers.
         plan.p6_scratch_high =
             std::max(plan.p6_scratch_high, builder->scratch_high_water());
@@ -12955,7 +12947,7 @@ struct PlannedFn {
         if (is_final_return) {
             // RFC 0026 dual-track elimination: a construct-capability terminal
             // already has its CapabilityAction set (is_construct=true). Install
-            // the construct handler's function ordinal so runv() can call it
+            // the construct handler's function ordinal so run_frame() can call it
             // before the bridge import.
             const auto terminal_it =
                 std::find_if(plan.construct_capability_terminals.begin(),
@@ -12965,7 +12957,7 @@ struct PlannedFn {
                 auto &cap = std::get<CapabilityAction>(plan.actions[state]);
                 cap.construct_function = index;
             } else {
-                // V2-A: the handler materialized the output frame; runv invokes it
+                // computed-final: the handler materialized the output frame; run_frame invokes it
                 // directly and returns the output base. It never goto-branches.
                 plan.actions[state] = ComputedReturnAction{index};
                 plan.has_computed_final = true;
@@ -12978,8 +12970,8 @@ struct PlannedFn {
             plan.reads_raw_input_frame = true;
         }
     }
-    // V2-B: move the frozen pool onto the plan only after the last handler
-    // body was emitted (the builders hold non-owning pointers into it). A V2-D
+    // string-frame: move the frozen pool onto the plan only after the last handler
+    // body was emitted (the builders hold non-owning pointers into it). A workflow-frame
     // relocated build shares the workflow module pool and leaves it in place.
     if (owns_rodata_pool && plan.rodata_extent != 0) {
         plan.rodata = std::move(rodata_pool);
@@ -13115,7 +13107,7 @@ validate_workflow_region(const CoreProgram &program,
             if (!path.projection.empty()) {
                 add_diag(result,
                          core_wasm_diag::kUnsupportedWorkflowFrame,
-                         "a projected workflow-input field is outside the P6-7 V2-D frame subset");
+                         "a projected workflow-input field is outside the P6-7 workflow-frame frame subset");
                 return std::nullopt;
             }
             if (path.root_type != workflow.input_type) {
@@ -13324,7 +13316,7 @@ validate_workflow_region(const CoreProgram &program,
     const CoreExpr &yield_expr = workflow.storage.exprs[yield_let.expr.value];
     if (const auto *path = std::get_if<CorePathExpr>(&yield_expr.node)) {
         // A bare path in a single-let region is the exact opaque forwarding
-        // shape; a projected path is a P4-D region the V2-D scheduler
+        // shape; a projected path is a P4-D region the workflow-frame scheduler
         // materializes.
         if (path->projection.empty() && lets.size() == 1) {
             auto source =
@@ -13343,7 +13335,7 @@ validate_workflow_region(const CoreProgram &program,
         plan.source = *source;
     }
     // A projected path, a flat construct or a multi-let region is a P4-D frame
-    // the in-module scheduler constructs word-by-word (V2-D).
+    // the in-module scheduler constructs word-by-word (workflow-frame).
     plan.constructed = true;
     return plan;
 }
@@ -13351,7 +13343,7 @@ validate_workflow_region(const CoreProgram &program,
 [[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
                                                                  CoreInstanceId instance);
 
-// V2-D fix-forward: whether one layout edge is an aggregate the runtime
+// workflow-frame fix-forward: whether one layout edge is an aggregate the runtime
 // represents as a CHILD ADDRESS in the module's pointer-tree form (a struct or
 // a payload-bearing enum). A tag-only enum is physically one inline
 // discriminant word and a container is its two-word inline header, so neither
@@ -13401,7 +13393,7 @@ validate_workflow_region(const CoreProgram &program,
     return false;
 }
 
-// V2-D fix-forward: true when materializing `path` off an INLINE P4-D source
+// workflow-frame fix-forward: true when materializing `path` off an INLINE P4-D source
 // frame (the host-packed workflow Input or a node's inline O_k block) would
 // emit a child-address load against inline bytes. The scheduler materializer
 // (latch_path_slot + copy_aggregate) speaks the module POINTER-TREE form:
@@ -13463,9 +13455,9 @@ validate_workflow_region(const CoreProgram &program,
     return std::nullopt;
 }
 
-// V2-D D6: the compile-time single-page capacity family for a workflow that
+// workflow-frame D6: the compile-time single-page capacity family for a workflow that
 // contains at least one P6-frame node. Every extent is a compile-time constant;
-// nothing here is runtime-growable. Layout order (frame-bridge v2 design
+// nothing here is runtime-growable. Layout order (frame bridge design
 // section 6.1), cursor starting just above the (capability-workflow-only)
 // node-event region:
 //
@@ -13786,7 +13778,7 @@ validate_workflow_region(const CoreProgram &program,
     plan.wf_output_base = static_cast<std::uint32_t>(cursor);
     cursor += align8(*wf_output_size);
 
-    // (5c) V2-D emission half 2: state-entry trace ring. One 8-byte record per
+    // (5c) workflow-frame emission half 2: state-entry trace ring. One 8-byte record per
     // declared state of every P6 node's packaged agent is the conservative
     // maximum (a deterministic single run enters each state at most once); the
     // first 8 bytes hold the record count header. WH-5c.2: each P6 node owns
@@ -14175,7 +14167,7 @@ build_workflow_plan(const CoreProgram &program,
         std::unique(plan.packaged_instances.begin(), plan.packaged_instances.end()),
         plan.packaged_instances.end());
 
-    // V2-D: first validate every node input region and the return region with
+    // workflow-frame: first validate every node input region and the return region with
     // the layout-aware region gate (exact bare forwarding vs a projected /
     // constructed P4-D region). These facts decide which nodes run on the P6
     // frame lane and what the scheduler must materialize before each runner.
@@ -14262,7 +14254,7 @@ build_workflow_plan(const CoreProgram &program,
         }
     }
 
-    // V2-D RETURN: the scheduler rewrites the host-packed INLINE entry frame
+    // workflow-frame RETURN: the scheduler rewrites the host-packed INLINE entry frame
     // into module POINTER-TREE form before ONE runner executes: the runner of
     // the FIRST scheduled node, and only when that node's input region is the
     // bare host-packed forward (!constructed, sourced from the workflow
@@ -14306,7 +14298,7 @@ build_workflow_plan(const CoreProgram &program,
         return true;
     };
 
-    // V2-D: build every packaged agent plan in FACT-GATHERING mode (agent-lane
+    // workflow-frame: build every packaged agent plan in FACT-GATHERING mode (agent-lane
     // coordinates, no agent frame section). This proves the SAME per-handler
     // gates the direct agent passes and reveals computed finals, bridge sites,
     // rodata extent, scratch high-water and imports. A second, relocated build
@@ -14329,14 +14321,14 @@ build_workflow_plan(const CoreProgram &program,
                 AgentPlanPolicy{.unsupported_code =
                                     core_wasm_diag::kUnsupportedWorkflowFrame,
                                 .allow_capability = true,
-                                // V2-D: a packaged agent passes the SAME
+                                // workflow-frame: a packaged agent passes the SAME
                                 // per-handler region/SSA/safety gates a
                                 // standalone agent passes (computed finals,
                                 // match arenas, ordered bridge calls).
                                 .allow_computed_goto = true,
                                 .allow_bridge = true,
                                 .slice = "E3",
-                                // V2-D RETURN: only the runner whose bare
+                                // workflow-frame RETURN: only the runner whose bare
                                 // host-packed entry frame the scheduler
                                 // normalizes in place may project through an
                                 // aggregate of its INPUT frame; every other
@@ -14363,7 +14355,7 @@ build_workflow_plan(const CoreProgram &program,
                 gathered[runner].bridge_spill_extent +=
                     static_cast<std::uint32_t>((std::uint64_t{site.spill_bytes} + 7u) &
                                                ~std::uint64_t{7u});
-                // P6-7 V2-D fix-forward: every planned bridge result must own a
+                // P6-7 workflow-frame fix-forward: every planned bridge result must own a
                 // finalized value layout. With skip_frame_section=true the
                 // agent-lane physical planner that otherwise proves this does
                 // not run, so an out-of-range value type / layout id must fail
@@ -14477,7 +14469,7 @@ build_workflow_plan(const CoreProgram &program,
     // agent builds the capability argument in-module and whose capability the
     // runner invokes via the bridge (the construct frame is the argument).
     // Its O_k holds the construct result.
-    // V2-D fix-forward: the scheduler materializer copies every P6 node's I_k
+    // workflow-frame fix-forward: the scheduler materializer copies every P6 node's I_k
     // and the workflow output frame from INLINE sources (the host-packed
     // workflow Input and every upstream node's inline O_k block) using
     // pointer-tree child dereferences. Only the single bare host-packed ENTRY
@@ -14526,25 +14518,24 @@ build_workflow_plan(const CoreProgram &program,
     // family over the node-frame blocks, the merged bridge control page frame,
     // the merged rodata image, the host-packed entry arena and the per-call-site
     // result placements. The workflow MODULE packaging (relocated handler
-    // emission, computed runners, in-module scheduler sequences, the v2
-    // core-layout section and the descriptor fields) is the following V2-D
-    // codegen slice; until it lands a workflow that actually needs the P6 node
-    // lane is rejected here with a precise diagnostic.
+    // emission, computed runners, in-module scheduler sequences, the
+    // core-layout section and the descriptor fields) uses this capacity plan.
+    // Reject an unsupported node-frame geometry before emitting module bytes.
     if (!plan.p6_nodes.empty() &&
         !plan_workflow_p6_capacity_family(program, layouts, workflow, plan, gathered, result)) {
         return std::nullopt;
     }
     if (!plan.p6_nodes.empty()) {
-        // V2-D emission half 1: a p6 runner whose ONLY computed content is a
+        // workflow-frame emission half 1: a p6 runner whose ONLY computed content is a
         // COMPUTED FINAL (with projected/constructed node inputs and a
         // projected/constructed workflow return materialized by the in-module
-        // scheduler) is emitted by encode_workflow_module. The remaining V2-D
+        // scheduler) is emitted by encode_workflow_module. The remaining workflow-frame
         // handler families still fail closed with a precise diagnostic:
         //   * a non-final computed-goto preamble (the relocated handler-loop
         //     computed runner with state threading);
         //   * an in-handler capability bridge (the workflow module's bridge
         //     functype, control blocks and host callback lane).
-        // V2-D emission half 2: one shared dense bridge registry spans every
+        // workflow-frame emission half 2: one shared dense bridge registry spans every
         // packaged runner; a runner's sites compact as a contiguous per-runner
         // tail onto GLOBAL dense ids (block_offset = global_id * block_stride),
         // and the per-runner spill window begins at bridge_spill_base plus the
@@ -14557,7 +14548,7 @@ build_workflow_plan(const CoreProgram &program,
         // conservative per-runner bound; the section records the tight extents.
         std::uint32_t actual_spill_cursor = plan.bridge_spill_base;
 
-        // V2-D emission half 1: second, relocated build of every packaged P6
+        // workflow-frame emission half 1: second, relocated build of every packaged P6
         // runner's agent plan. The builders emit onto the instance's node block
         // and into the shared, merged rodata pool; the opaque runner path still
         // consumes the static GotoAction walk (the relocated handlers are
@@ -14586,6 +14577,112 @@ build_workflow_plan(const CoreProgram &program,
             plan.workflow_rodata_extent = merged_rodata.extent();
         }
         plan.workflow_rodata = std::move(merged_rodata);
+
+        // Seal one function registry for the final workflow module before any
+        // relocated handler emits a call. The existing reachability planner
+        // follows direct calls and closure targets recursively and orders the
+        // unique bodies by numeric CoreFnId.
+        std::vector<const CoreBodyStorage *> entry_storages;
+        std::vector<std::vector<CoreInstanceId>> entry_callees;
+        std::uint32_t total_handlers = 0;
+        std::uint64_t workflow_heap_budget = 0;
+        for (const CoreWorkflowNodeId node_id : plan.p6_nodes) {
+            const auto runner = workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
+            if (!runner.has_value()) {
+                return std::nullopt;
+            }
+            const AgentPlan &fact = plan.agent_plans[*runner];
+            const auto *flow = unique_target_flow(program, fact.agent);
+            if (flow == nullptr) {
+                return std::nullopt;
+            }
+            entry_storages.push_back(&flow->storage);
+            auto &callees = entry_callees.emplace_back();
+            for (const CompiledFn &fn : fact.fns) {
+                callees.push_back(program.fns[fn.id.value].instance);
+            }
+            total_handlers += static_cast<std::uint32_t>(fact.handlers.size());
+            workflow_heap_budget += fact.construct_heap_budget;
+        }
+        std::vector<PlannedFn> workflow_fns;
+        bool heap_enabled = false;
+        std::uint32_t heap_base = 0;
+        std::uint64_t heap_budget = 0;
+        std::uint32_t entry_env_bytes = 0;
+        if (!plan_reachable_fn_bodies(program, layouts, workflow_fns, entry_storages,
+                                      entry_callees, {}, 0, result, heap_enabled,
+                                      heap_base, heap_budget,
+                                      plan.fn_placement.closure_table,
+                                      plan.fn_placement.closure_signatures,
+                                      entry_env_bytes, std::nullopt, &plan.imports)) {
+            return std::nullopt;
+        }
+        // Handler closure facts were already validated by their agent plans.
+        // Merge them with the outlined-body facts into the module's single
+        // funcref table and call_indirect type registry.
+        for (const AgentPlan &fact : plan.agent_plans) {
+            for (const CoreFnId target : fact.closure_table) {
+                plan.fn_placement.closure_table.push_back(target);
+            }
+            for (const ClosureCallType &signature : fact.closure_signatures) {
+                const bool present = std::ranges::find(plan.fn_placement.closure_signatures,
+                                                        signature) !=
+                                     plan.fn_placement.closure_signatures.end();
+                if (!present) {
+                    plan.fn_placement.closure_signatures.push_back(signature);
+                }
+            }
+        }
+        auto &closure_table = plan.fn_placement.closure_table;
+        std::ranges::sort(closure_table, {}, &CoreFnId::value);
+        closure_table.erase(std::unique(closure_table.begin(), closure_table.end()),
+                            closure_table.end());
+        for (std::uint32_t slot = 0; slot < closure_table.size(); ++slot) {
+            plan.fn_placement.fn_to_table_slot.emplace(closure_table[slot].value, slot);
+        }
+        const bool has_bridge = std::ranges::any_of(plan.agent_plans,
+            [](const AgentPlan &fact) { return !fact.bridge_calls.empty(); });
+        plan.fn_placement.type_base = 6u + (has_bridge ? 1u : 0u);
+        const WorkflowFunctionTable functions{
+            static_cast<std::uint32_t>(plan.imports.size()),
+            static_cast<std::uint32_t>(plan.p6_nodes.size()), total_handlers,
+            static_cast<std::uint32_t>(workflow_fns.size())};
+        plan.fn_placement.function_base = functions.fn(0);
+        plan.fn_placement.fn_count = functions.fn_count;
+        plan.fn_placement.instance_to_ordinal.assign(
+            program.instances.size(), std::numeric_limits<std::uint32_t>::max());
+        for (std::uint32_t ordinal = 0; ordinal < workflow_fns.size(); ++ordinal) {
+            const CoreFnId fn = workflow_fns[ordinal].id;
+            plan.fn_placement.instance_to_ordinal[program.fns[fn.value].instance.value] = ordinal;
+        }
+        // The heap lives for the whole workflow invocation: later nodes must
+        // not reset it over values returned by earlier native calls. Its base
+        // clears every workflow frame, backing, trace and bridge allocation.
+        plan.construct_heap_enabled = heap_enabled;
+        for (const AgentPlan &fact : plan.agent_plans) {
+            if (fact.construct_heap_enabled) {
+                plan.construct_heap_enabled = true;
+                plan.wf_heap_base = std::max(plan.wf_heap_base, fact.construct_heap_base);
+            }
+        }
+        if (plan.construct_heap_enabled) {
+            plan.wf_heap_base = std::max(plan.wf_heap_base, heap_base);
+        }
+        const auto capacity = ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
+        workflow_heap_budget = std::max(workflow_heap_budget, heap_budget);
+        if (plan.wf_heap_base > capacity || workflow_heap_budget > capacity - plan.wf_heap_base) {
+            add_diag(result, core_wasm_diag::kResourceExhausted,
+                     "workflow native-function allocations exceed the fixed linear-memory page");
+            return std::nullopt;
+        }
+        if (!emit_reachable_fn_bodies(program, workflow_fns,
+                                      plan.fn_placement.function_base,
+                                      plan.fn_placement.closure_table,
+                                      plan.fn_placement.closure_signatures,
+                                      &plan.imports, result, plan.fns,
+                                      &plan.fn_placement)) {
+            return std::nullopt;
+        }
 
         // WH-5c.2 (GAP 1, Approach B): relocated_handlers is P6-NODE-dense
         // (parallel to p6_nodes / node_blocks). Every P6 node gets its own
@@ -14630,7 +14727,7 @@ build_workflow_plan(const CoreProgram &program,
             // private current_state per P6 NODE (p6-dense ordinal), so a reused
             // instance's nodes do not alias each other's state.
             relocation.current_state_global =
-                (plan.imports.empty() ? 5u : 6u) + p6;
+                (plan.imports.empty() ? 4u : 5u) + p6;
             relocation.transition_count_global = kWorkflowGlobalTransitionCount;
             relocation.heap_next_global = kWorkflowGlobalHeapNext;
             // WH-5c.2: the normalized-entry-frame admit is per NODE, not per
@@ -14657,7 +14754,8 @@ build_workflow_plan(const CoreProgram &program,
                                .wf_runner_spill_base = runner_spill_base,
                                .wf_control_base = plan.bridge_control_base,
                                .wf_block_stride = plan.bridge_block_stride,
-                               .wf_imports = &plan.imports});
+                               .wf_imports = &plan.imports,
+                               .wf_fn_placement = &plan.fn_placement});
             if (!relocated.has_value()) {
                 return std::nullopt;
             }
@@ -14724,7 +14822,7 @@ build_workflow_plan(const CoreProgram &program,
     return plan;
 }
 
-// V2-D: build the workflow module's core-layout section and its boundary wire
+// workflow-frame: build the workflow module's core-layout section and its boundary wire
 // schema. The dense layout table is the union of the workflow entry nominal,
 // every packaged node's input/context/output boundary and the workflow output
 // nominal, emitted through one BoundaryTableBuilder (two fixed slots that share
@@ -14844,7 +14942,7 @@ build_workflow_plan(const CoreProgram &program,
     if (!projection.ok() || !projection.table->frame_roots.has_value()) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "a P6 workflow boundary is not wire-transportable on the V2-D frame lane");
+                 "a P6 workflow boundary is not wire-transportable on the workflow-frame frame lane");
         return false;
     }
 
@@ -14932,7 +15030,7 @@ build_workflow_plan(const CoreProgram &program,
     std::vector<ir::core::CoreFrameBackingPlacement> wf_placements =
         std::move(wf_assigned->placements);
 
-    // V2-D emission half 2: plan the merged capability bridge page frame's
+    // workflow-frame emission half 2: plan the merged capability bridge page frame's
     // dense records and the disjoint per-call-site result placements + payload
     // arenas. The sites are grouped per runner (global dense call_site_id
     // order); each runner's results occupy the exact conservative window the
@@ -15163,7 +15261,7 @@ build_workflow_plan(const CoreProgram &program,
     }
 
     ir::core::CoreFrameLayoutSection section;
-    section.format_version = 5;
+    section.construct_heap_base = plan.construct_heap_enabled ? plan.wf_heap_base : 0u;
     section.table = builder.table_ref();
     section.placements = std::move(wf_placements);
     section.input_layout = ir::core::CoreLayoutId{ir::core::CoreLayoutId::kInvalid};
@@ -15324,52 +15422,48 @@ append_export(ByteBuffer &section, std::string_view name, std::uint8_t kind, std
     return true;
 }
 
-[[nodiscard]] ByteBuffer make_alloc_body(std::uint32_t heap_global = kGlobalHeapNext) {
-    ByteBuffer body;
-    body.u32(1);
-    body.u32(1);
-    body.byte(kI32);
-    append_indexed_op(body, kOpGlobalGet, heap_global);
-    append_indexed_op(body, kOpLocalSet, 1);
-    append_indexed_op(body, kOpGlobalGet, heap_global);
-    append_indexed_op(body, kOpLocalGet, 0);
-    body.byte(kOpI32Add);
-    append_indexed_op(body, kOpGlobalSet, heap_global);
-    append_indexed_op(body, kOpLocalGet, 1);
-    body.byte(kOpEnd);
-    return body;
-}
-// RFC 0026 E4-B2-C: capability-workflow-private checked bump allocator. Keeps the
-// existing (i32)->i32 signature. Computes new = heap_next + len; if new exceeds
-// the fixed 64 KiB page (65536), returns the reserved null pointer 0 WITHOUT
-// advancing heap_next. Otherwise advances and returns the old heap_next. The
-// shared unchecked make_alloc_body used by E1/E2/E3 is left untouched.
-[[nodiscard]] ByteBuffer make_checked_alloc_body(std::uint32_t heap_global) {
+// Exported alloc keeps its (i32)->i32 ABI: return the original cursor and
+// advance by an eight-byte-aligned extent. Capability workflows report OOM as
+// null without mutation; other lanes trap. Validate unsigned words before any
+// addition, then validate the end before rounding (the page is eight-aligned).
+[[nodiscard]] ByteBuffer make_alloc_body(std::uint32_t heap_global = kGlobalHeapNext,
+                                        bool return_null_on_failure = false) {
     ByteBuffer body;
     body.u32(1);
     body.u32(2);
-    body.byte(kI32); // locals 1 = old heap_next, 2 = new heap_next
+    body.byte(kI32); // locals 1 = old heap_next, 2 = end heap_next
+    const auto fail_if = [&] {
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        if (return_null_on_failure) {
+            append_const(body, 0);
+            body.byte(kOpReturn);
+        } else {
+            body.byte(kOpUnreachable);
+        }
+        body.byte(kOpEnd);
+    };
     append_indexed_op(body, kOpGlobalGet, heap_global);
     append_indexed_op(body, kOpLocalSet, 1);
+    for (const std::uint32_t local : {0u, 1u}) {
+        append_indexed_op(body, kOpLocalGet, local);
+        append_const(body, kCoreWasmFixedLinearMemoryCapacityBytes);
+        body.byte(kOpI32GtU);
+        fail_if();
+    }
     append_indexed_op(body, kOpLocalGet, 1);
     append_indexed_op(body, kOpLocalGet, 0);
     body.byte(kOpI32Add);
-    append_indexed_op(body, kOpLocalSet, 2);
-    // Capacity check: new > fixed single-page capacity OR new < old (wrap) ->
-    // return 0, no advance.
-    append_indexed_op(body, kOpLocalGet, 2);
+    append_indexed_op(body, kOpLocalTee, 2);
     append_const(body, kCoreWasmFixedLinearMemoryCapacityBytes);
     body.byte(kOpI32GtU);
+    fail_if();
     append_indexed_op(body, kOpLocalGet, 2);
-    append_indexed_op(body, kOpLocalGet, 1);
-    body.byte(kOpI32LtU);
-    body.byte(kOpI32Or);
-    body.byte(kOpIf);
-    body.byte(kEmptyBlock);
-    append_const(body, 0);
-    body.byte(kOpReturn);
-    body.byte(kOpEnd);
-    append_indexed_op(body, kOpLocalGet, 2);
+    append_const(body, 7);
+    body.byte(kOpI32Add);
+    body.byte(kOpI32Const);
+    body.s32(-8);
+    body.byte(kOpI32And);
     append_indexed_op(body, kOpGlobalSet, heap_global);
     append_indexed_op(body, kOpLocalGet, 1);
     body.byte(kOpEnd);
@@ -15479,29 +15573,6 @@ void append_run_to_final(ByteBuffer &body,
     body.byte(kOpEnd);
 }
 
-[[nodiscard]] bool has_capability_action(const AgentPlan &plan) {
-    return !plan.imports.empty();
-}
-
-[[nodiscard]] ByteBuffer make_run_body(const AgentPlan &plan, const FunctionTable &functions) {
-    ByteBuffer body;
-    if (has_capability_action(plan)) {
-        // The pointer-only v1 ABI cannot represent status or length. Trap before
-        // state mutation, input inspection, or any effect instead of discarding them.
-        body.u32(0);
-        body.byte(kOpUnreachable);
-        body.byte(kOpEnd);
-        return body;
-    }
-    body.u32(1);
-    body.u32(1);
-    body.byte(kI32); // local 2 = fuel
-    append_run_to_final(body, plan, functions, 2);
-    append_indexed_op(body, kOpLocalGet, 0);
-    body.byte(kOpEnd);
-    return body;
-}
-
 void append_error_return(ByteBuffer &body) {
     append_const(body, AHFL_CAP_ERROR);
     append_const(body, 0);
@@ -15521,9 +15592,9 @@ void append_error_return(ByteBuffer &body) {
     return static_cast<std::uint32_t>(it - plan.imports.begin());
 }
 
-// RFC 0026 P6-7 D3 + frame-bridge v2 rung V2-A + dual-track elimination:
-// runv() -> (status:i32, value_ptr:i32). It drives the same deterministic
-// state walk run2 performs, then switches on the reached final:
+// RFC 0026 P6-7 D3 + frame bridge rung computed-final + dual-track elimination:
+// run_frame() -> (status:i32, value_ptr:i32). It drives the same deterministic
+// state walk run_workflow performs, then switches on the reached final:
 //   * an IDENTITY final returns (OK, kP6AggregateInputBase) — the borrowed
 //     input frame, no copy;
 //   * a COMPUTED final invokes its materializing handler and returns
@@ -15531,7 +15602,7 @@ void append_error_return(ByteBuffer &body) {
 //   * a CAPABILITY final writes the bridge control block, calls the bridge
 //     import, and returns (OK, result_ptr) — the host-packed result frame.
 [[nodiscard]] std::optional<ByteBuffer>
-make_runv_body(const AgentPlan &plan, const FunctionTable &functions) {
+make_run_frame_body(const AgentPlan &plan, const FunctionTable &functions) {
     ByteBuffer body;
     body.u32(1);
     body.u32(3);
@@ -15696,8 +15767,8 @@ encode_module(const CoreProgram &program,
 
     ByteBuffer types;
     // Type table: 4 fixed ABI types, then per-fn types, closure call types,
-    // runv type, and optionally the bridge type. The old type 4
-    // (i32,i32)->(i32,i32,i32) was the run2/opaque-capability tuple, deleted
+    // run_frame type, and optionally the bridge type. The old type 4
+    // (i32,i32)->(i32,i32,i32) was the run_workflow/opaque-capability tuple, deleted
     // with the WireJson lane.
     types.u32(4 + static_cast<std::uint32_t>(plan.fns.size()) +
                   static_cast<std::uint32_t>(plan.closure_signatures.size()) +
@@ -15706,13 +15777,13 @@ encode_module(const CoreProgram &program,
     append_func_type(types, {kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {});
     append_func_type(types, {kI32, kI32}, {kI32});
-    // RFC 0026 P6-7 D3: the runv functype index follows every fixed, per-fn,
-    // and closure type. The V2-C bridge functype is appended after runv (it is
+    // RFC 0026 P6-7 D3: the run_frame functype index follows every fixed, per-fn,
+    // and closure type. The capability-bridge bridge functype is appended after run_frame (it is
     // the very last type).
-    const std::uint32_t runv_type_index =
+    const std::uint32_t run_frame_type_index =
         4u + static_cast<std::uint32_t>(plan.fns.size()) +
         static_cast<std::uint32_t>(plan.closure_signatures.size());
-    const std::uint32_t bridge_type_index = runv_type_index + 1u;
+    const std::uint32_t bridge_type_index = run_frame_type_index + 1u;
     // RFC 0026 FB-1: one functype per outlined fn, in ordinal order, appended
     // beyond the four fixed ABI types. Wasm permits structurally duplicate
     // functypes, so each fn gets its own type index (4 + ordinal) even when
@@ -15749,8 +15820,8 @@ encode_module(const CoreProgram &program,
         types.u32(1);
         types.byte(signature.result);
     }
-    // RFC 0026 P6-7 D3: runv `() -> (status:i32, value_ptr:i32)` is appended
-    // after every existing type. The V2-C bridge functype
+    // RFC 0026 P6-7 D3: run_frame `() -> (status:i32, value_ptr:i32)` is appended
+    // after every existing type. The capability-bridge bridge functype
     // `(i32)->(i32,i32)` follows as the very LAST type (one mode per capability
     // field; an old host that meets the unknown functype fails closed).
     append_func_type(types, {}, {kI32, kI32});
@@ -15786,7 +15857,6 @@ encode_module(const CoreProgram &program,
     functions_section.u32(kTypeNoArgsI32);
     functions_section.u32(kTypeNoArgsI32);
     functions_section.u32(kTypeNoArgsI32);
-    functions_section.u32(kTypeTwoI32ToI32);
     // RFC 0026 P6-2: each compiled handler is a `() -> i32` function (same type
     // as alloc/current_state/is_final). Absent handlers contribute no entry.
     for (std::uint32_t index = 0; index < plan.handlers.size(); ++index) {
@@ -15797,9 +15867,9 @@ encode_module(const CoreProgram &program,
     for (std::uint32_t index = 0; index < plan.fns.size(); ++index) {
         functions_section.u32(4u + index);
     }
-    // RFC 0026 P6-7: runv is the last defined function, using the runv
+    // RFC 0026 P6-7: run_frame is the last defined function, using the run_frame
     // functype appended after every per-fn/closure type.
-    functions_section.u32(runv_type_index);
+    functions_section.u32(run_frame_type_index);
     if (!append_section(module, kSectionFunction, functions_section)) {
         return std::nullopt;
     }
@@ -15828,16 +15898,14 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer globals;
-    globals.u32(5);
+    globals.u32(4);
     append_global(globals, true, plan.initial.value);
     append_global(globals, true, 0);
-    append_global(globals, false, 1);
     // The agent lane's bump heap starts at the identity-workflow node-event log
     // base. When the module uses per-activation outlined-fn aggregate constructs
     // (FB-1 fix-forward) it is RELOCATED above every reserved frame and the
     // bounded-collection backing high-water, and each computed handler resets it
-    // on entry; the legacy host alloc()/run() path simply begins at that higher
-    // base.
+    // on entry; exported alloc() begins at that higher base.
     append_global(globals, true,
                   plan.construct_heap_enabled ? plan.construct_heap_base
                                               : kNodeEventLogBase);
@@ -15847,20 +15915,18 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer exports;
-    exports.u32(9);
-    const std::uint32_t runv_index =
+    exports.u32(7);
+    const std::uint32_t run_frame_index =
         functions.import_count + functions.defined_count() +
         static_cast<std::uint32_t>(plan.fns.size());
     const bool exports_ok =
         append_export(exports, "memory", kExportMemory, 0) &&
         append_export(exports, "alloc", kExportFunction, functions.alloc()) &&
         append_export(exports, "dealloc", kExportFunction, functions.dealloc()) &&
-        append_export(exports, "run", kExportFunction, functions.run()) &&
         append_export(exports, "step", kExportFunction, functions.step()) &&
         append_export(exports, "current_state", kExportFunction, functions.current_state()) &&
         append_export(exports, "transition_count", kExportGlobal, kGlobalTransitionCount) &&
-        append_export(exports, "ahfl_abi_version", kExportGlobal, kGlobalAbiVersion) &&
-        append_export(exports, "runv", kExportFunction, runv_index);
+        append_export(exports, "run_frame", kExportFunction, run_frame_index);
     if (!exports_ok || !append_section(module, kSectionExport, exports)) {
         return std::nullopt;
     }
@@ -15903,9 +15969,8 @@ encode_module(const CoreProgram &program,
     const auto current = make_current_state_body();
     const auto final = make_is_final_body(plan);
     const auto step = make_step_body(plan, functions);
-    const auto run = make_run_body(plan, functions);
     if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) || !code.sized(final) ||
-        !code.sized(step) || !code.sized(run)) {
+        !code.sized(step)) {
         return std::nullopt;
     }
     // RFC 0026 P6-2: the compiled handler function bodies follow the fixed
@@ -15922,21 +15987,21 @@ encode_module(const CoreProgram &program,
             return std::nullopt;
         }
     }
-    // RFC 0026 P6-7 D3: runv is the final code entry.
-    const auto runv = make_runv_body(plan, functions);
-    if (!runv.has_value() || !code.sized(*runv)) {
+    // RFC 0026 P6-7 D3: run_frame is the final code entry.
+    const auto run_frame = make_run_frame_body(plan, functions);
+    if (!run_frame.has_value() || !code.sized(*run_frame)) {
         return std::nullopt;
     }
     if (!append_section(module, kSectionCode, code)) {
         return std::nullopt;
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): exactly ONE additive
+    // RFC 0026 P6-7 frame bridge D1 (rung string-frame): exactly ONE additive
     // active Data(11) section, in canonical position AFTER Code(10) and before
     // the EOF custom sections. Its single active segment (flags 0: memory 0,
     // active, offset i32.const kP6RodataBase; end) initializes the rodata
     // region with the frozen literal image. A module with no String literal
-    // emits no Data section and stays byte-identical to V2-A.
+    // emits no Data section and stays byte-identical to computed-final.
     if (plan.rodata_extent != 0) {
         ByteBuffer data;
         data.u32(1); // one segment
@@ -16101,7 +16166,7 @@ void append_i64_store_zero(ByteBuffer &body, std::uint32_t addr) {
 [[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
                                                                  CoreInstanceId instance);
 
-// One in-runner bridge call site as emitted in the manifest v2 per-node table.
+// One in-runner bridge call site as emitted in the manifest per-node table.
 // The ordinal is the dense per-node bridge-call ordinal (0-based, execution
 // order, aligned with the host recorder's per_node_counters_); call_site_id
 // joins to the frame section's bridge_call_sites for result placement.
@@ -16112,7 +16177,7 @@ struct ManifestBridgeSiteEntry {
     std::uint64_t source_symbol{0};
 };
 
-// RFC 0026 E4-B2-C + WH-5b.2: emit the AHFLXM execution-manifest payload v2,
+// RFC 0026 E4-B2-C + WH-5b.2: emit the AHFLXM execution-manifest payload,
 // byte-identical to the A2 decoder's canonical grammar. Private to this TU; no
 // runtime code shared. Nodes are emitted in schedule order so schedule_pos ==
 // array index.
@@ -16189,7 +16254,6 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
     ByteBuffer out;
     out.raw_span(
         std::span<const std::uint8_t>(kExecManifestMagic.data(), kExecManifestMagic.size()));
-    out.byte(kExecManifestVersion);
     out.byte(kExecManifestEntryKindWorkflow);
     out.u32(plan.workflow.value);
     out.u32(static_cast<std::uint32_t>(plan.schedule.size()));
@@ -16245,7 +16309,7 @@ encode_exec_manifest(const CoreProgram &program, const WorkflowPlan &plan) {
 
 // RFC 0026 KR6.8 WH-4 fix-forward D-C: emit the AHFLXM execution-manifest
 // payload for a capability AGENT module, byte-identical to the A2 decoder's
-// agent arm. Grammar: magic(6) + version(1) + entry_kind=1 + agent_id(4) +
+// agent arm. Grammar: magic(6) + entry_kind=1 + agent_id(4) +
 // capability_count(4) + capabilities[] { capability_id(4) + source_symbol(8)
 // }. An agent has no workflow schedule / nodes, so the manifest is a flat
 // capability list; each capability becomes one A2 call site. EVERY capability
@@ -16264,7 +16328,6 @@ encode_agent_exec_manifest(const CoreProgram &program, const AgentPlan &plan) {
     ByteBuffer out;
     out.raw_span(
         std::span<const std::uint8_t>(kExecManifestMagic.data(), kExecManifestMagic.size()));
-    out.byte(kExecManifestVersion);
     out.byte(kExecManifestEntryKindAgent);
     out.u32(plan.agent.value);
     out.u32(static_cast<std::uint32_t>(plan.imports.size()));
@@ -16344,7 +16407,7 @@ workflow_import_function_index(std::span<const CoreCapabilityId> imports,
 }
 
 
-// V2-D: the P6 tuple runner for one packaged computed node (computed-final
+// workflow-frame: the P6 tuple runner for one packaged computed node (computed-final
 // half 1; computed-goto + in-handler capability bridge half 2). Same
 // (i32,i32)->(i32,i32,i32) signature as the opaque runner (the scheduler
 // passes I_k/I_k-size and receives OK,O_k,O_k-size). It drives the packaged
@@ -16362,7 +16425,7 @@ workflow_import_function_index(std::span<const CoreCapabilityId> imports,
 //     packager routes identity terminals to the identity-copy arm), so
 //     reaching one traps. A bounded fuel ladder makes a non-terminating
 //     action graph trap instead of looping forever.
-    // V2-D emission half 2: append one (runner, state) 8-byte record to the fixed
+    // workflow-frame emission half 2: append one (runner, state) 8-byte record to the fixed
 // state-entry trace ring using the runner's one fuel local (local 2) as
 // scratch. Layout: u32 count at [base], records at [base+8+8*i]. A stored
 // count outside the record window traps (fail-closed; the record capacity was
@@ -16684,12 +16747,12 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
 }
 
 // ----------------------------------------------------------------------------
-// V2-D in-module P4-D frame materializer
+// workflow-frame in-module P4-D frame materializer
 //
 // The scheduler emits, before each packaged P6 node runner and after the whole
 // schedule, word-by-word P4-D copy sequences that build projected/constructed
 // node input frames and the workflow return frame (design §6.3). It is the
-// scheduler-side twin of the V2-A computed-final materializer:
+// scheduler-side twin of the computed-final computed-final materializer:
 //   * a scalar / tag-only-enum slot is copied width-exactly (i32 / i64);
 //   * a String PtrLen slot is copied as its two inline words, so the payload
 //     pointer is shared zero-copy (it names only rodata / the entry arena / an
@@ -16700,12 +16763,12 @@ make_workflow_p6_runner_body(const AgentPlan &agent_plan,
 //   * padding is established by a bounded zero-fill of the destination region.
 //
 // A path let is either a bare root value (the frame itself) or a projected
-// field: its source base is the workflow entry input (run2 local 0) or a
+// field: its source base is the workflow entry input (run_workflow local 0) or a
 // predecessor node's O_k block, and an aggregate field is reached through the
 // SAME i32-address dereference walk a frame handler projection uses. A
 // construct let lays its aggregate out in the scheduler's fixed construct
 // scratch region. The materializer keeps one address-stack local per aggregate
-// nesting depth (the caller reserves them in run2's local pool).
+// nesting depth (the caller reserves them in run_workflow's local pool).
 // ----------------------------------------------------------------------------
 
 class WorkflowFrameMaterializer {
@@ -16721,10 +16784,10 @@ class WorkflowFrameMaterializer {
           node_needs_normalize_(compute_needs_normalize_flags(
               program, layouts, plan)) {}
 
-    // Number of address locals one run2 invocation needs for this plan. The
+    // Number of address locals one run_workflow invocation needs for this plan. The
     // materializer uses one local per aggregate level (depth+1); the entry
     // normalizer uses a paired (src,dst) pair per level (2*(depth+1)). Return
-    // the larger requirement so a single reserved run2 block serves both.
+    // the larger requirement so a single reserved run_workflow block serves both.
     [[nodiscard]] static std::uint32_t
     required_locals(const CoreProgram &program,
                     const ir::core::CoreLayoutTable &layouts,
@@ -16811,7 +16874,7 @@ class WorkflowFrameMaterializer {
     }
 
     // Materialize one region into the frame at dst_base (a node I_k block or
-    // the workflow output slot). entry_ptr_local is run2's local naming the
+    // the workflow output slot). entry_ptr_local is run_workflow's local naming the
     // host-packed entry input pointer. addr_base is the first reserved
     // address-stack local; the zero-fill cursor takes addr_base-1.
     [[nodiscard]] bool emit(ByteBuffer &body,
@@ -16863,8 +16926,8 @@ class WorkflowFrameMaterializer {
         return true;
     }
 
-    // V2-D RETURN: turn the host-packed INLINE entry frame in I_k (the host
-    // packs it at run2's input pointer, which IS the entry node's I_k base)
+    // workflow-frame RETURN: turn the host-packed INLINE entry frame in I_k (the host
+    // packs it at run_workflow's input pointer, which IS the entry node's I_k base)
     // into the module POINTER-TREE form, so a packaged handler that reads an
     // aggregate field off its input frame dereferences a child address like on
     // the module's own construct path. Scalars/PtrLen/tag words stay inline in
@@ -16872,7 +16935,7 @@ class WorkflowFrameMaterializer {
     // zero-filled window in the entry-normalize scratch and the parent slot
     // stores that window's address. An enum child copies the discriminant plus
     // ONLY the active variant's payload (a run-time ladder), exactly as the
-    // V2-A materializer does. A container/Uuid/closure field fails closed.
+    // computed-final materializer does. A container/Uuid/closure field fails closed.
     //
     // The transform is IN-PLACE at the root: the host zero-fills the frame
     // regions before packing, so the root is never bulk-zeroed here (that would
@@ -17805,7 +17868,7 @@ class WorkflowFrameMaterializer {
                 }
                 continue;
             }
-            return fail("a workflow frame copy reaches a non-v1 frame field");
+            return fail("a workflow frame copy reaches a unsupported frame field");
         }
         return true;
     }
@@ -17819,7 +17882,7 @@ class WorkflowFrameMaterializer {
         emit_copy_word(false, addr_local(level), src_off, dst_base,
                        static_cast<std::uint32_t>(dst_off));
         // Copy ONLY the active variant's payload, selected at run time by the
-        // source discriminant (the same fail-closed ladder the V2-A final
+        // source discriminant (the same fail-closed ladder the computed-final final
         // materializer uses).
         for (std::uint32_t ordinal = 0;
              ordinal < tagged.variant_payload_layouts.size(); ++ordinal) {
@@ -17931,8 +17994,8 @@ void append_event_record_write(ByteBuffer &body,
     // [8..11]: schedule_pos.
     append_i32_store_const(body, record_addr + 8u, node.schedule_pos);
     // [12..15]: capability (0 for identity). For a multi-capability node the
-    // event record carries the first capability (the legacy node-event identity);
-    // the exec-manifest accounts for all of them.
+    // event record identifies the first capability; the execution manifest
+    // accounts for every capability in the node.
     append_i32_store_const(
         body, record_addr + 12u, has_cap ? node.capabilities.front().first.value : 0u);
     // [16..23]: source_symbol u64 (0 for identity). A capability source SymbolId
@@ -17962,7 +18025,7 @@ void append_event_record_write(ByteBuffer &body,
     append_i32_store_const(body, record_addr + 36u, 0u);
 }
 
-// V2-D: zero-fill one node-frame sub-span one i32 word at a time using the
+// workflow-frame: zero-fill one node-frame sub-span one i32 word at a time using the
 // caller's cursor local (the scheduler zeroes C_k before the packaged runner
 // executes, so a context field without a literal default is deterministically
 // zero and padding reads back as 0). The span size is 4-aligned by the D6
@@ -18013,7 +18076,7 @@ void append_word_zero_fill(ByteBuffer &body,
     append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalTransitionCount);
     append_const(body, 0);
     append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
-    // V2-D emission half 2: reset the state-entry trace count header (the ring
+    // workflow-frame emission half 2: reset the state-entry trace count header (the ring
     // contents are read only through the count, so no body wipe is needed).
     if (!plan.p6_nodes.empty() && plan.state_trace_capacity != 0) {
         append_i32_store_const(body, plan.state_trace_base, 0u);
@@ -18021,7 +18084,7 @@ void append_word_zero_fill(ByteBuffer &body,
 
     if (capability_workflow) {
         // Reset the node-event header: event_count = 0 and pad[4..7] = 0. The
-        // latch first-instruction gate (in run2) has already run before this.
+        // latch first-instruction gate (in run_workflow) has already run before this.
         append_i32_store_const(body, kNodeEventLogBase + 0u, 0u);
         append_i32_store_const(body, kNodeEventLogBase + 4u, 0u);
     }
@@ -18042,14 +18105,14 @@ void append_word_zero_fill(ByteBuffer &body,
         {
             const WorkflowNodeBlock &block =
                 plan.node_blocks[node.p6_block_ordinal];
-            // V2-D: every packaged runner starts from a zeroed context frame
+            // workflow-frame: every packaged runner starts from a zeroed context frame
             // (scalar defaults are zero; a String default PtrLen is not in this
             // rung, so no Data segment is materialized into C_k).
             if (block.context_size != 0) {
                 append_word_zero_fill(body, block.context_base,
                                       block.context_size, cursor_local);
             }
-            // V2-D: materialize the node's projected/constructed input frame
+            // workflow-frame: materialize the node's projected/constructed input frame
             // into its fixed I_k block, then invoke the packaged P6 runner
             // with (I_k, input_size). It walks the plain-goto chain and invokes
             // the relocated computed-final handler, returning
@@ -18058,7 +18121,7 @@ void append_word_zero_fill(ByteBuffer &body,
             // directly into I_k, so emitting the region would zero-fill the
             // host-packed bytes.
             const WorkflowRegionPlan &region = plan.node_regions[node_id.value];
-            // V2-D: the host packs the workflow entry frame directly into the
+            // workflow-frame: the host packs the workflow entry frame directly into the
             // FIRST scheduled node's I_k. A bare-forward region on that entry
             // node therefore needs no materialization (emitting it would zero
             // and self-copy the host-packed bytes). Every OTHER p6 node must be
@@ -18068,7 +18131,7 @@ void append_word_zero_fill(ByteBuffer &body,
             const bool host_packed_entry =
                 node_id == plan.schedule.front() && !region.constructed &&
                 region.source.kind == WorkflowFrameSourceKind::Input;
-            // V2-D: a node whose runner projects an aggregate field off the
+            // workflow-frame: a node whose runner projects an aggregate field off the
             // input needs I_k rewritten into module pointer-tree form
             // in-place before the runner executes. The entry node receives
             // the host-packed INLINE frame directly; every other node's I_k
@@ -18135,9 +18198,9 @@ void append_word_zero_fill(ByteBuffer &body,
             append_indexed_op(body, kOpLocalSet, *ptr_local);
             append_indexed_op(body, kOpLocalSet, status_local);
             // WH-5b.2 (design 12.14.5): a P6 bridge node's runner can suspend
-            // mid-handler on a Pending in-runner bridge call. Mirror the run2
+            // mid-handler on a Pending in-runner bridge call. Mirror the run_workflow
             // PENDING arm: only a null result_ptr is a legal suspend ->
-            // set the latch and return (PENDING,0,0) from run2. A PENDING with a
+            // set the latch and return (PENDING,0,0) from run_workflow. A PENDING with a
             // non-null ptr is malformed -> ERROR and does NOT latch. The tag-0
             // identity record is NOT written (the node did not complete), so
             // event_count stays at the node's schedule_pos.
@@ -18211,7 +18274,7 @@ void append_word_zero_fill(ByteBuffer &body,
 }
 
 [[nodiscard]] std::optional<ByteBuffer>
-make_workflow_run2_body(const CoreProgram &program,
+make_workflow_run_body(const CoreProgram &program,
                         const ir::core::CoreLayoutTable &layouts,
                         const WorkflowPlan &plan,
                         const WorkflowFunctionTable &functions,
@@ -18222,13 +18285,13 @@ make_workflow_run2_body(const CoreProgram &program,
     }
     const auto node_locals = static_cast<std::uint32_t>(plan.nodes.size()) * 2u;
     const auto status_local = 2u + node_locals;
-    // V2-D: the frame materializer needs one zero-fill cursor plus an
+    // workflow-frame: the frame materializer needs one zero-fill cursor plus an
     // address-stack local per aggregate nesting depth. They sit above the
     // scheduler's status scratch.
     const bool p6 = !plan.p6_nodes.empty();
     const std::uint32_t address_locals =
         p6 ? WorkflowFrameMaterializer::required_locals(program, layouts, plan) : 0u;
-    // The V2-D scheduler locals are contiguous above the node/status slots:
+    // The workflow-frame scheduler locals are contiguous above the node/status slots:
     // the zero-fill cursor, the entry-normalization cursor (reserved even when
     // this workflow performs no normalization, so the address-stack base never
     // aliases a different local between two workflow shapes), then the
@@ -18242,11 +18305,11 @@ make_workflow_run2_body(const CoreProgram &program,
     ByteBuffer body;
     body.u32(1);
     body.u32(node_locals + 1u + extra_locals);
-    body.byte(kI32); // node (ptr,len) pairs, status, then V2-D materializer locals
+    body.byte(kI32); // node (ptr,len) pairs, status, then workflow-frame materializer locals
 
     if (!plan.imports.empty()) {
         // L4: a suspended capability-workflow instance cannot accept another
-        // input frame. This latch check is the FIRST instruction of run2, before
+        // input frame. This latch check is the FIRST instruction of run_workflow, before
         // the schedule resets the event header or re-runs any import.
         append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalPendingLatched);
         body.byte(kOpIf);
@@ -18269,7 +18332,7 @@ make_workflow_run2_body(const CoreProgram &program,
     }
     append_const(body, AHFL_CAP_OK);
     if (p6) {
-        // V2-D: materialize the workflow return frame into the fixed workflow
+        // workflow-frame: materialize the workflow return frame into the fixed workflow
         // output slot and return it (with the declared output layout size),
         // never a borrowed node pointer.
         WorkflowFrameMaterializer materializer(program, layouts, plan, result);
@@ -18293,42 +18356,6 @@ make_workflow_run2_body(const CoreProgram &program,
     if (!append_workflow_source(body, plan.output)) {
         return std::nullopt;
     }
-    body.byte(kOpEnd);
-    return body;
-}
-
-[[nodiscard]] ByteBuffer make_workflow_run_body(const WorkflowPlan &plan,
-                                                const WorkflowFunctionTable &functions) {
-    ByteBuffer body;
-    if (!plan.imports.empty() || !plan.p6_nodes.empty()) {
-        // Legacy run is pointer-only; the v1 (ptr,len) ABI cannot carry a status,
-        // so a capability-workflow's run traps before any state mutation, input
-        // read, or capability effect (a PENDING must never leak through run).
-        // A V2-D p6 workflow's entry is a packed P4-D frame, so legacy run
-        // traps.
-        body.u32(0);
-        body.byte(kOpUnreachable);
-        body.byte(kOpEnd);
-        return body;
-    }
-    body.u32(1);
-    body.u32(3);
-    body.byte(kI32); // locals 2=status, 3=ptr, 4=len
-    append_indexed_op(body, kOpLocalGet, 0);
-    append_indexed_op(body, kOpLocalGet, 1);
-    append_indexed_op(body, kOpCall, functions.run2());
-    append_indexed_op(body, kOpLocalSet, 4);
-    append_indexed_op(body, kOpLocalSet, 3);
-    append_indexed_op(body, kOpLocalSet, 2);
-    append_indexed_op(body, kOpLocalGet, 2);
-    append_const(body, AHFL_CAP_OK);
-    body.byte(kOpI32Eq);
-    body.byte(kOpI32Eqz);
-    body.byte(kOpIf);
-    body.byte(kEmptyBlock);
-    body.byte(kOpUnreachable);
-    body.byte(kOpEnd);
-    append_indexed_op(body, kOpLocalGet, 3);
     body.byte(kOpEnd);
     return body;
 }
@@ -18423,7 +18450,7 @@ encode_workflow_module(const CoreProgram &program,
         }
     }
 
-    // V2-D: relocated handler layout. Handler functions follow run2; a P6
+    // workflow-frame: relocated handler layout. Handler functions follow run_workflow; a P6
     // node runner owns the contiguous range [handler_offset[p6], +count).
     // WH-5c.2: runner_count is the number of runner FUNCTIONS = P6 node count
     // (one unique runner per P6 node).
@@ -18438,15 +18465,16 @@ encode_workflow_module(const CoreProgram &program,
             static_cast<std::uint32_t>(plan.relocated_handlers[p6].size());
     }
 
-    const WorkflowFunctionTable functions{import_count, runner_count, total_handlers, 0u};
+    const WorkflowFunctionTable functions{import_count, runner_count, total_handlers,
+                                          static_cast<std::uint32_t>(plan.fns.size())};
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
-    // V2-D emission half 2 (RFC 0026 dual-track elimination): every capability
+    // workflow-frame emission half 2 (RFC 0026 dual-track elimination): every capability
     // import uses the bridge control-block functype (i32)->(i32,i32) at type
     // index 6 -- the opaque-terminal tuple mode was deleted with the WireJson
     // lane. Type 6 is appended only when the module actually carries a bridge
-    // site; the run2 tuple at type 4 is a defined-function functype only and
+    // site; the run_workflow tuple at type 4 is a defined-function functype only and
     // must never appear on an import (locked by wasm_workflow_cap_binary_gate.py).
     const auto workflow_import_is_bridge = [&](CoreCapabilityId id) {
         return std::any_of(plan.workflow_bridge_sites.begin(),
@@ -18459,12 +18487,22 @@ encode_workflow_module(const CoreProgram &program,
         std::any_of(plan.imports.begin(), plan.imports.end(), workflow_import_is_bridge);
 
     ByteBuffer types;
-    // V2-D: type index 5 (`() -> i32`) is appended only when the module carries
+    // workflow-frame: type index 5 (`() -> i32`) is appended only when the module carries
     // relocated handlers; type index 6 (`(i32)->(i32,i32)`, the frame-bridge
     // control-block protocol) only when a packaged handler bridges.
     const std::uint32_t workflow_type_count =
         5u + (p6 ? 1u : 0u) + (p6 && has_bridge_imports ? 1u : 0u);
-    types.u32(workflow_type_count);
+    if (p6 && (plan.fn_placement.function_base != functions.fn(0) ||
+               plan.fn_placement.fn_count != functions.fn_count ||
+               plan.fn_placement.type_base != workflow_type_count)) {
+        add_diag(result, core_wasm_diag::kInternalInvalid,
+                 "workflow function placement does not match the emitted module; "
+                 "the compiler cannot produce a valid workflow artifact",
+                 capacity_range);
+        return std::nullopt;
+    }
+    types.u32(workflow_type_count + static_cast<std::uint32_t>(plan.fns.size()) +
+              static_cast<std::uint32_t>(plan.fn_placement.closure_signatures.size()));
     append_func_type(types, {}, {kI32});
     append_func_type(types, {kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {});
@@ -18477,6 +18515,28 @@ encode_workflow_module(const CoreProgram &program,
         if (has_bridge_imports) {
             append_func_type(types, {kI32}, {kI32, kI32});
         }
+    }
+    for (const CompiledFn &fn : plan.fns) {
+        std::vector<std::uint8_t> params{kI32}; // env
+        for (const P6ScalarKind word : fn.param_words) {
+            if (word == P6ScalarKind::Closure) {
+                params.push_back(kI32);
+                params.push_back(kI32);
+            } else {
+                params.push_back(word == P6ScalarKind::IntI64 ? kI64
+                                 : word == P6ScalarKind::F64 ? kF64 : kI32);
+            }
+        }
+        const auto result_word = fn.result_word == P6ScalarKind::IntI64 ? kI64
+                               : fn.result_word == P6ScalarKind::F64 ? kF64 : kI32;
+        append_func_type(types, params, {result_word});
+    }
+    for (const ClosureCallType &signature : plan.fn_placement.closure_signatures) {
+        types.byte(kFuncType);
+        types.u32(static_cast<std::uint32_t>(signature.params.size()));
+        types.raw_span(signature.params);
+        types.u32(1);
+        types.byte(signature.result);
     }
     if (!append_section(module, kSectionType, types)) {
         return std::nullopt;
@@ -18514,18 +18574,17 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer functions_section;
-    // RFC 0026 FB-1: defined_count() is runner_count+6; V2-D appends the
-    // relocated `() -> i32` handler functions (type index 5) after run2.
+    // Five fixed functions surround the runners; relocated handlers and outlined
+    // bodies follow run_workflow in the finalized function table.
     functions_section.u32(functions.defined_count());
     functions_section.u32(kTypeI32ToI32);
     functions_section.u32(kTypeTwoI32ToVoid);
     functions_section.u32(kTypeNoArgsI32);
     functions_section.u32(kTypeNoArgsI32);
     for (std::uint32_t i = 0; i < functions.runner_count; ++i) {
-        functions_section.u32(kTypeWorkflowRun2);
+        functions_section.u32(kTypeWorkflowWorkflowRun);
     }
-    functions_section.u32(kTypeTwoI32ToI32);
-    functions_section.u32(kTypeWorkflowRun2);
+    functions_section.u32(kTypeWorkflowWorkflowRun);
     // WH-5c.2: relocated handlers are per P6 NODE (p6-dense).
     for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
         for (const CompiledHandler &h : plan.relocated_handlers[p6]) {
@@ -18533,8 +18592,22 @@ encode_workflow_module(const CoreProgram &program,
             (void)h;
         }
     }
+    for (std::uint32_t ordinal = 0; ordinal < plan.fns.size(); ++ordinal) {
+        functions_section.u32(workflow_type_count + ordinal);
+    }
     if (!append_section(module, kSectionFunction, functions_section)) {
         return std::nullopt;
+    }
+
+    if (!plan.fn_placement.closure_table.empty()) {
+        ByteBuffer tables;
+        tables.u32(1);
+        tables.byte(kFuncRefType);
+        tables.byte(0);
+        tables.u32(static_cast<std::uint32_t>(plan.fn_placement.closure_table.size()));
+        if (!append_section(module, kSectionTable, tables)) {
+            return std::nullopt;
+        }
     }
 
     ByteBuffer memories;
@@ -18547,15 +18620,14 @@ encode_workflow_module(const CoreProgram &program,
 
     // Globals: a capability workflow adds the private pending_latched flag as a
     // 6th global (cap-lane only). Identity workflows keep the 5-global section.
-    // V2-D + WH-5c.2: a P6 workflow appends one mutable private current-state
+    // workflow-frame + WH-5c.2: a P6 workflow appends one mutable private current-state
     // global PER P6 NODE after the fixed five (a relocated handler latches its
     // own node's global).
     ByteBuffer globals;
     const std::uint32_t global_count =
-        (capability_workflow ? 6u : 5u) + (p6 ? p6_runner_count : 0u);
+        (capability_workflow ? 5u : 4u) + (p6 ? p6_runner_count : 0u);
     globals.u32(global_count);
     append_global(globals, true, 0);
-    append_global(globals, false, 1);
     append_global(globals, true, heap_base);
     append_global(globals, false, static_cast<std::uint32_t>(plan.nodes.size()));
     append_global(globals, true, 0);
@@ -18577,17 +18649,15 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer exports;
-    exports.u32(11);
+    exports.u32(9);
     const bool exports_ok =
         append_export(exports, "memory", kExportMemory, 0) &&
         append_export(exports, "alloc", kExportFunction, functions.alloc()) &&
         append_export(exports, "dealloc", kExportFunction, functions.dealloc()) &&
-        append_export(exports, "run", kExportFunction, functions.run()) &&
-        append_export(exports, "run2", kExportFunction, functions.run2()) &&
+        append_export(exports, "run_workflow", kExportFunction, functions.run_workflow()) &&
         append_export(exports, "step", kExportFunction, functions.step()) &&
         append_export(exports, "current_state", kExportFunction, functions.current_state()) &&
         append_export(exports, "transition_count", kExportGlobal, kWorkflowGlobalTransitionCount) &&
-        append_export(exports, "ahfl_abi_version", kExportGlobal, kWorkflowGlobalAbiVersion) &&
         append_export(exports, "workflow_node_count", kExportGlobal, kWorkflowGlobalNodeCount) &&
         append_export(
             exports, "workflow_completed_count", kExportGlobal, kWorkflowGlobalCompletedCount);
@@ -18595,13 +18665,32 @@ encode_workflow_module(const CoreProgram &program,
         return std::nullopt;
     }
 
+    if (!plan.fn_placement.closure_table.empty()) {
+        ByteBuffer elements;
+        elements.u32(1);
+        elements.byte(0);
+        elements.byte(kOpI32Const);
+        elements.s32(0);
+        elements.byte(kOpEnd);
+        elements.u32(static_cast<std::uint32_t>(plan.fn_placement.closure_table.size()));
+        for (const CoreFnId fn : plan.fn_placement.closure_table) {
+            const auto instance = program.fns[fn.value].instance;
+            const auto ordinal = plan.fn_placement.instance_to_ordinal[instance.value];
+            if (ordinal == std::numeric_limits<std::uint32_t>::max()) {
+                return std::nullopt;
+            }
+            elements.u32(functions.fn(ordinal));
+        }
+        if (!append_section(module, kSectionElement, elements)) {
+            return std::nullopt;
+        }
+    }
+
     ByteBuffer code;
     code.u32(functions.defined_count());
-    // A capability workflow uses the checked-alloc body (returns 0 on capacity
-    // exhaustion, never advancing heap_next); identity workflows keep the shared
-    // unchecked bump body byte-for-byte.
-    const auto alloc = capability_workflow ? make_checked_alloc_body(kWorkflowGlobalHeapNext)
-                                           : make_alloc_body(kWorkflowGlobalHeapNext);
+    // Both lanes share aligned allocation. Capability workflows return null on
+    // capacity failure; identity workflows trap. Neither advances on failure.
+    const auto alloc = make_alloc_body(kWorkflowGlobalHeapNext, capability_workflow);
     const auto dealloc = make_dealloc_body();
     const auto current = make_trapping_i32_body();
     const auto step = make_trapping_i32_body();
@@ -18623,7 +18712,7 @@ encode_workflow_module(const CoreProgram &program,
             plan.node_blocks[p6],
             plan.node_bridge_calls[p6],
             /*handler_base=*/functions.handler(handler_offset[p6]),
-            /*state_global=*/(plan.imports.empty() ? 5u : 6u) + p6,
+            /*state_global=*/(plan.imports.empty() ? 4u : 5u) + p6,
             plan.state_trace_base,
             plan.state_trace_capacity,
             functions,
@@ -18634,15 +18723,14 @@ encode_workflow_module(const CoreProgram &program,
     }
     // RFC 0026 dual-track elimination: every packaged instance is P6, so the
     // P6 node runners emitted above are the only runners.
-    // V2-D: run and run2 precede the relocated handlers in the code section,
+    // workflow-frame: run and run_workflow precede the relocated handlers in the code section,
     // matching the function section's declaration order (alloc, dealloc,
-    // current_state, step, runners, run, run2, handlers).
-    const auto run = make_workflow_run_body(plan, functions);
-    auto run2 = make_workflow_run2_body(program, layouts, plan, functions, result);
-    if (!run2.has_value() || !code.sized(run) || !code.sized(*run2)) {
+    // current_state, step, runners, run, run_workflow, handlers).
+    auto run_workflow = make_workflow_run_body(program, layouts, plan, functions, result);
+    if (!run_workflow.has_value() || !code.sized(*run_workflow)) {
         return std::nullopt;
     }
-    // V2-D: the relocated frame handlers follow run2 in one flat per-P6-node
+    // workflow-frame: the relocated frame handlers follow run_workflow in one flat per-P6-node
     // range.
     for (std::uint32_t p6 = 0; p6 < p6_runner_count; ++p6) {
         for (const CompiledHandler &handler : plan.relocated_handlers[p6]) {
@@ -18651,11 +18739,16 @@ encode_workflow_module(const CoreProgram &program,
             }
         }
     }
+    for (const CompiledFn &fn : plan.fns) {
+        if (!code.sized(fn.body)) {
+            return std::nullopt;
+        }
+    }
     if (!append_section(module, kSectionCode, code)) {
         return std::nullopt;
     }
 
-    // V2-D: exactly ONE additive active Data(11) section for a P6 workflow's
+    // workflow-frame: exactly ONE additive active Data(11) section for a P6 workflow's
     // merged rodata image, in canonical position after Code(10).
     if (p6 && plan.workflow_rodata_extent != 0) {
         ByteBuffer data;
@@ -18673,7 +18766,7 @@ encode_workflow_module(const CoreProgram &program,
         }
     }
 
-    // V2-D: a P6 workflow carries the core-layout section (node blocks, the
+    // workflow-frame: a P6 workflow carries the core-layout section (node blocks, the
     // entry payload arena, the workflow output slot, rodata span and the dense
     // layout table) as an EOF custom section, mirroring the agent p6-frame
     // lane. The matching boundary wire-schema section is appended exactly
@@ -18724,7 +18817,7 @@ encode_workflow_module(const CoreProgram &program,
         if (!wire_payload.ok()) {
             add_diag(result,
                      core_wasm_diag::kBinaryOverflow,
-                     "a V2-D workflow wire-schema section payload exceeds the encoding "
+                     "a workflow-frame workflow wire-schema section payload exceeds the encoding "
                      "domain");
             return std::nullopt;
         }
@@ -18868,7 +18961,7 @@ build_import_descriptors(const CoreProgram &program,
 
 // The ordered state names one agent runner enters on a single invocation:
 // the initial state followed by the deterministic goto chain, ending at the
-// terminal. V2-D emission half 2: the walk follows the REAL reachable chain
+// terminal. workflow-frame emission half 2: the walk follows the REAL reachable chain
 // (a GotoAction target is the only successor the packaged runner takes), so
 // UNREACHABLE states (e.g. the untaken if-else arm of a non-final routing
 // handler) are never observed. A computed-goto / computed-return terminal
@@ -18951,8 +19044,8 @@ runner_last_cap_walk_index(const CoreProgram &program,
     descriptor.is_workflow = false;
     {
         CoreWasmFrameLane lane;
-        // RFC 0026 P6-7 frame-bridge v2 rung V2-A: the final-kind discriminator
-        // is the sole authority for runv's authorized value_ptr base. An
+        // RFC 0026 P6-7 frame bridge rung computed-final: the final-kind discriminator
+        // is the sole authority for run_frame's authorized value_ptr base. An
         // identity final returns the borrowed input base (1024); a computed
         // final materializes into the fixed output base (12288); a capability
         // final places the bridge result at the output base (12288).
@@ -18982,7 +19075,7 @@ runner_last_cap_walk_index(const CoreProgram &program,
         lane.payload_arena_capacity = frame_plan.payload_arena_capacity;
         lane.rodata_base = frame_plan.rodata_base;
         lane.rodata_extent = frame_plan.rodata_extent;
-        // V2-C: the capability bridge control page frame and per-call-site
+        // capability-bridge: the capability bridge control page frame and per-call-site
         // facts the Node host callback walks.
         lane.bridge_control_base = frame_plan.bridge_control_base;
         lane.bridge_block_stride = frame_plan.bridge_block_stride;
@@ -19075,7 +19168,7 @@ runner_last_cap_walk_index(const CoreProgram &program,
         descriptor.workflow_index = plan.workflow.value;
     }
     // RFC 0026 dual-track elimination: every workflow is P6-frame. The host
-    // packs the entry into the entry node's I block, run2 drives the in-module
+    // packs the entry into the entry node's I block, run_workflow drives the in-module
     // scheduler/runner lane, and the workflow output slot is encoded against
     // the boundary wire schema.
     descriptor.imports = build_import_descriptors(program, plan.imports);
@@ -19093,12 +19186,12 @@ runner_last_cap_walk_index(const CoreProgram &program,
         lane.payload_arena_base = plan.entry_payload_base;
         lane.payload_arena_capacity = plan.entry_payload_capacity;
         // The workflow entry is packed into the first P6-runner node block and
-        // run2 returns the fixed workflow output slot.
+        // run_workflow returns the fixed workflow output slot.
         lane.input_base = plan.node_blocks.front().input_base;
         lane.input_size = plan.node_blocks.front().input_size;
         lane.output_base = plan.wf_output_base;
         lane.output_size = plan.wf_output_size;
-        // V2-D emission half 2: the merged in-handler capability bridge page
+        // workflow-frame emission half 2: the merged in-handler capability bridge page
         // frame and the dense per-call-site facts the Node host callback walks
         // (resolved from the frame section + the workflow wire-schema table).
         lane.bridge_control_base = plan.frame_section.bridge_control_base;
@@ -19151,19 +19244,8 @@ runner_last_cap_walk_index(const CoreProgram &program,
             bridge.spill_extent = site.spill_extent;
             lane.bridge_call_sites.push_back(std::move(bridge));
         }
-        // The construct heap is per-agent-plan: each P6 handler resets the
-        // shared heap_next global to its plan's construct_heap_base on entry
-        // (see build_agent_plan's reset_construct_heap_on_entry). The
-        // descriptor carries the minimum enabled base so a host authorizes
-        // the largest possible region [min_base, 65536) for output String
-        // reads.
-        for (const AgentPlan &agent_plan : plan.agent_plans) {
-            if (agent_plan.construct_heap_enabled &&
-                (lane.construct_heap_base == 0 ||
-                 agent_plan.construct_heap_base < lane.construct_heap_base)) {
-                lane.construct_heap_base = agent_plan.construct_heap_base;
-            }
-        }
+        // Native allocations share the workflow module's run-lifetime heap.
+        lane.construct_heap_base = plan.construct_heap_enabled ? plan.wf_heap_base : 0u;
         descriptor.frame = std::move(lane);
         descriptor.frame_section = plan.frame_section;
         descriptor.wire_schema = plan.frame_wire_table;
@@ -19253,10 +19335,6 @@ runner_last_cap_walk_index(const CoreProgram &program,
         }
         if (!node.capabilities.empty()) {
             node_descriptor.has_capability = true;
-            node_descriptor.capability_ordinal =
-                workflow_import_function_index(plan.imports, node.capabilities.front().first)
-                    .value_or(0);
-            node_descriptor.source_symbol = node.capabilities.front().second;
             for (const auto &[cap, sym] : node.capabilities) {
                 auto ordinal = workflow_import_function_index(plan.imports, cap);
                 if (ordinal.has_value()) {
@@ -19363,12 +19441,10 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         artifact.exports = {"memory",
                             "alloc",
                             "dealloc",
-                            "run",
-                            "run2",
+                            "run_workflow",
                             "step",
                             "current_state",
                             "transition_count",
-                            "ahfl_abi_version",
                             "workflow_node_count",
                             "workflow_completed_count"};
         result.descriptor = build_workflow_descriptor(program, *plan);
@@ -19391,7 +19467,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     }
 
     // RFC 0026 P6-7 rung A: a raw-input-frame agent CAN become a P6-frame
-    // module carrying (1) a deterministic `ahfl.core-layout.v1` section (P4-D
+    // module carrying (1) a deterministic `ahfl.core-layout` section (P4-D
     // table + boundary roots + disjoint backing placements) and (2) a
     // boundary-root extension of the wire-schema projection.
     //
@@ -19406,11 +19482,11 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     // capability module's wire-schema section, the raw+capability hybrid
     // section 11 forbids).
     //
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL is the second
+    // RFC 0026 P6-7 frame bridge rung computed-final: a COMPUTED FINAL is the second
     // frame-module predicate (design §7.3 emission disjunction): such an agent
     // may never project its raw input (its handlers only construct the output)
-    // but still carries the layout/wire sections and runv.
-    // RFC 0026 P6-7 frame-bridge v2 (rung V2-C): the frame section is physically
+    // but still carries the layout/wire sections and run_frame.
+    // RFC 0026 P6-7 frame bridge (rung capability-bridge): the frame section is physically
     // planned exactly once, inside build_agent_plan BEFORE handler emission (a
     // bridge handler's bytes embed the control-block coordinates). The emit
     // entry only serializes the already-verified plan; a raw-projecting agent
@@ -19489,12 +19565,10 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     artifact.exports = {"memory",
                         "alloc",
                         "dealloc",
-                        "run",
                         "step",
                         "current_state",
                         "transition_count",
-                        "ahfl_abi_version",
-                        "runv"};
+                        "run_frame"};
     for (const auto id : plan->imports) {
         artifact.imports.push_back("ahfl_cap.cap_" +
                                    std::to_string(*program.capabilities[id.value].symbol_ref.id));

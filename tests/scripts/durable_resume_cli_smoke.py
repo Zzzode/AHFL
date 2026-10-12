@@ -10,6 +10,8 @@
   2b. A real shell round-trip: --suspend-capability forces a capability to
      PENDING, the run suspends + persists a snapshot + exits 0; a second run
      loads it and resumes with --resume-pending-result to the injected result.
+  2c. Malformed, unknown-schema, and unreadable recovery snapshots fail before
+     any live capability request; only a missing snapshot permits a fresh run.
   3. --resume-pending-result rejects invalid JSON with a targeted diagnostic and
      a nonzero exit.
   4. (when a repo root is passed) the shipped examples/durable-resume package
@@ -22,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -34,6 +37,7 @@ def require(condition: bool, message: str) -> None:
 
 class OkHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
+        self.server.request_count += 1
         length = int(self.headers.get("Content-Length", "0"))
         self.rfile.read(length)
         payload = json.dumps(
@@ -88,9 +92,7 @@ workflow SmokeWorkflow {
 # codec) and flow through to a Completed workflow output. std::option needs an
 # import, which needs a package manifest + std sysroot (a detached single file
 # cannot express it).
-_RICH_MANIFEST = """manifest_version = 1
-
-[package]
+_RICH_MANIFEST = """[package]
 name = "g4c-durable-rich"
 version = "0.1.0"
 edition = "2026"
@@ -175,9 +177,7 @@ def write_rich_package(pkg_dir: Path) -> None:
 # constructed P4-D frame transcodes to wire-JSON identically on origination and
 # replay, so the memo identity (node, ordinal, arg_hash) matches and the resumed
 # run yields the same result.
-_CONSTRUCT_PARITY_MANIFEST = """manifest_version = 1
-
-[package]
+_CONSTRUCT_PARITY_MANIFEST = """[package]
 name = "g4d-construct-parity"
 version = "0.1.0"
 edition = "2026"
@@ -262,13 +262,20 @@ def main() -> int:
               file=sys.stderr)
         return 2
     ahflc = Path(sys.argv[1])
-    work = Path(sys.argv[2])
-    work.mkdir(parents=True, exist_ok=True)
+    work_root = Path(sys.argv[2])
+    work_root.mkdir(parents=True, exist_ok=True)
+    # Each invocation owns its checkpoints and authenticated LLM namespace.
+    # A new mock endpoint must not accidentally reopen a previous test's run.
+    work = Path(tempfile.mkdtemp(prefix="run-", dir=work_root))
+    home = work / "home"
+    home.mkdir(mode=0o700)
+    os.environ["HOME"] = str(home.resolve())
 
     source = work / "smoke.ahfl"
     source.write_text(SOURCE, encoding="utf-8")
 
     server = HTTPServer(("127.0.0.1", 0), OkHandler)
+    server.request_count = 0
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -312,6 +319,67 @@ def main() -> int:
                 f"completing run should exit 0, got {completed.returncode}: {completed.stderr}")
         require(not snapshot.exists(),
                 "no snapshot must be written when the workflow completes (flag is inert on success)")
+        require(server.request_count == 1,
+                "a missing recovery snapshot must allow one live capability request")
+
+        # Loading failures must not silently become a fresh run. Reuse the same
+        # live endpoint so a misplaced load gate would expose an external effect.
+        for label, payload, diagnostic in (
+            ("malformed", '{"format":', "invalid recovery snapshot"),
+            ("unknown-schema", json.dumps({
+                "format": "ahfl.workflow-recovery",
+                "workflow_id": 0,
+                "checkpoint_id": 0,
+                "completed_nodes": [],
+            }), "invalid recovery snapshot"),
+            ("unreadable", "{}", "could not read recovery snapshot"),
+            ("symlink-loop", "", "could not read recovery snapshot"),
+        ):
+            failed_snapshot = work / f"{label}-recovery.json"
+            if label == "symlink-loop":
+                try:
+                    failed_snapshot.symlink_to(failed_snapshot.name)
+                except (OSError, NotImplementedError):
+                    print("symlink-loop recovery snapshot: skipped (symlinks unavailable)")
+                    continue
+            else:
+                failed_snapshot.write_text(payload, encoding="utf-8")
+            if label == "unreadable":
+                failed_snapshot.chmod(0)
+            try:
+                # Root and some Windows filesystems can bypass mode bits. They
+                # cannot provide this read-permission fixture; the other failure
+                # cases still run and pin the side-effect boundary there.
+                if label == "unreadable" and os.access(failed_snapshot, os.R_OK):
+                    print("unreadable recovery snapshot: skipped (mode bits bypassed)")
+                    continue
+                requests_before = server.request_count
+                rejected = subprocess.run(
+                    [
+                        str(ahflc), "run",
+                        "--workflow", "smoke::SmokeWorkflow",
+                        "--input", '{"_type":"smoke::Request","value":"hi"}',
+                        "--llm-config", str(config),
+                        "--recovery-store", str(failed_snapshot),
+                        "--output-format", "json",
+                        str(source),
+                    ],
+                    env=env, check=False, capture_output=True, text=True, timeout=30,
+                )
+                require(rejected.returncode == 1,
+                        f"{label} snapshot must fail execution: {rejected.stderr}")
+                require(diagnostic in rejected.stderr
+                        and str(failed_snapshot) in rejected.stderr,
+                        f"{label} snapshot needs a path-specific diagnostic: {rejected.stderr}")
+                require(server.request_count == requests_before,
+                        f"{label} snapshot must fail before live capability dispatch")
+                require(not rejected.stdout,
+                        f"{label} snapshot must not produce a fresh execution report")
+            finally:
+                if label == "symlink-loop":
+                    failed_snapshot.unlink()
+                else:
+                    failed_snapshot.chmod(0o600)
 
         # (2b): a REAL shell round-trip. --suspend-capability forces Echo to
         # PENDING on a fresh run -> the workflow suspends, exits 0, and writes a
@@ -341,6 +409,8 @@ def main() -> int:
         require(suspend_report["audit"]["workflow_completed"] == 0,
                 "suspended run must not report a completed workflow")
 
+        requests_before_resume = server.request_count
+
         resume = subprocess.run(
             base + ["--resume-pending-result",
                     '{"_type":"smoke::Response","value":"resumed-ok"}'],
@@ -354,6 +424,8 @@ def main() -> int:
         result = resume_report.get("result", resume_report.get("output"))
         require(result is not None and result.get("value") == "resumed-ok",
                 f"resumed output must be the injected result, got {result}")
+        require(server.request_count == requests_before_resume,
+                "suspend/resume must consume the injected result without a live request")
 
         # (2c): a RICH schema-guided round-trip. The pending capability returns a
         # struct carrying Int / Float / Option<Int> / Unit; on resume the raw

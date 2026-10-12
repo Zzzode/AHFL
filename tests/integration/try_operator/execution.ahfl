@@ -1,0 +1,105 @@
+module try_operator::execution;
+
+import try_operator::option as option_recipe;
+import try_operator::result as result_recipe;
+import std::option as option;
+import std::result as result;
+
+pub struct Request { a: Int; b: Int; c: Int; missing_r: Bool; }
+pub struct Context {}
+pub struct Response {
+    rgb: option::Option<Int>;
+    flag: option::Option<Bool>;
+    quotient: result::Result<Int, Int>;
+    closure_sum: Int;
+}
+
+fn red(value: Int, missing: Bool) -> option::Option<Int> effect Pure decreases 0 {
+    if missing {
+        return option::Option::None;
+    }
+    return option::Option::Some(value);
+}
+
+fn preserve<T>(value: option::Option<T>) -> option::Option<T> effect Pure decreases 0 {
+    let payload = value?;
+    return option::Option::Some(payload);
+}
+
+fn preserve_result<T, E>(value: result::Result<T, E>) -> result::Result<T, E> effect Pure decreases 0 {
+    let payload = value?;
+    return result::Result::Ok(payload);
+}
+
+fn apply(f: Fn(Int) -> Int, value: Int) -> Int {
+    return f(value);
+}
+
+pub agent Calculate {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Ready, Done];
+    initial: Ready;
+    final: [Done];
+    capabilities: [];
+    transition Ready -> Done;
+}
+
+flow for Calculate {
+    state Ready {
+        goto Done;
+    }
+    state Done {
+        let a: Int = input.a;
+        let b: Int = input.b;
+        let first: Fn(Int) -> Int = \value -> value + a;
+        let second: Fn(Int) -> Int = \value -> value + b;
+        let first_value: Int = apply(first, input.c);
+        let second_value: Int = apply(second, input.c);
+        return Response {
+            rgb: preserve<Int>(option_recipe::hex_to_rgb(
+                red(input.a, input.missing_r),
+                option::Option::Some(input.b),
+                option::Option::Some(input.c)
+            )),
+            flag: preserve<Bool>(option::Option::Some(input.missing_r)),
+            quotient: preserve_result<Int, Int>(result_recipe::div_chain(input.a, input.b, input.c)),
+            closure_sum: first_value + second_value
+        };
+    }
+}
+
+pub agent Advance {
+    input: Request;
+    context: Context;
+    output: Request;
+    states: [Ready, Done];
+    initial: Ready;
+    final: [Done];
+    capabilities: [];
+    transition Ready -> Done;
+}
+
+flow for Advance {
+    state Ready {
+        goto Done;
+    }
+    state Done {
+        return Request {
+            a: input.a + 1,
+            b: input.b,
+            c: input.c,
+            missing_r: input.missing_r
+        };
+    }
+}
+
+pub workflow TryWorkflow {
+    input: Request;
+    output: Response;
+    node original: Calculate(input);
+    node changed: Advance(input) after [original];
+    node later: Calculate(changed) after [changed];
+    return: original;
+}

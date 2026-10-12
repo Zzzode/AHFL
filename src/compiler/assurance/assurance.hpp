@@ -10,7 +10,7 @@
 
 namespace ahfl::assurance {
 
-inline constexpr std::string_view kAssuranceBundleFormatVersion = "ahfl.assurance-bundle.v0.1";
+inline constexpr std::string_view kAssuranceBundleFormat = "ahfl.assurance-bundle";
 
 struct AssuranceObligation {
     std::string target;
@@ -86,7 +86,7 @@ struct VerificationProfile {
 };
 
 struct AssuranceBundle {
-    std::string format_version{std::string(kAssuranceBundleFormatVersion)};
+    std::string format{std::string(kAssuranceBundleFormat)};
     std::string status;
     std::vector<CapabilityAssurance> capabilities;
     std::vector<FlowEffectSummary> flow_effects;

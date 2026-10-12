@@ -1,8 +1,9 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
+-- Control verification only; expression-valued data contracts use the opt-in SMT path.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__lib_agents_AliasAgent__called__lib_agents_Echo => agent lib::agents::AliasAgent called lib::agents::Echo @ lib/agents.ahfl:53-123
+-- AHFL_MAP agent__lib_agents_AliasAgent__state => agent lib::agents::AliasAgent state @ lib/agents.ahfl:129-368
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__state => workflow app::main::MainWorkflow node run state @ app/main.ahfl:355-391
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__phase => workflow app::main::MainWorkflow node run lifecycle phase @ app/main.ahfl:355-391
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failure_requested => workflow app::main::MainWorkflow node run environment failure request @ app/main.ahfl:355-391
@@ -15,6 +16,7 @@
 -- AHFL_MAP (G (!workflow__app_main_MainWorkflow__node__run__failure_requested) -> (F ((workflow__app_main_MainWorkflow__node__run__completed & (workflow__app_main_MainWorkflow__node__run__state = Done))))) => workflow app::main::MainWorkflow liveness[0] @ app/main.ahfl:406-437
 MODULE main
 VAR
+  agent__lib_agents_AliasAgent__state : {Init, Done};
   workflow__app_main_MainWorkflow__node__run__state : {Init, Done};
   workflow__app_main_MainWorkflow__node__run__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
 IVAR
@@ -28,6 +30,12 @@ DEFINE
   workflow__app_main_MainWorkflow__node__run__recovered := (workflow__app_main_MainWorkflow__node__run__phase = AHFL_NODE_RECOVERED | workflow__app_main_MainWorkflow__node__run__phase = AHFL_NODE_COMPENSATED);
   agent__lib_agents_AliasAgent__called__lib_agents_Echo := FALSE;
 ASSIGN
+  init(agent__lib_agents_AliasAgent__state) := Init;
+  next(agent__lib_agents_AliasAgent__state) := case
+    agent__lib_agents_AliasAgent__state = Init : Done;
+    agent__lib_agents_AliasAgent__state = Done : Done;
+    TRUE : agent__lib_agents_AliasAgent__state;
+  esac;
   init(workflow__app_main_MainWorkflow__node__run__state) := Init;
   next(workflow__app_main_MainWorkflow__node__run__state) := case
     !(workflow__app_main_MainWorkflow__node__run__phase = AHFL_NODE_RUNNING) : workflow__app_main_MainWorkflow__node__run__state;
@@ -50,6 +58,10 @@ ASSIGN
     workflow__app_main_MainWorkflow__node__run__phase = AHFL_NODE_RUNNING & workflow__app_main_MainWorkflow__node__run__failure_requested : AHFL_NODE_FAILED;
     TRUE : workflow__app_main_MainWorkflow__node__run__phase;
   esac;
+LTLSPEC agent__lib_agents_AliasAgent__state = Init
+LTLSPEC G ((agent__lib_agents_AliasAgent__state = Init) -> X (((agent__lib_agents_AliasAgent__state = Init) | (agent__lib_agents_AliasAgent__state = Done))))
+LTLSPEC G ((agent__lib_agents_AliasAgent__state = Done) -> X ((agent__lib_agents_AliasAgent__state = Done)))
+LTLSPEC G ((agent__lib_agents_AliasAgent__state = Done) -> X (agent__lib_agents_AliasAgent__state = Done))
 -- workflow app::main::MainWorkflow node run lifecycle[completed_final]
 LTLSPEC G (workflow__app_main_MainWorkflow__node__run__completed -> (workflow__app_main_MainWorkflow__node__run__state = Done))
 -- workflow app::main::MainWorkflow node run recovery[failed_enters_recovering]

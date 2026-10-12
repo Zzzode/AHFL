@@ -78,8 +78,7 @@ function hasSection(id) {
 if (!hasSection(4) || !hasSection(9))
   throw new Error("a closure module must carry Table(4) and Element(9) sections");
 const {exports: c} = await WebAssembly.instantiate(module, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 if (c.current_state() !== initial)
   throw new Error(`initial state ${c.current_state()} != ${initial}`);
 

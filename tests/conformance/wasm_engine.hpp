@@ -28,7 +28,7 @@
 namespace ahfl::conformance {
 
 inline constexpr std::string_view kConformanceWasmDescriptorFormat =
-    "ahfl.conformance-wasm-descriptor.v1";
+    "ahfl.conformance-wasm-descriptor";
 
 /// Why a case/scenario cannot produce a canonical Node observation. Mirrors the
 /// manifest lane but is computed against the real emit path.

@@ -6,8 +6,7 @@
 // import callback with this recorder. At each opaque import the wrapper
 // derives (node, ordinal) from the call site and opens a current-import
 // correlation; the wrapped invoker fills in arg_hash + result; the wrapper
-// reads the exact reply wire bytes from guest memory and appends an
-// ExactSidecar memo entry. A Pending reply stamps the pending coordinate so
+// captures the native reply as an InMemoryMemoResult. A Pending reply stamps the pending coordinate so
 // the session can build a SuspendedNodeState (node_input is nullopt on the
 // wasm lane: the in-guest materialized input is not host-observable).
 //
@@ -15,8 +14,9 @@
 // recorder (memo index + frontier). At each import the wrapper classifies
 // the coordinate (memo hit / frontier / post-frontier live / pre-frontier
 // miss) and serves verbatim, injects, or fails closed -- the invoker is
-// never called for a memo hit or the frontier, so a resumed run has zero
-// live side effects before the pending call.
+// never called for memo hits. A frontier is either injected manually or resolved
+// by its prepared provider; both successful frontiers and later live calls are
+// memoized so subsequent suspensions preserve their results.
 //
 // The recorder is a state holder, not a decision authority: the session
 // wrapper drives it and owns the engine / binding / diagnostic machinery.
@@ -77,30 +77,15 @@ class WasmResumeRecorder {
 
     // Open a current-import correlation and assign the per-node ordinal
     // (the memo key, reproducible across resume). Returns the ordinal.
-    std::uint64_t begin_import(std::size_t schedule_pos, WorkflowNodeId node,
-                               std::size_t cap_id);
+    std::uint64_t begin_import(std::size_t schedule_pos, WorkflowNodeId node, std::size_t cap_id);
 
     // The current import correlation (nullopt outside an import). The
     // wrapped invoker mutates it (arg_hash / result / pending).
     [[nodiscard]] CurrentImport *current_import() noexcept;
 
-    // Append a memo entry from the current import. Called by the wrapper
-    // after a successful reply.
-    //
-    // ExactSidecar: the caller supplies the exact wire JSON bytes (used for
-    // reloaded entries). The entry carries authoritative_json = those bytes.
-    //
-    // NativeOnly (bridge lane, WH-5b.2): the bridge result is a P4-D binary
-    // frame, not JSON. The entry carries the native Value (cloned from the
-    // invoker result) and NO authoritative_json. The persistence layer
-    // serializes the Value to wire JSON via try_value_to_json; on reload the
-    // entry becomes ExactSidecar with wire-JSON authoritative_json, and the
-    // replay MemoHit path re-packs it through pack_bridge_result_value (the
-    // same packing the Frontier path uses).
-    void append_memo_entry(
-        std::string authoritative_json,
-        PersistedMemoResultSource source =
-            PersistedMemoResultSource::ExactSidecar);
+    // Capture the successful native reply. Persistence converts its value to
+    // canonical wire JSON; reloaded results are decoded under the live binding.
+    void append_memo_entry();
 
     // Stamp the pending coordinate from the current import.
     void stamp_pending();
@@ -113,10 +98,11 @@ class WasmResumeRecorder {
     // --- Replay (resume run) ---
 
     // Whether this recorder is in replay mode (load_replay succeeded). The
-    // session wrapper uses this to decide whether to append memo entries
-    // after a live call (origination only; replay post-frontier live calls
-    // are not memoized).
-    [[nodiscard]] bool is_replay() const noexcept { return replay_; }
+    // session wrapper uses this to classify calls against the admitted frontier;
+    // successful live calls are memoized in both origination and replay modes.
+    [[nodiscard]] bool is_replay() const noexcept {
+        return replay_;
+    }
 
     // Load a recovery snapshot's memo + frontier, taking ownership of the
     // memo vector (CapabilityMemoEntry is move-only: its native result Value
@@ -131,9 +117,8 @@ class WasmResumeRecorder {
     // coordinate (the wasm consumer requires it on every entry; a snapshot
     // without one is rejected here, not silently re-run) or a node
     // coordinate is out of range for the mapping.
-    [[nodiscard]] bool
-    load_replay(WorkflowRecoverySnapshot snapshot,
-                std::span<const std::size_t> node_to_schedule);
+    [[nodiscard]] bool load_replay(WorkflowRecoverySnapshot snapshot,
+                                   std::span<const std::size_t> node_to_schedule);
 
     // Classify an import coordinate against the loaded memo + frontier.
     // schedule_pos is the node's dense position in the Kahn schedule (the
@@ -143,12 +128,11 @@ class WasmResumeRecorder {
     // session actually walks (design 12.6.5 step 4: "nodes after the
     // suspended node in the schedule"), which can differ from declaration
     // order when a node depends on a later-declared node.
-    [[nodiscard]] ReplayClass classify(std::size_t schedule_pos,
-                                       std::uint64_t ordinal) const;
+    [[nodiscard]] ReplayClass classify(std::size_t schedule_pos, std::uint64_t ordinal) const;
 
     // The memo entry for a MemoHit coordinate (nullptr on miss / wrong class).
-    [[nodiscard]] const CapabilityMemoEntry *
-    memo_entry(std::size_t schedule_pos, std::uint64_t ordinal) const;
+    [[nodiscard]] const CapabilityMemoEntry *memo_entry(std::size_t schedule_pos,
+                                                        std::uint64_t ordinal) const;
 
     // The frontier (pending coordinate). nullptr when not a resume run.
     [[nodiscard]] const PendingCoordinate *frontier() const noexcept;

@@ -70,18 +70,9 @@ Owned<ast::ExprSyntax> make_length_self() {
     return expr;
 }
 
-// Constructs `self.<field>` as MemberAccessExpr.
+// Constructs the canonical source path `self.<field>`.
 Owned<ast::ExprSyntax> make_self_field(std::string_view field) {
-    auto base = make_path("self");
-    auto ma = ast::MemberAccessExpr{
-        .base = std::move(base),
-        .member = std::string{field},
-    };
-    auto expr = make_owned<ast::ExprSyntax>();
-    expr->range = kZeroRange;
-    expr->text = std::string("self.") + std::string{field};
-    expr->node = std::move(ma);
-    return expr;
+    return make_path("self", {std::string{field}});
 }
 
 // Constructs `<ident> - 1` BinaryExpr.
@@ -184,16 +175,6 @@ TEST_CASE("decreases.golden.01_length_self_negative") {
 // ============================================================================
 // Golden 2: self.<field>
 // ============================================================================
-
-TEST_CASE("decreases.golden.02_self_field_member_access_shape") {
-    INFO("Recognize self.idx via MemberAccessExpr shape");
-    auto exprs = move_exprs({make_self_field("idx")});
-    LexOrderEntry entry = recognize_single(exprs.front(), 0);
-    REQUIRE(entry.kind == DecreasePatternKind::SelfField);
-    auto const &detail = std::get<PatternSelfField>(entry.detail);
-    REQUIRE(detail.field_name == "idx");
-    REQUIRE(detail.subterm_index == 0);
-}
 
 TEST_CASE("decreases.golden.02_self_field_path_shape") {
     INFO("Recognize self.iterations via PathExpr shape (root=self + 1 member)");

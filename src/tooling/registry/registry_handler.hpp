@@ -9,15 +9,15 @@ namespace ahfl::registry {
 /// (mirrored by the LocalRegistry fixture in
 /// scripts/generate-release-evidence-archive.py):
 ///
-///   GET  /v1/packages/{name}/registry-index
-///   GET  /v1/packages/{name}/versions/{version}/registry-index
-///   GET  /v1/packages/{name}/versions/{version}/source-archive
-///   GET  /v1/packages/{name}/versions/{version}/source-archive.payload
-///   GET  /v1/packages/{name}/versions/{version}/public-api
-///   PUT  /v1/packages/{name}/versions/{version}/publish
-///   POST /v1/packages/{name}/versions/{version}/yank
+///   GET  /packages/{name}/registry-index
+///   GET  /packages/{name}/versions/{version}/registry-index
+///   GET  /packages/{name}/versions/{version}/source-archive
+///   GET  /packages/{name}/versions/{version}/source-archive.payload
+///   GET  /packages/{name}/versions/{version}/public-api
+///   PUT  /packages/{name}/versions/{version}/publish
+///   POST /packages/{name}/versions/{version}/yank
 ///
-/// The `/v1` (or `/api/v1`) prefix is optional for routing. All responses
+/// Only the documented route spelling is accepted. All responses
 /// are JSON except the source archive payload, which is served as raw bytes.
 class RegistryRequestHandler final : public RequestHandler {
   public:

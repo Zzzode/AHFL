@@ -1,8 +1,3 @@
-manifest_version = 1
-
 [workspace]
 name = "no-module-workspace"
 members = ["app", "lib"]
-
-[resolver]
-version = 1

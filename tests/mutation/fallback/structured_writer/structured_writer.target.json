@@ -1,5 +1,5 @@
 {
-  "schema": "ahfl.mutation.target.v1",
+  "format": "ahfl.mutation.target",
   "target": "structured_writer",
   "source": "structured_writer.cpp",
   "test": "structured_writer_test.cpp",

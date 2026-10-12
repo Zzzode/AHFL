@@ -54,10 +54,10 @@ find_mock_for_binding(const CapabilityMockSet &mock_set,
 void validate_capability_mock_set(const CapabilityMockSet &mock_set,
                                   const handoff::WorkflowPlan &workflow,
                                   DiagnosticBag &diagnostics) {
-    if (mock_set.format_version != kCapabilityMockSetFormatVersion) {
+    if (mock_set.format != kCapabilityMockSetFormat) {
         diagnostics.error()
-            .message("capability mock set encountered unsupported format_version '" +
-                     mock_set.format_version + "'")
+            .message("capability mock set encountered unsupported format '" +
+                     mock_set.format + "'")
             .emit();
     }
 
@@ -153,8 +153,8 @@ DryRunResult run_local_dry_run(const handoff::ExecutionPlan &plan,
     }
 
     DryRunTrace trace{
-        .format_version = std::string(kTraceFormatVersion),
-        .source_execution_plan_format_version = plan.format_version,
+        .format = std::string(kTraceFormat),
+        .source_execution_plan_format = plan.format,
         .source_package_identity = plan.source_package_identity,
         .workflow_canonical_name = workflow->workflow_canonical_name,
         .status = DryRunStatus::Completed,

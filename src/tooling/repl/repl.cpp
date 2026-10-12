@@ -595,7 +595,7 @@ std::string Repl::default_eval(const std::string &input) {
         // P2-1: render the enumerator NAME (not the raw int) and append the
         // first diagnostic's code + message in the CLI's punctuation, so the
         // failure is actionable (e.g. a div-by-zero trap surfaces
-        // `[wasm.trap]: run_wasm_agent: runv trapped`).
+        // `[wasm.trap]: run_wasm_agent: run_frame trapped`).
         std::string message =
             "Error: agent did not complete (status: " +
             std::string(workflow_status_name(workflow_result.status())) + ")";

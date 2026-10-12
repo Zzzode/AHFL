@@ -36,7 +36,7 @@ decision_due: "2026-08-07"
 4. 节点是否调用 LLM、执行耗时、失败位置、重试和降级不能在节点时间线上直接识别。
 5. `WorkflowRuntime` 只在执行结束后返回 `WorkflowResult`，CLI 无法在节点运行期间提供可靠进度，也无法自然驱动可视化界面。
 6. 默认运行仍要求通过 `--input "$(...)"` 注入 JSON；manifest、input fixture 和 LLM 配置之间没有完整的工程级启动配置。
-7. 现有 smoke tests 依赖标题字符串，机器消费者没有版本化的 run report 或 event stream contract。
+7. 现有 smoke tests 依赖标题字符串，机器消费者没有结构明确的 run report 或 event stream contract。
 
 这些问题并非颜色、缩进或终端 spinner 能解决。根因是业务执行结果、runtime trace、provider observability 和 presentation 被压在同一个输出函数中。继续扩展当前 printer 会让 TUI、Web UI、CI 集成和运行审计各自维护不一致的日志解析器。
 
@@ -46,7 +46,7 @@ decision_due: "2026-08-07"
 2. 定义 runtime-owned、`std::variant` 表达、数值 ID 关联的结构化执行事件模型。
 3. 定义默认 human renderer，使用户首先看到 workflow 进度、节点职责、关键结果、LLM 调用和最终业务输出。
 4. 定义 normal、verbose、trace 三个信息层级，并把 provider 内部遥测移出默认输出。
-5. 定义版本化 JSON report 和 JSONL event stream，禁止脚本解析 human output。
+5. 定义当前完整结构的 JSON report 和 JSONL event stream，禁止脚本解析 human output。
 6. 支持 TTY 实时刷新和非 TTY 确定性输出，同时保持相同业务语义和退出码。
 7. 为耗时、失败、重试、降级、token/cost 和 secret-free observability 建立可测试的关联关系。
 8. 删除现有 ad-hoc workflow/observability printer，不保留旧输出兼容模式。
@@ -276,14 +276,14 @@ TTY 可以原地刷新 running line 和使用 ANSI color。重定向到文件或
 
 ### Machine-readable Output
 
-`--output-format json` 在 stdout 输出一个 `ahfl.run-report.v1` JSON document。`--output-format jsonl` 每行输出一个 `ahfl.run-event.v1` event，最后一行必须是 `RunCompleted`。两者都必须包含 `schema` 和 `schema_version`，并使用 shared JSON DOM/serializer，禁止手工字符串拼接。
+`--output-format json` 在 stdout 输出一个 `ahfl.run-report` JSON document。`--output-format jsonl` 每行输出一个 `ahfl.run-event` event，最后一行必须是 `RunCompleted`。两者都必须包含 `schema` 和 `format`，并使用 shared JSON DOM/serializer，禁止手工字符串拼接。
 
 JSON report 的最小形状：
 
 ```json
 {
-  "schema": "ahfl.run-report",
-  "schema_version": 1,
+  "format": "ahfl.run-report",
+  "format": 1,
   "run": {"id": 1, "status": "completed", "duration_ms": 2400},
   "workflow": {"id": 0, "name": "execution_demo::main::IncidentWorkflow"},
   "nodes": [],
@@ -354,7 +354,7 @@ beta gate 的 machine report 必须逐项输出 `passed`、`failed` 或 `missing
 
 工程作者可以在 `ahfl.toml` 中定义默认运行场景，普通用户从工程根目录执行 `ahflc run` 即可。默认终端输出以 workflow 和 agent 节点为中心，LLM 使用量归属到实际调用节点，最终业务结果不再被 provider 内部遥测淹没。
 
-CI、IDE 和未来可视化工具必须改用版本化 JSON/JSONL，不再依赖 `=== AHFL Workflow Execution ===`、`Node Results` 或 `Token Budget Events` 等英文标题。失败、重试、fallback 和预算超限会获得稳定的结构化关联。
+CI、IDE 和未来可视化工具必须改用当前完整结构的 JSON/JSONL，不再依赖 `=== AHFL Workflow Execution ===`、`Node Results` 或 `Token Budget Events` 等英文标题。失败、重试、fallback 和预算超限会获得稳定的结构化关联。
 
 ## Compatibility and Migration
 
@@ -371,7 +371,7 @@ CI、IDE 和未来可视化工具必须改用版本化 JSON/JSONL，不再依赖
 
 1. 人类调用者删除额外参数，改由 `[run]` 或 run profile 提供默认值。
 2. 文件输入调用者改用 `[run].input` 或 `--input-file`。
-3. 自动化调用者改用 `--output-format json` 并解析 `ahfl.run-report.v1`。
+3. 自动化调用者改用 `--output-format json` 并解析 `ahfl.run-report`。
 4. 流式观察者改用 `--output-format jsonl` 并按 event ID、node ID 和 invocation ID 关联。
 5. provider audit 调用者改用 `--output-format jsonl --verbosity trace`。
 6. runtime consumer 改用 ID-based `ExecutionReport` 和 flat event store。
@@ -404,7 +404,7 @@ automation and configure input/LLM defaults under [run] in ahfl.toml.
 2. Runtime integration tests：覆盖 deterministic node、LLM node、失败、dependency skip、retry、fallback、budget reject 和 budget exceed。
 3. Fake-clock tests：固定 duration，避免 golden output 依赖 wall clock。
 4. Human golden tests：覆盖 normal、verbose、trace、TTY、non-TTY、`NO_COLOR`、长字符串和重复 final output 折叠。
-5. JSON schema tests：解析 `ahfl.run-report.v1`，验证 typed value、diagnostics、usage 和失败 report。
+5. JSON schema tests：解析 `ahfl.run-report`，验证 typed value、diagnostics、usage 和失败 report。
 6. JSONL tests：逐行解析 event，验证最后一行是 `RunCompleted`，sequence 单调且 invocation 关联完整。
 7. Redaction tests：扫描所有模式，确保 API key、Authorization header、secret value 和完整 credential reference 不出现。
 8. Configuration tests：覆盖 manifest ancestor discovery、唯一 target、default profile、named profile、CLI precedence、相对路径和冲突参数。
@@ -418,7 +418,7 @@ automation and configure input/LLM defaults under [run] in ahfl.toml.
 
 1. `draft`：已确认 event taxonomy、run manifest fields、JSON schema 和 breaking migration。
 2. `review`：已确认 ID model、renderer boundary、security policy、scope freeze 和 test ownership。
-3. `accepted`：冻结 v1 report/event 字段、CLI option names、reference workflow 和 beta gate，不冻结 future optional fields。
+3. `accepted`：冻结 report/event 字段、CLI option names、reference workflow 和 beta gate，所有字段遵循当前完整结构校验，新增字段同步更新生产者、消费者与测试。
 4. `implementing`：按 event core、instrumentation、renderers、project launch、consumer migration 顺序提交。
 5. `implemented`：旧 printers、旧字符串断言和 `--llm-observability` 已删除，example default run 可执行。
 6. `stabilized`：同步 CLI reference、execution user guide、package configuration contract 和 release migration note，并有真实 LLM run evidence。
@@ -437,16 +437,16 @@ automation and configure input/LLM defaults under [run] in ahfl.toml.
 
 当前没有阻塞实现的开放问题。后续扩展遵守以下已接受决定：
 
-1. `ahfl.run-event.v1` 在 beta 前保持 `developer-facing`；至少一个 replay/audit 之外的独立 consumer 通过兼容性测试后，另行 RFC 决定是否升级 `stable-artifact`。
-2. v1 compact value renderer 不引入语言级 display metadata，只使用结构化字段、稳定字段顺序和确定性截断。
+1. `ahfl.run-event` 在 beta 前保持 `developer-facing`；至少一个 replay/audit 之外的独立 consumer 通过兼容性测试后，另行 RFC 决定是否升级 `stable-artifact`。
+2. compact value renderer 不引入语言级 display metadata，只使用结构化字段、稳定字段顺序和确定性截断。
 3. ancestor manifest discovery 完全复用 RFC 0005 的 nearest package 与 workspace boundary；发现歧义时 fail closed，不新增第二套 discovery 规则。
-4. v1 trace JSONL 只写 stdout，由调用者重定向；原生 artifact path 不进入本 RFC。
+4. trace JSONL 只写 stdout，由调用者重定向；原生 artifact path 不进入本 RFC。
 
 ## Decision History
 
 - 2026-07-10: Draft opened after validating the real `examples/execution-demo` LLM run output and identifying the current printer/observability coupling.
 - 2026-07-11: Product direction accepted; issue #16 became the implementation tracker, `examples/execution-demo` became the sole reference workflow, and the scope-freeze and beta gates became normative acceptance conditions.
-- 2026-08-26: Status `accepted` → `implementing`, reconciling the frontmatter with the tree. An audit against the 8-slice Implementation Plan found the core already landed (in the breaking commit `7c3ae2d2` "establish canonical execution and release gates", later extended by the RFC 0022 suspension/resume events) but never recorded here. Slice-by-slice: 1 Runtime identity (all 11 IDs + `CheckpointId`, `ExecutionEvent` variant, `ExecutionEventSink`, flat `ExecutionEventStore`), 3 Provider bridge (invocation-scoped usage/retry/fallback/cache events), 4 Report aggregation (`ExecutionReport` from the event store, canonical value JSON), 5 Renderer layer (human/json/jsonl/quiet; both old printers deleted), 6 Project launch (`[run]` + `run.profiles` manifest parsing, ancestor discovery, precedence, `--input-file`), and 8 Consumer migration (legacy title-string assertions gone, `--llm-observability` removed, docs migrated) are **DONE**, with unit tests (`execution_event`/`execution_report`/`execution_renderer`/`execution_otel`), the `ahfl.beta-gate.v1` machine report, and `docs/reference/user-guide-execution.zh.md`. Two slices remain **PARTIAL** and block `implemented`: slice 2's injectable monotonic clock (runtime still hardcodes `steady_clock::now()`, so no fake-clock golden path) and slice 7's TTY/`NO_COLOR` detection + ANSI human presentation (the `use_color`/`interactive_terminal` options exist but are never set and the renderer emits no ANSI). `stabilized` additionally still needs a synced release migration note and real (non-stub) LLM run evidence.
+- 2026-08-26: Status `accepted` → `implementing`, reconciling the frontmatter with the tree. An audit against the 8-slice Implementation Plan found the core already landed (in the breaking commit `7c3ae2d2` "establish canonical execution and release gates", later extended by the RFC 0022 suspension/resume events) but never recorded here. Slice-by-slice: 1 Runtime identity (all 11 IDs + `CheckpointId`, `ExecutionEvent` variant, `ExecutionEventSink`, flat `ExecutionEventStore`), 3 Provider bridge (invocation-scoped usage/retry/fallback/cache events), 4 Report aggregation (`ExecutionReport` from the event store, canonical value JSON), 5 Renderer layer (human/json/jsonl/quiet; both old printers deleted), 6 Project launch (`[run]` + `run.profiles` manifest parsing, ancestor discovery, precedence, `--input-file`), and 8 Consumer migration (legacy title-string assertions gone, `--llm-observability` removed, docs migrated) are **DONE**, with unit tests (`execution_event`/`execution_report`/`execution_renderer`/`execution_otel`), the `ahfl.beta-gate` machine report, and `docs/tutorials/execution.zh.md`. Two slices remain **PARTIAL** and block `implemented`: slice 2's injectable monotonic clock (runtime still hardcodes `steady_clock::now()`, so no fake-clock golden path) and slice 7's TTY/`NO_COLOR` detection + ANSI human presentation (the `use_color`/`interactive_terminal` options exist but are never set and the renderer emits no ANSI). `stabilized` additionally still needs a synced release migration note and real (non-stub) LLM run evidence.
 - 2026-08-26: Closed the two PARTIAL slices, so all 8 Implementation-Plan slices are now **DONE**. Slice 2 (commit landing this entry's series): `WorkflowRuntimeConfig::monotonic_clock` injectable clock (defaults to `steady_clock::now`); `run()` reads all event timings through it and a fake-clock unit test pins a deterministic, reproducible offset sequence. Slice 7: the human renderer now applies ANSI SGR to status keywords only under `use_color`, the CLI detects an interactive stdout (`isatty`) and honors `NO_COLOR`, and a renderer test proves color is opt-in and that stripping ANSI from colored output reproduces the plain text byte-for-byte. The product-scope-freeze gate was widened to treat `implementing` (not just `accepted`) as freeze-active, matching the RFC's "accepted → beta gate closed" window. Remaining before `implemented`/`stabilized`: a full per-item beta-gate evidence pass (currently the run evidence uses a local deterministic stub, not a public LLM) and a synced release migration note; the status stays `implementing` until those are verified rather than asserted.
-- 2026-08-27: Status `implementing` → `implemented`. Ran the full `ahfl.beta-gate.v1` machine report (`scripts/check-beta-gate.py`) against HEAD after regenerating the evidence bundle for the current revision: all ten criteria (BETA-01..10) report `passed`, gate `status: "ready"`. This machine-verifies the `implemented` exit condition — old printers, legacy title-string assertions, and `--llm-observability` are gone, and the `examples/execution-demo` default run launches from `[run]` with no repeated CLI configuration (BETA-01). All 8 Implementation-Plan slices are DONE. The product-scope-freeze gate (checker + smoke test) was widened to keep the freeze active through `implemented` as well, since the freeze lifts only when the beta gate closes at `stabilized`. Still open for `stabilized`: a synced release migration note and **real (non-stub) public-LLM run evidence** — the beta bundle currently exercises a local deterministic OpenAI-compatible stub, so that evidence is environment-blocked (needs an external LLM endpoint) rather than a code gap.
+- 2026-08-27: Status `implementing` → `implemented`. Ran the full `ahfl.beta-gate` machine report (`scripts/check-beta-gate.py`) against HEAD after regenerating the evidence bundle for the current revision: all ten criteria (BETA-01..10) report `passed`, gate `status: "ready"`. This machine-verifies the `implemented` exit condition — old printers, legacy title-string assertions, and `--llm-observability` are gone, and the `examples/execution-demo` default run launches from `[run]` with no repeated CLI configuration (BETA-01). All 8 Implementation-Plan slices are DONE. The product-scope-freeze gate (checker + smoke test) was widened to keep the freeze active through `implemented` as well, since the freeze lifts only when the beta gate closes at `stabilized`. Still open for `stabilized`: a synced release migration note and **real (non-stub) public-LLM run evidence** — the beta bundle currently exercises a local deterministic OpenAI-compatible stub, so that evidence is environment-blocked (needs an external LLM endpoint) rather than a code gap.
 - 2026-08-27: Status `implemented` → `stabilized`. Both remaining exit conditions are now closed. (1) Release migration note: `docs/reference/migration-policy.zh.md` carries the RFC 0012 breaking-change section (CLI output + runtime result contract). (2) Real (non-stub) LLM run evidence: rather than remain blocked on an external public-LLM endpoint (all model-hosting hosts were unreachable from the build environment), the evidence now drives a **genuine local llama.cpp inference engine**. `tests/scripts/real_llm_run_evidence.py` boots a real `llama-server` over the committed random-weight GGUF fixture (`tests/fixtures/llm/tiny-llama.gguf`, reproducible via `make_tiny_llama_gguf.py`) and drives `ahflc run` through AHFL's production LLM provider path (HttpClient → response parser → event projection) via a thin OpenAI-`/chat/completions`→llama.cpp-`/completion` translation proxy that performs no inference of its own. Every generated token comes from a real autoregressive transformer forward pass plus sampler — not a canned lookup like the mock-server smoke tests. The run reaches terminal `status: "completed"` with a real `capability_completed` event. Registered as the optional `ahflc.run.real_llm.evidence` CTest (`llm-provider` label), gated on a discovered `llama-server` (`AHFL_LLAMA_SERVER`), mirroring the `AHFL_Z3_SOLVER` / `AHFL_SMV_CHECKER` optional-solver precedent. The beta gate closes at `stabilized`, so the product-scope-freeze gate (checker + smoke test) now treats `stabilized` as freeze-lifted: catalog-addition checks are skipped once RFC 0012 stabilizes, and the smoke test asserts both the frozen behavior (pinned to `implemented`) and the lift.

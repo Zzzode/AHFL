@@ -1,8 +1,9 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
+-- Control verification only; expression-valued data contracts use the opt-in SMT path.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0 => observation workflow_safety formal::flow_workflow::ReviewWorkflow[1] @ formal/flow_workflow.ahfl:1110-1163
+-- AHFL_MAP agent__formal_flow_workflow_ReviewAgent__state => agent formal::flow_workflow::ReviewAgent state @ formal/flow_workflow.ahfl:179-528
 -- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__state => workflow formal::flow_workflow::ReviewWorkflow node first state @ formal/flow_workflow.ahfl:952-983
 -- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase => workflow formal::flow_workflow::ReviewWorkflow node first lifecycle phase @ formal/flow_workflow.ahfl:952-983
 -- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node first environment failure request @ formal/flow_workflow.ahfl:952-983
@@ -26,6 +27,7 @@
 -- AHFL_MAP (G ((!workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested & !workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested)) -> (F ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done))))) => workflow formal::flow_workflow::ReviewWorkflow liveness[0] @ formal/flow_workflow.ahfl:1179-1213
 MODULE main
 VAR
+  agent__formal_flow_workflow_ReviewAgent__state : {Init, FastTrack, Review, Done};
   workflow__formal_flow_workflow_ReviewWorkflow__node__first__state : {Init, FastTrack, Review, Done};
   workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
   workflow__formal_flow_workflow_ReviewWorkflow__node__second__state : {Init, FastTrack, Review, Done};
@@ -48,6 +50,14 @@ DEFINE
   workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovering := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERING | workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPENSATING);
   workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovered := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERED | workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPENSATED);
 ASSIGN
+  init(agent__formal_flow_workflow_ReviewAgent__state) := Init;
+  next(agent__formal_flow_workflow_ReviewAgent__state) := case
+    agent__formal_flow_workflow_ReviewAgent__state = Init : {FastTrack, Review};
+    agent__formal_flow_workflow_ReviewAgent__state = FastTrack : Done;
+    agent__formal_flow_workflow_ReviewAgent__state = Review : Done;
+    agent__formal_flow_workflow_ReviewAgent__state = Done : Done;
+    TRUE : agent__formal_flow_workflow_ReviewAgent__state;
+  esac;
   init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__state) := Init;
   next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__state) := case
     !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RUNNING) : workflow__formal_flow_workflow_ReviewWorkflow__node__first__state;
@@ -96,6 +106,12 @@ ASSIGN
     workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RUNNING & workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested : AHFL_NODE_FAILED;
     TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase;
   esac;
+LTLSPEC agent__formal_flow_workflow_ReviewAgent__state = Init
+LTLSPEC G ((agent__formal_flow_workflow_ReviewAgent__state = Init) -> X (((agent__formal_flow_workflow_ReviewAgent__state = Init) | (agent__formal_flow_workflow_ReviewAgent__state = FastTrack) | (agent__formal_flow_workflow_ReviewAgent__state = Review) | (agent__formal_flow_workflow_ReviewAgent__state = Done))))
+LTLSPEC G ((agent__formal_flow_workflow_ReviewAgent__state = FastTrack) -> X (((agent__formal_flow_workflow_ReviewAgent__state = FastTrack) | (agent__formal_flow_workflow_ReviewAgent__state = Done))))
+LTLSPEC G ((agent__formal_flow_workflow_ReviewAgent__state = Review) -> X (((agent__formal_flow_workflow_ReviewAgent__state = Review) | (agent__formal_flow_workflow_ReviewAgent__state = Done))))
+LTLSPEC G ((agent__formal_flow_workflow_ReviewAgent__state = Done) -> X ((agent__formal_flow_workflow_ReviewAgent__state = Done)))
+LTLSPEC G ((agent__formal_flow_workflow_ReviewAgent__state = Done) -> X (agent__formal_flow_workflow_ReviewAgent__state = Done))
 -- workflow formal::flow_workflow::ReviewWorkflow node first lifecycle[completed_final]
 LTLSPEC G (workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed -> (workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done))
 -- workflow formal::flow_workflow::ReviewWorkflow node first recovery[failed_enters_recovering]

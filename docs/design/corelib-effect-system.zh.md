@@ -201,7 +201,7 @@ effect 推导在 typecheck 阶段与类型判断同时进行（对标 [core-lang
 | `if c then...else...` | `ε(c) join ε(then) join ε(else)` | 三支 effect 合取 |
 | `goto S;` | `Pure` | 控制流跳转无副作用 |
 | `return e;` | `ε(e)` | |
-| `assert c;` | `ε(c)` | assert 无副作用（失败时 abort，不视为副作用） |
+| `assert(c);` | `ε(c)` | assert 无副作用（失败时 abort，不视为副作用） |
 | `expr;`（表达式语句） | `ε(expr)` | |
 
 **注意**：上述"无副作用"语义需要细化"副作用"的范围。在 Pure 函数体内，**不允许**出现赋值语句（`ctx` 突变），因为 Pure 函数没有 `ctx`（Pure 函数的局部状态是栈绑定 `let`，不是 agent context）。Pure 函数体内出现赋值 → `E::effect_not_pure`（赋值目标不存在或不可写）。这一约束在 §2.6.4 的"Pure 函数体校验"中检查。

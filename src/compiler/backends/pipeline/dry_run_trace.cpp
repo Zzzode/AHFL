@@ -16,9 +16,9 @@ class DryRunTraceJsonPrinter final : private PipelineJsonHelpers {
 
     void print(const dry_run::DryRunTrace &trace) {
         print_object(0, [&](const auto &field) {
-            field("format_version", [&]() { write_string(trace.format_version); });
-            field("source_execution_plan_format_version",
-                  [&]() { write_string(trace.source_execution_plan_format_version); });
+            field("format", [&]() { write_string(trace.format); });
+            field("source_execution_plan_format",
+                  [&]() { write_string(trace.source_execution_plan_format); });
             field("source_package_identity", [&]() {
                 if (trace.source_package_identity.has_value()) {
                     print_package_identity(*trace.source_package_identity, 1);

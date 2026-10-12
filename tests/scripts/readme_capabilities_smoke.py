@@ -84,14 +84,14 @@ def copy_inputs(source: Path, target: Path) -> None:
             destination = target / evidence["path"]
             destination.parent.mkdir(parents=True, exist_ok=True)
             evidence_entries.append(
-                (destination, evidence["schema"], criterion["id"])
+                (destination, evidence["format"], criterion["id"])
             )
     revision = initialize_repository(target)
     for destination, schema, criterion in evidence_entries:
         destination.write_text(
             json.dumps(
                 {
-                    "schema": schema,
+                    "format": schema,
                     "criterion": criterion,
                     "status": "passed",
                     "source_revision": revision,
@@ -120,7 +120,7 @@ def main() -> int:
         require(result.returncode == 0, f"valid READMEs must pass:\n{result.stderr}")
         value = json.loads(evidence.read_text())
         require(
-            value["schema"] == "ahfl.beta-evidence.readme-capabilities.v1",
+            value["format"] == "ahfl.beta-evidence.readme-capabilities",
             "unexpected README evidence schema",
         )
         require(value["criterion"] == "BETA-09", "README evidence criterion mismatch")

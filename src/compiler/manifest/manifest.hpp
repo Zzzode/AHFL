@@ -71,7 +71,6 @@ struct RunManifest {
 };
 
 struct PackageManifest {
-    int manifest_version{0};
     std::string package_name;
     std::string package_version;
     std::string edition;
@@ -88,10 +87,8 @@ struct PackageManifest {
 };
 
 struct WorkspaceManifest {
-    int manifest_version{0};
     std::string workspace_name;
     std::vector<std::string> members;
-    int resolver_version{0};
     std::vector<DependencySpec> dependencies;
 };
 

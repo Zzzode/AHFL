@@ -1231,15 +1231,16 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
         }
         if (target.owner_symbol_id.has_value() &&
             snapshot.type_check_result != nullptr) {
-            const auto info =
-                snapshot.type_check_result->environment.get_contract(
-                    *target.owner_symbol_id);
-            if (info.has_value()) {
-                payload.canonical_name = info->get().target_name;
+            const auto &contracts = snapshot.type_check_result->environment.contracts();
+            const auto info = std::find_if(contracts.begin(), contracts.end(), [&](const auto &value) {
+                return value.source_id == target.source_id && value.target_range == target.token_range;
+            });
+            if (info != contracts.end()) {
+                payload.canonical_name = info->target_name;
                 add_primary_fact(
                     payload,
                     "Clauses",
-                    std::to_string(info->get().clauses.size()));
+                    std::to_string(info->clauses.size()));
             }
         }
         if (target.symbol_id.has_value()) {

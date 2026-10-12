@@ -45,7 +45,7 @@
 | `effect Nondet` | `ExternalEffect`（非确定环境输入） | 否 |
 | `effect <Capability>+` | `CapabilityCall` 或 `ExternalEffect`（按 effect profile） | 否 |
 
-因此 `fold`（`effect Pure decreases length(self)`）调用点推导为 `PredicateCall`，可自由进入 `requires` / `ensures` / `if` / `assert`；而 `now`（`effect Nondet`）调用点推导为 `ExternalEffect`，禁止进入纯表达式位置，违反报 `E::effect_not_pure`。
+因此集合方法 `values.fold(...)`（`effect Pure`，递减度量来自集合长度）调用点推导为 `PredicateCall`，可自由进入 `requires` / `ensures` / `if` / `assert`；而 `now`（`effect Nondet`）调用点推导为 `ExternalEffect`，禁止进入纯表达式位置，违反报 `E::effect_not_pure`。
 
 ### 1.3 `@builtin` hook 的约束
 
@@ -82,53 +82,38 @@ match opt {
 }
 ```
 
-### 2.2 完整接口
+### 2.2 当前接口
+
+接收者操作使用 inherent method，例如 `value.map(f)` 或 `value.length()`；
+不导出重复的模块级接收者 wrapper。构造与独立算法保留显式 free function。
+以下签名与当前 std 实现一致；函数体以源码为准。
 
 ```ahfl
-// —— 谓词（effect Pure）——
-fn is_some<T>(self: Option<T>) effect Pure -> Bool;
-fn is_none<T>(self: Option<T>) effect Pure -> Bool;
+impl<T> Option<T> {
+    pub fn is_some(self) -> Bool effect Pure decreases 0;
+    pub fn is_none(self) -> Bool effect Pure decreases 0;
+    pub fn map<U>(self, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0;
+    pub fn and_then<U>(self, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0;
+    pub fn or_else(self, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0;
+    pub fn filter(self, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0;
+    pub fn unwrap_or(self, default: T) -> T effect Pure decreases 0;
+    pub fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0;
+    pub fn get_or_insert(self, value: T) -> T effect Pure decreases 0;
+    pub fn xor(self, other: Option<T>) -> Option<T> effect Pure decreases 0;
+}
 
-// —— 同型变换（effect Pure，回调必须 effect Pure）——
-fn map<T, U>(self: Option<T>, f: Fn(T) -> U)
-    effect Pure -> Option<U>
-    requires effect_of(f) == Pure
-    ensures   is_none(result) == is_none(self);
-
-fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>)
-    effect Pure -> Option<U>
-    requires effect_of(f) == Pure;
-
-fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>)
-    effect Pure -> Option<T>
-    requires effect_of(alt) == Pure;
-
-fn filter<T>(self: Option<T>, p: Fn(T) -> Bool)
-    effect Pure -> Option<T>
-    requires effect_of(p) == Pure;
-
-// —— 取值（effect Pure）——
-fn unwrap_or<T>(self: Option<T>, default: T) effect Pure -> T;
-fn unwrap_or_else<T>(self: Option<T>, default: Fn() -> T)
-    effect Pure -> T
-    requires effect_of(default) == Pure;
-fn get_or_insert<T>(self: Option<T>, value: T) effect Pure -> T;     // self: 不可变, 返回 T 副本
-fn zip<T, U>(self: Option<T>, other: Option<U>) effect Pure -> Option<(T, U)>;
-
-// —— 折叠/比较（依赖 trait）——
-impl<T> Iterable<T> for Option<T>;
-impl<T> Foldable<T> for Option<T>     { /* length: 0 or 1 */ }
-impl<T: Eq>  Eq  for Option<T>;
-impl<T: Ord> Ord for Option<T>        { /* None < Some(_) */ }
-impl<T: Hash> Hash for Option<T>;
-impl<T: Display> Display for Option<T>;
+pub fn xor<T>(self: Option<T>, other: Option<T>) -> Option<T> effect Pure decreases 0;
+pub fn flat_map<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0;
+pub fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0;
+pub fn some<T>(value: T) -> Option<T> effect Pure decreases 0;
+pub fn option_none<T>() -> Option<T> effect Pure decreases 0;
 ```
 
-注：`requires effect_of(f) == Pure` 是 trait-bound 形式的 effect 约束，闭包参数 `f` 必须自身是 `effect Pure`，否则 `Option::map` 调用点会被推导为非纯，禁止进入纯表达式位置。`effect_of(f)` 是 effect 系统的反射查询，对标 F\* 的 `effect_of`。
+### 2.3 构造与导入
 
-### 2.3 与现有 `Optional<T>` 的迁移
-
-RFC P5 把现有关键字 `Optional<T>` 迁移为 `Option<T>` ADT。过渡期 `Optional<T>` 作为 `Option<T>` 的 type alias 保留（spec §4.3.1 别名透明），现有 `some(e)` / `none` 字面量语法保留为构造子语法糖。
+`Option<T>` 是 nominal enum；使用 `Option::Some(value)` / `Option::None` 和正常
+模式匹配。prelude 显式导出 Option；导入别名遵守普通名称解析规则，不选择历史
+类型实现，也不承诺保留任何过渡期 API。
 
 ---
 
@@ -147,58 +132,30 @@ enum Result<T, E> {
 }
 ```
 
-### 3.2 完整接口
+### 3.2 当前接口
+
+接收者操作使用 inherent method，例如 `value.map(f)` 或 `value.length()`；
+不导出重复的模块级接收者 wrapper。构造与独立算法保留显式 free function。
+以下签名与当前 std 实现一致；函数体以源码为准。
 
 ```ahfl
-// —— 谓词 ——
-fn is_ok<T, E>(self: Result<T, E>) effect Pure -> Bool;
-fn is_err<T, E>(self: Result<T, E>) effect Pure -> Bool;
+impl<T, E> Result<T, E> {
+    pub fn is_ok(self) -> Bool effect Pure decreases 0;
+    pub fn is_err(self) -> Bool effect Pure decreases 0;
+    pub fn map<U>(self, f: Fn(T) -> U) -> Result<U, E> effect Pure decreases 0;
+    pub fn map_err<F>(self, f: Fn(E) -> F) -> Result<T, F> effect Pure decreases 0;
+    pub fn and_then<U>(self, f: Fn(T) -> Result<U, E>) -> Result<U, E> effect Pure decreases 0;
+    pub fn or_else<F>(self, alt: Fn(E) -> Result<T, F>) -> Result<T, F> effect Pure decreases 0;
+    pub fn unwrap_or(self, default: T) -> T effect Pure decreases 0;
+    pub fn unwrap_or_else(self, default: Fn(E) -> T) -> T effect Pure decreases 0;
+    pub fn ok(self) -> option::Option<T> effect Pure decreases 0;
+    pub fn err(self) -> option::Option<E> effect Pure decreases 0;
+}
 
-// —— 同型变换 ——
-fn map<T, U, E>(self: Result<T, E>, f: Fn(T) -> U)
-    effect Pure -> Result<U, E>
-    requires effect_of(f) == Pure;
-
-fn map_err<T, E, F>(self: Result<T, E>, f: Fn(E) -> F)
-    effect Pure -> Result<T, F>
-    requires effect_of(f) == Pure;
-
-fn and_then<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>)
-    effect Pure -> Result<U, E>
-    requires effect_of(f) == Pure;
-
-fn or_else<T, E, F>(self: Result<T, E>, f: Fn(E) -> Result<T, F>)
-    effect Pure -> Result<T, F>
-    requires effect_of(f) == Pure;
-
-// —— 取值 ——
-fn unwrap<T, E: Display>(self: Result<T, E>) effect Pure -> T
-    requires is_ok(self)
-    ensures  result matches Ok(_);                  // 运行时 panic 由 §8.2 决议, 编译期不可达
-fn unwrap_or<T, E>(self: Result<T, E>, default: T) effect Pure -> T;
-fn unwrap_or_else<T, E>(self: Result<T, E>, default: Fn(E) -> T)
-    effect Pure -> T
-    requires effect_of(default) == Pure;
-
-// —— 副作用转换：try 操作符 desugar 入口 ——
-// `expr?` desugar 为 try(expr)
-fn try<T, E>(r: Result<T, E>) effect Pure -> T
-    requires is_ok(r)
-    ensures  matches Ok(result);
-
-// —— Option 互转 ——
-fn ok<T, E>(self: Result<T, E>) effect Pure -> Option<T>;
-fn err<T, E>(self: Result<T, E>) effect Pure -> Option<E>;
-fn from_option<T, E>(opt: Option<T>, err: Fn() -> E)
-    effect Pure -> Result<T, E>
-    requires effect_of(err) == Pure;
-
-// —— trait 实现 ——
-impl<T, E> Iterable<T> for Result<T, E>;   // 只迭代 Ok 值
-impl<T: Eq, E: Eq>   Eq  for Result<T, E>;
-impl<T: Ord, E: Ord> Ord for Result<T, E>;  // Err < Ok, 同型按内层比较
-impl<T: Hash, E: Hash> Hash for Result<T, E>;
-impl<T: Display, E: Display> Display for Result<T, E>;
+pub fn from_option<T, E>(opt: option::Option<T>, mk_err: Fn() -> E) -> Result<T, E> effect Pure decreases 0;
+pub fn flat_map<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, E> effect Pure decreases 0;
+pub fn flatten<T, E>(self: Result<Result<T, E>, E>) -> Result<T, E> effect Pure decreases 0;
+pub fn transpose<T, E>(self: Result<option::Option<T>, E>) -> option::Option<Result<T, E>> effect Pure decreases 0;
 ```
 
 ### 3.3 `try` / `?` 操作符
@@ -249,143 +206,78 @@ set[1, 2, 3]                    // Set<Int>
 map["a": 1, "b": 2]             // Map<String, Int>
 ```
 
-### 4.2 完整接口（List）
+### 4.2 当前接口（List）
+
+接收者操作使用 inherent method，例如 `value.map(f)` 或 `value.length()`；
+不导出重复的模块级接收者 wrapper。构造与独立算法保留显式 free function。
+以下签名与当前 std 实现一致；函数体以源码为准。
 
 ```ahfl
-// —— 构造 ——
-fn empty<T>() effect Pure -> List<T>;
-fn singleton<T>(x: T) effect Pure -> List<T>;
+impl<T> List<T> {
+    pub fn is_empty(self) -> Bool effect Pure decreases 0;
+    pub fn length(self) -> Int effect Pure decreases 0;
+    pub fn get(self, i: Int) -> option::Option<T> effect Pure decreases 0;
+    pub fn first(self) -> option::Option<T> effect Pure decreases 0;
+    pub fn last(self) -> option::Option<T> effect Pure decreases 0;
+    pub fn append(self, other: List<T>) -> List<T> effect Pure decreases list_raw_length<T>(self) + list_raw_length<T>(other);
+    pub fn map<U>(self, f: Fn(T) -> U) -> List<U> effect Pure decreases list_raw_length<T>(self);
+    pub fn filter(self, p: Fn(T) -> Bool) -> List<T> effect Pure decreases list_raw_length<T>(self);
+    pub fn fold<U>(self, init: U, f: Fn(U, T) -> U) -> U effect Pure decreases list_raw_length<T>(self);
+    pub fn contains(self, x: T) -> Bool effect Pure decreases list_raw_length<T>(self);
+    pub fn tail(self) -> option::Option<List<T>> effect Pure decreases 0;
+    pub fn concat(self, others: List<List<T>>) -> List<T> effect Pure decreases list_raw_length<List<T>>(others);
+    pub fn slice(self, start: Int, end: Int) -> option::Option<List<T>> effect Pure decreases 0;
+    pub fn insert(self, idx: Int, x: T) -> option::Option<List<T>> effect Pure decreases 0;
+    pub fn remove(self, x: T) -> List<T> effect Pure decreases list_raw_length<T>(self);
+    pub fn remove_at(self, idx: Int) -> option::Option<List<T>> effect Pure decreases 0;
+    pub fn fold_right<U>(self, init: U, f: Fn(T, U) -> U) -> U effect Pure decreases list_raw_length<T>(self);
+    pub fn flat_map<U>(self, f: Fn(T) -> List<U>) -> List<U> effect Pure decreases list_raw_length<T>(self);
+    pub fn reverse(self) -> List<T> effect Pure decreases list_raw_length<T>(self);
+}
 
-// —— 谓词 ——
-fn is_empty<T>(self: List<T>) effect Pure -> Bool;
-fn contains<T: Eq>(self: List<T>, x: T) effect Pure -> Bool;
-fn length<T>(self: List<T>) effect Pure -> Int
-    ensures result >= 0;
-
-// —— 访问 (下标走 @builtin) ——
-fn get<T>(self: List<T>, i: Int) effect Pure -> Option<T>
-    ensures (i < 0 or i >= length(self)) == is_none(result);
-fn first<T>(self: List<T>) effect Pure -> Option<T>;
-fn last<T>(self: List<T>)  effect Pure -> Option<T>;
-fn head<T>(self: List<T>) effect Pure -> T requires length(self) > 0;
-fn tail<T>(self: List<T>) effect Pure -> List<T>;
-
-// —— 拼接/切片 ——
-fn append<T>(self: List<T>, other: List<T>) effect Pure -> List<T>
-    ensures length(result) == length(self) + length(other);
-fn concat<T>(xs: List<List<T>>) effect Pure -> List<T>;
-fn slice<T>(self: List<T>, from: Int, to: Int) effect Pure -> List<T>
-    requires 0 <= from and from <= to and to <= length(self);
-
-// —— 变更 (返回新容器, 函数式不可变语义) ——
-fn insert<T>(self: List<T>, i: Int, x: T) effect Pure -> List<T>
-    requires 0 <= i and i <= length(self)
-    ensures  length(result) == length(self) + 1;
-fn remove<T: Eq>(self: List<T>, x: T) effect Pure -> List<T>;
-fn remove_at<T>(self: List<T>, i: Int) effect Pure -> List<T>
-    requires 0 <= i and i < length(self);
-
-// —— 高阶 (依赖 trait, 可验证子集友好) ——
-fn map<T, U>(self: List<T>, f: Fn(T) -> U)
-    effect Pure decreases length(self) -> List<U>
-    requires effect_of(f) == Pure
-    ensures  length(result) == length(self);
-
-fn filter<T>(self: List<T>, p: Fn(T) -> Bool)
-    effect Pure decreases length(self) -> List<T>
-    requires effect_of(p) == Pure
-    ensures  length(result) <= length(self);
-
-fn fold<T, A>(self: List<T>, init: A, f: Fn(A, T) -> A)
-    effect Pure decreases length(self) -> A
-    requires effect_of(f) == Pure;
-
-fn fold_right<T, A>(self: List<T>, init: A, f: Fn(T, A) -> A)
-    effect Pure decreases length(self) -> A
-    requires effect_of(f) == Pure;
-
-fn for_each<T>(self: List<T>, f: Fn(T) -> Unit)
-    effect <EffectOf f> decreases length(self) -> Unit;   // 效果透传回调
-
-fn flat_map<T, U>(self: List<T>, f: Fn(T) -> List<U>)
-    effect Pure decreases length(self) -> List<U>
-    requires effect_of(f) == Pure;
-
-// —— 排序 (依赖 Ord) ——
-fn sort<T: Ord>(self: List<T>) effect Pure -> List<T>
-    ensures length(result) == length(self);
-fn sort_by<T, K: Ord>(self: List<T>, key: Fn(T) -> K)
-    effect Pure -> List<T>
-    requires effect_of(key) == Pure;
-fn reverse<T>(self: List<T>) effect Pure -> List<T>;
-
-// —— 转换 ——
-fn to_set<T: Hash>(self: List<T>) effect Pure -> Set<T>;
-fn keys<K: Hash, V>(self: Map<K, V>) effect Pure -> List<K>;
-fn values<K, V>(self: Map<K, V>) effect Pure -> List<V>;
-fn entries<K, V>(self: Map<K, V>) effect Pure -> List<(K, V)>;
+pub fn list_cons<T>(x: T, xs: List<T>) -> List<T> effect Pure decreases 0;
+pub fn empty<T>() -> List<T> effect Pure decreases 0;
+pub fn singleton<T>(x: T) -> List<T> effect Pure decreases 0;
+pub fn sort<T>(self: List<T>) -> List<T> effect Pure decreases 0;
+pub fn dedup<T>(self: List<T>) -> List<T> effect Pure decreases 0;
 ```
 
-### 4.3 完整接口（Set）
+### 4.3 当前接口（Set）
+
+接收者操作使用 inherent method，例如 `value.map(f)` 或 `value.length()`；
+不导出重复的模块级接收者 wrapper。构造与独立算法保留显式 free function。
+以下签名与当前 std 实现一致；函数体以源码为准。
 
 ```ahfl
-// —— 构造/谓词 ——
-fn empty<T: Hash>() effect Pure -> Set<T>;
-fn singleton<T: Hash>(x: T) effect Pure -> Set<T>;
-fn is_empty<T: Hash>(self: Set<T>) effect Pure -> Bool;
-fn contains<T: Hash>(self: Set<T>, x: T) effect Pure -> Bool;
-fn length<T: Hash>(self: Set<T>) effect Pure -> Int
-    ensures result >= 0;
+impl<T> Set<T> {
+    pub fn is_empty(self) -> Bool effect Pure decreases 0;
+    pub fn length(self) -> Int effect Pure decreases 0;
+    pub fn contains(self, x: T) -> Bool effect Pure decreases 0;
+}
 
-// —— 变更 ——
-fn insert<T: Hash>(self: Set<T>, x: T) effect Pure -> Set<T>;
-fn remove<T: Hash>(self: Set<T>, x: T) effect Pure -> Set<T>;
-
-// —— 集合运算 ——
-fn union<T: Hash>(self: Set<T>, other: Set<T>) effect Pure -> Set<T>;
-fn intersection<T: Hash>(self: Set<T>, other: Set<T>) effect Pure -> Set<T>;
-fn difference<T: Hash>(self: Set<T>, other: Set<T>) effect Pure -> Set<T>;
-fn is_subset<T: Hash>(self: Set<T>, other: Set<T>) effect Pure -> Bool;
-fn is_disjoint<T: Hash>(self: Set<T>, other: Set<T>) effect Pure -> Bool;
-
-// —— 高阶 ——
-fn map<T: Hash, U: Hash>(self: Set<T>, f: Fn(T) -> U)
-    effect Pure decreases length(self) -> Set<U>
-    requires effect_of(f) == Pure;
-fn filter<T: Hash>(self: Set<T>, p: Fn(T) -> Bool)
-    effect Pure decreases length(self) -> Set<T>
-    requires effect_of(p) == Pure;
-fn fold<T: Hash, A>(self: Set<T>, init: A, f: Fn(A, T) -> A)
-    effect Pure decreases length(self) -> A
-    requires effect_of(f) == Pure;
+pub fn set_empty<T>() -> Set<T> effect Pure decreases 0;
+pub fn set_singleton<T>(x: T) -> Set<T> effect Pure decreases 0;
 ```
 
-### 4.4 完整接口（Map）
+### 4.4 当前接口（Map）
+
+接收者操作使用 inherent method，例如 `value.map(f)` 或 `value.length()`；
+不导出重复的模块级接收者 wrapper。构造与独立算法保留显式 free function。
+以下签名与当前 std 实现一致；函数体以源码为准。
 
 ```ahfl
-// —— 构造/谓词 ——
-fn empty<K: Hash, V>() effect Pure -> Map<K, V>;
-fn is_empty<K: Hash, V>(self: Map<K, V>) effect Pure -> Bool;
-fn contains_key<K: Hash, V>(self: Map<K, V>, k: K) effect Pure -> Bool;
-fn length<K: Hash, V>(self: Map<K, V>) effect Pure -> Int
-    ensures result >= 0;
+impl<K, V> Map<K, V> {
+    pub fn is_empty(self) -> Bool effect Pure decreases 0;
+    pub fn length(self) -> Int effect Pure decreases 0;
+    pub fn contains_key(self, key: K) -> Bool effect Pure decreases 0;
+    pub fn get(self, key: K) -> option::Option<V> effect Pure decreases 0;
+    pub fn get_or(self, key: K, default: V) -> V effect Pure decreases 0;
+}
 
-// —— 访问/变更 ——
-fn get<K: Hash, V>(self: Map<K, V>, k: K) effect Pure -> Option<V>;
-fn get_or<K: Hash, V>(self: Map<K, V>, k: K, default: V) effect Pure -> V;
-fn insert<K: Hash, V>(self: Map<K, V>, k: K, v: V) effect Pure -> Map<K, V>;
-fn remove<K: Hash, V>(self: Map<K, V>, k: K) effect Pure -> Map<K, V>;
-
-// —— 高阶 ——
-fn map_values<K: Hash, V, U>(self: Map<K, V>, f: Fn(V) -> U)
-    effect Pure decreases length(self) -> Map<K, U>
-    requires effect_of(f) == Pure;
-fn filter<K: Hash, V>(self: Map<K, V>, p: Fn(K, V) -> Bool)
-    effect Pure decreases length(self) -> Map<K, V>
-    requires effect_of(p) == Pure;
-fn fold<K: Hash, V, A>(self: Map<K, V>, init: A, f: Fn(A, K, V) -> A)
-    effect Pure decreases length(self) -> A
-    requires effect_of(f) == Pure;
+pub fn map_empty<K, V>() -> Map<K, V> effect Pure decreases 0;
+pub fn map_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure decreases 0;
+pub fn map_values<K, V, U>(self: Map<K, V>, f: Fn(V) -> U) -> Map<K, U> effect Pure decreases map_raw_size<K, V>(self);
+pub fn filter_keys<K, V>(self: Map<K, V>, p: Fn(K) -> Bool) -> Map<K, V> effect Pure decreases map_raw_size<K, V>(self);
 ```
 
 ### 4.5 SMV 编码对应
@@ -464,8 +356,9 @@ fn fold<K: Hash, V, A>(self: Map<K, V>, init: A, f: Fn(A, K, V) -> A)
 ```ahfl
 // ✅ 合法：在 std::string 内调用 @builtin
 module std::string;
-fn length(s: String) effect Pure -> Int {
-    @builtin("string_raw_length")(s)
+impl String {
+    @builtin("string_raw_length")
+    pub fn length(self) -> Int effect Pure;
 }
 
 // ❌ 非法：用户模块直接调用 @builtin
@@ -589,48 +482,31 @@ trait ToJson {
 
 ### 7.1 std::string
 
+接收者操作使用 inherent method，例如 `value.map(f)` 或 `value.length()`；
+不导出重复的模块级接收者 wrapper。构造与独立算法保留显式 free function。
+以下签名与当前 std 实现一致；函数体以源码为准。
+
 ```ahfl
-module std::string;
-
-// String 是 stdlib 类型, 字面量 "..." 内置但 String 类型本身在库 (RFC §3.1)
-type String where length <= MAX_STRING_LEN;     // 默认 1 << 16
-
-// —— 谓词 ——
-fn is_empty(s: String) effect Pure -> Bool;
-fn length(s: String) effect Pure -> Int
-    ensures result >= 0;
-fn contains(haystack: String, needle: String) effect Pure -> Bool;
-fn starts_with(s: String, prefix: String) effect Pure -> Bool;
-fn ends_with(s: String, suffix: String) effect Pure -> Bool;
-fn equals(a: String, b: String) effect Pure -> Bool;
-
-// —— 变换 ——
-fn upper(s: String) effect Pure -> String;
-fn lower(s: String) effect Pure -> String;
-fn trim(s: String) effect Pure -> String;
-fn replace(s: String, from: String, to: String) effect Pure -> String;
-fn concat(a: String, b: String) effect Pure -> String;     // 支持 a + b 操作符语法糖
-fn slice(s: String, from: Int, to: Int) effect Pure -> String
-    requires 0 <= from and from <= to and to <= length(s);
-
-// —— 分解 ——
-fn split(s: String, sep: String) effect Pure -> List<String>;
-fn split_lines(s: String) effect Pure -> List<String>;
-fn join(parts: List<String>, sep: String) effect Pure -> String;
-
-// —— 解析 (依赖 FromStr trait) ——
-fn parse<T: FromStr>(s: String) effect Pure -> Option<T>;
-
-trait FromStr {
-    fn from_str(s: String) effect Pure -> Option<Self>;
+impl String {
+    pub fn is_empty(self) -> Bool effect Pure decreases 0;
+    pub fn contains(self, needle: String) -> Bool effect Pure decreases 0;
+    pub fn starts_with(self, prefix: String) -> Bool effect Pure decreases 0;
+    pub fn ends_with(self, suffix: String) -> Bool effect Pure decreases 0;
+    pub fn trim(self) -> String effect Pure decreases 0;
+    pub fn trim_start(self) -> String effect Pure decreases 0;
+    pub fn trim_end(self) -> String effect Pure decreases 0;
+    pub fn replace(self, from: String, to: String) -> String effect Pure decreases 0;
+    pub fn split(self, sep: String) -> collections::List<String> effect Pure decreases 0;
+    pub fn parse_int(self) -> option::Option<Int> effect Pure decreases 0;
+    pub fn split_whitespace(self) -> collections::List<String> effect Pure decreases 0;
+    pub fn parse_float(self) -> option::Option<Float> effect Pure decreases 0;
+    pub fn concat(self, other: String) -> String effect Pure decreases 0;
+    pub fn substring(self, start: Int, end: Int) -> String effect Pure decreases 0;
+    pub fn parse_uuid(self) -> option::Option<UUID> effect Pure decreases 0;
+    pub fn repeat(self, n: Int) -> String effect Pure decreases 0;
 }
 
-// —— trait 实现 ——
-impl Eq    for String;
-impl Ord   for String;          // 字典序
-impl Hash  for String;
-impl Display for String { fn display(self) effect Pure -> String { self } }
-impl FromStr for String { fn from_str(s: String) effect Pure -> Option<String> { Some(s) } }
+pub fn join(strings: collections::List<String>, sep: String) -> String effect Pure decreases collections::list_raw_length<String>(strings);
 ```
 
 ### 7.2 std::fmt
@@ -814,11 +690,10 @@ capability BadQuery(id: String) -> Result<T, NetworkError>;   // NetworkError �
 
 ## 9. 开放问题 5：prelude stability policy
 
-### 9.1 prelude 导出清单（冻结）
+### 9.1 prelude 当前导出清单
 
 `std::prelude` 是标准库显式预置模块。当前公开 PackageGraph 入口不隐式注入
-prelude；用户需要显式 `import std::prelude;` 或使用全限定 std 名称。当前版本
-（v1）冻结导出下列符号。
+prelude；用户需要显式 `import std::prelude;` 或使用全限定 std 名称。当前导出下列符号。
 
 #### 9.1.1 类型与构造子
 
@@ -830,31 +705,15 @@ List, Set, Map
 String
 ```
 
-#### 9.1.2 函数
+#### 9.1.2 函数与方法
 
-```text
-// option/result
-is_some, is_none, is_ok, is_err, map, map_err, and_then, or_else,
-unwrap_or, unwrap_or_else, ok, err, try
+接收者 API 由所属类型的 inherent impl 提供：Option / Result 的 map、and_then、
+unwrap_or，集合的 length、contains、get、fold，以及 String 的 trim、split 等
+都使用点调用。prelude 不复制模块级 receiver wrappers，不以裸函数名选择某个
+容器的实现。
 
-// collections
-length, is_empty, contains, contains_key, get, get_or,
-first, last, head, tail, append, concat, slice, insert, remove, remove_at,
-fold, fold_right, filter, flat_map, for_each, sort, reverse,
-keys, values, entries,
-union, intersection, difference, is_subset, is_disjoint,
-to_set, to_list
-
-// string
-starts_with, ends_with, contains, upper, lower, trim, replace,
-split, split_lines, join, parse, format
-
-// cmp
-compare, min, max, clamp
-
-// common constructors
-empty (overloaded for List/Set/Map), singleton
-```
+free function 只保留实际独立构造、算法与格式化入口。当前导出以
+`std/prelude.ahfl` 为准；不在 prelude 的独立 API 通过显式模块导入访问。
 
 #### 9.1.3 trait
 
@@ -874,69 +733,40 @@ Iterable, Foldable, Functor
 | `std::fmt` 的底层 `DisplayValue` | 仅 `format` 进 prelude，底层类型按需导入 |
 | 任何 `@builtin` 函数 | 永远不进 prelude（永远只在 std 内部用） |
 
-### 9.2 稳定性策略
+### 9.2 当前 prelude 契约
 
-prelude 是 **language stability boundary**（语言稳定性边界），与 spec / grammar 同级冻结。策略与 Rust prelude / Swift stdlib 对齐。
+prelude 与当前 grammar / spec 同步维护，只有一份显式导出的清单。变更符号、
+签名、effect 或语义时，同步更新 std、编译器消费点、测试、示例与文档；删除旧
+实现和旧名称，不保留 deprecated alias、代际模块或等待周期。
 
-#### 9.2.1 semver 边界
+#### 9.2.1 依赖与变更边界
 
-| 变更类型 | 语义化版本影响 | 是否允许 | 迁移机制 |
-| --- | --- | --- | --- |
-| 新增 prelude 符号（不与用户符号冲突） | minor（向后兼容） | 允许 | 自动可用 |
-| 新增 prelude 符号（与用户已有同名符号冲突） | — | **不允许** | 改名后进 prelude |
-| 重命名 prelude 符号 | major（破坏性） | 仅在 major 版本允许 | 旧名保留为 deprecated alias 至少 1 个 major 周期 |
-| 删除 prelude 符号 | major（破坏性） | 仅在 major 版本允许 | deprecated 至少 1 个 major 周期后再删 |
-| 改变 prelude 符号的签名（参数/返回类型/effect） | major | 仅在 major 版本允许 | 同上 |
-| 改变 prelude 符号的语义（保持签名） | patch（向后兼容） | 允许，但需 release notes | 通过 contract 兼容性测试守住 |
-| 改变 prelude 导出清单（仅新增，不冲突） | minor | 允许 | — |
+包依赖的 SemVer 是选择依赖的数据，保留。它不选择 AHFL 的历史实现，也不要求
+维护旧 prelude。破坏性变更须列出受影响符号和调用方需要修改的源码，并提供当前
+contract 套件、SMV golden 和真实编译入口的回归证据。
 
 #### 9.2.2 名字冲突解析
 
-当用户显式导入 prelude 且 prelude 符号与用户模块 local 符号同名时，按
-[module-resolution-rules.zh.md](./module-resolution-rules.zh.md) §"lookup 顺序"的优先级：
-**当前 module local > 原始 canonical > alias 展开**。具体到 prelude：
+显式导入的 prelude 遵守 [module-resolution-rules.zh.md](./module-resolution-rules.zh.md)
+中的 lookup 顺序。用户模块 local declaration 优先；prelude 不成为隐式全局依赖。
+需要明确选择 std 符号时，显式导入拥有该类型 impl 的模块，然后调用 `values.map(f)`。
 
-1. 用户模块若声明了同名符号（如自定义 `map`），其 local declaration 优先
-2. prelude 符号不会自动进入 public PackageGraph 编译单元；显式 import 后仍受普通
-   local shadowing 规则约束
-3. 用户若想强制使用 prelude 版本，写全限定名 `std::collections::map`
-
-这保留了 Rust / Haskell prelude 的稳定清单经验，但 AHFL 当前选择显式导入，避免
-早期语言阶段把 std 符号集变成隐式全局依赖。
-
-#### 9.2.3 版本演化与下游兼容
+#### 9.2.3 同步更新流程
 
 ```mermaid
 graph LR
-    V1["prelude v1<br/>(冻结清单见 §9.1)"]
-    V2["prelude v2<br/>(minor: 仅新增符号)"]
-    V3["prelude v3<br/>(major: 重命名/删除,<br/>deprecated alias 过渡)"]
-    V1 -->|minor, 向后兼容| V2
-    V2 -->|major, 需 deprecated 周期| V3
-    V1 -.->|"release notes<br/>+ contract 兼容测试"| Downstream1["下游项目"]
-    V2 -.-> Downstream2["下游项目"]
-    V3 -.-> Downstream3["下游项目"]
+    Contract["当前导出清单"] --> Compiler["编译器与 std"]
+    Contract --> Callers["所有调用方与示例"]
+    Compiler --> Checks["contract 与 SMV 回归"]
+    Callers --> Checks
+    Checks --> Docs["当前文档与变更说明"]
 ```
 
-每个 prelude 版本变更必须满足：
+#### 9.2.4 行业实践的取舍
 
-1. **contract 兼容测试**：stdlib 自身的 `requires`/`ensures`/`invariant` 套件在新旧版本上等价（spec §4.7 contract 规则不变）
-2. **SMV golden 兼容**：对相同源码，新 prelude 不能改变 SMV 输出（formal-backend 已要求 backend 不读 parse tree）
-3. **release notes**：每个 minor/major 变更必须在 release notes 列出 prelude diff
-4. **deprecated alias 周期**：major 变更必须保留 deprecated alias 至少 1 个 major 周期，编译器对 deprecated alias 报 warning `W::prelude_deprecated`
-
-#### 9.2.4 与其他语言对标的依据
-
-| 语言 | prelude 策略 | AHFL 借鉴 |
-| --- | --- | --- |
-| **Rust** | `std::prelude` 每个 edition 冻结，跨 edition 才允许新增；删除走 edition gate | 冻结清单 + edition（major 版本）边界 |
-| **Swift** | `Swift` 模块默认 import，符号集稳定；删除极其罕见 | 极度保守的删除策略 |
-| **Haskell** | `Prelude` 由 report 冻结，扩展走 `Prelude2021` 等显式 opt-in | 冻结清单 + 显式模块演进 |
-| **Lean** | `Init` 模块默认 import，按 Lean 版本演进 | 单根模块树 + 版本绑定 |
-
-AHFL 取 Rust edition + Haskell 显式模块演进折中：**prelude 清单冻结在 v1**，
-当前 public PackageGraph 入口显式导入；新增通过 minor 版本，删除/重命名通过
-major 版本（deprecated alias 过渡）。
+借鉴 Rust 的明确名称解析、Swift 的 stdlib 边界与 Haskell 的显式模块导入。
+AHFL 不复制它们的历史 edition 或 deprecated alias 机制：当前项目明确要求
+原子更新和单一实现。名称冲突规则、类型检查和形式化证据仍须完整。
 
 ---
 
@@ -1200,7 +1030,7 @@ graph TD
 3. `std/ahfl.toml` 作为 sysroot package manifest 落地
 4. PackageGraph sysroot 解析按 §11.1 落地
 5. SMV 编码按 §4.5 表格落地
-6. prelude 显式入口与稳定性按 §9.2 / §11.2 落地（CI 加入 contract 兼容测试）
+6. prelude 显式入口与稳定性按 §9.2 / §11.2 落地（CI 加入 当前 contract 回归）
 
 ---
 
@@ -1218,7 +1048,6 @@ graph TD
 | `E::nondet_in_invariant` | `now`/`uuid_new` 等 Nondet 函数进入 invariant（沿用 RFC §5） | error |
 | `E::std_module_not_found` | std 模块在 sysroot PackageGraph module root 中找不到 | error |
 | `E::std_cyclic_dependency` | std 模块间检测到循环依赖 | error |
-| `W::prelude_deprecated` | 使用了 deprecated prelude alias | warning |
 | `W::std_root_overridden` | 预留：非默认 sysroot 覆盖了编译期 std | warning |
 
 ---
@@ -1239,15 +1068,15 @@ graph TD
 
 ### 13.2 开放问题 5 决议
 
-**结论**：prelude 是 language stability boundary，v1 清单冻结（§9.1）。
+**结论**：prelude 是当前语言导出边界，清单见 §9.1。
 
-- prelude 导出：`Option`/`Result`/`Ordering`/`List`/`Set`/`Map`/`String` + 高阶函数（`map`/`fold`/`filter`/`contains`/`length` 等）+ trait（`Eq`/`Ord`/`Hash`/`Display`/`Iterable`/`Foldable`/`Functor`/`FromJson`/`ToJson`/`FromStr`）。
+- prelude 导出：`Option`/`Result`/`Ordering`/`List`/`Set`/`Map`/`String`；高阶操作通过所属类型方法访问+ trait（`Eq`/`Ord`/`Hash`/`Display`/`Iterable`/`Foldable`/`Functor`/`FromJson`/`ToJson`/`FromStr`）。
 - 不在 prelude：`std::time`/`std::uuid`（引入 `Nondet`）、`std::json`/`std::decimal`（领域特定）、任何 `@builtin`。
-- semver 边界：新增走 minor（不与用户符号冲突），删除/重命名走 major + deprecated alias 至少 1 个 major 周期。
-- 名字冲突：local 声明 > prelude 符号，强制用 prelude 版本写全限定名。
-- 版本演化：minor 通过 release notes + contract 兼容测试守；major 通过 deprecated alias 过渡。
+- 包的 SemVer 用于依赖选择；语言导出变化通过同次源码更新与回归闭合。
+- 名字冲突：local 声明 > prelude 符号，明确选择 prelude 符号时写全限定名。
+- 修改导出时同次更新所有消费点、contract 测试与文档，删除旧名称。
 
-**理由**：对标 Rust prelude edition 边界 + Haskell `Prelude` 显式模块演进的折中；保证 stdlib 自举（RFC §3.3）下下游项目跨版本不破。
+**理由**：对标 Rust prelude edition 边界 + Haskell `Prelude` 显式模块演进的折中；保证 stdlib 自举（RFC §3.3）与当前项目导出一致；破坏性修改明确受影响的源码。
 
 ---
 
@@ -1259,4 +1088,4 @@ graph TD
 4. [module-resolution-rules.zh.md](./module-resolution-rules.zh.md) §"lookup 顺序"、§"不带 alias 的 import"（prelude 注入与名字遮蔽）
 5. 本文 §8 / §9 决议、§5 `@builtin` 清单、§9.1 prelude 清单
 
-本附件冻结后，RFC P6 的实现可直接据本文签名落地；对本文任何修改需经 RFC 评审，并通过 contract 兼容测试与 SMV golden 兼容测试。
+本附件冻结后，RFC P6 的实现可直接据本文签名落地；对本文任何修改需经 RFC 评审，并通过 当前 contract 回归与 SMV golden 回归。

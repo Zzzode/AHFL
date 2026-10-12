@@ -538,7 +538,7 @@ flow for NonPureAgent {
     state Done {
         if Probe(input.value) {
         }
-        assert Probe(input.value);
+        assert(Probe(input.value));
         return Response { value: input.value };
     }
 }
@@ -765,7 +765,7 @@ flow for BoolBoundaryAgent {
     state Done {
         if input.value {
         }
-        assert input.value;
+        assert(input.value);
         return Response { value: input.value };
     }
 }

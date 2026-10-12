@@ -118,7 +118,6 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     ahfl_tooling_dap
     ahfl_tooling_telemetry
     ahfl_tooling_profiling
-    ahfl_tooling_abi
     ahfl_tooling_cache
     ahfl_tooling_testing
     ahfl_tooling_package

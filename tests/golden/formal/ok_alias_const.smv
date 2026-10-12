@@ -1,10 +1,8 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
+-- Control verification only; expression-valued data contracts use the opt-in SMT path.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo => agent ir::alias_const::EchoAgent called ir::alias_const::Echo @ ir/alias_const.ahfl:297-348
--- AHFL_MAP contract_ir_alias_const_EchoAgent_0_atom_0 => observation contract ir::alias_const::EchoAgent[0] @ ir/alias_const.ahfl:637-670
--- AHFL_MAP contract_ir_alias_const_EchoAgent_1_atom_0 => observation contract ir::alias_const::EchoAgent[1] @ ir/alias_const.ahfl:675-708
 -- AHFL_MAP agent__ir_alias_const_EchoAgent__state => agent ir::alias_const::EchoAgent state @ ir/alias_const.ahfl:398-600
 -- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__state => workflow ir::alias_const::EchoWorkflow node run state @ ir/alias_const.ahfl:1021-1054
 -- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__phase => workflow ir::alias_const::EchoWorkflow node run lifecycle phase @ ir/alias_const.ahfl:1021-1054
@@ -27,8 +25,6 @@ VAR
   workflow__ir_alias_const_EchoWorkflow__node__run__state : {Init, Done};
   workflow__ir_alias_const_EchoWorkflow__node__run__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
 IVAR
-  contract_ir_alias_const_EchoAgent_0_atom_0 : boolean;
-  contract_ir_alias_const_EchoAgent_1_atom_0 : boolean;
   workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested : boolean;
 DEFINE
   workflow__ir_alias_const_EchoWorkflow__node__run__started := !(workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_IDLE);
@@ -73,8 +69,10 @@ ASSIGN
     workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_RUNNING & workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested : AHFL_NODE_FAILED;
     TRUE : workflow__ir_alias_const_EchoWorkflow__node__run__phase;
   esac;
--- contract ir::alias_const::EchoAgent requires[0] observation_assumption: contract_ir_alias_const_EchoAgent_0_atom_0
--- contract ir::alias_const::EchoAgent ensures[1] data_guarantee_abstracted: contract_ir_alias_const_EchoAgent_1_atom_0
+LTLSPEC agent__ir_alias_const_EchoAgent__state = Init
+LTLSPEC G ((agent__ir_alias_const_EchoAgent__state = Init) -> X (((agent__ir_alias_const_EchoAgent__state = Init) | (agent__ir_alias_const_EchoAgent__state = Done))))
+LTLSPEC G ((agent__ir_alias_const_EchoAgent__state = Done) -> X ((agent__ir_alias_const_EchoAgent__state = Done)))
+LTLSPEC G ((agent__ir_alias_const_EchoAgent__state = Done) -> X (agent__ir_alias_const_EchoAgent__state = Done))
 -- workflow ir::alias_const::EchoWorkflow node run lifecycle[completed_final]
 LTLSPEC G (workflow__ir_alias_const_EchoWorkflow__node__run__completed -> (workflow__ir_alias_const_EchoWorkflow__node__run__state = Done))
 -- workflow ir::alias_const::EchoWorkflow node run recovery[failed_enters_recovering]

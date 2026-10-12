@@ -78,7 +78,7 @@ AHFL 名字来源分为三层：
 | Std package module namespace | `std::collections::List`、`std::json::JsonValue`、`std::fmt::format` | 是 | 是，且 package 必须声明 `std = { source = "sysroot" }` dependency | active sysroot `std/ahfl.toml` 和 PackageGraph |
 | User package namespace | `refund::audit::Workflow`、path/workspace dependency modules | 是 | 是 | root/workspace `ahfl.toml` 和 PackageGraph |
 
-Primitive 类型可以有 std facade impl，例如 `impl String { ... }` 或 `impl Int { ... }`。这些 impl 属于 active sysroot 的 std package，用于 PackageGraph/SourceSysroot 模式下的方法解析、hover、documentation 和 implementation candidates；但 primitive 类型本身不是从 `std::string` import 得到的普通 nominal type。Detached mode v1 只使用 sysroot 提供 primitive canonical home，不暴露 std facade impl candidates。
+Primitive 类型可以有 std facade impl，例如 `impl String { ... }` 或 `impl Int { ... }`。这些 impl 属于 active sysroot 的 std package，用于 PackageGraph/SourceSysroot 模式下的方法解析、hover、documentation 和 implementation candidates；但 primitive 类型本身不是从 `std::string` import 得到的普通 nominal type。Detached mode 只使用 sysroot 提供 primitive canonical home，不暴露 std facade impl candidates。
 
 关键分界：primitive type name visibility 不等于 primitive method visibility。裸写 `String` 是语言 primitive prelude；调用 `s.length()` 是对 std facade impl method 的使用，必须满足本 RFC 的 std dependency/import 规则。
 
@@ -102,7 +102,7 @@ flowchart TD
 
 ### Primitive prelude contract
 
-AHFL primitive prelude v1 包含：
+AHFL primitive prelude 包含：
 
 | Primitive | Source syntax | Canonical type identity | Canonical home |
 | --- | --- | --- | --- |
@@ -123,7 +123,7 @@ AHFL primitive prelude v1 包含：
 3. `import std::string as string;` 不影响裸写 `String` 的解析结果。
 4. Primitive methods 只能来自 PackageGraph/SourceSysroot 中按模块可见性可见的 std facade impl，或来自未来单独规范的 compiler builtin method table；裸文件没有 full PackageGraph 时，compiler 可以解析 primitive type 本身，但不得解析、补全或展示 std facade methods。
 5. 如果某个 canonical home 文件在当前 sysroot 不存在，LSP 仍可返回 compiler virtual location 或 hover 文档，但必须记录 index completeness 为 `VirtualPrimitiveHome`。
-6. `SysrootPrimitiveIndex` v1 只提供 primitive canonical home；它不得索引 impl methods、trait impls、ordinary std exports 或 completion candidates。
+6. `SysrootPrimitiveIndex` 只提供 primitive canonical home；它不得索引 impl methods、trait impls、ordinary std exports 或 completion candidates。
 
 ### Package std dependency semantics
 
@@ -138,8 +138,6 @@ PackageGraph 模式下，`std` namespace 的可见性由 dependency graph 决定
 例如：
 
 ```toml
-manifest_version = 1
-
 [package]
 name = "scratch"
 version = "0.1.0"
@@ -272,7 +270,7 @@ CLI、LSP、formatter 和测试 harness 不得各自重复实现“向上搜索 
 3. 让 `List`、`Map`、`Option`、`Result` 等 std nominal types 因 prelude 或 sysroot 存在而裸名可见。
 4. 让 std facade impl 改变当前文件 typecheck 结论。
 5. 把裸文件目录当作 implicit package root。
-6. 接受任何 `import` declaration。Detached v1 没有 module root、package root 或 dependency graph，因此无法可靠区分 local module import、package import 和 std import。
+6. 接受任何 `import` declaration。Detached 没有 module root、package root 或 dependency graph，因此无法可靠区分 local module import、package import 和 std import。
 7. 为了 LSP completion 临时注入 std imports。
 
 示例：
@@ -295,7 +293,7 @@ struct A {
 
 在 detached mode 中，上例 import 必须报 diagnostic：当前文件没有 module root、package context 或 dependency graph。用户需要创建 `ahfl.toml`，或者通过 CLI/LSP 显式指定 root manifest，而不是依赖裸文件隐式 std。
 
-未来如果 AHFL 需要多文件 scratch 或 playground，可以通过单独 RFC 设计 `--root`、`--include` 或 scratch package 模式；不得把这些规则塞进 detached v1。
+未来如果 AHFL 需要多文件 scratch 或 playground，可以通过单独 RFC 设计 `--root`、`--include` 或 scratch package 模式；不得把这些规则塞进 detached 。
 
 ### LSP behavior
 
@@ -329,7 +327,7 @@ sequenceDiagram
 
 1. `std_manifest` canonical path。
 2. `std_identity`。
-3. primitive home schema version。
+3. 当前 primitive home 输入和实际 toolchain 内容身份；不保留 schema 计数器。
 
 它只索引 primitive canonical home，不索引 primitive facade impl metadata、trait impls、ordinary std module exports 或 completion candidates。这样裸文件能跳到 `String` 文档，但不能解析 `std::json::JsonValue`，也不能列出 `impl String` 方法候选。
 
@@ -391,7 +389,7 @@ error [E::package_dependency_missing]: package import requires a declared depend
 
 1. Language primitive prelude 永远在作用域内，不能关闭。
 2. `std::prelude` 是 standard-library package module，只有 PackageGraph/SourceSysroot 模式能加载。
-3. AHFL v1 的 `std::prelude` injection 仍按 RFC 0005 的 manifest 字段控制；当前标准库 manifest 使用 `injection = "explicit"`。
+3. AHFL 的 `std::prelude` injection 仍按 RFC 0005 的 manifest 字段控制；当前标准库 manifest 使用 `injection = "explicit"`。
 4. Detached mode 不注入 `std::prelude`。
 5. 如果后续 RFC 允许用户 package 自动注入 std prelude，也不得改变 detached mode 的 std module import 边界，除非同时明确 single-file package model。
 
@@ -505,7 +503,7 @@ LSP workspace folder 只定义 project discovery 边界，不等于 package root
 6. 已落库 primitive shadowing 专用诊断：用户声明 `struct String {}` 报 `E::primitive_shadowing_forbidden`。
 7. 已落库 `W::primitive_home_unavailable`：active sysroot 缺少 primitive home，或没有可用 default ToolchainProfile 时，LSP detached diagnostics 可见。
 8. 已落库 `ahflc init --single-file`：从 detached source 显式生成 RFC 0005 package manifest，缺失 module declaration 时补写 module header，且不覆盖已有 manifest。
-9. 已同步 [core-language.zh.md](../spec/core-language.zh.md)、[single-file-mode.zh.md](../reference/single-file-mode.zh.md)、[cli-commands.zh.md](../reference/cli-commands.zh.md)、[lsp-vscode-extension.zh.md](../reference/lsp-vscode-extension.zh.md)、[stdlib-cookbook.zh.md](../reference/stdlib-cookbook.zh.md) 与 [error-codes.zh.md](../reference/error-codes.zh.md)。
+9. 已同步 [core-language.zh.md](../spec/core-language.zh.md)、[single-file-mode.zh.md](../reference/single-file-mode.zh.md)、[cli-commands.zh.md](../reference/cli-commands.zh.md)、[lsp-vscode-extension.zh.md](../reference/lsp-vscode-extension.zh.md)、[standard-library.zh.md](../tutorials/standard-library.zh.md) 与 [error-codes.zh.md](../reference/error-codes.zh.md)。
 
 ## Alternatives
 
@@ -521,10 +519,10 @@ LSP workspace folder 只定义 project discovery 边界，不等于 package root
 
 ## Resolved Questions
 
-1. `Unit` v1 不强制新增实际 `std/unit.ahfl`。若 active sysroot 缺少该 home，
+1. `Unit` 不强制新增实际 `std/unit.ahfl`。若 active sysroot 缺少该 home，
    `SysrootPrimitiveIndex` 记录 missing home，并由 LSP 发
    `W::primitive_home_unavailable`。
-2. `Decimal` v1 继续使用 `PrimitiveKind::Decimal` 加 `TypeKey::primitive_parameter`
+2. `Decimal` 继续使用 `PrimitiveKind::Decimal` 加 `TypeKey::primitive_parameter`
    表示 scale；不引入独立 `PrimitiveTypeKey` payload。
 
 ## Decision History

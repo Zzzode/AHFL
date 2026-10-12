@@ -75,8 +75,7 @@ const module = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module).length !== 0)
   throw new Error("a pure direct-call agent expanded import authority");
 const {exports: c} = await WebAssembly.instantiate(module, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 const expectedInitial = Number(process.argv[3]);
 const expectedEntered = process.argv[4].split(",").map(Number);
@@ -113,16 +112,8 @@ if (JSON.stringify(observed) !== JSON.stringify(expectedSequence))
 if (c.transition_count.value !== expectedTransitions)
   throw new Error(`transition_count ${c.transition_count.value} != ${expectedTransitions}`);
 
-// The identity final forwards the borrowed input frame through legacy run().
-const input = new TextEncoder().encode("identity");
-const ptr = c.alloc(input.length);
-new Uint8Array(c.memory.buffer, ptr, input.length).set(input);
-const outPtr = c.run(ptr, input.length);
-const expectedFinal = expectedSequence[expectedSequence.length - 1];
-if (outPtr !== ptr || c.current_state() !== expectedFinal ||
-    c.transition_count.value !== expectedTransitions)
-  throw new Error("legacy run() did not reach the same final state");
-c.dealloc(ptr, input.length);
+if ("run" in c) throw new Error("removed pointer-only entry is exported");
+
 ''')
 
         args = [

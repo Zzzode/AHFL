@@ -4,9 +4,9 @@
 // sequence against the descriptor's state table. Two lanes:
 //   1. P6-frame identity agent (e1_identity_agent): the canonical
 //      `let in = input; return in;` passthrough; the input is packed into the
-//      fixed P4-D regions and runv returns the borrowed input base. The walk
+//      fixed P4-D regions and run_frame returns the borrowed input base. The walk
 //      drives Start -> Done on the effects-free instance.
-//   2. P6-frame computed agent (v2b_computed_string): the input is packed into
+//   2. P6-frame computed agent (computed_string): the input is packed into
 //      the fixed P4-D regions before the walk (computed handlers branch on
 //      packed input); the walk drives Start -> Done.
 //
@@ -175,7 +175,7 @@ void test_p6frame_identity_agent(const std::filesystem::path &repo_root) {
 // ==== 2. P6-frame agent step-walk ====
 
 void test_p6frame_agent(const std::filesystem::path &repo_root) {
-    const auto source = repo_root / "tests/golden/wasm/v2b_computed_string.ahfl";
+    const auto source = repo_root / "tests/golden/wasm/computed_string.ahfl";
     auto emitted = emit_agent(source);
     check(emitted.has_value(), "p6frame.emit");
     if (!emitted.has_value()) {

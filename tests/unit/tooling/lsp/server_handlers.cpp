@@ -766,7 +766,6 @@ void write_package_manifest(const std::filesystem::path &package_root,
                             std::string_view target_entry = "src/main.ahfl",
                             std::string_view dependencies = {}) {
     write_file(package_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"" +
@@ -796,21 +795,15 @@ void write_package_manifest(const std::filesystem::path &package_root,
 void write_workspace_manifest(const std::filesystem::path &workspace_root,
                               std::string_view members) {
     write_file(workspace_root / "ahfl.workspace.toml",
-               "manifest_version = 1\n"
                "\n"
                "[workspace]\n"
                "name = \"lsp-workspace\"\n"
                "members = [" +
-                   std::string(members) +
-                   "]\n"
-                   "\n"
-                   "[resolver]\n"
-                   "version = 1\n");
+                   std::string(members) + "]\n");
 }
 
 void write_std_manifest(const std::filesystem::path &sysroot_std_root) {
     write_file(sysroot_std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -903,14 +896,6 @@ initialize_body_with_default_and_bundled_sysroot(const std::filesystem::path &ro
            R"(","initializationOptions":{"ahfl":{"toolchain":{"defaultSysroot":")" +
            escape_json_string(default_sysroot.string()) + R"(","bundledSysroot":")" +
            escape_json_string(bundled_sysroot.string()) + R"("}}}}})";
-}
-
-std::string initialize_body_with_legacy_sysroot(const std::filesystem::path &root,
-                                                const std::filesystem::path &sysroot) {
-    return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
-           AnalysisService::uri_from_path(root) +
-           R"(","initializationOptions":{"ahfl":{"sysroot":")" +
-           escape_json_string(sysroot.string()) + R"("}}}})";
 }
 
 std::string
@@ -2201,7 +2186,7 @@ void test_persistent_cache_cold_start_serves_typed_program() {
 
     // The persistent cache directory now holds exactly one entry.
     const auto cache_dir =
-        cache_home / "ahfl" / cache::project_root_hash(app_root);
+        cache_home / "ahfl" / cache::default_producer_digest() / cache::project_root_hash(app_root);
     {
         cache::PersistentCache cache(cache_dir);
         check(cache.entry_count() == 1, "persistentCache.coldStart.entry_stored");
@@ -2252,7 +2237,7 @@ void test_persistent_cache_invalidation_on_change() {
     });
 
     const auto cache_dir =
-        cache_home / "ahfl" / cache::project_root_hash(app_root);
+        cache_home / "ahfl" / cache::default_producer_digest() / cache::project_root_hash(app_root);
 
     // First service: full analysis persists the typed HIR.
     AnalysisService analysis(store);
@@ -2328,7 +2313,7 @@ void test_persistent_cache_corrupt_file_falls_back() {
     });
 
     const auto cache_dir =
-        cache_home / "ahfl" / cache::project_root_hash(app_root);
+        cache_home / "ahfl" / cache::default_producer_digest() / cache::project_root_hash(app_root);
 
     // First service: full analysis persists the typed HIR.
     {
@@ -3876,11 +3861,10 @@ void test_project_references_include_indexed_unopened_source() {
                 check(snapshot->workspace_index->metadata().revision ==
                           snapshot->workspace_revision,
                       "references.index_model.metadata_revision_matches_snapshot");
-                check(snapshot->workspace_index->metadata().index_schema_version ==
-                          "lsp-workspace-index-v1",
+                check(snapshot->workspace_index->metadata().index_format == "lsp-workspace-index",
                       "references.index_model.metadata_index_schema");
-                check(snapshot->workspace_index->metadata().index_identity_schema_version ==
-                          "lsp-workspace-index-identity-v1",
+                check(snapshot->workspace_index->metadata().index_identity_format ==
+                          "lsp-workspace-index-identity",
                       "references.index_model.metadata_identity_schema");
                 const auto &source_units = snapshot->workspace_index->source_units();
                 check(!source_units.empty(), "references.index_model.source_units_exist");
@@ -3995,7 +3979,6 @@ void test_user_package_references_include_lazy_sysroot_index() {
                            "src/main.ahfl",
                            "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -4533,8 +4516,8 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
             .metadata =
                 NavigationIndexMetadata{
                     .revision = 7,
-                    .index_schema_version = "test-index-schema",
-                    .index_identity_schema_version = "test-identity-schema",
+                    .index_format = "test-index-schema",
+                    .index_identity_format = "test-identity-schema",
                 },
         });
 
@@ -4695,8 +4678,8 @@ void test_workspace_index_reuses_unchanged_source_unit_facts() {
             .metadata =
                 NavigationIndexMetadata{
                     .revision = revision,
-                    .index_schema_version = "test-index-schema",
-                    .index_identity_schema_version = "test-identity-schema",
+                    .index_format = "test-index-schema",
+                    .index_identity_format = "test-identity-schema",
                 },
             .previous_index = previous_index,
         };
@@ -4817,8 +4800,8 @@ void test_workspace_index_does_not_reuse_stale_completeness_facts() {
             .metadata =
                 NavigationIndexMetadata{
                     .revision = revision,
-                    .index_schema_version = "test-index-schema",
-                    .index_identity_schema_version = "test-identity-schema",
+                    .index_format = "test-index-schema",
+                    .index_identity_format = "test-identity-schema",
                 },
             .previous_index = previous_index,
         };
@@ -6110,7 +6093,6 @@ void write_primitive_home_std_package(const std::filesystem::path &std_root,
                                       std::string_view string_source,
                                       std::string_view uuid_source) {
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -6288,7 +6270,6 @@ void test_definition_discovers_primitive_home_from_exported_impl_facts() {
                                    "fn primitive_use(x: Int) -> Int effect Pure;\n";
 
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -6643,7 +6624,6 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
                                     "\n"
                                     "impl Int {}\n";
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -6812,7 +6792,6 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
                            "src/main.ahfl",
                            "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -6925,7 +6904,6 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
 
 void write_detached_primitive_home_std_package(const std::filesystem::path &std_root) {
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -7158,7 +7136,6 @@ void test_watched_sysroot_file_change_refreshes_primitive_candidates() {
                            "src/main.ahfl",
                            "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -7246,7 +7223,6 @@ void test_open_sysroot_overlay_feeds_primitive_implementation_candidates() {
                            "src/main.ahfl",
                            "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
     write_file(std_root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"std\"\n"
@@ -7550,31 +7526,6 @@ void test_lsp_bundled_sysroot_mismatch_reports_related_information() {
           "bundled_sysroot_mismatch_related.active_manifest_uri");
 }
 
-void test_lsp_legacy_initialization_sysroot_option_is_ignored() {
-    const auto root = make_temp_project("legacy_sysroot_initialization_option");
-    const auto std_root = root / "std";
-    const auto json_path = std_root / "json.ahfl";
-    const std::string json_source = "module std::json;\n"
-                                    "import std::collections as collections;\n"
-                                    "import std::option as option;\n"
-                                    "\n"
-                                    "type List<T> = collections::List<T>;\n"
-                                    "type MaybeList<T> = option::Option<List<T>>;\n";
-    write_minimal_std_sources(std_root, json_path, json_source);
-
-    const auto json_uri = AnalysisService::uri_from_path(json_path);
-    const auto output = run_lsp_messages({
-        initialize_body_with_legacy_sysroot(std_root, root),
-        did_open_body(json_uri, 1, json_source),
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
-            json_uri + R"("}}})",
-        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
-    });
-
-    check(output.find("E::toolchain_sysroot_mismatch") != std::string::npos,
-          "legacy_sysroot_initialization_option.ignored");
-}
-
 void test_lsp_noncanonical_toolchain_sysroot_initialization_option_is_ignored() {
     const auto root = make_temp_project("noncanonical_toolchain_sysroot_initialization_option");
     const auto std_root = root / "std";
@@ -7715,7 +7666,6 @@ void test_lsp_project_discovery_ignores_process_cwd_sysroot_probe() {
     const auto types_path = root / "src" / "types.ahfl";
     write_package_manifest(root, "cwd-independent", "app", "\"main\", \"types\"");
     write_file(poison_root / "std" / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package]\n"
                "name = \"not-std\"\n"
@@ -7973,11 +7923,10 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
           "analysis_toolchain_cache_key.std_identity");
     check(first->toolchain_cache_key->scope == "workspace-folder-uri",
           "analysis_toolchain_cache_key.scope");
-    check(first->toolchain_cache_key->index_schema_version == "lsp-workspace-index-v1",
-          "analysis_toolchain_cache_key.index_schema_version");
-    check(first->toolchain_cache_key->index_identity_schema_version ==
-              "lsp-workspace-index-identity-v1",
-          "analysis_toolchain_cache_key.index_identity_schema_version");
+    check(first->toolchain_cache_key->index_format == "lsp-workspace-index",
+          "analysis_toolchain_cache_key.index_format");
+    check(first->toolchain_cache_key->index_identity_format == "lsp-workspace-index-identity",
+          "analysis_toolchain_cache_key.index_identity_format");
 
     analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, sysroot_b));
     const auto *third = analysis.snapshot_for_uri(uri);
@@ -8260,7 +8209,6 @@ void test_multi_root_sysroot_index_uses_resource_toolchain_profiles() {
                                   std::string_view format_name,
                                   std::string_view marker) {
         write_file(std_root / "ahfl.toml",
-                   "manifest_version = 1\n"
                    "\n"
                    "[package]\n"
                    "name = \"std\"\n"
@@ -9430,6 +9378,7 @@ void test_completion_struct_literal_field_not_type_position() {
 /// upgrades the detail field.
 void test_completion_typed_hir_detail_enrichment() {
     const std::string source =
+        "module typed::symbol_zero;\n"
         "const MAX_COUNT: Int = 42;\n"
         "\n"
         "fn greet(name: String, count: Int) -> String effect Pure decreases 0 {\n"
@@ -9441,10 +9390,10 @@ void test_completion_typed_hir_detail_enrichment() {
         "    return x;\n"
         "}\n";
 
-    // Cursor at top of file (line 0, char 0) triggers generic expression
-    // completion: not after '.', not in a pattern, not in type position.
+    // Module metadata must not shadow MAX_COUNT's valid SymbolId zero.
+    // Completion starts outside member, pattern, and type contexts.
     const std::string params =
-        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":0,"character":0}})";
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":1,"character":0}})";
     const auto output =
         run_handler_request(source, "textDocument/completion", params);
 
@@ -13124,7 +13073,6 @@ void test_malformed_manifest_toml_reports_diagnostic() {
     const auto main_path = root / "src" / "main.ahfl";
     // Write malformed TOML (unclosed bracket in table header).
     write_file(root / "ahfl.toml",
-               "manifest_version = 1\n"
                "\n"
                "[package\n"
                "name = \"bad\"\n");
@@ -13503,7 +13451,6 @@ int main() {
     test_lsp_bundled_sysroot_initialization_option_selects_fallback();
     test_lsp_default_sysroot_precedes_bundled_fallback();
     test_lsp_bundled_sysroot_mismatch_reports_related_information();
-    test_lsp_legacy_initialization_sysroot_option_is_ignored();
     test_lsp_noncanonical_toolchain_sysroot_initialization_option_is_ignored();
     test_did_change_configuration_requests_resource_toolchain_profile();
     test_workspace_manifest_does_not_capture_unlisted_nested_package();

@@ -1,14 +1,39 @@
 # AHFL
 
-VS Code language support for the **AHFL Agent Flow Language** -- a typed DSL for
-defining agent handoff flows, capability contracts, workflow orchestration, and
-verified effect handling.
+VS Code language support for **AHFL (Agent Handoff Flow Language)**. Edit
+workflow source with syntax highlighting, snippets, diagnostics, navigation,
+and debugging. Language Server Protocol (LSP) connects the extension to the
+`ahfl-lsp` server that supplies semantic editor features.
+
+## Install and open a project
+
+1. Obtain a platform VSIX extension package for your operating system and CPU.
+   You can build one from the repository root:
+
+   ```bash
+   scripts/package-vscode-vsix-release.sh
+   ```
+
+2. Install the generated package:
+
+   ```bash
+   code --install-extension tools/vscode/dist/ahfl-language-<version>-<target>.vsix
+   ```
+
+   Replace `<version>` and `<target>` with the generated filename. You can also
+   choose **Extensions: Install from VSIX...** in VS Code.
+
+3. Open your project's root folder and an `.ahfl` file. Platform packages
+   include `ahfl-lsp` and the standard library, so language features do not
+   require a separate server installation.
+4. If you use a client-only extension package, install `ahfl-lsp` on `PATH` or
+   set `ahfl.serverPath` to its absolute executable path in VS Code settings.
 
 ## Features
 
 ### Syntax Highlighting
 
-Full TextMate grammar covering the core AHFL keyword set:
+Syntax highlighting covers the core AHFL keyword set:
 
 - **Modules**: `module`, `import`
 - **Types**: `struct`, `enum`, `type`, `const`, `trait`, `impl`
@@ -71,8 +96,7 @@ configured via `ahfl.serverPath`), the following features are active:
   cursor.
 - **Selection Range** -- expand/shrink selection following AHFL parse tree
   boundaries.
-- **Document Formatting** -- invoke the `ahflc fmt` backend via the language
-  server (command: `AHFL: Format Document`).
+- **Document Formatting** -- format the active file with `AHFL: Format Document`.
 
 ### Commands
 
@@ -82,13 +106,15 @@ configured via `ahfl.serverPath`), the following features are active:
 | `AHFL: Format Document`          | Format the active AHFL file                      |
 | `AHFL: Show Language Server Output` | Open the extension output channel for LSP logs  |
 
-### Debugging (Requires `ahfl-dap`)
+### Debug a workflow (Requires `ahfl-dap`)
 
-The extension contributes an `ahfl` debug type backed by the `ahfl-dap` Debug
-Adapter Protocol binary. Press `F5` on an open `.ahfl` file (or add a launch
-configuration) to start a workflow debug session with support for breakpoints
-on state transitions and capability invocations, stepping, and inspecting agent
-state.
+Install or build `ahfl-dap`, the Debug Adapter Protocol (DAP) server, and set
+`ahfl.debugAdapterPath` to its absolute executable path if it is not on `PATH`.
+Press `F5` on an open `.ahfl` file (or add a launch configuration) to start a
+workflow debug session. You can set breakpoints on state transitions and
+capability invocations, step through execution, and inspect agent state.
+See the [debugging guide](../../docs/tutorials/debugging.zh.md) for provider
+configuration and workflow selection.
 
 A minimal launch configuration:
 
@@ -128,73 +154,28 @@ takes precedence, then the bundled release adapter under `server/`, then
 }
 ```
 
-## Requirements
+## Resolve editor problems
 
-### LSP Server
+- **No diagnostics or completion**: run `AHFL: Show Language Server Output`,
+  check that `ahfl.serverPath` points to `ahfl-lsp`, and run
+  `AHFL: Restart Language Server` after correcting the setting.
+- **Standard library imports fail**: use a platform VSIX with the bundled
+  standard library or configure the project's sysroot as described in the
+  [VS Code guide](../../docs/reference/lsp-vscode-extension.zh.md).
+- **Debug session cannot start**: check `ahfl.debugAdapterPath` and confirm
+  that `ahfl-dap` exists and is executable.
 
-Release VSIX packages include the matching release `ahfl-lsp` server binary
-under `server/`. When installing a client-only build, you need a working
-`ahfl-lsp` binary either on `PATH` or configured via `ahfl.serverPath`.
-
-Build a local LSP server for development:
-
-```bash
-cmake --build --preset build-dev --target ahfl-lsp
-```
-
-The development binary is at:
-
-```text
-build/dev/src/tooling/lsp/ahfl-lsp
-```
-
-### Node Tooling
-
-Extension dependency installation uses pnpm via Corepack:
+To build a local language server from the repository root:
 
 ```bash
-corepack enable
-corepack prepare pnpm@10.10.0 --activate
+cmake --preset dev
+cmake --build --preset build-dev --target ahfl-lsp -j"$(getconf _NPROCESSORS_ONLN)"
 ```
 
-## Building & Testing the Extension
+The executable is `build/dev/src/tooling/lsp/ahfl-lsp`. The language server is
+launched directly as `ahfl-lsp`; configure that executable in `ahfl.serverPath`.
 
-```bash
-cd tools/vscode
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run compile                    # type-check + esbuild bundle
-pnpm run test:extension             # full extension-host regression
-pnpm run test:problems-transcript   # capture diagnostics transcript
-```
+## Develop the extension
 
-## Marketplace Publishing
-
-Platform VSIX releases are automated via `.github/workflows/vscode-extension.yml`.
-The release package is built from the repository root so the extension includes
-the release `ahfl-lsp` binary and the bundled `std` sysroot:
-
-```bash
-scripts/package-vscode-vsix-release.sh
-```
-
-The workflow runs this packaging script on Linux and macOS, verifies the
-Marketplace package inventory, runs a platform VSIX install smoke, uploads the
-generated `tools/vscode/dist/ahfl-language-<version>-<target>.vsix`, and can
-publish to the Visual Studio Marketplace when dispatched with `publish=true`
-and `secrets.VSCE_PAT`.
-
-Client-only packaging remains useful for local extension development:
-
-```bash
-cd tools/vscode
-pnpm run package
-```
-
-Do not publish the client-only VSIX as the primary user artifact; it lacks the
-bundled language server and bundled sysroot.
-
-## Known Limitations
-
-- The LSP server is a **standalone `ahfl-lsp` binary**; there is no
-  `ahflc --lsp` subcommand. Make sure you point `ahfl.serverPath` to the
-  correct executable if not using the bundled release.
+Extension contributors can find dependency setup, tests, packaging, and release
+instructions in the [VS Code reference](../../docs/reference/lsp-vscode-extension.zh.md).

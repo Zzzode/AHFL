@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -195,7 +196,10 @@ void rebuild_states(
             return "node-event record capability kind disagrees with descriptor";
         }
         if (node_desc->has_capability) {
-            if (event.source_symbol != node_desc->source_symbol) {
+            if (std::none_of(node_desc->all_capabilities.begin(),
+                             node_desc->all_capabilities.end(), [&](const auto &capability) {
+                                 return capability.second == event.source_symbol;
+                             })) {
                 return "node-event record source_symbol disagrees with descriptor";
             }
         } else if (event.source_symbol != 0) {
@@ -220,8 +224,7 @@ void rebuild_states(
     // descriptor carries the workflow's dense program index (stable across
     // runs of the same program); a mismatch means the snapshot belongs to a
     // different workflow.
-    if (snapshot.workflow !=
-        WorkflowId{static_cast<std::size_t>(descriptor.workflow_index)}) {
+    if (snapshot.workflow != WorkflowId{static_cast<std::size_t>(descriptor.workflow_index)}) {
         return "recovery snapshot workflow ID does not match the selected "
                "workflow";
     }
@@ -236,9 +239,13 @@ void rebuild_states(
         node_by_id[descriptor.nodes[i].node_id] = i;
     }
 
+    // Persisted IDs must remain in the descriptor's numeric domain before
+    // narrowing. High bits must never alias a different node coordinate.
+    if (suspended.node.index() > std::numeric_limits<std::uint32_t>::max()) {
+        return "recovery snapshot suspended node ID is outside the module's numeric domain";
+    }
     // The suspended node must exist in the descriptor.
-    const auto suspended_it =
-        node_by_id.find(static_cast<std::uint32_t>(suspended.node.index()));
+    const auto suspended_it = node_by_id.find(static_cast<std::uint32_t>(suspended.node.index()));
     if (suspended_it == node_by_id.end()) {
         return "recovery snapshot suspended node ID is unknown to this module";
     }
@@ -246,8 +253,7 @@ void rebuild_states(
 
     // The suspended agent must match the descriptor node's runner (wasm-lane
     // convention: AgentId{runner_index}).
-    if (suspended.agent !=
-        AgentId{descriptor.nodes[suspended_schedule].runner}) {
+    if (suspended.agent != AgentId{descriptor.nodes[suspended_schedule].runner}) {
         return "recovery snapshot suspended agent ID does not match the module";
     }
 
@@ -256,26 +262,25 @@ void rebuild_states(
     // every node and memo-supplies its calls).
     std::unordered_set<std::uint32_t> completed_ids;
     for (const auto &state : snapshot.completed_nodes) {
-        const auto it =
-            node_by_id.find(static_cast<std::uint32_t>(state.node.index()));
+        if (state.node.index() > std::numeric_limits<std::uint32_t>::max()) {
+            return "recovery snapshot completed node ID is outside the module's numeric domain";
+        }
+        const auto it = node_by_id.find(static_cast<std::uint32_t>(state.node.index()));
         if (it == node_by_id.end()) {
             return "recovery snapshot contains an unknown completed node ID";
         }
         if (state.agent != AgentId{descriptor.nodes[it->second].runner}) {
             return "recovery snapshot completed agent ID does not match the module";
         }
-        if (!completed_ids.insert(static_cast<std::uint32_t>(state.node.index()))
-                 .second) {
+        if (!completed_ids.insert(static_cast<std::uint32_t>(state.node.index())).second) {
             return "recovery snapshot contains a duplicate completed node ID";
         }
     }
-    if (completed_ids.count(
-            static_cast<std::uint32_t>(suspended.node.index())) != 0U) {
+    if (completed_ids.count(static_cast<std::uint32_t>(suspended.node.index())) != 0U) {
         return "recovery snapshot suspended node is also marked completed";
     }
     for (const auto &state : snapshot.completed_nodes) {
-        const auto it =
-            node_by_id.find(static_cast<std::uint32_t>(state.node.index()));
+        const auto it = node_by_id.find(static_cast<std::uint32_t>(state.node.index()));
         for (const auto dep : descriptor.nodes[it->second].dependencies) {
             if (completed_ids.count(dep) == 0U) {
                 return "recovery snapshot is not closed over workflow dependencies";
@@ -287,7 +292,10 @@ void rebuild_states(
     // requires it; recorder.load_replay enforces this too, but fail closed
     // here with a session-level message).
     for (const auto &entry : suspended.memo) {
-        if (!entry.node.has_value()) {
+        if (entry.node.index() > std::numeric_limits<std::uint32_t>::max()) {
+            return "recovery snapshot memo node ID is outside the module's numeric domain";
+        }
+        if (!entry.node.valid()) {
             return "recovery snapshot memo entry is missing its node coordinate "
                    "(a snapshot without per-node coordinates cannot resume on "
                    "the wasm lane)";
@@ -298,13 +306,12 @@ void rebuild_states(
     // the pending ordinal.
     std::unordered_map<std::uint64_t, std::set<std::uint64_t>> per_node_ordinals;
     for (const auto &entry : suspended.memo) {
-        const auto node_key = entry.node->index();
+        const auto node_key = entry.node.index();
         auto &set = per_node_ordinals[node_key];
         if (!set.insert(entry.ordinal).second) {
             return "recovery snapshot memo contains a duplicate ordinal for a node";
         }
-        if (entry.node == suspended.node &&
-            entry.ordinal >= suspended.pending_ordinal) {
+        if (entry.node == suspended.node && entry.ordinal >= suspended.pending_ordinal) {
             return "recovery snapshot memo ordinal is not below the pending ordinal";
         }
     }
@@ -321,20 +328,16 @@ void rebuild_states(
                 continue;
             }
             if (node.all_capabilities.empty()) {
-                if (node.source_symbol == suspended.pending_cap_id) {
+                return "descriptor capability node has no capability coordinates";
+            }
+            for (const auto &[ordinal, sym] : node.all_capabilities) {
+                if (sym == suspended.pending_cap_id) {
                     cap_resolvable = true;
                     break;
                 }
-            } else {
-                for (const auto &[ordinal, sym] : node.all_capabilities) {
-                    if (sym == suspended.pending_cap_id) {
-                        cap_resolvable = true;
-                        break;
-                    }
-                }
-                if (cap_resolvable) {
-                    break;
-                }
+            }
+            if (cap_resolvable) {
+                break;
             }
         }
         if (!cap_resolvable) {
@@ -351,7 +354,8 @@ void rebuild_states(
 std::expected<WorkflowSessionResult, std::string>
 run_workflow_session(std::span<const std::uint8_t> module_bytes,
                      const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-                     const Value &input, WorkflowSessionConfig config) {
+                     const Value &input,
+                     WorkflowSessionConfig config) {
     if (!descriptor.is_workflow) {
         return std::unexpected("run_workflow_session: descriptor is not a workflow");
     }
@@ -436,25 +440,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             // Map ALL capabilities to this node's runner (a P6 bridge node can
             // call multiple capabilities across branches).
             if (node.all_capabilities.empty()) {
-                // Legacy single-capability descriptor.
-                // P2-10: fail closed when the descriptor's capability_ordinal
-                // is out of range for the imports table (silent skip would
-                // drop lifecycle event attribution).
-                if (node.capability_ordinal >= descriptor.imports.size()) {
-                    return std::unexpected(
-                        "descriptor node capability_ordinal out of range");
+                return std::unexpected("descriptor capability node has no capability coordinates");
+            }
+            for (const auto &[ordinal, sym] : node.all_capabilities) {
+                if (ordinal >= descriptor.imports.size()) {
+                    return std::unexpected("descriptor node capability ordinal out of range");
                 }
-                symbol_to_runner[node.source_symbol] = node.runner;
-            } else {
-                for (const auto &[ordinal, sym] : node.all_capabilities) {
-                    // P2-10: fail closed when any capability ordinal is out of
-                    // range (same rationale as the legacy path above).
-                    if (ordinal >= descriptor.imports.size()) {
-                        return std::unexpected(
-                            "descriptor node all_capabilities ordinal out of range");
-                    }
-                    symbol_to_runner[sym] = node.runner;
-                }
+                symbol_to_runner[sym] = node.runner;
             }
         }
     }
@@ -500,6 +492,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
+    const auto input_wire = runtime::try_value_to_json(input);
+    if (!input_wire.has_value()) {
+        return std::unexpected("run_workflow_session: cannot fingerprint workflow input");
+    }
+    const auto module_digest = support::sha256(module_bytes);
+    const auto input_digest = support::sha256(std::span<const std::uint8_t>{
+        reinterpret_cast<const std::uint8_t *>(input_wire->data()), input_wire->size()});
+
     // WH-8 (kr68 section 12.9.2) + fix-forward F1: boundary cancellation.
     // Set by the wrapped_invoker (after a blocking capability_invoked_hook,
     // before the side effect) or the wrapped_callback (at the top and again
@@ -507,7 +507,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // cancellation / interruption at an import boundary. The invoker returns
     // a Cancelled/Interrupted Error result (the import executor replies
     // AHFL_CAP_ERROR, trapping the guest); the callback returns ImportAbort
-    // to terminate run2. The session then overrides the outcome
+    // to terminate run_workflow. The session then overrides the outcome
     // classification to Cancelled / Interrupted. The latch is sticky: once
     // latched, interruption never overrides cancel.
     enum class BoundaryCancellation { None, Cancelled, Interrupted };
@@ -524,20 +524,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // F1: the cancellation predicates are copied and boundary_cancel is
     // captured by reference so the post-hook re-check can latch a
     // disconnect that landed while the capability_invoked_hook blocked.
-    ContextualCapabilityInvoker wrapped_invoker =
-        [invoker = std::move(config.invoker),
-         capability_invoked_hook = config.capability_invoked_hook,
-         capability_result_observer = config.capability_result_observer,
-         cancellation_requested = config.cancellation_requested,
-         interruption_requested = config.interruption_requested,
-         &recorder, &collected_capabilities, &collected_cap_args,
-         &collected_failures, &symbol_to_runner, &collected_cap_calls,
-         &boundary_cancel,
-         workflow_index = descriptor.workflow_index](
-            const CapabilityInvocationContext &ctx,
-            const std::string &name,
-            const std::vector<Value> &args)
-        -> CapabilityCallResult {
+    const auto workflow_index = descriptor.workflow_index;
+    bool automatically_resumable_pending = false;
+    auto decorate_context = [&](const CapabilityInvocationContext &ctx,
+            const std::vector<Value> &args) {
         // P2-2: resolve the REAL per-import agent_id from the capability's
         // source_symbol (set by the WH-3 executor per-call). Falls back to
         // the context's agent_id when the symbol is not in the map (e.g.,
@@ -556,13 +546,26 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // capability is called from different nodes (the failed node's
         // cap_call would be attributed to the wrong node and filtered out
         // by emit_workflow_events' node_id match).
-        std::uint32_t import_node_id = 0;
         // WH-4b: fill the recorder's current-import correlation. The import
         // wrapper opened it (node / ordinal / cap_id); here the invoker
         // fills arg_hash + result once the args are decoded and the
         // capability returns. Also stamp the idempotency key on the context.
         if (auto *current = recorder.current_import()) {
-            import_node_id = static_cast<std::uint32_t>(current->node.index());
+            real_ctx.workflow_coordinate = WorkflowCapabilityCoordinate{
+                .workflow = WorkflowId{static_cast<std::size_t>(workflow_index)},
+                .node = current->node,
+                .capability = CapabilityId{current->cap_id},
+                .ordinal = current->ordinal,
+            };
+            real_ctx.module_digest = module_digest;
+            real_ctx.workflow_input_digest = input_digest;
+            real_ctx.run_id = RunId{0};
+            real_ctx.workflow_id = real_ctx.workflow_coordinate->workflow;
+            real_ctx.workflow_node_id = current->node;
+            real_ctx.capability_id = real_ctx.workflow_coordinate->capability;
+            real_ctx.has_workflow_node_context = true;
+            real_ctx.workflow_name = descriptor.workflow_name;
+            real_ctx.workflow_node_name = descriptor.nodes[current->schedule_pos].name;
             if (auto arg_hash = runtime::hash_values(args)) {
                 current->arg_hash = *arg_hash;
                 current->arg_hash_set = true;
@@ -571,6 +574,31 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     current->ordinal, current->cap_id, *arg_hash);
             }
         }
+        return real_ctx;
+    };
+
+    ContextualCapabilityInvoker wrapped_invoker =
+        [invoker = std::move(config.invoker),
+         pending_resolver = config.pending_capability_resolver,
+         capability_invoked_hook = config.capability_invoked_hook,
+         capability_result_observer = config.capability_result_observer,
+         cancellation_requested = config.cancellation_requested,
+         interruption_requested = config.interruption_requested,
+         &recorder,
+         &collected_capabilities,
+         &collected_cap_args,
+         &collected_failures,
+         &collected_cap_calls,
+         &boundary_cancel,
+         &decorate_context,
+         &replay_divergence,
+         &automatically_resumable_pending](const CapabilityInvocationContext &ctx,
+                                           const std::string &name,
+                                           const std::vector<Value> &args) -> CapabilityCallResult {
+        auto real_ctx = decorate_context(ctx, args);
+        const auto *import = recorder.current_import();
+        const auto import_node_id =
+            import == nullptr ? 0U : static_cast<std::uint32_t>(import->node.index());
         // F6.2: on a pre-dispatch F1(b) cancel this entry stays name-only (no matching collected_cap_calls/args/result); every current post-run consumer tolerates it (the capabilities vector is dead at its sole call site; emit_workflow_events projects collected_cap_calls only).
         collected_capabilities.push_back(name);
         if (capability_invoked_hook) {
@@ -605,7 +633,26 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         if (auto envelope = serialize_args_for_wire_json(args)) {
             collected_cap_args.push_back(std::move(*envelope));
         }
-        auto result = invoker(real_ctx, name, args);
+        const auto *current = recorder.current_import();
+        const bool at_pending_frontier =
+            current != nullptr && recorder.is_replay() &&
+            recorder.classify(current->schedule_pos, current->ordinal) ==
+                WasmResumeRecorder::ReplayClass::Frontier;
+        CapabilityCallResult result;
+        if (at_pending_frontier && pending_resolver) {
+            auto resolved = pending_resolver(real_ctx, name, args);
+            if (!resolved.has_value()) {
+                replay_divergence = "durable resume is missing the pending capability result";
+                result.error_message = *replay_divergence;
+            } else {
+                result = std::move(*resolved);
+            }
+        } else {
+            result = invoker(real_ctx, name, args);
+        }
+        if (result.status == CapabilityCallStatus::Pending) {
+            automatically_resumable_pending = result.automatically_resumable;
+        }
         if (capability_result_observer) {
             capability_result_observer(real_ctx, result);
         }
@@ -657,7 +704,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // These MUST outlive the callback: the CapabilityImportConfig holds
     // references to them, and the config is moved into the
     // make_capability_import_callback lambda that is called during
-    // invoke_run2 (long after the else block below ends). Declaring them
+    // invoke_run_workflow (long after the else block below ends). Declaring them
     // inside the else block would dangle the references.
     CapabilityInvocationContext invocation_context;
     invocation_context.agent_id = AgentId{0};
@@ -740,8 +787,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         const std::function<std::optional<std::string>(std::uint64_t)>
             *resolver = &config.name_resolver;
         if (!resolver->operator bool()) {
-            fallback_resolver = [&descriptor](std::uint64_t source_symbol)
-                -> std::optional<std::string> {
+            fallback_resolver =
+                [&descriptor](std::uint64_t source_symbol) -> std::optional<std::string> {
                 for (const auto &node : descriptor.nodes) {
                     if (!node.has_capability) {
                         continue;
@@ -755,14 +802,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         }
                         return std::nullopt;
                     };
-                    if (!node.all_capabilities.empty()) {
-                        for (const auto &[ordinal, sym] : node.all_capabilities) {
-                            if (sym == source_symbol) {
-                                return resolve_ordinal(ordinal);
-                            }
+                    for (const auto &[ordinal, sym] : node.all_capabilities) {
+                        if (sym == source_symbol) {
+                            return resolve_ordinal(ordinal);
                         }
-                    } else if (node.source_symbol == source_symbol) {
-                        return resolve_ordinal(node.capability_ordinal);
                     }
                 }
                 return std::nullopt;
@@ -779,8 +822,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             .name_resolver = *resolver,
             .state = import_state,
         };
-        auto inner_callback =
-            make_capability_import_callback(std::move(cap_config));
+        auto inner_callback = make_capability_import_callback(std::move(cap_config));
 
         // --- 5. Wrap the import callback to fire state_entered_live_hook at
         //        import boundaries (P6-frame trace ring only, kr68
@@ -790,7 +832,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // move-only; the invoker was already moved into wrapped_invoker).
         // `resume_pending_result` is captured by reference: it is a member
         // of the `config` parameter, which outlives every callback
-        // invocation (callbacks fire only during invoke_run2).
+        // invocation (callbacks fire only during invoke_run_workflow).
         // kr68 section 12.9.14: the LIVE debug channel
         // (state_entered_live_hook) fires here at the import boundary with
         // the trace prefix; the ordered observation channel
@@ -799,467 +841,504 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // in section 10's per-node loop (WH-5c.4 251ebdb7).
         wrapped_callback =
             [&resume_pending_result = config.resume_pending_result,
-             resume_pending_result_wire_json =
-                 config.resume_pending_result_wire_json,
+             resume_pending_result_wire_json = config.resume_pending_result_wire_json,
+             has_pending_resolver = static_cast<bool>(config.pending_capability_resolver),
+             pending_injection_guard = config.pending_injection_guard,
+             completed_metadata_reader = config.completed_capability_metadata_reader,
+             &collected_cap_calls,
+             pending_name_resolver = *resolver,
+             &decorate_context,
              state_entered_live_hook = config.state_entered_live_hook,
              cancellation_requested = config.cancellation_requested,
              interruption_requested = config.interruption_requested,
-             &engine, &recorder, &replay_divergence, &origination_failure,
+             &engine,
+             &recorder,
+             &replay_divergence,
+             &origination_failure,
              &boundary_cancel,
-             &descriptor, &last_trace_count, &collected_states,
-             &states_per_node, &runner_to_schedule, &trace_error, &admitted,
-             &frame_section,
-             has_trace, inner = std::move(inner_callback)](
-                const eng::ImportObservation &obs)
-            -> eng::ImportCallbackResult {
-                // WH-8 (kr68 section 12.9.2): cancellation / interruption
-                // check at the import boundary, BEFORE trace decode and
-                // memo classification. A cancellation request aborts the
-                // run immediately (the capability is never dispatched);
-                // the session overrides the outcome post-run.
-                if (boundary_cancel == BoundaryCancellation::None) {
-                    if (cancellation_requested && cancellation_requested()) {
-                        boundary_cancel = BoundaryCancellation::Cancelled;
-                    } else if (interruption_requested &&
-                               interruption_requested()) {
-                        boundary_cancel = BoundaryCancellation::Interrupted;
+             &descriptor,
+             &last_trace_count,
+             &collected_states,
+             &states_per_node,
+             &runner_to_schedule,
+             &trace_error,
+             &admitted,
+             has_trace,
+             inner = std::move(inner_callback)](
+                const eng::ImportObservation &obs) -> eng::ImportCallbackResult {
+            // WH-8 (kr68 section 12.9.2): cancellation / interruption
+            // check at the import boundary, BEFORE trace decode and
+            // memo classification. A cancellation request aborts the
+            // run immediately (the capability is never dispatched);
+            // the session overrides the outcome post-run.
+            if (boundary_cancel == BoundaryCancellation::None) {
+                if (cancellation_requested && cancellation_requested()) {
+                    boundary_cancel = BoundaryCancellation::Cancelled;
+                } else if (interruption_requested && interruption_requested()) {
+                    boundary_cancel = BoundaryCancellation::Interrupted;
+                }
+            }
+            if (boundary_cancel != BoundaryCancellation::None) {
+                return eng::ImportAbort{};
+            }
+            if (has_trace) {
+                const auto &section = descriptor.frame_section;
+                auto decoded = decode_state_trace(
+                    obs.whole_memory, section.state_trace_base, section.state_trace_capacity);
+                if (decoded.has_value()) {
+                    // kr68 section 12.9.14: fire the LIVE debug channel
+                    // at the import boundary (trace prefix, before the
+                    // capability is dispatched). The ordered observation
+                    // channel fires post-run in section 10's per-node
+                    // loop.
+                    auto err = fire_state_entries(*decoded,
+                                                  last_trace_count,
+                                                  descriptor,
+                                                  state_entered_live_hook,
+                                                  collected_states,
+                                                  states_per_node,
+                                                  runner_to_schedule);
+                    if (err.has_value()) {
+                        trace_error = std::move(*err);
+                    } else {
+                        last_trace_count = decoded->size();
                     }
                 }
-                if (boundary_cancel != BoundaryCancellation::None) {
-                    return eng::ImportAbort{};
-                }
-                if (has_trace) {
-                    const auto &section = descriptor.frame_section;
-                    auto decoded = decode_state_trace(
-                        obs.whole_memory, section.state_trace_base,
-                        section.state_trace_capacity);
-                    if (decoded.has_value()) {
-                        // kr68 section 12.9.14: fire the LIVE debug channel
-                        // at the import boundary (trace prefix, before the
-                        // capability is dispatched). The ordered observation
-                        // channel fires post-run in section 10's per-node
-                        // loop.
-                        auto err = fire_state_entries(
-                            *decoded, last_trace_count, descriptor,
-                            state_entered_live_hook, collected_states,
-                            states_per_node, runner_to_schedule);
-                        if (err.has_value()) {
-                            trace_error = std::move(*err);
-                        } else {
-                            last_trace_count = decoded->size();
-                        }
-                    }
-                }
+            }
 
-                // F1(a): the state_entered_live_hook fired above BLOCKS in the
-                // DAP pause(). A disconnect can land while it blocks, AFTER
-                // the top-of-import check and BEFORE the capability side
-                // effect. Re-check the predicates here with the same sticky
-                // latch semantics (once latched, interruption never overrides
-                // cancel).
-                if (boundary_cancel == BoundaryCancellation::None) {
-                    if (cancellation_requested && cancellation_requested()) {
-                        boundary_cancel = BoundaryCancellation::Cancelled;
-                    } else if (interruption_requested &&
-                               interruption_requested()) {
-                        boundary_cancel = BoundaryCancellation::Interrupted;
-                    }
+            // F1(a): the state_entered_live_hook fired above BLOCKS in the
+            // DAP pause(). A disconnect can land while it blocks, AFTER
+            // the top-of-import check and BEFORE the capability side
+            // effect. Re-check the predicates here with the same sticky
+            // latch semantics (once latched, interruption never overrides
+            // cancel).
+            if (boundary_cancel == BoundaryCancellation::None) {
+                if (cancellation_requested && cancellation_requested()) {
+                    boundary_cancel = BoundaryCancellation::Cancelled;
+                } else if (interruption_requested && interruption_requested()) {
+                    boundary_cancel = BoundaryCancellation::Interrupted;
                 }
-                if (boundary_cancel != BoundaryCancellation::None) {
-                    return eng::ImportAbort{};
-                }
+            }
+            if (boundary_cancel != BoundaryCancellation::None) {
+                return eng::ImportAbort{};
+            }
 
-                // WH-5b.2: resolve the bridge site from the control-block
-                // pointer (the same resolution handle_bridge performs). The
-                // site gives the result placement (result_base /
-                // result_extent / result_payload_base /
-                // result_payload_capacity) for memo capture and injection.
-                // The call site (resolved below) gives the source_symbol and
-                // result binding.
-                const irc::CoreFrameBridgeCallSite *bridge_site = nullptr;
-                {
-                    CapabilityImportError resolve_error{};
-                    auto resolved = resolve_bridge_call_site(
-                        descriptor.frame_section, obs.scalar_arg,
-                        resolve_error);
-                    if (!resolved.has_value()) {
-                        if (recorder.is_replay()) {
-                            replay_divergence =
-                                "durable resume replay diverged: bridge "
-                                "call site resolution failed";
-                            return eng::ImportAbort{};
-                        }
-                        origination_failure =
-                            "bridge call site resolution failed at import "
-                            "boundary";
-                        return eng::ImportAbort{};
-                    }
-                    bridge_site = resolved->site;
-                }
-
-                // P1-1: derive the CURRENT node's schedule position from the
-                // guest's node-event completion counter. The scheduler walks
-                // nodes in Kahn order and writes event_count = schedule_pos +
-                // 1 on each node's completion, so at an import boundary
-                // event_count == the executing node's schedule position.
-                // This replaces the unsound capability->node map (which
-                // mis-attributed the memo identity when two nodes shared a
-                // capability: last-wins). The call site's source_symbol is
-                // still needed for cap_id (the integrity cross-check) and for
-                // the result-binding decode on the frontier path.
-                const auto call_site = resolve_import_call_site(
-                    *admitted.module, obs.import_ordinal);
-                if (!call_site.has_value()) {
-                    // Replay: a call site the origination run did not have
-                    // is a divergence. Origination: let inner handle it
-                    // (it fails closed with CallSiteNotFound).
+            // WH-5b.2: resolve the bridge site from the control-block
+            // pointer (the same resolution handle_bridge performs). The
+            // site gives the result placement (result_base /
+            // result_extent / result_payload_base /
+            // result_payload_capacity) for memo capture and injection.
+            // The call site (resolved below) gives the source_symbol and
+            // result binding.
+            const irc::CoreFrameBridgeCallSite *bridge_site = nullptr;
+            {
+                CapabilityImportError resolve_error{};
+                auto resolved = resolve_bridge_call_site(
+                    descriptor.frame_section, obs.scalar_arg, resolve_error);
+                if (!resolved.has_value()) {
                     if (recorder.is_replay()) {
-                        replay_divergence =
-                            "durable resume replay diverged: import call "
-                            "site not found";
+                        replay_divergence = "durable resume replay diverged: bridge "
+                                            "call site resolution failed";
                         return eng::ImportAbort{};
                     }
-                    return inner(obs);
-                }
-                const auto source_symbol = call_site->source_symbol();
-
-                // WH-5b.2: cross-check the bridge site's source_symbol with
-                // the call site's (the call site was resolved from the
-                // import ordinal; the bridge site from the control-block
-                // pointer). A mismatch is a host-side invariant violation.
-                if (bridge_site->source_symbol != source_symbol) {
-                    if (recorder.is_replay()) {
-                        replay_divergence =
-                            "durable resume replay diverged: bridge site "
-                            "source_symbol mismatch";
-                        return eng::ImportAbort{};
-                    }
-                    origination_failure =
-                        "bridge site source_symbol mismatch at import "
-                        "boundary";
+                    origination_failure = "bridge call site resolution failed at import "
+                                          "boundary";
                     return eng::ImportAbort{};
                 }
+                bridge_site = resolved->site;
+            }
 
-                const auto event_count =
-                    ne::read_event_count(obs.whole_memory);
-                if (!event_count.has_value() ||
-                    *event_count >= descriptor.nodes.size()) {
-                    // The guest's node-event header is unreadable or reports a
-                    // completion count past the schedule. Replay: divergence.
-                    // Origination: a host-side invariant violation (the module
-                    // is corrupt or the ABI drifted) -- fail the run rather
-                    // than originating a snapshot with a bogus node coordinate
-                    // (P2-4).
-                    if (recorder.is_replay()) {
-                        replay_divergence =
-                            "durable resume replay diverged: node-event "
-                            "completion counter unreadable or out of range";
-                        return eng::ImportAbort{};
-                    }
-                    origination_failure =
-                        "node-event completion counter unreadable or out of "
-                        "range at import boundary";
-                    return eng::ImportAbort{};
-                }
-                const std::size_t schedule_pos = *event_count;
-                const WorkflowNodeId node{
-                    static_cast<std::size_t>(
-                        descriptor.nodes[schedule_pos].node_id)};
-                const std::size_t cap_id =
-                    static_cast<std::size_t>(source_symbol);
-
-                // Open the current-import correlation and get the ordinal
-                // (the memo key, reproducible across resume).
-                const std::uint64_t ordinal =
-                    recorder.begin_import(schedule_pos, node, cap_id);
-
+            // P1-1: derive the CURRENT node's schedule position from the
+            // guest's node-event completion counter. The scheduler walks
+            // nodes in Kahn order and writes event_count = schedule_pos +
+            // 1 on each node's completion, so at an import boundary
+            // event_count == the executing node's schedule position.
+            // This replaces the unsound capability->node map (which
+            // mis-attributed the memo identity when two nodes shared a
+            // capability: last-wins). The call site's source_symbol is
+            // still needed for cap_id (the integrity cross-check) and for
+            // the result-binding decode on the frontier path.
+            const auto call_site = resolve_import_call_site(*admitted.module, obs.import_ordinal);
+            if (!call_site.has_value()) {
+                // Replay: a call site the origination run did not have
+                // is a divergence. Origination: let inner handle it
+                // (it fails closed with CallSiteNotFound).
                 if (recorder.is_replay()) {
-                    // Replay mode: classify the coordinate and serve.
-                    const auto replay_class =
-                        recorder.classify(schedule_pos, ordinal);
-                    switch (replay_class) {
-                    case WasmResumeRecorder::ReplayClass::MemoHit: {
-                        // Cross-check cap_id + arg_hash against the live
-                        // import (fail-closed on mismatch).
-                        const auto *entry =
-                            recorder.memo_entry(schedule_pos, ordinal);
-                        if (entry == nullptr ||
-                            entry->cap_id != cap_id) {
-                            replay_divergence =
-                                "durable resume replay diverged from the "
-                                "recorded memo (ordinal " +
-                                std::to_string(ordinal) + ")";
+                    replay_divergence = "durable resume replay diverged: import call "
+                                        "site not found";
+                    return eng::ImportAbort{};
+                }
+                return inner(obs);
+            }
+            const auto source_symbol = call_site->source_symbol();
+
+            // WH-5b.2: cross-check the bridge site's source_symbol with
+            // the call site's (the call site was resolved from the
+            // import ordinal; the bridge site from the control-block
+            // pointer). A mismatch is a host-side invariant violation.
+            if (bridge_site->source_symbol != source_symbol) {
+                if (recorder.is_replay()) {
+                    replay_divergence = "durable resume replay diverged: bridge site "
+                                        "source_symbol mismatch";
+                    return eng::ImportAbort{};
+                }
+                origination_failure = "bridge site source_symbol mismatch at import "
+                                      "boundary";
+                return eng::ImportAbort{};
+            }
+
+            const auto event_count = ne::read_event_count(obs.whole_memory);
+            if (!event_count.has_value() || *event_count >= descriptor.nodes.size()) {
+                // The guest's node-event header is unreadable or reports a
+                // completion count past the schedule. Replay: divergence.
+                // Origination: a host-side invariant violation (the module
+                // is corrupt or the ABI drifted) -- fail the run rather
+                // than originating a snapshot with a bogus node coordinate
+                // (P2-4).
+                if (recorder.is_replay()) {
+                    replay_divergence = "durable resume replay diverged: node-event "
+                                        "completion counter unreadable or out of range";
+                    return eng::ImportAbort{};
+                }
+                origination_failure = "node-event completion counter unreadable or out of "
+                                      "range at import boundary";
+                return eng::ImportAbort{};
+            }
+            const std::size_t schedule_pos = *event_count;
+            const WorkflowNodeId node{
+                static_cast<std::size_t>(descriptor.nodes[schedule_pos].node_id)};
+            const std::size_t cap_id = static_cast<std::size_t>(source_symbol);
+
+            // Open the current-import correlation and get the ordinal
+            // (the memo key, reproducible across resume).
+            const std::uint64_t ordinal = recorder.begin_import(schedule_pos, node, cap_id);
+
+            if (recorder.is_replay()) {
+                // Replay mode: classify the coordinate and serve.
+                const auto replay_class = recorder.classify(schedule_pos, ordinal);
+                switch (replay_class) {
+                case WasmResumeRecorder::ReplayClass::MemoHit: {
+                    // Cross-check cap_id + arg_hash against the live
+                    // import (fail-closed on mismatch).
+                    const auto *entry = recorder.memo_entry(schedule_pos, ordinal);
+                    if (entry == nullptr || entry->cap_id != cap_id) {
+                        replay_divergence = "durable resume replay diverged from the "
+                                            "recorded memo (ordinal " +
+                                            std::to_string(ordinal) + ")";
+                        return eng::ImportAbort{};
+                    }
+                    // WH-5b.2: bridge arg_hash. The bridge lane
+                    // decodes P4-D args; the hash feeds hash_values so
+                    // the origination and replay hashes use the SAME
+                    // code path (decode_bridge_import_args is shared
+                    // with handle_bridge).
+                    std::uint64_t live_arg_hash = 0;
+                    std::vector<Value> memo_args;
+                    {
+                        CapabilityImportError decode_error{};
+                        ArgDecodeSubReason decode_sub_reason{ArgDecodeSubReason::kUnspecified};
+                        auto bargs = decode_bridge_import_args(descriptor.frame_section,
+                                                               *call_site,
+                                                               *bridge_site,
+                                                               obs.scalar_arg,
+                                                               obs.whole_memory,
+                                                               decode_error,
+                                                               decode_sub_reason);
+                        if (!bargs.has_value()) {
+                            replay_divergence = "durable resume replay diverged from "
+                                                "the recorded memo (ordinal " +
+                                                std::to_string(ordinal) +
+                                                ": bridge argument decode failed: " +
+                                                std::string(to_string(decode_error)) + "/" +
+                                                std::string(to_string(decode_sub_reason)) + ")";
                             return eng::ImportAbort{};
                         }
-                        // WH-5b.2: bridge arg_hash. The bridge lane
-                        // decodes P4-D args; the hash feeds hash_values so
-                        // the origination and replay hashes use the SAME
-                        // code path (decode_bridge_import_args is shared
-                        // with handle_bridge).
-                        std::uint64_t live_arg_hash = 0;
-                        {
-                            CapabilityImportError decode_error{};
-                            ArgDecodeSubReason decode_sub_reason{
-                                ArgDecodeSubReason::kUnspecified};
-                            auto bargs = decode_bridge_import_args(
-                                descriptor.frame_section, *call_site,
-                                *bridge_site, obs.scalar_arg,
-                                obs.whole_memory, decode_error,
-                                decode_sub_reason);
-                            if (!bargs.has_value()) {
-                                replay_divergence =
-                                    "durable resume replay diverged from "
-                                    "the recorded memo (ordinal " +
-                                    std::to_string(ordinal) +
-                                    ": bridge argument decode failed: " +
-                                    std::string(to_string(decode_error)) +
-                                    "/" +
-                                    std::string(
-                                        to_string(decode_sub_reason)) +
-                                    ")";
-                                return eng::ImportAbort{};
-                            }
-                            auto h = runtime::hash_values(*bargs);
-                            if (!h.has_value()) {
-                                replay_divergence =
-                                    "durable resume replay diverged from "
-                                    "the recorded memo (ordinal " +
-                                    std::to_string(ordinal) + ")";
-                                return eng::ImportAbort{};
-                            }
-                            live_arg_hash = *h;
-                        }
-                        if (live_arg_hash != entry->arg_hash) {
-                            replay_divergence =
-                                "durable resume replay diverged from the "
-                                "recorded memo (ordinal " +
-                                std::to_string(ordinal) + ")";
+                        auto h = runtime::hash_values(*bargs);
+                        if (!h.has_value()) {
+                            replay_divergence = "durable resume replay diverged from "
+                                                "the recorded memo (ordinal " +
+                                                std::to_string(ordinal) + ")";
                             return eng::ImportAbort{};
                         }
-                        // Serve the memo bytes verbatim (never
-                        // re-serialized: no spelling drift).
-                        if (!entry->authoritative_json.has_value() ||
-                            entry->authoritative_json->empty()) {
-                            replay_divergence =
-                                "durable resume replay diverged from the "
-                                "recorded memo (ordinal " +
-                                std::to_string(ordinal) + ")";
-                            return eng::ImportAbort{};
-                        }
-                        // WH-5b.2: resolve the bridge site from the
-                        // manifest (node, ordinal) -> call_site_id ->
-                        // frame section site. The manifest is the
-                        // trusted authority (A2-admitted); the
-                        // control-block site is untrusted guest input.
-                        auto node_result = admitted.module->resolve_node(
-                            csm::ManifestNodeIndex{schedule_pos});
-                        if (!node_result.ok() ||
-                            !node_result.node.has_value()) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "manifest node not found";
-                            return eng::ImportAbort{};
-                        }
-                        const auto sites =
-                            node_result.node->bridge_sites();
-                        if (ordinal >= sites.size()) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge site ordinal out of range";
-                            return eng::ImportAbort{};
-                        }
-                        const auto &manifest_site =
-                            sites[static_cast<std::size_t>(ordinal)];
-                        // Cross-check the manifest site's call_site_id
-                        // with the control-block site's (defense-in-
-                        // depth: they must agree).
-                        if (manifest_site.call_site_id !=
-                            bridge_site->call_site_id) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge call_site_id mismatch";
-                            return eng::ImportAbort{};
-                        }
-                        const auto *inject_site =
-                            find_bridge_site_by_id(
-                                descriptor.frame_section,
-                                manifest_site.call_site_id);
-                        if (inject_site == nullptr) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge site not found in frame "
-                                "section";
-                            return eng::ImportAbort{};
-                        }
-                        // WH-5b.2: the bridge lane stores NativeOnly at
-                        // origination (the result is a P4-D binary frame,
-                        // not JSON). The persistence layer serializes the
-                        // native Value to wire JSON; on reload the entry
-                        // is ExactSidecar with wire-JSON
-                        // authoritative_json. Decode through the call
-                        // site's result binding, then pack into the P4-D
-                        // frame (the same packing the Frontier path
-                        // uses). The P4-D encoding is deterministic, so
-                        // re-packing produces the identical frame the
-                        // guest wrote at origination.
-                        auto dom = ahfl::json::parse_json(
-                            *entry->authoritative_json);
+                        live_arg_hash = *h;
+                        memo_args = std::move(*bargs);
+                    }
+                    if (live_arg_hash != entry->arg_hash) {
+                        replay_divergence = "durable resume replay diverged from the "
+                                            "recorded memo (ordinal " +
+                                            std::to_string(ordinal) + ")";
+                        return eng::ImportAbort{};
+                    }
+                    const bool present = std::visit(
+                        [](const auto &result) { return result.present; }, entry->result);
+                    if (!present || !memo_result_state_well_formed(*entry)) {
+                        replay_divergence = "durable resume replay diverged from the recorded "
+                                            "memo (result is absent or malformed)";
+                        return eng::ImportAbort{};
+                    }
+                    // WH-5b.2: resolve the bridge site from the
+                    // manifest (node, ordinal) -> call_site_id ->
+                    // frame section site. The manifest is the
+                    // trusted authority (A2-admitted); the
+                    // control-block site is untrusted guest input.
+                    auto node_result =
+                        admitted.module->resolve_node(csm::ManifestNodeIndex{schedule_pos});
+                    if (!node_result.ok() || !node_result.node.has_value()) {
+                        replay_divergence = "durable resume replay diverged: "
+                                            "manifest node not found";
+                        return eng::ImportAbort{};
+                    }
+                    const auto sites = node_result.node->bridge_sites();
+                    if (ordinal >= sites.size()) {
+                        replay_divergence = "durable resume replay diverged: "
+                                            "bridge site ordinal out of range";
+                        return eng::ImportAbort{};
+                    }
+                    const auto &manifest_site = sites[static_cast<std::size_t>(ordinal)];
+                    // Cross-check the manifest site's call_site_id
+                    // with the control-block site's (defense-in-
+                    // depth: they must agree).
+                    if (manifest_site.call_site_id != bridge_site->call_site_id) {
+                        replay_divergence = "durable resume replay diverged: "
+                                            "bridge call_site_id mismatch";
+                        return eng::ImportAbort{};
+                    }
+                    const auto *inject_site = find_bridge_site_by_id(descriptor.frame_section,
+                                                                     manifest_site.call_site_id);
+                    if (inject_site == nullptr) {
+                        replay_divergence = "durable resume replay diverged: "
+                                            "bridge site not found in frame "
+                                            "section";
+                        return eng::ImportAbort{};
+                    }
+                    // Stored results have no generic Value projection: the current
+                    // capability binding is the sole decoder authority.
+                    Value memo_value{NoneValue{}};
+                    if (const auto *memory = std::get_if<InMemoryMemoResult>(&entry->result)) {
+                        memo_value = clone_value(memory->value);
+                    } else {
+                        const auto &stored = std::get<StoredMemoResult>(entry->result);
+                        auto dom = ahfl::json::parse_json(stored.result_wire_json);
                         if (!dom.has_value() || !*dom) {
                             replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge memo result is not valid wire "
-                                "JSON";
+                                "durable resume bridge memo result is not valid wire JSON";
                             return eng::ImportAbort{};
                         }
-                        auto decoded = wire_codec::decode_json(
-                            **dom, call_site->result_binding());
+                        auto decoded = wire_codec::decode_json(**dom, call_site->result_binding());
                         if (!decoded.ok()) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge memo result type mismatch";
+                            replay_divergence = "durable resume bridge memo result type mismatch";
                             return eng::ImportAbort{};
                         }
-                        CapabilityImportError pack_error{};
-                        auto packed = pack_bridge_result_value(
-                            engine, descriptor.frame_section,
-                            *call_site, *inject_site,
-                            std::move(*decoded.value), pack_error);
-                        if (std::holds_alternative<
-                                eng::ImportAbort>(packed)) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge memo pack failed";
-                            return eng::ImportAbort{};
-                        }
-                        return packed;
+                        memo_value = std::move(*decoded.value);
                     }
-                    case WasmResumeRecorder::ReplayClass::Frontier: {
-                        // Identity gate (P0-15): the pending call's
-                        // capability must match.
-                        const auto *frontier = recorder.frontier();
-                        if (frontier == nullptr ||
-                            frontier->cap_id != cap_id) {
+                    std::optional<CapabilityCallResult> completed_metadata;
+                    std::optional<std::string> memo_name;
+                    if (completed_metadata_reader) {
+                        CapabilityInvocationContext context;
+                        context.source_capability_symbol_id = cap_id;
+                        auto decorated = decorate_context(context, memo_args);
+                        memo_name = pending_name_resolver(cap_id);
+                        if (!memo_name) {
                             replay_divergence =
-                                "durable resume pending-call identity "
-                                "mismatch";
+                                "durable resume memo capability name is unavailable";
                             return eng::ImportAbort{};
                         }
-                        // Resolve the injection result (native XOR raw
-                        // wire; both set is a fail-closed conflict).
-                        const bool has_native =
-                            resume_pending_result.has_value();
-                        const bool has_raw =
-                            resume_pending_result_wire_json.has_value();
-                        if (has_native && has_raw) {
-                            replay_divergence =
-                                "durable resume received both a native and "
-                                "a raw wire pending result";
+                        auto metadata = completed_metadata_reader(decorated, *memo_name, memo_args);
+                        if (!metadata) {
+                            replay_divergence = metadata.error();
                             return eng::ImportAbort{};
                         }
-                        if (!has_native && !has_raw) {
-                            replay_divergence =
-                                "durable resume is missing the pending "
-                                "capability result";
-                            return eng::ImportAbort{};
-                        }
-                        // WH-5b.2: bridge frontier. Pack the pending
-                        // result Value into the P4-D frame at the
-                        // bridge site's disjoint result placement (the
-                        // same packing handle_bridge performs on a
-                        // live success), then return the ImportReply
-                        // identical in shape to live placement.
-                        runtime::Value pending_value{
-                            runtime::NoneValue{}};
-                        if (has_native) {
-                            pending_value = runtime::clone_value(
-                                *resume_pending_result);
-                        } else {
-                            auto dom = ahfl::json::parse_json(
-                                *resume_pending_result_wire_json);
-                            if (!dom.has_value() || !*dom) {
-                                replay_divergence =
-                                    "durable resume pending result "
-                                    "is not valid wire JSON";
+                        if (*metadata) {
+                            const auto memo_wire = try_value_to_json(memo_value);
+                            const auto completed_wire = (**metadata).value
+                                                            ? try_value_to_json(*(**metadata).value)
+                                                            : std::nullopt;
+                            if ((**metadata).status != CapabilityCallStatus::Success ||
+                                !memo_wire || !completed_wire || *memo_wire != *completed_wire) {
+                                replay_divergence = "completed capability metadata does not match "
+                                                    "the authoritative memo result";
                                 return eng::ImportAbort{};
                             }
-                            auto decoded = wire_codec::decode_json(
-                                **dom,
-                                call_site->result_binding());
-                            if (!decoded.ok()) {
-                                replay_divergence =
-                                    "durable resume pending-result "
-                                    "type mismatch";
-                                return eng::ImportAbort{};
-                            }
-                            pending_value = std::move(
-                                *decoded.value);
+                            completed_metadata = std::move(**metadata);
                         }
-                        CapabilityImportError pack_error{};
-                        auto packed = pack_bridge_result_value(
-                            engine, descriptor.frame_section,
-                            *call_site, *bridge_site,
-                            std::move(pending_value), pack_error);
-                        if (std::holds_alternative<
-                                eng::ImportAbort>(packed)) {
-                            replay_divergence =
-                                "durable resume replay diverged: "
-                                "bridge frontier pack failed";
-                            return eng::ImportAbort{};
-                        }
-                        recorder.mark_frontier_injected();
-                        return packed;
                     }
-                    case WasmResumeRecorder::ReplayClass::PostFrontier: {
-                        // ReadyForLive: pass through to the live invoker
-                        // path (the same path as a non-resume run).
-                        return inner(obs);
-                    }
-                    case WasmResumeRecorder::ReplayClass::PreFrontierMiss: {
-                        replay_divergence =
-                            "durable resume replay diverged: pre-frontier "
-                            "import not in memo (ordinal " +
-                            std::to_string(ordinal) + ")";
+                    CapabilityImportError pack_error{};
+                    auto packed = pack_bridge_result_value(engine,
+                                                           descriptor.frame_section,
+                                                           *call_site,
+                                                           *inject_site,
+                                                           std::move(memo_value),
+                                                           pack_error);
+                    if (std::holds_alternative<eng::ImportAbort>(packed)) {
+                        replay_divergence = "durable resume replay diverged: "
+                                            "bridge memo pack failed";
                         return eng::ImportAbort{};
                     }
+                    if (completed_metadata) {
+                        collected_cap_calls.push_back(WasmCapabilityCall{
+                            .node_id = static_cast<std::uint32_t>(node.index()),
+                            .capability_name = *memo_name,
+                            .result = std::move(*completed_metadata),
+                        });
                     }
-                    replay_divergence =
-                        "durable resume replay diverged: unknown replay "
-                        "class";
+                    return packed;
+                }
+                case WasmResumeRecorder::ReplayClass::Frontier: {
+                    // Identity gate (P0-15): the pending call's
+                    // capability must match.
+                    const auto *frontier = recorder.frontier();
+                    if (frontier == nullptr || frontier->cap_id != cap_id) {
+                        replay_divergence = "durable resume pending-call identity "
+                                            "mismatch";
+                        return eng::ImportAbort{};
+                    }
+                    // Resolve the injection result (native XOR raw
+                    // wire; both set is a fail-closed conflict).
+                    const bool has_native = resume_pending_result.has_value();
+                    const bool has_raw = resume_pending_result_wire_json.has_value();
+                    if (has_native && has_raw) {
+                        replay_divergence = "durable resume received both a native and "
+                                            "a raw wire pending result";
+                        return eng::ImportAbort{};
+                    }
+                    if (!has_native && !has_raw) {
+                        if (has_pending_resolver) {
+                            auto reply = inner(obs);
+                            if (const auto *returned = std::get_if<eng::ImportReply>(&reply)) {
+                                if (returned->raw_status == AHFL_CAP_OK) {
+                                    recorder.append_memo_entry();
+                                    recorder.mark_frontier_injected();
+                                } else if (returned->raw_status == AHFL_CAP_PENDING) {
+                                    recorder.stamp_pending();
+                                }
+                            }
+                            return reply;
+                        }
+                        replay_divergence = "durable resume is missing the pending "
+                                            "capability result";
+                        return eng::ImportAbort{};
+                    }
+                    // WH-5b.2: bridge frontier. Pack the pending
+                    // result Value into the P4-D frame at the
+                    // bridge site's disjoint result placement (the
+                    // same packing handle_bridge performs on a
+                    // live success), then return the ImportReply
+                    // identical in shape to live placement.
+                    runtime::Value pending_value{runtime::NoneValue{}};
+                    if (has_native) {
+                        pending_value = runtime::clone_value(*resume_pending_result);
+                    } else {
+                        auto dom = ahfl::json::parse_json(*resume_pending_result_wire_json);
+                        if (!dom.has_value() || !*dom) {
+                            replay_divergence = "durable resume pending result "
+                                                "is not valid wire JSON";
+                            return eng::ImportAbort{};
+                        }
+                        auto decoded = wire_codec::decode_json(**dom, call_site->result_binding());
+                        if (!decoded.ok()) {
+                            replay_divergence = "durable resume pending-result "
+                                                "type mismatch";
+                            return eng::ImportAbort{};
+                        }
+                        pending_value = std::move(*decoded.value);
+                    }
+                    CapabilityImportError decode_error{};
+                    ArgDecodeSubReason decode_reason{ArgDecodeSubReason::kUnspecified};
+                    auto pending_args = decode_bridge_import_args(descriptor.frame_section,
+                                                                  *call_site,
+                                                                  *bridge_site,
+                                                                  obs.scalar_arg,
+                                                                  obs.whole_memory,
+                                                                  decode_error,
+                                                                  decode_reason);
+                    const auto pending_hash = pending_args.has_value()
+                                                  ? runtime::hash_values(*pending_args)
+                                                  : std::nullopt;
+                    if (!pending_hash.has_value()) {
+                        replay_divergence = "durable resume pending argument decode failed";
+                        return eng::ImportAbort{};
+                    }
+                    if (pending_injection_guard) {
+                        CapabilityInvocationContext context;
+                        context.source_capability_symbol_id = cap_id;
+                        auto decorated = decorate_context(context, *pending_args);
+                        const auto pending_name = pending_name_resolver(cap_id);
+                        if (!pending_name.has_value()) {
+                            replay_divergence =
+                                "durable resume pending capability name is unavailable";
+                            return eng::ImportAbort{};
+                        }
+                        if (auto error =
+                                pending_injection_guard(decorated, *pending_name, *pending_args)) {
+                            replay_divergence = std::move(*error);
+                            return eng::ImportAbort{};
+                        }
+                    }
+                    auto *current = recorder.current_import();
+                    current->arg_hash = *pending_hash;
+                    current->arg_hash_set = true;
+                    current->result = runtime::clone_value(pending_value);
+                    current->result_present = true;
+                    CapabilityImportError pack_error{};
+                    auto packed = pack_bridge_result_value(engine,
+                                                           descriptor.frame_section,
+                                                           *call_site,
+                                                           *bridge_site,
+                                                           std::move(pending_value),
+                                                           pack_error);
+                    if (std::holds_alternative<eng::ImportAbort>(packed)) {
+                        replay_divergence = "durable resume replay diverged: "
+                                            "bridge frontier pack failed";
+                        return eng::ImportAbort{};
+                    }
+                    recorder.append_memo_entry();
+                    recorder.mark_frontier_injected();
+                    return packed;
+                }
+                case WasmResumeRecorder::ReplayClass::PostFrontier: {
+                    auto reply = inner(obs);
+                    if (const auto *returned = std::get_if<eng::ImportReply>(&reply)) {
+                        if (returned->raw_status == AHFL_CAP_OK) {
+                            recorder.append_memo_entry();
+                        } else if (returned->raw_status == AHFL_CAP_PENDING) {
+                            recorder.stamp_pending();
+                        }
+                    }
+                    return reply;
+                }
+                case WasmResumeRecorder::ReplayClass::PreFrontierMiss: {
+                    replay_divergence = "durable resume replay diverged: pre-frontier "
+                                        "import not in memo (ordinal " +
+                                        std::to_string(ordinal) + ")";
                     return eng::ImportAbort{};
                 }
-
-                // Origination mode: pass through to the live invoker path,
-                // then record the memo entry (OK) or pending coordinate.
-                auto reply = inner(obs);
-                if (const auto *import_reply =
-                        std::get_if<eng::ImportReply>(&reply)) {
-                    if (import_reply->raw_status == AHFL_CAP_PENDING) {
-                        recorder.stamp_pending();
-                    } else if (import_reply->raw_status == AHFL_CAP_OK) {
-                        // WH-5b.2: the bridge result is a P4-D binary
-                        // frame, not JSON. Store the native Value
-                        // (NativeOnly) so the persistence layer
-                        // serializes it to wire JSON via
-                        // try_value_to_json. On reload the entry becomes
-                        // ExactSidecar with wire-JSON bytes, and the
-                        // replay MemoHit path re-packs it through
-                        // pack_bridge_result_value (the same packing the
-                        // Frontier path uses). The P4-D bytes are
-                        // deterministic, so re-packing produces the
-                        // identical frame the guest wrote.
-                        recorder.append_memo_entry(
-                            {}, PersistedMemoResultSource::NativeOnly);
-                    }
                 }
-                return reply;
-            };
+                replay_divergence = "durable resume replay diverged: unknown replay "
+                                    "class";
+                return eng::ImportAbort{};
+            }
+
+            // Origination mode: pass through to the live invoker path,
+            // then record the memo entry (OK) or pending coordinate.
+            auto reply = inner(obs);
+            if (const auto *import_reply = std::get_if<eng::ImportReply>(&reply)) {
+                if (import_reply->raw_status == AHFL_CAP_PENDING) {
+                    recorder.stamp_pending();
+                } else if (import_reply->raw_status == AHFL_CAP_OK) {
+                    // Capture the native reply. Persistence encodes its exact
+                    // wire form; replay decodes and packs under the current
+                    // capability binding before returning it to the guest.
+                    recorder.append_memo_entry();
+                }
+            }
+            return reply;
+        };
     }
 
     // --- 6. Instantiate the module ---
     auto inst = engine.fresh_instance(module_bytes, std::move(wrapped_callback));
     if (!inst.has_value()) {
-        return std::unexpected(
-            "run_workflow_session: fresh_instance failed");
+        return std::unexpected("run_workflow_session: fresh_instance failed");
     }
 
     // --- 7. Pack / write the input ---
@@ -1327,12 +1406,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         entry_len = block.input_size;
     }
 
-    // --- 8. Invoke run2 ---
+    // --- 8. Invoke run_workflow ---
     // D-D: trap / host-abort / engine error map to a FAILED WorkflowResult
     // with diagnostic codes wasm.trap / wasm.host-abort / wasm.run-failed,
     // NOT a bare std::string error. std::unexpected is reserved for PRE-RUN
     // setup failures (admission, instantiation, pack).
-    auto outcome = engine.invoke_run2(entry_ptr, entry_len);
+    auto outcome = engine.invoke_run_workflow(entry_ptr, entry_len);
 
     RunTerminalStatus run_status = RunTerminalStatus::Completed;
     std::optional<WorkflowFailureKind> run_failure_kind;
@@ -1346,10 +1425,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     ahfl::ir::SourceRangeOpt run_failure_range;
     bool run_ok = false;
     bool run_suspended = false;
-    const eng::Run2ResultTuple *tuple = nullptr;
+    const eng::WorkflowRunResultTuple *tuple = nullptr;
 
     // WH-8 (kr68 section 12.9.2): boundary cancellation override. The
-    // wrapped_callback set boundary_cancel at an import boundary; run2
+    // wrapped_callback set boundary_cancel at an import boundary; run_workflow
     // host-aborted as a result. Override the outcome classification to
     // Cancelled / Interrupted (the host-abort is the mechanism, not the
     // semantic).
@@ -1383,13 +1462,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kTrap;
         run_failure_message =
-            "run_workflow_session: invoke_run2 failed (engine error)";
-    } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
+            "run_workflow_session: invoke_run_workflow failed (engine error)";
+    } else if (std::holds_alternative<eng::WorkflowRunHostAborted>(*outcome)) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kHostAbort;
         run_failure_message =
-            "run_workflow_session: run2 host-aborted (capability import "
+            "run_workflow_session: run_workflow host-aborted (capability import "
             "failure)";
         // P2-1: use the CapabilityImportError ENUM NAME, not the raw integer.
         if (import_state.last_error.has_value()) {
@@ -1407,11 +1486,11 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             }
             run_failure_message += ")";
         }
-    } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
+    } else if (std::holds_alternative<eng::WorkflowRunTrapped>(*outcome)) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kTrap;
-        run_failure_message = "run_workflow_session: run2 trapped";
+        run_failure_message = "run_workflow_session: run_workflow trapped";
         // WH-5c.1: a capability that executed and failed traps the guest by
         // design (the bridge lane has a graceful PENDING arm only).
         // Surface the human-readable capability failure so the diagnostic is
@@ -1422,10 +1501,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             run_failure_message += ")";
         }
     } else {
-        tuple = &std::get<eng::Run2ResultTuple>(*outcome);
+        tuple = &std::get<eng::WorkflowRunResultTuple>(*outcome);
         if (tuple->raw_status == AHFL_CAP_PENDING) {
             // WH-4b: the workflow suspended on a pending capability call.
-            // The guest latched the pending status and run2 returned
+            // The guest latched the pending status and run_workflow returned
             // (2, 0, 0). The recorder stamped the pending coordinate; the
             // snapshot is built after node events are decoded (section 10b).
             run_status = RunTerminalStatus::Suspended;
@@ -1437,13 +1516,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 run_failure_kind = WorkflowFailureKind::NodeFailed;
                 run_failure_code = wasm_diag::kRunFailed;
                 run_failure_message =
-                    "run_workflow_session: run2 returned non-zero status " +
+                    "run_workflow_session: run_workflow returned non-zero status " +
                     std::to_string(tuple->raw_status);
             }
         }
     }
 
-    // WH-4b: a replay run that completed (run2 OK) without hitting the
+    // WH-4b: a replay run that completed (run_workflow OK) without hitting the
     // frontier diverged: the fresh instance took a different branch and the
     // pending call never happened. Fail closed.
     if (run_ok && recorder.is_replay() &&
@@ -1458,10 +1537,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // WH-5c.5 test seam: a fail-closed mutation pin may corrupt the
-    // output bytes here (after run2, before the post-run join).
-    if (config.post_run2_memory_mutator) {
+    // output bytes here (after run_workflow, before the post-run join).
+    if (config.post_run_workflow_memory_mutator) {
         if (auto mem = engine.mutable_whole_memory(); mem.has_value()) {
-            config.post_run2_memory_mutator(*mem);
+            config.post_run_workflow_memory_mutator(*mem);
         }
     }
 
@@ -1675,14 +1754,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     if (run_suspended) {
         const auto pending = recorder.pending();
         if (!pending.has_value()) {
-            // run2 returned Pending but the recorder stamped no coordinate:
+            // run_workflow returned Pending but the recorder stamped no coordinate:
             // an internal invariant violation. Downgrade to Failed.
             run_suspended = false;
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
             run_failure_code = wasm_diag::kRunFailed;
             run_failure_message =
-                "run_workflow_session: run2 suspended but no pending "
+                "run_workflow_session: run_workflow suspended but no pending "
                 "coordinate was recorded";
         } else {
             WorkflowRecoverySnapshot snapshot;
@@ -1727,7 +1806,11 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             // back in the result); a save failure downgrades to NodeFailed.
             const bool persisted =
                 config.recovery_store == nullptr ||
-                config.recovery_store->save(snapshot).has_value();
+                config.recovery_store
+                    ->save(snapshot,
+                           support::AtomicReplaceOptions{
+                               .durable = automatically_resumable_pending})
+                    .has_value();
             if (persisted) {
                 suspended_snapshot = std::move(snapshot);
             } else {
@@ -1837,8 +1920,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // capability lookup misses) the failed node's WorkflowNode::source_range.
     // The last_error/last_capability_error guard matters: a source_symbol
     // recorded for an EARLIER SUCCESSFUL call must not be blamed for an
-    // unrelated later generic trap. Covers Run2HostAborted, Run2Trapped
-    // (with/without capability context), invoke_run2 engine error, non-zero
+    // unrelated later generic trap. Covers WorkflowRunHostAborted, WorkflowRunTrapped
+    // (with/without capability context), invoke_run_workflow engine error, non-zero
     // status, replay divergence, origination failure, and the suspend
     // invariant-violation downgrade (section 10b).
     if (!run_failure_range.has_value() && failed_node_index.has_value()) {
@@ -1858,7 +1941,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // WH-5c.6: snapshot the resolved range into the workflow facts AFTER the
     // section-13 resolution so the lifecycle helper's workflow-level fallback
     // (no node failed -- e.g. the P6 O_k decode fail-closed where every node
-    // completed during run2) carries the same range as the node facts.
+    // completed during run_workflow) carries the same range as the node facts.
     facts.failure_range = run_failure_range;
 
     for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
@@ -1968,6 +2051,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // WH-4b: carry the suspended snapshot in the result so the facade /
     // caller can persist or inspect it.
     result.suspended = std::move(suspended_snapshot);
+    result.automatically_resumable_pending =
+        result.suspended.has_value() && automatically_resumable_pending;
 
     return WorkflowSessionResult{
         .result = std::move(result),

@@ -43,6 +43,10 @@ capability TicketCreate(order_id: String, reason: String) -> String;
 capability RefundExecute(order_id: String, amount: Decimal(2)) -> Unit;
 capability UserInfoModify(user_id: String) -> Unit;
 
+// Host predicates declare business conditions; they have no proof definitions here.
+// Default check reports the three requires as environment premises and the
+// data ensures as not_requested. --verify-data-contracts rejects these calls.
+// Runtime does not automatically evaluate these contract predicates.
 predicate order_exists(order_id: String) -> Bool;
 predicate order_belongs_to_user(order_id: String, user_id: String) -> Bool;
 predicate refund_amount_within_total(order_id: String, amount: Decimal(2)) -> Bool;
@@ -68,6 +72,8 @@ pub agent RefundAudit {
     transition Rejected -> Terminated;
 }
 
+// Pure control temporal clauses below are verified in the finite control model.
+// The data clauses are declarations, not evidence of order-service correctness.
 contract for RefundAudit {
     requires: order_exists(input.order_id);
     requires: order_belongs_to_user(input.order_id, input.user_id);

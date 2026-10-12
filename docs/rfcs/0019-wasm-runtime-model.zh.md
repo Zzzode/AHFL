@@ -115,7 +115,7 @@ Playground 无从落地。
 ```mermaid
 flowchart TD
     Agent["ir::Program (AgentDecl + capabilities + contract)"] --> Lower["WASM lowering"]
-    Lower --> Mod["core WASM module (shared ABI: run/step/memory exports)"]
+    Lower --> Mod["core WASM module (current ABI: run_frame or run_workflow, step, memory)"]
     Mod --> WASI["profile: wasi (wasmtime/wasmer + WASI imports)"]
     Mod --> Browser["profile: browser (JS host + capability proxy imports)"]
     WASI --> WasiCaps["capability -> WASI (file/clock/net) per effect projection"]
@@ -126,32 +126,26 @@ flowchart TD
 
 ### WASM ↔ host 执行契约
 
-编译出的 agent 模块导出稳定 ABI:
+编译器与宿主只维护一份当前 ABI。agent 导出 `run_frame() -> (status,value_ptr)`，
+workflow 导出 `run_workflow(input_ptr,input_len) -> (status,output_ptr,output_len)`。
+两者均提供 `memory`、`alloc`、`dealloc`、`step`、`current_state` 与
+`transition_count`；workflow 另提供节点总数与完成数观察。
 
-- `(memory (export "memory"))` — 线性内存(已存在于 `emit_wat_header`)。
-- `(func (export "alloc") (param i32) (result i32))` — 在 WASM 线性内存中分配 n 字节,
-   返回指针;host 用它写 input 帧(OQ2 决策:导出侧分配)。
-- `(func (export "dealloc") (param i32 i32))` — 释放 (ptr,len);host 读完 output 帧后调用。
-- `(func (export "run") (param i32 i32) (result i32))` — 传入 input 的 (ptr,len),
-   执行 agent 到 final 状态,返回 output 的 (ptr) / 错误码。
-- `(func (export "step") (result i32))` — 单步迁移(供 DAP/playground 步进,复用 RFC 0015
-   的调试语义)。
-- `(func (export "current_state") (result i32))` — 当前状态 index(映射回 AHFL 状态名)。
-- `(global (export "transition_count"))` — quota 计数(已存在),对齐 native 的 agent quota。
-- `(global (export "ahfl_abi_version") i32)` — ABI 版本号(OQ4/OQ1 决策:版本化契约,
-   序列化格式与帧结构的演进经此号切换,Component Model 为未来 major 版本目标)。
+删除 pointer-only `run` 和 ABI-version global，宿主按当前完整 import/export
+签名与 custom-section 结构验证产物。输入、context、输出以经验证的布局区域
+读写；能力边界按精确 wire binding 解码。Wasm 标准 header 的版本仍遵守
+第三方规范，不能混同 AHFL 的已删除版本协商。
 
-input/context/output 作为**长度前缀的 `value_json` 字节流**(OQ1 决策:复用
-`value_json` 保证与 native 编解码一致;紧凑二进制为后续版本)布局在线性内存;所有权契约
-(OQ2):host 经导出的 `alloc` 分配并写 input、把 (ptr,len) 传给 `run`;WASM 写 output 帧
-并返回其 ptr,host 读后经 `dealloc` 释放。
+所有权按调用结果与 region 契约表达：host 经模块 `alloc` 获得适当缓冲，完成后
+使用同一 `dealloc`；PENDING 的输入/结果寿命由恢复边界处理，不从裸指针推断。
+参见 [单一当前契约](../design/current-contract.zh.md)。
 
 ### capability → host import 映射
 
 每个 agent 用到的 AHFL capability 编译为一个 WASM import,类型统一:
 
 ```
-(import "ahfl_cap" "<capability_symbol>" (func (param i32 i32) (result i32)))
+(import "ahfl_cap" "<capability_symbol>" (func (param i32 i32) (result i32 i32 i32)))
 ```
 
 - 参数 (ptr,len) 指向线性内存中序列化的 capability 参数;返回值 (ptr) 指向序列化结果
@@ -237,7 +231,7 @@ RFC 让契约先落地。
    (纯 agent → 空能力;网络 agent → NetworkAccess);capability import 名从 `SymbolId`
    确定性生成。
 - **Golden 正例**：一个 agent `emit wasm --profile wasi` 与 `--profile browser` 的输出
-   golden;断言 ABI 导出(`run`/`step`/`current_state`/`memory`)存在、capability import
+   golden;断言 当前 ABI 导出(`run_frame` 或 `run_workflow`/`step`/`current_state`/`memory`)存在、capability import
    按契约命名。
 - **Golden 负例**：browser profile 下用文件 capability → 确定编译期诊断。
 - **确定性**：同一 agent 两次 `emit wasm` 字节一致(无 wall clock/host path)。
@@ -276,28 +270,24 @@ RFC 让契约先落地。
 
 所有开放问题已在进入 review 前决策；下列为最终结论与理由。
 
-1. **input/context/output 的线性内存序列化格式** → **决策：初期复用 `value_json`（长度前缀
-   的 UTF-8 JSON），二进制编码推迟。** 理由：`value_json`（`src/runtime/`）已是 native
-   runtime 与 handoff artifact 的既有序列化器,复用它保证 WASM 与 native 对同一 `Value`
-   的编解码一致(Goal 6),避免初期维护第二套 ABI;性能/体积优化(紧凑二进制)在有真实
-   codegen 与 benchmark 后再作为独立 RFC 引入。ABI 契约以"长度前缀 + 字节流"描述,
-   编码格式本身是 ABI 的一个版本化字段,便于后续替换而不破坏帧结构。
+1. **input/context/output 的线性内存格式** → **决策：当前 dense frame layout 用于
+   模块内值与 Agent 输入/输出，capability 外部字节边界使用 canonical wire JSON。**
+   当前 wire binding、frame layout 和 manifest 各自校验完整结构；不设置帧格式版本字段，
+   不混用历史布局。结构改变同步更新 codegen、host、测试与产物。
 2. **内存所有权/分配协商** → **决策：模块导出 `alloc`/`dealloc`,host 在 WASM 线性内存内
    写 input,WASM 写 output;不使用 host 回调分配。** 理由:导出侧 `alloc` 是 wasm-bindgen /
    wasmtime embedder 的主流约定,host 无需持有 WASM 内部分配器状态,所有权边界清晰
-   (host 拥有它 alloc 的 input 帧直到传入 `run`;WASM 拥有它返回的 output 帧,host 读后
+   (host 拥有它 alloc 的 input 帧直到传入 workflow 的 `run_workflow` 或按 Agent frame 约定运行;WASM 拥有它返回的 output 帧,host 读后
    调 `dealloc`)。
 3. **确定性时钟/随机注入** → **决策：确定性模式下 `ClockAccess` 由 host import 提供固定
    基准 + 单调递增计数,每次时钟读取返回 `base + counter++`;随机同理由 host 注入种子。**
    理由:满足 artifact 确定性边界(无 wall clock 泄漏),又保留时钟读取之间的可区分性
    (对超时/顺序敏感的 agent 逻辑);非确定性模式(命令行 wasi)下时钟直连 WASI
    `clock_time_get`。
-4. **Component Model / WIT 迁移路径** → **决策:本 RFC 用手写 core WASM import 契约,
-   不引入 WIT;但 ABI 契约设一个版本号字段,Component Model 作为未来 major ABI 版本的
-   迁移目标,不预留具体 hook。** 理由:Component Model 浏览器支持尚不完整(Non-Goal 5),
-   过早预留 hook 是投机;版本号让未来迁移有干净切换点而不污染当前契约。
+4. **Component Model / WIT** → **决策：本 RFC 使用当前 core WASM import 契约。**
+   组件模型是独立设计，不预留版本号、格式切换 hook 或兼容入口。
 5. **capability 的异步性** → **决策:ABI 层 capability import 声明为同步 `(param i32 i32)
-   (result i32)`;异步由 host 侧吸收——wasi profile 下 embedder 阻塞等待,browser profile
+   (result i32 i32 i32)`;异步由 host 侧吸收——wasi profile 下 embedder 阻塞等待,browser profile
    下初期要求 host 用同步桥接(SharedArrayBuffer + Atomics.wait 或预解析),JSPI/Asyncify
    作为 browser 的后续增强,不改 WASM 侧同步 ABI。** 理由:保持 WASM 模块 ABI 同步且
    profile 无关(Goal 5 的"共享模块 ABI"),把异步复杂度隔离在 host 侧,模块本身不需
@@ -311,28 +301,13 @@ RFC 让契约先落地。
 ## Decision History
 
 - 2026-08-24: Draft opened.
-- 2026-08-24: All six Open Questions resolved (value_json length-prefixed
-  serialization with a versioned ABI field; module-exported `alloc`/`dealloc`
-  ownership; deterministic clock = host-injected base + monotonic counter;
-  core WASM + versioned ABI, Component Model as a future major-ABI target;
-  synchronous capability
-  ABI with async absorbed host-side; consistency = per-state-transition now,
-  capability-argument parity after codegen). Owners / shepherd assigned;
-  tracking_issue / discussion set to none. Status draft → review.
-- 2026-08-24: Owner sign-off; status review → implementing. Slicing per the
-  Implementation Plan, starting with the ABI contract (slice 1). Full WASM
-  codegen (AHFL evaluator → WASM instructions) stays out of scope per Non-Goal
-  1; this RFC lands the contract, effect→WASI projection, capability imports,
-  and profiled emit.
-- 2026-08-24: Slice 1 landed — WASM ↔ host ABI contract. `wasm_runtime.hpp`
-  gains `WasmAbiContract` (version + `value_json` frame format) and
-  `wasm_abi_exports()` (exported functions with signatures, single source of
-  truth). `wasm_backend.cpp` emits the stable ABI: an `ahfl_abi_version`
-  global, a bump-allocator `alloc`/`dealloc` for host-owned input / WASM-owned
-  output frames (OQ2), and `run` / `step` / `current_state` entry points (thin
-  wrappers over the state-machine primitives; full agent-body codegen stays out
-  of scope per Non-Goal 1). Covered by `ahfl.backends.wasm_all` (ABI emission +
-  export-list registration + abi-catalogue SoT).
+- 2026-08-24: 初始设计确定模块分配、host-injected clock、宿主吸收异步调用和
+  状态迁移级观察；这些是当时的执行边界。其 pointer-only 入口和版本协商已在
+  2026-10-12 同步替换，不属于当前契约。
+- 2026-10-12: 独立决策代理确定唯一当前结构，producer/host/tests 原子更新。
+  Agent 使用 `run_frame`，workflow 使用 `run_workflow`；删除旧入口、版本导出和
+  历史 reader。当前结构字段必须完整，旧产物必须重新构建。
+
 - 2026-08-24: Slice 2 landed — effect → WASI projection. `project_wasi_config`
   maps an agent's per-capability effect severities to a least-privilege WASI
   capability set: a pure agent (no capabilities) and a read-only capability

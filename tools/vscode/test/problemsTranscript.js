@@ -30,7 +30,7 @@ function assertScenario(transcript, scenario, predicate) {
 
 function validateTranscript() {
   const transcript = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
-  assert.strictEqual(transcript.schema, 'ahfl.vscode.problemsTranscript.v1');
+  assert.strictEqual(transcript.schema, 'ahfl.vscode.problemsTranscript');
   assert.strictEqual(transcript.source, 'vscode.languages.getDiagnostics');
   assert.ok(Array.isArray(transcript.snapshots), 'expected transcript snapshots array');
 

@@ -47,7 +47,7 @@ def main() -> int:
             "install evidence generation failed:\n" + result.stdout + result.stderr,
         )
         value = json.loads(output.read_text())
-        require(value["schema"] == "ahfl.beta-evidence.install-smoke.v1", "schema mismatch")
+        require(value["format"] == "ahfl.beta-evidence.install-smoke", "schema mismatch")
         require(value["criterion"] == "BETA-08", "criterion mismatch")
         require(value["status"] == "passed", "install evidence must pass")
         require(value["clean_prefix"]["reference_workflow_checked"], "CLI/sysroot not checked")
@@ -55,8 +55,14 @@ def main() -> int:
         require(value["vsix"]["bundled_server"], "VSIX server missing")
         require(value["vsix"]["bundled_sysroot"], "VSIX sysroot missing")
         require(
-            set(value["schema_compatibility"].values()) == {"accepted", "rejected"},
-            "schema compatibility matrix incomplete",
+            value["artifact_admission"] == {
+                "current_lockfile": "accepted",
+                "unknown_lockfile_format": "rejected",
+                "current_workflow_recovery": "accepted",
+                "unknown_recovery_format": "rejected",
+                "incomplete_recovery_shape": "rejected",
+            },
+            "current artifact admission matrix incomplete",
         )
 
     print("install evidence smoke passed")

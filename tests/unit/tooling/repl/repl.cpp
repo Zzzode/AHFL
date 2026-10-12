@@ -278,7 +278,7 @@ int main() {
               "4 / 0 does not render the raw int");
         check(r.output.find("[wasm.trap]") != std::string::npos,
               "4 / 0 appends the wasm.trap code");
-        check(r.output.find("runv trapped") != std::string::npos,
+        check(r.output.find("run_frame trapped") != std::string::npos,
               "4 / 0 appends the trap message");
     }
 #else

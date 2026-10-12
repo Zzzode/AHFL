@@ -2,7 +2,7 @@
 // module inspector.
 //
 // SCOPE: a generic host receives transported Wasm MODULE BYTES (not a
-// CoreProgram) and mints a verified wire binding from the `ahfl.wire-schema.v1`
+// CoreProgram) and mints a verified wire binding from the `ahfl.wire-schema`
 // custom section. This file frames a canonical module via a TEST-ONLY builder
 // and exercises the inspector positive controls, resource gates, and
 // single-gate negatives; the real admission authority is the inspector + the
@@ -136,7 +136,7 @@ struct ModuleSpec {
     bool type_after_import = false; // emit Import before Type (order violation)
     // The wire-schema table encoded into the target custom section (empty = none).
     std::optional<std::vector<std::uint8_t>> target_table = std::nullopt;
-    std::string target_name = "ahfl.wire-schema.v1";
+    std::string target_name = "ahfl.wire-schema";
     bool duplicate_target = false;
     bool section_after_target = false; // append a nonzero section AFTER the target
     // Unknown non-target custom sections emitted BEFORE the target.
@@ -582,7 +582,7 @@ void test_wire_schema_module_inspector() {
     // module has no target -> missing-target failure. ------------------------
     {
         ModuleSpec spec;
-        spec.target_name = "ahfl.wire-schema.v2"; // not the accepted name
+        spec.target_name = "ahfl.unrecognized-schema"; // not the accepted name
         spec.target_table = encode_table(single_int_table());
         const auto module = build_module(spec);
         const auto result = make_wire_binding_from_core_wasm(
@@ -666,7 +666,7 @@ void test_wire_schema_module_inspector() {
         import_body.push_back(0x00);
         put_uleb(import_body, 0);
         put_section(module, 2, import_body);
-        put_section(module, 0, custom_payload("ahfl.wire-schema.v1",
+        put_section(module, 0, custom_payload("ahfl.wire-schema",
                                               encode_table(single_int_table(42))));
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
@@ -689,7 +689,7 @@ void test_wire_schema_module_inspector() {
         import_body.push_back(0x03); // global import kind
         put_uleb(import_body, 0);
         put_section(module, 2, import_body);
-        put_section(module, 0, custom_payload("ahfl.wire-schema.v1",
+        put_section(module, 0, custom_payload("ahfl.wire-schema",
                                               encode_table(single_int_table(42))));
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
@@ -775,7 +775,7 @@ void test_wire_schema_module_inspector() {
         import_body.push_back(0x00);
         put_uleb(import_body, 0);
         put_section(module, 2, import_body);
-        put_section(module, 0, custom_payload("ahfl.wire-schema.v1",
+        put_section(module, 0, custom_payload("ahfl.wire-schema",
                                               encode_table(single_int_table(42))));
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
@@ -815,7 +815,7 @@ void test_wire_schema_module_inspector() {
         import_body.push_back(0x00);
         put_uleb(import_body, 0);
         put_section(module, 2, import_body);
-        put_section(module, 0, custom_payload("ahfl.wire-schema.v1",
+        put_section(module, 0, custom_payload("ahfl.wire-schema",
                                               encode_table(single_int_table(42))));
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
@@ -934,7 +934,7 @@ void test_wire_schema_module_inspector() {
         import_body.push_back(0x00);
         put_uleb(import_body, 0);
         put_section(module, 2, import_body);
-        put_section(module, 0, custom_payload("ahfl.wire-schema.v1",
+        put_section(module, 0, custom_payload("ahfl.wire-schema",
                                               encode_table(single_int_table(42))));
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);

@@ -1,7 +1,7 @@
 // RFC 0026 KR6.8 WH-3: end-to-end resume test over the REAL wasm3 engine with
 // the production capability-import executor as the import callback. Unlike the
 // unit tests (which drive the executor directly with hand-built observations),
-// this TU goes through the full invoke_run2 path: the engine's trampoline
+// this TU goes through the full invoke_run_workflow path: the engine's trampoline
 // calls the executor, the executor invokes a scripted capability through the
 // ContextualCapabilityInvoker, and the module's compiled classifier arms
 // consume the raw ahfl_cap_status reply.
@@ -9,7 +9,7 @@
 // Three evidence classes:
 //   1. Live cap invocation through the executor (opaque lane, OK / ERROR /
 //      PENDING), proving the full module -> import -> executor -> invoker ->
-//      reply -> classifier -> run2-return path over real wasm3.
+//      reply -> classifier -> run_workflow-return path over real wasm3.
 //   2. Suspended -> Injected -> Consumed replay: a first run suspends
 //      (PENDING), the host injects the result (scripted Success on a fresh
 //      instance), and the second run consumes it (OK). This is the D1b
@@ -17,15 +17,15 @@
 //      (WH-3 does NOT deliver the durable store; the injection is simulated
 //      by the scripted mock, exactly as the Node e2e simulates the host).
 //   3. ImportAbort on engine fault: the executor returns ImportAbort (unknown
-//      capability name), and invoke_run2 unwinds as Run2HostAborted (distinct
-//      from Run2Trapped).
+//      capability name), and invoke_run_workflow unwinds as WorkflowRunHostAborted (distinct
+//      from WorkflowRunTrapped).
 //
 // The bridge lane (i32)->(i32,i32) is covered by the unit tests
 // (ahfl_wasm_host_capability_import_tests) AND by the real bridge e2e below
 // (test_bridge_e2e): WH-3 made A2 admission accept the bridge functype
 // alongside the opaque tuple, and the WH-4 fix-forward (D-C) made the codegen
 // emit a REAL AHFLXM exec-manifest for every capability agent (bridge-lane
-// included), so a real emitted bridge module (v2c_single_arg_bridge) is
+// included), so a real emitted bridge module (single_arg_bridge) is
 // A2-admitted directly (no synthetic manifest injection, no frame admit) and
 // driven end-to-end through the capability_import executor on the real wasm3
 // engine.
@@ -101,7 +101,7 @@ struct ScriptedInvoker {
     }
 };
 
-// Create a fresh engine + executor for one invoke_run2 call. The `module_bytes`
+// Create a fresh engine + executor for one invoke_run_workflow call. The `module_bytes`
 // must already carry the A2 admission sections. `name_resolver` resolves
 // source_symbol -> capability name.
 struct E2eSession {
@@ -155,7 +155,7 @@ struct EmittedBridgeFixture {
     wh::P6FinalKind final_kind{wh::P6FinalKind::Identity};
 };
 
-// Emit the real v2c_single_arg_bridge agent in-process. The agent now carries
+// Emit the real single_arg_bridge agent in-process. The agent now carries
 // a REAL AHFLXM exec-manifest (WH-4 fix-forward D-C: every capability agent
 // emits one, bridge-lane included), so the host A2-admits the genuine bytes
 // directly -- no synthetic manifest injection. The frame section + wire schema
@@ -165,7 +165,7 @@ struct EmittedBridgeFixture {
 std::optional<EmittedBridgeFixture> emit_bridge_fixture() {
     namespace fs = std::filesystem;
     const fs::path repo = ahfl::test_support::repo_root_from_source_file(__FILE__);
-    const fs::path fixture = repo / "tests" / "golden" / "wasm" / "v2c_single_arg_bridge.ahfl";
+    const fs::path fixture = repo / "tests" / "golden" / "wasm" / "single_arg_bridge.ahfl";
     std::string error;
     auto program = conf::compile_conformance_source(fixture, error);
     if (!program.has_value()) {
@@ -224,14 +224,14 @@ std::optional<EmittedBridgeFixture> emit_bridge_fixture() {
     };
 }
 
-// WH-3 bridge e2e: a real emitted bridge module (v2c_single_arg_bridge) is
+// WH-3 bridge e2e: a real emitted bridge module (single_arg_bridge) is
 // A2-admitted directly (it now carries a REAL AHFLXM exec-manifest -- WH-4
 // fix-forward D-C emits one for every capability agent, bridge-lane included)
 // and driven end-to-end through the capability_import executor on the real
 // wasm3 engine. The OK case proves the bridge reply binds the result_base (the
 // executor packs the capability result at the call site's disjoint placement
 // and the module materializes it); the non-OK case proves a bridge
-// Error/Pending reaches the guest's unreachable -> Run2Trapped (the bridge has
+// Error/Pending reaches the guest's unreachable -> WorkflowRunTrapped (the bridge has
 // no graceful ERROR/PENDING arm).
 void test_bridge_e2e() {
     auto fixture = emit_bridge_fixture();
@@ -309,7 +309,7 @@ void test_bridge_e2e() {
     }
 
     // --- non-OK case: the mock returns Error; the bridge has no graceful
-    //     ERROR/PENDING arm, so the guest traps -> Run2Trapped.
+    //     ERROR/PENDING arm, so the guest traps -> WorkflowRunTrapped.
     {
         wh::Wasm3ResumeEngine engine;
         wh::CapabilityImportState state;
@@ -340,9 +340,9 @@ void test_bridge_e2e() {
         check(!output.has_value(), "bridge e2e err: execute_p6_frame failed");
         if (!output.has_value()) {
             const bool trapped =
-                std::holds_alternative<wh::RunvError>(output.error()) &&
-                std::get<wh::RunvError>(output.error()).kind == wh::RunvError::Kind::Trapped;
-            check(trapped, "bridge e2e err: Run2Trapped (no graceful arm)");
+                std::holds_alternative<wh::FrameRunError>(output.error()) &&
+                std::get<wh::FrameRunError>(output.error()).kind == wh::FrameRunError::Kind::Trapped;
+            check(trapped, "bridge e2e err: WorkflowRunTrapped (no graceful arm)");
         }
         check(mock.call_count == 1, "bridge e2e err: invoker called once");
     }
@@ -395,13 +395,13 @@ std::optional<EmittedWorkflowFixture> emit_workflow_fixture() {
 }
 
 // Build a module that passes A2 admission (AHFLXM + AHFLWS + Memory + Type +
-// Import) AND has a real Code section whose run2 executes unreachable (a wasm
+// Import) AND has a real Code section whose run_workflow executes unreachable (a wasm
 // trap, not a host abort). This exercises the run_resume trap -> ModuleTrap
 // path on the real wasm3 engine.
 std::vector<std::uint8_t> build_a2_trap_module() {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
     // Type: bridge (i32)->(i32,i32) for the ahfl_cap import, (i32)->i32 for
-    // alloc, and (i32,i32)->(i32,i32,i32) for the run2 workflow scheduler entry.
+    // alloc, and (i32,i32)->(i32,i32,i32) for the run_workflow workflow scheduler entry.
     // RFC 0026 dual-track elimination: every capability import must use the
     // bridge signature; the opaque (i32,i32)->(i32,i32,i32) import type is gone.
     rts::put_section(m, 1,
@@ -412,23 +412,23 @@ std::vector<std::uint8_t> build_a2_trap_module() {
                                                        {wht::kI32, wht::kI32, wht::kI32})}));
     // Import: 1 ahfl_cap import (type 0, the bridge signature)
     rts::put_section(m, 2, rts::import_payload({{0, 0}}));
-    // Function: run2 (type 2, defined index 1), alloc (type 1, defined index 2)
+    // Function: run_workflow (type 2, defined index 1), alloc (type 1, defined index 2)
     wht::put_section(m, 3, wht::function_section({2, 1}));
     // Memory: 1 page
     wht::put_section(m, 5, wht::memory_section(1));
     // Global: heap pointer
     wht::put_section(m, 6, wht::global_i32_mut(static_cast<std::int32_t>(wht::kHeapBase)));
-    // Export: memory(0), run2(1), alloc(2)
+    // Export: memory(0), run_workflow(1), alloc(2)
     wht::put_section(m, 7, wht::standard_exports(1, 2));
-    // Code: run2 = unreachable, alloc = checked bump allocator
-    std::vector<std::uint8_t> run2_body = wht::locals_decl({});
-    run2_body.push_back(wht::kOpUnreachable);
-    run2_body.push_back(wht::kOpEnd);
-    wht::append_standard_code(m, run2_body);
+    // Code: run_workflow = unreachable, alloc = checked bump allocator
+    std::vector<std::uint8_t> run_workflow_body = wht::locals_decl({});
+    run_workflow_body.push_back(wht::kOpUnreachable);
+    run_workflow_body.push_back(wht::kOpEnd);
+    wht::append_standard_code(m, run_workflow_body);
     // AHFLXM: 1 P6 bridge node (workflow_node_id=0, cap_call_count=0, one
     // in-runner bridge site: ordinal=0, call_site_id=0, capability=0, sym=0).
     rts::put_section(m, 0,
-                     rts::custom_payload("ahfl.wasm-exec-manifest.v1",
+                     rts::custom_payload("ahfl.execution-manifest",
                                          rts::exec_manifest_body(
                                              0, {{0, 0, 0, 0,
                                                   {{0, 0, 0, 0}}}})));
@@ -436,7 +436,7 @@ std::vector<std::uint8_t> build_a2_trap_module() {
     rts::put_section(
         m, 0,
         rts::custom_payload(
-            "ahfl.wire-schema.v1",
+            "ahfl.wire-schema",
             rts::encode_schema(
                 rts::schema_table({}, {rts::CapSpec{0, 0, rts::CoreWireSchemaNodeId{0}}}))));
     return m;
@@ -453,7 +453,7 @@ std::vector<std::uint8_t> build_a2_trap_module() {
 //    resume proves the invoker call count is ZERO.
 // 2. Injected-slot publish/ack (NeedInjectedSlot): the Suspended frontier
 //    publishes the injected frame to a fresh slot, ACKs, and serves it.
-// 3. Module trap -> ModuleTrap: a module whose run2 executes unreachable
+// 3. Module trap -> ModuleTrap: a module whose run_workflow executes unreachable
 //    traps; the driver classifies it ModuleTrap (not a host abort).
 // 4. Host abort (arg_hash mismatch): the entry frame's arg_hash does not
 //    match the ledgered pending; the controller returns CoordinateMismatch,
@@ -856,7 +856,7 @@ void test_run_resume_wasm3_e2e() {
         request.injected_result = std::span<const std::uint8_t>(memo_bytes);
         request.chosen_injected_slot = injected_slot;
         // The hand-built trap module has no frame layout section, so the P4-D
-        // packer cannot work. Use the bump-packers: run2 traps before any
+        // packer cannot work. Use the bump-packers: run_workflow traps before any
         // import is served, so the entry frame placement is irrelevant.
         request.pack_entry_frame = rts::make_bump_entry_packer();
         request.pack_bridge_result = rts::make_bump_result_packer();

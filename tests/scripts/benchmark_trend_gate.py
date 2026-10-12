@@ -8,12 +8,12 @@ no drift could be charted. This gate closes that gap the same way the accepted
 SMV-size trend gate does (`smv_size_trend_gate.py`), reusing its shape:
 
   * run each bench binary with the opt-in machine-readable report
-    (`--report <scratch>`, schema `ahfl.bench-report.v1`),
+    (`--report <scratch>`, schema `ahfl.bench-report`),
   * compare every measured budget against the committed baseline
-    (`config/benchmark-baseline.json`, schema `ahfl.benchmark-baseline.v1`),
+    (`config/benchmark-baseline.json`, schema `ahfl.benchmark-baseline`),
   * fail when a structural metric drifts at all, or when the memory proxy grows
     past a relative tolerance, and
-  * write a machine-readable trend artifact (`ahfl.benchmark-trend.v1`) with
+  * write a machine-readable trend artifact (`ahfl.benchmark-trend`) with
     per-budget baseline/current/delta for a release process to chart.
 
 Both benches compile the *same* fixture ladder and use the one shared
@@ -62,9 +62,9 @@ import tempfile
 from pathlib import Path
 
 # Report artifacts this gate produces/consumes.
-BENCH_REPORT_SCHEMA = "ahfl.bench-report.v1"
-BASELINE_SCHEMA = "ahfl.benchmark-baseline.v1"
-TREND_SCHEMA = "ahfl.benchmark-trend.v1"
+BENCH_REPORT_SCHEMA = "ahfl.bench-report"
+BASELINE_SCHEMA = "ahfl.benchmark-baseline"
+TREND_SCHEMA = "ahfl.benchmark-trend"
 
 # Metrics guarded exactly (any drift fails). Structural + deterministic.
 EXACT_METRICS = ("source_bytes", "typed_exprs", "typed_statements", "ir_decls", "ir_exprs")
@@ -98,9 +98,9 @@ def run_bench(binary: Path, kind: str) -> list[dict[str, object]]:
             )
         doc = json.loads(report.read_text(encoding="utf-8"))
 
-    if doc.get("schema") != BENCH_REPORT_SCHEMA:
+    if doc.get("format") != BENCH_REPORT_SCHEMA:
         raise RuntimeError(
-            f"{binary.name} report schema {doc.get('schema')!r} != {BENCH_REPORT_SCHEMA!r}"
+            f"{binary.name} report schema {doc.get('format')!r} != {BENCH_REPORT_SCHEMA!r}"
         )
     if doc.get("kind") != kind:
         raise RuntimeError(f"{binary.name} report kind {doc.get('kind')!r} != {kind!r}")
@@ -151,7 +151,7 @@ def main() -> int:
     args = parser.parse_args()
 
     baseline_doc = json.loads(args.baseline.read_text(encoding="utf-8"))
-    if baseline_doc.get("schema") != BASELINE_SCHEMA:
+    if baseline_doc.get("format") != BASELINE_SCHEMA:
         print(f"baseline schema must be {BASELINE_SCHEMA}", file=sys.stderr)
         return 2
 
@@ -269,7 +269,7 @@ def main() -> int:
 
     status = "updated" if args.update else ("failed" if (failures or regressions) else "passed")
     report = {
-        "schema": TREND_SCHEMA,
+        "format": TREND_SCHEMA,
         "status": status,
         "proxy_tolerance": PROXY_GROWTH_TOLERANCE,
         "benches": list(BENCHES),

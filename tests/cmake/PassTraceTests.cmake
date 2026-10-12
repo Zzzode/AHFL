@@ -6,7 +6,7 @@
 #
 # The gate runs the compiler against a golden fixture known to trigger the
 # default optimization pipeline under -O, then parses the emitted JSON,
-# checks the schema is ahfl.pass_trace.v1, and asserts the recorded passes
+# checks the schema is ahfl.pass_trace, and asserts the recorded passes
 # include the transformation passes that ran.
 #
 # NOTE: this file is included from tests/CMakeLists.txt (the orchestrator

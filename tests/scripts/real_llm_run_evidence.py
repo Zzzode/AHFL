@@ -357,7 +357,7 @@ def main() -> int:
         return 1
 
     summary = {
-        "schema": "ahfl.real-llm-run-evidence.v1",
+        "format": "ahfl.real-llm-run-evidence",
         "engine": "llama.cpp llama-server",
         "model_file": str(model),
         "inference": "autoregressive transformer forward pass (random-weight GGUF)",

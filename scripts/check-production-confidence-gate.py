@@ -48,15 +48,15 @@ def validate_contract(value: Any) -> list[str]:
     failures: list[str] = []
     if not isinstance(value, dict):
         return ["production confidence contract must be an object"]
-    if value.get("schema") != "ahfl.production-confidence-gate.v2":
-        failures.append("contract schema must be ahfl.production-confidence-gate.v2")
+    if value.get("format") != "ahfl.production-confidence-gate":
+        failures.append("contract schema must be ahfl.production-confidence-gate")
     evidence = value.get("evidence")
     if not isinstance(evidence, dict):
         failures.append("evidence must be an object")
     else:
         if not str(evidence.get("path", "")).strip():
             failures.append("evidence.path must not be empty")
-        if not str(evidence.get("schema", "")).strip():
+        if not str(evidence.get("format", "")).strip():
             failures.append("evidence.schema must not be empty")
     duration = value.get("minimum_duration_seconds")
     if not finite_number(duration) or float(duration) < 3600:
@@ -143,9 +143,9 @@ def validate_evidence(
     failures: list[str] = []
     if not isinstance(evidence, dict):
         return ["evidence must be an object"], None
-    expected = contract["evidence"]["schema"]
-    if evidence.get("schema") != expected:
-        failures.append(f"schema mismatch: found {evidence.get('schema')!r}")
+    expected = contract["evidence"]["format"]
+    if evidence.get("format") != expected:
+        failures.append(f"schema mismatch: found {evidence.get('format')!r}")
     if evidence.get("status") != "passed":
         failures.append(f"status is {evidence.get('status')!r}, expected 'passed'")
     revision = evidence.get("source_revision")
@@ -265,7 +265,7 @@ def make_report(
     current_revision: str,
 ) -> dict[str, Any]:
     return {
-        "schema": "ahfl.production-confidence-gate-report.v2",
+        "format": "ahfl.production-confidence-gate-report",
         "status": status,
         "source_revision": source_revision,
         "current_source_revision": current_revision,

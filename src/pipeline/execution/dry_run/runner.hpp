@@ -10,8 +10,8 @@
 
 namespace ahfl::dry_run {
 
-inline constexpr std::string_view kTraceFormatVersion = "ahfl.dry-run-trace.v1";
-inline constexpr std::string_view kCapabilityMockSetFormatVersion = "ahfl.capability-mocks.v0.6";
+inline constexpr std::string_view kTraceFormat = "ahfl.dry-run-trace";
+inline constexpr std::string_view kCapabilityMockSetFormat = "ahfl.capability-mocks";
 
 enum class DryRunStatus {
     Completed,
@@ -31,7 +31,7 @@ struct CapabilityMock {
 };
 
 struct CapabilityMockSet {
-    std::string format_version{std::string(kCapabilityMockSetFormatVersion)};
+    std::string format{std::string(kCapabilityMockSetFormat)};
     std::vector<CapabilityMock> mocks;
 };
 
@@ -56,8 +56,8 @@ struct DryRunNodeTrace {
 };
 
 struct DryRunTrace {
-    std::string format_version{std::string(kTraceFormatVersion)};
-    std::string source_execution_plan_format_version;
+    std::string format{std::string(kTraceFormat)};
+    std::string source_execution_plan_format;
     std::optional<handoff::PackageIdentity> source_package_identity;
     std::string workflow_canonical_name;
     DryRunStatus status{DryRunStatus::Completed};

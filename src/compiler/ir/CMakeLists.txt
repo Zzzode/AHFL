@@ -6,7 +6,7 @@ add_library(ahfl_compiler_ir STATIC
     core_lower.cpp
     core_recursion.cpp
     core_verify.cpp
-    core_wire_migration.cpp
+    core_wire_projection.cpp
     core_wire_schema.cpp
     identity.cpp
     ir_equal.cpp

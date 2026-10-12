@@ -47,6 +47,12 @@ if(NOT ahflc_output MATCHES "checker_status: available")
     )
 endif()
 
+if(NOT ahflc_output MATCHES "control_status: passed" OR
+   NOT ahflc_output MATCHES "data_contract_status: not_requested" OR
+   ahflc_output MATCHES "smt_bmc_status:|NOT_IN_VERIFIED_SUBSET")
+    message(FATAL_ERROR "expected default control proof without requested data verification:\n${ahflc_output}")
+endif()
+
 # The checker path must be the binary next to ahflc, not a PATH lookup.
 get_filename_component(_ahflc_dir "${AHFLC}" DIRECTORY)
 if(NOT ahflc_output MATCHES "checker: ${_ahflc_dir}/NuSMV")

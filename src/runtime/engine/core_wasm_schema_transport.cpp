@@ -32,7 +32,7 @@ namespace {
 // The wire-schema custom section carried by the C2 writer. Kept in sync with the
 // backend writer's `kWireSchemaSectionName`; the two are separate compilation
 // units, so this reader validates the name it observes against this constant.
-constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
+constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema";
 
 // The exact capability import contract the C2 writer emits.
 constexpr std::string_view kCapabilityImportModule = "ahfl_cap";

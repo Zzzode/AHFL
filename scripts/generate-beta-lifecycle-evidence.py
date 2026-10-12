@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -74,6 +75,7 @@ def main() -> int:
     tests = run(
         [
             "ctest",
+            f"-j{os.cpu_count() or 1}",
             "--test-dir",
             str(build),
             "--output-on-failure",
@@ -151,7 +153,7 @@ def main() -> int:
             raise RuntimeError(f"terminal validator does not enforce {invariant}")
 
     value = {
-        "schema": "ahfl.beta-evidence.lifecycle-matrix.v1",
+        "format": "ahfl.beta-evidence.lifecycle-matrix",
         "status": "passed",
         "criterion": "BETA-04",
         "source_revision": args.source_revision or compute_source_revision(repo),

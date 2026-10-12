@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -42,6 +43,7 @@ def main() -> int:
     tests = run(
         [
             "ctest",
+            f"-j{os.cpu_count() or 1}",
             "--test-dir",
             str(build),
             "--output-on-failure",
@@ -94,7 +96,7 @@ def main() -> int:
         raise RuntimeError("formatter idempotence matrix is incomplete")
 
     value: dict[str, object] = {
-        "schema": "ahfl.beta-evidence.formatter-idempotence.v1",
+        "format": "ahfl.beta-evidence.formatter-idempotence",
         "status": "passed",
         "criterion": "BETA-05",
         "source_revision": args.source_revision or compute_source_revision(repo),

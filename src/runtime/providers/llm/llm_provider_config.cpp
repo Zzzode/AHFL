@@ -4,8 +4,10 @@
 
 #include "base/json/json_value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
+#include "runtime/providers/llm/model_capacity.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <optional>
@@ -96,6 +98,13 @@ namespace {
     return static_cast<int>(*value);
 }
 
+// Invalid supplied token limits must fail validation rather than silently enabling auto mode.
+[[nodiscard]] std::optional<int> token_limit_field(const ahfl::json::JsonValue &object,
+                                                  std::string_view key) {
+    if (object.get(key) == nullptr) return std::nullopt;
+    return int_field(object, key).value_or(0);
+}
+
 [[nodiscard]] std::optional<bool> bool_field(const ahfl::json::JsonValue &object,
                                              std::string_view key) {
     const auto *field = object.get(key);
@@ -167,6 +176,8 @@ fallback_providers_field(const ahfl::json::JsonValue &object, std::string_view k
         if (auto value = string_field(*item, "auth_header"); value.has_value()) {
             entry.auth_header = std::move(*value);
         }
+        entry.model_context_window_tokens = token_limit_field(*item, "model_context_window_tokens");
+        entry.model_max_output_tokens = token_limit_field(*item, "model_max_output_tokens");
         if (auto value = int_field(*item, "priority"); value.has_value()) {
             entry.priority = *value;
         }
@@ -280,13 +291,13 @@ capability_token_budgets_field(const ahfl::json::JsonValue &object, std::string_
         } else if (auto name = string_field(*item, "capability_name"); name.has_value()) {
             budget.capability_name = std::move(*name);
         }
-        if (auto value = int_field(*item, "max_tokens"); value.has_value()) {
+        if (auto value = token_limit_field(*item, "max_tokens"); value.has_value()) {
             budget.max_tokens = *value;
         }
-        if (auto value = int_field(*item, "max_prompt_tokens"); value.has_value()) {
+        if (auto value = token_limit_field(*item, "max_prompt_tokens"); value.has_value()) {
             budget.max_prompt_tokens = *value;
         }
-        if (auto value = int_field(*item, "max_total_tokens"); value.has_value()) {
+        if (auto value = token_limit_field(*item, "max_total_tokens"); value.has_value()) {
             budget.max_total_tokens = *value;
         }
         if (auto value = number_field(*item, "max_total_cost_usd"); value.has_value()) {
@@ -381,15 +392,17 @@ LLMProviderConfig load_config(const std::string &json_content) {
     if (auto value = number_field(root, "temperature"); value.has_value()) {
         config.temperature = *value;
     }
-    if (auto value = int_field(root, "max_tokens"); value.has_value()) {
+    if (auto value = token_limit_field(root, "max_tokens"); value.has_value()) {
         config.max_tokens = *value;
     }
-    if (auto value = int_field(root, "max_prompt_tokens"); value.has_value()) {
+    if (auto value = token_limit_field(root, "max_prompt_tokens"); value.has_value()) {
         config.max_prompt_tokens = *value;
     }
-    if (auto value = int_field(root, "max_total_tokens"); value.has_value()) {
+    if (auto value = token_limit_field(root, "max_total_tokens"); value.has_value()) {
         config.max_total_tokens = *value;
     }
+    config.model_context_window_tokens = token_limit_field(root, "model_context_window_tokens");
+    config.model_max_output_tokens = token_limit_field(root, "model_max_output_tokens");
     if (auto value = number_field(root, "prompt_token_cost_per_million"); value.has_value()) {
         config.prompt_token_cost_per_million = *value;
     }
@@ -479,16 +492,22 @@ std::optional<std::string> validate_config(const LLMProviderConfig &config) {
             return *mtls_error;
         }
     }
-    if (config.max_tokens <= 0) {
-        return "LLM config max_tokens must be positive";
+    if (config.temperature.has_value() &&
+        (!std::isfinite(*config.temperature) || *config.temperature < 0.0 || *config.temperature > 2.0)) {
+        return "LLM config temperature must be finite and between 0 and 2 when supplied";
     }
-    if (config.max_prompt_tokens <= 0) {
-        return "LLM config max_prompt_tokens must be positive";
+    for (const auto &[name, value] : std::vector<std::pair<std::string_view, std::optional<int>>>{
+             {"max_tokens", config.max_tokens},
+             {"max_prompt_tokens", config.max_prompt_tokens},
+             {"max_total_tokens", config.max_total_tokens},
+             {"model_context_window_tokens", config.model_context_window_tokens},
+             {"model_max_output_tokens", config.model_max_output_tokens}}) {
+        if (value && *value <= 0) {
+            return "LLM config " + std::string(name) + " must be positive";
+        }
     }
-    if (config.max_total_tokens <= 0) {
-        return "LLM config max_total_tokens must be positive";
-    }
-    if (config.max_prompt_tokens + config.max_tokens > config.max_total_tokens) {
+    if (config.max_prompt_tokens && config.max_tokens && config.max_total_tokens &&
+        *config.max_prompt_tokens > *config.max_total_tokens - *config.max_tokens) {
         return "LLM config max_prompt_tokens + max_tokens must not exceed max_total_tokens";
     }
     if (config.prompt_token_cost_per_million < 0.0) {
@@ -524,22 +543,19 @@ std::optional<std::string> validate_config(const LLMProviderConfig &config) {
             return "LLM config capability_token_budgets capability '" + budget.capability_name +
                    "' is duplicated";
         }
-        const auto max_tokens = budget.max_tokens.value_or(config.max_tokens);
-        const auto max_prompt_tokens = budget.max_prompt_tokens.value_or(config.max_prompt_tokens);
-        const auto max_total_tokens = budget.max_total_tokens.value_or(config.max_total_tokens);
-        if (max_tokens <= 0) {
-            return "LLM config capability_token_budgets '" + budget.capability_name +
-                   "' max_tokens must be positive";
+        auto effective = config;
+        if (budget.max_tokens) effective.max_tokens = budget.max_tokens;
+        if (budget.max_prompt_tokens) effective.max_prompt_tokens = budget.max_prompt_tokens;
+        if (budget.max_total_tokens) effective.max_total_tokens = budget.max_total_tokens;
+        for (const auto value : {effective.max_tokens, effective.max_prompt_tokens,
+                                 effective.max_total_tokens}) {
+            if (value && *value <= 0) {
+                return "LLM config capability_token_budgets '" + budget.capability_name +
+                       "' token limits must be positive";
+            }
         }
-        if (max_prompt_tokens <= 0) {
-            return "LLM config capability_token_budgets '" + budget.capability_name +
-                   "' max_prompt_tokens must be positive";
-        }
-        if (max_total_tokens <= 0) {
-            return "LLM config capability_token_budgets '" + budget.capability_name +
-                   "' max_total_tokens must be positive";
-        }
-        if (max_prompt_tokens + max_tokens > max_total_tokens) {
+        if (effective.max_prompt_tokens && effective.max_tokens && effective.max_total_tokens &&
+            *effective.max_prompt_tokens > *effective.max_total_tokens - *effective.max_tokens) {
             return "LLM config capability_token_budgets '" + budget.capability_name +
                    "' max_prompt_tokens + max_tokens must not exceed max_total_tokens";
         }
@@ -618,6 +634,10 @@ std::optional<std::string> validate_config(const LLMProviderConfig &config) {
         }
         if (provider.endpoint.empty() || provider.model.empty()) {
             return "LLM fallback provider '" + provider.name + "' requires endpoint and model";
+        }
+        if ((provider.model_context_window_tokens && *provider.model_context_window_tokens <= 0) ||
+            (provider.model_max_output_tokens && *provider.model_max_output_tokens <= 0)) {
+            return "LLM fallback provider model capacity limits must be positive";
         }
         const auto scheme =
             provider.auth_scheme.empty() ? config.auth_scheme : provider.auth_scheme;

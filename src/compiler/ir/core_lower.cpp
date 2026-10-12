@@ -628,7 +628,7 @@ class TypeEnv {
     // Where a CoreTypeDecl entered `register_type`. This is an EXPLICIT provenance
     // flag, never inferred from the decl's metadata shape (Codex P0-1): a real std
     // decl that happens to arrive with `type_param_count == 0 && variances.empty()`
-    // — e.g. a legacy / deserialized / hand-built AHFL-IR StructDecl that predates
+    // — e.g. a malformed / deserialized / hand-built AHFL-IR StructDecl missing
     // the variance fields — must NOT be silently mistaken for a synthetic base and
     // stamped past the drift gate. Only `add_builtins` (which fabricates the base
     // from the descriptor SSOT) is SyntheticBuiltin; every real AHFL-IR decl is
@@ -3492,7 +3492,7 @@ template <class RootPolicy> class ExprLowerer {
         source_variant.owner_enum = u.operand.ptr->resolved_type.nominal_ref;
         {
             auto binding = std::make_unique<ir::MatchPattern>();
-            binding->node = ir::BindingPattern{std::string{"__unwrap_payload"}, false, nullptr};
+            binding->node = ir::BindingPattern{std::string{"__unwrap_payload"}, nullptr};
             binding->matched_type_ref = payload_type_ref(u);
             source_variant.subpatterns.push_back(std::move(binding));
         }
@@ -4020,7 +4020,7 @@ template <class RootPolicy> class ExprLowerer {
     // is the resolved Fn symbol, `args` are the already-lowered ANF operands
     // (method calls pass receiver as args[0]), and `result_ty` is the call's
     // interned result type. Returns false (no diagnostic) when the callee is
-    // unknown/bodyless so the caller keeps its legacy fail-closed path.
+    // unknown/bodyless so the caller keeps its fail-closed path.
     // RFC 0026 FB-4 (design §5.3): every call is emitted as an ordered
     // CoreCallStmt first; the source scanner cannot see an effect routed
     // through a FnT parameter, and reconcile_fn_call_shapes canonicalizes the

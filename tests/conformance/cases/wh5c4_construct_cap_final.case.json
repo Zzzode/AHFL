@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/wh5c4_construct_cap_final.ahfl",
   "kind": "workflow",
   "entry": "wasm::wh5c4_construct_cap_final::ReplyWorkflow",

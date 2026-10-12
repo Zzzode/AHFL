@@ -78,7 +78,7 @@ int Resolver::compare(const SemVer &a, const SemVer &b) {
     return 0;
 }
 
-std::string Resolver::format_version(const SemVer &v) {
+std::string Resolver::format(const SemVer &v) {
     std::string result =
         std::to_string(v.major) + "." + std::to_string(v.minor) + "." + std::to_string(v.patch);
     if (!v.prerelease.empty()) {
@@ -202,8 +202,8 @@ ResolveResult Resolver::resolve() const {
                     result.success = false;
                     result.error = ResolveError::VersionConflict;
                     result.error_message = "Version conflict for '" + result.resolved[i].name +
-                                           "': " + format_version(result.resolved[i].version) +
-                                           " vs " + format_version(result.resolved[j].version);
+                                           "': " + format(result.resolved[i].version) +
+                                           " vs " + format(result.resolved[j].version);
                     return result;
                 }
             }

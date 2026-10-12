@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/p6_nested_depth3_taken.ahfl",
   "kind": "agent",
   "entry": "wasm::p6_nested_depth3_taken::NestedDepth3TakenAgent",

@@ -1,0 +1,20 @@
+[package]
+name = "refund-rules-example"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_rules"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_rules::main::RefundRuleWorkflow"
+exports = [
+  { kind = "workflow", name = "refund_rules::main::RefundRuleWorkflow" },
+  { kind = "agent", name = "refund_rules::main::RefundRule" },
+]

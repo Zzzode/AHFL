@@ -131,10 +131,9 @@ lower_k8s_crd(const ir::AhflIr &program) {
             config.final_states = agent->final_states;
             config.capabilities = symbol_names(agent->capability_refs);
 
-            // KR7.4: map the agent's port types to real JSON Schema trees via
-            // the shared OpenApiTypeMapper. Scalar types render inline;
-            // struct/enum types render as $ref to the definitions table.
-            // Fail closed on unresolved nominal types (dangling $refs).
+            // Reuse JSON type information, then validate the CRD-specific
+            // projection here so unsupported types fail before any artifact
+            // is emitted. OpenAPI itself retains its existing semantics.
             OpenApiTypeMapper mapper(program);
             config.input_schema = mapper.map_type(agent->input_type_ref);
             config.context_schema = mapper.map_type(agent->context_type_ref);
@@ -142,7 +141,19 @@ lower_k8s_crd(const ir::AhflIr &program) {
             if (!mapper.errors().empty()) {
                 return std::unexpected("K8s CRD lowering failed: " + mapper.errors().front());
             }
-            config.definitions = mapper.release_components();
+            config.components = mapper.release_components();
+            for (const auto &[port, schema] :
+                 {std::pair<std::string_view, const OpenApiSchema *>{"input", &config.input_schema},
+                  {"context", &config.context_schema}, {"output", &config.output_schema}}) {
+                if (port == "context" && agent->context_type_ref.kind == ir::TypeRefKind::Unit) {
+                    continue;
+                }
+                auto projected = project_crd_schema(*schema, config.components, port);
+                if (!projected) {
+                    return std::unexpected("K8s CRD lowering failed for agent '" + agent->name +
+                                           "': " + projected.error());
+                }
+            }
 
             result.push_back(std::move(config));
         }

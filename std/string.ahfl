@@ -64,12 +64,7 @@ impl String {
         return string_raw_length(self) == 0;
     }
 
-    // BLK-01 demo: impl methods can now declare @builtin inline. When the
-    // @builtin attribute is present the body is optional (the `;` prototype
-    // shape matches module-level `@builtin fn name(...);`). Lowering dispatches
-    // directly to the C++ builtin hook without routing through the
-    // module-level string_raw_length wrapper. The module-level prototype is
-    // kept for one release cycle (deprecated-call-site compatibility).
+    // Direct lowering uses the same builtin hook as internal length checks.
     pub @builtin("string_raw_length")
     fn length(self) -> Int effect Pure decreases 0;
 
@@ -132,14 +127,6 @@ impl String {
         return string_parse_uuid(self);
     }
 
-    /// Deprecated alias retained for one release cycle (P5 → P6). New code
-    /// should prefer `s.length()` which has identical semantics and is not
-    /// prefixed with `raw_` (which is an implementation detail of the
-    /// lowering pipeline, not a user-facing concept).
-    fn raw_length(self) -> Int effect Pure decreases 0 {
-        return self.length();
-    }
-
     // repeat (M1-4, P0): self concatenated n times. Pure AHFL over
     // string_raw_concat (no new builtin hook). n <= 0 yields the empty string.
     pub fn repeat(self, n: Int) -> String effect Pure decreases 0 {
@@ -150,79 +137,6 @@ impl String {
     }
 }
 
-// ===========================================================================
-// Module-level helpers (original surface; preserved for one release cycle).
-// ===========================================================================
-
-pub fn concat(left: String, right: String) -> String effect Pure decreases 0 {
-    return string_raw_concat(left, right);
-}
-
-// Deprecated UFCS wrappers (P5 → P6, one release cycle).
-fn raw_length(self: String) -> Int effect Pure decreases 0 {
-    return self.length();
-}
-
-fn raw_concat(left: String, right: String) -> String effect Pure decreases 0 {
-    return string_raw_concat(left, right);
-}
-
-fn raw_substring(s: String, start: Int, end: Int) -> String effect Pure decreases 0 {
-    return string_raw_substring(s, start, end);
-}
-
-pub fn is_empty(self: String) -> Bool effect Pure decreases 0 {
-    return self.is_empty();
-}
-
-pub fn length(self: String) -> Int effect Pure decreases 0 {
-    return self.length();
-}
-
-pub fn starts_with(self: String, prefix: String) -> Bool effect Pure decreases 0 {
-    return self.starts_with(prefix);
-}
-
-pub fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
-    return self.ends_with(suffix);
-}
-
-pub fn trim(self: String) -> String effect Pure decreases 0 {
-    return self.trim();
-}
-
-pub fn trim_start(self: String) -> String effect Pure decreases 0 {
-    return self.trim_start();
-}
-
-pub fn trim_end(self: String) -> String effect Pure decreases 0 {
-    return self.trim_end();
-}
-
-pub fn replace(self: String, from: String, to: String) -> String effect Pure decreases 0 {
-    return self.replace(from, to);
-}
-
-pub fn split(self: String, sep: String) -> collections::List<String> effect Pure decreases 0 {
-    return self.split(sep);
-}
-
-pub fn parse_int(self: String) -> option::Option<Int> effect Pure decreases 0 {
-    return self.parse_int();
-}
-
-pub fn split_whitespace(self: String) -> collections::List<String> effect Pure decreases 0 {
-    return self.split_whitespace();
-}
-
-pub fn parse_float(self: String) -> option::Option<Float> effect Pure decreases 0 {
-    return self.parse_float();
-}
-
-pub fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {
-    return self.contains(needle);
-}
-
 // string_repeat_step: tail-recursive helper for String::repeat (M1-4).
 // Manual recursion over the count (decreases n - i) using string_raw_concat.
 fn string_repeat_step(s: String, n: Int, i: Int, buf: String) -> String effect Pure decreases n - i {
@@ -230,11 +144,6 @@ fn string_repeat_step(s: String, n: Int, i: Int, buf: String) -> String effect P
         return buf;
     }
     return string_repeat_step(s, n, i + 1, string_raw_concat(buf, s));
-}
-
-// repeat (M1-4): UFCS surface for s.repeat(n).
-pub fn repeat(self: String, n: Int) -> String effect Pure decreases 0 {
-    return self.repeat(n);
 }
 
 // ===========================================================================

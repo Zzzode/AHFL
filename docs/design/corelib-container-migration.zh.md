@@ -48,7 +48,7 @@
 3. 语法糖设计（解析层保留、语义层是库）
 4. `@builtin` 下沉清单（结构性 op 与算法的边界）
 5. **决议主 RFC §7 开放问题 6**
-6. 与 typed HIR 迁移（memory: `ahfl-typed-hir-migration-audit-v1`）的协调
+6. 与 typed HIR 迁移的协调
 
 **前置依赖**：P1（ADT `enum` 带 payload）+ P2（`fn` + 用户泛型 + 单态化）+ P3（`trait`，至少 `Foldable/Iterable`）必须先落地。本 RFC 在此前提下展开。
 
@@ -472,7 +472,7 @@ graph LR
 
 ---
 
-## 8. 与 typed HIR 迁移（memory: `ahfl-typed-hir-migration-audit-v1`）的协调
+## 8. 与 typed HIR 迁移的协调
 
 ### 8.1 两个大重构的依赖关系
 

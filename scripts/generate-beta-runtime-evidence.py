@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -85,6 +86,7 @@ def main() -> int:
     runtime_tests = run(
         [
             "ctest",
+            f"-j{os.cpu_count() or 1}",
             "--test-dir",
             str(build_dir),
             "--output-on-failure",
@@ -156,7 +158,7 @@ def main() -> int:
         raise RuntimeError("provider usage is not represented by canonical execution events")
     require_no_match(
         repo,
-        r"ahfl\.reference-provider-audit\.v1|(?:pre-crash-)?provider-audit\.json",
+        r"ahfl\.reference-provider-audit|(?:pre-crash-)?provider-audit\.json",
         ["src", "include", "tests"],
         "parallel provider audit fact source",
     )
@@ -184,7 +186,7 @@ def main() -> int:
         out_dir / "runtime-identity.json",
         {
             **common,
-            "schema": "ahfl.beta-evidence.runtime-identity.v1",
+            "format": "ahfl.beta-evidence.runtime-identity",
             "status": "passed",
             "criterion": "BETA-02",
             "strong_ids": [
@@ -212,7 +214,7 @@ def main() -> int:
         out_dir / "event-projections.json",
         {
             **common,
-            "schema": "ahfl.beta-evidence.event-projections.v1",
+            "format": "ahfl.beta-evidence.event-projections",
             "criterion": "BETA-03",
             "event_store": "ExecutionEventStore",
             "report": "ExecutionReport",
@@ -258,7 +260,7 @@ def main() -> int:
     write_evidence(
         out_dir / "product-scope-freeze.json",
         {
-            "schema": "ahfl.beta-evidence.product-scope-freeze.v1",
+            "format": "ahfl.beta-evidence.product-scope-freeze",
             "status": "passed",
             "criterion": "BETA-10",
             "source_revision": revision,

@@ -5,7 +5,7 @@ module wasm::wh4_trace;
 // routes on it (a raw-frame projection that latches reads_raw_input_frame), so
 // the workflow emitter packages it as a P6 node and plans the state-entry trace
 // ring (plan_workflow_p6_capacity_family). The workflow has ONE node and NO
-// capabilities, so the ring is produced by a real wasm3 runv with no import
+// capabilities, so the ring is produced by a real wasm3 run_frame with no import
 // callback. n=1 routes Decide -> High -> Done; n=0 routes Decide -> Low -> Done.
 // Both paths enter exactly three states, so the decoded ring is a three-record
 // (runner,state) sequence the KAT pins against the descriptor's all_states.
@@ -13,7 +13,7 @@ module wasm::wh4_trace;
 // The Done state returns a COMPUTED Frame (not `return input`): the P6 workflow
 // emitter's generic computed runner supports a relocated computed-final handler
 // but rejects an opaque identity terminal fed by a scalar computed-goto
-// preamble (v2d_computed_goto_preamble_reject).
+// preamble (computed_goto_preamble_reject).
 
 pub struct Frame {
     n: Int;

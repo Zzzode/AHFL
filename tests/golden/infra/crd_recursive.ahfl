@@ -1,0 +1,28 @@
+module infra::crd_recursive;
+
+struct Frame { child: Frame; }
+
+struct ValidFrame { value: String; }
+
+// Lowering must reject the complete artifact even after a valid first agent.
+agent First {
+    input: ValidFrame;
+    context: Unit;
+    output: ValidFrame;
+    states: [Idle, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [];
+    transition Idle -> Done;
+}
+
+agent Schema {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Idle, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [];
+    transition Idle -> Done;
+}

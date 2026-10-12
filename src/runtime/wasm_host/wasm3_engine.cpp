@@ -341,11 +341,11 @@ struct Wasm3EngineImpl {
     // module is unloaded (wasm3.h: "m3_LoadModule returned a result" =>
     // unloaded) and the dtor frees it separately.
     bool module_loaded{false};
-    IM3Function run2{nullptr};
+    IM3Function run_workflow{nullptr};
     IM3Function alloc{nullptr};
-    // WH-2: found lazily on the first invoke_runv (a non-P6 module does not
-    // export runv and still instantiates, so fresh_instance never requires it).
-    IM3Function runv{nullptr};
+    // WH-2: found lazily on the first invoke_run_frame (a non-P6 module does not
+    // export run_frame and still instantiates, so fresh_instance never requires it).
+    IM3Function run_frame{nullptr};
     // WH-4: found lazily on the first invoke_step / invoke_current_state /
     // read_transition_count (a workflow module does not export these and
     // still instantiates, so fresh_instance never requires them).
@@ -580,23 +580,23 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     }
 
     // 7. Export surface: alloc (i32)->i32 is required for every module.
-    //    run2 (i32,i32)->(i32,i32,i32) is the workflow scheduler entry and is
-    //    only present on workflow modules; agent modules export runv (found
-    //    lazily on the first invoke_runv) instead. m3_FindFunction compiles
+    //    run_workflow (i32,i32)->(i32,i32,i32) is the workflow scheduler entry and is
+    //    only present on workflow modules; agent modules export run_frame (found
+    //    lazily on the first invoke_run_frame) instead. m3_FindFunction compiles
     //    eagerly, so an unresolved import or a body that does not compile
     //    fails here, at fresh_instance.
     if (m3_FindFunction(&impl_->alloc, impl_->runtime, "alloc") != nullptr ||
         !export_has_i32_signature(impl_->alloc, 1, 1)) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
-    // run2 is optional: a module without it is an agent module that drives
-    // the state machine through step/current_state/runv instead.
-    if (m3_FindFunction(&impl_->run2, impl_->runtime, "run2") == nullptr) {
-        if (!export_has_i32_signature(impl_->run2, 2, 3)) {
+    // run_workflow is optional: a module without it is an agent module that drives
+    // the state machine through step/current_state/run_frame instead.
+    if (m3_FindFunction(&impl_->run_workflow, impl_->runtime, "run_workflow") == nullptr) {
+        if (!export_has_i32_signature(impl_->run_workflow, 2, 3)) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
     } else {
-        impl_->run2 = nullptr; // no run2 export (agent module)
+        impl_->run_workflow = nullptr; // no run_workflow export (agent module)
     }
 
     // 8. Commit: the session is live.
@@ -661,12 +661,12 @@ Wasm3ResumeEngine::alloc_then_write(std::span<const std::uint8_t> bytes) {
     return eng::GuestPointer{ptr};
 }
 
-std::expected<eng::Run2Outcome, eng::EngineError>
-Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_len) {
+std::expected<eng::WorkflowRunOutcome, eng::EngineError>
+Wasm3ResumeEngine::invoke_run_workflow(eng::GuestPointer entry_ptr, std::uint32_t entry_len) {
     if (!impl_->instantiated || impl_->run_started) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
-    if (impl_->run2 == nullptr) {
+    if (impl_->run_workflow == nullptr) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
     impl_->run_started = true;
@@ -684,7 +684,7 @@ Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_
 
     const std::uint32_t args[2] = {entry_ptr.value, entry_len};
     const void *argptrs[2] = {&args[0], &args[1]};
-    const M3Result result = m3_Call(impl_->run2, 2, argptrs);
+    const M3Result result = m3_Call(impl_->run_workflow, 2, argptrs);
 
     if (result == nullptr) {
         // Fixed-page invariant (decision doc section 5): the module declared
@@ -693,8 +693,8 @@ Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_
         // reallocates the linear memory (ResizeMemory, m3_env.c), breaking
         // the "exactly one fixed page" guarantee AFTER admission. The engine
         // contract holds the invariant for the whole session, so a grown
-        // run2 fails closed as MemoryCapacityExceeded: the guest's grow is a
-        // write beyond the fixed page. Not Run2Trapped (no wasm trap
+        // run_workflow fails closed as MemoryCapacityExceeded: the guest's grow is a
+        // write beyond the fixed page. Not WorkflowRunTrapped (no wasm trap
         // occurred); not a byte scan for 0x40 (it legitimately appears as a
         // LEB byte, e.g. the terminator of i32.const 64).
         std::uint32_t post_size = 0;
@@ -709,20 +709,20 @@ Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_
         std::uint32_t ptr = 0;
         std::uint32_t len = 0;
         const void *retptrs[3] = {&status, &ptr, &len};
-        if (m3_GetResults(impl_->run2, 3, retptrs) != nullptr) {
+        if (m3_GetResults(impl_->run_workflow, 3, retptrs) != nullptr) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        eng::Run2ResultTuple tuple;
+        eng::WorkflowRunResultTuple tuple;
         tuple.raw_status = status; // pass through verbatim; no classification
         tuple.output_ptr = eng::GuestPointer{ptr};
         tuple.output_len = len;
-        return eng::Run2Outcome{tuple};
+        return eng::WorkflowRunOutcome{tuple};
     }
     if (result == kHostAbortSentinel) {
-        return eng::Run2Outcome{eng::Run2HostAborted{}};
+        return eng::WorkflowRunOutcome{eng::WorkflowRunHostAborted{}};
     }
     if (is_wasm_trap(result)) {
-        return eng::Run2Outcome{eng::Run2Trapped{}};
+        return eng::WorkflowRunOutcome{eng::WorkflowRunTrapped{}};
     }
     return std::unexpected(eng::EngineError::InstanceUnavailable);
 }
@@ -740,26 +740,26 @@ Wasm3ResumeEngine::mutable_whole_memory() {
     return std::span<std::uint8_t>(memory, size);
 }
 
-std::expected<RunvOutcome, eng::EngineError>
-Wasm3ResumeEngine::invoke_runv() {
+std::expected<FrameRunOutcome, eng::EngineError>
+Wasm3ResumeEngine::invoke_run_frame() {
     if (!impl_->instantiated || impl_->run_started) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
     impl_->run_started = true;
 
-    // Lazily find + signature-check runv. m3_FindFunction compiles eagerly, so
+    // Lazily find + signature-check run_frame. m3_FindFunction compiles eagerly, so
     // a body that does not compile (or an unresolved import) surfaces here.
-    if (impl_->runv == nullptr) {
-        if (m3_FindFunction(&impl_->runv, impl_->runtime, "runv") != nullptr ||
-            !export_has_i32_signature(impl_->runv, 0, 2)) {
+    if (impl_->run_frame == nullptr) {
+        if (m3_FindFunction(&impl_->run_frame, impl_->runtime, "run_frame") != nullptr ||
+            !export_has_i32_signature(impl_->run_frame, 0, 2)) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
     }
 
-    const M3Result result = m3_Call(impl_->runv, 0, nullptr);
+    const M3Result result = m3_Call(impl_->run_frame, 0, nullptr);
     if (result == nullptr) {
-        // Fixed-page invariant (same discipline as invoke_run2): a structurally
-        // admissible module can still execute memory.grow mid-runv, breaking the
+        // Fixed-page invariant (same discipline as invoke_run_workflow): a structurally
+        // admissible module can still execute memory.grow mid-run_frame, breaking the
         // "exactly one fixed page" guarantee after admission.
         std::uint32_t post_size = 0;
         if (m3_GetMemory(impl_->runtime, &post_size, 0) == nullptr) {
@@ -772,19 +772,19 @@ Wasm3ResumeEngine::invoke_runv() {
         std::uint32_t status = 0;
         std::uint32_t ptr = 0;
         const void *retptrs[2] = {&status, &ptr};
-        if (m3_GetResults(impl_->runv, 2, retptrs) != nullptr) {
+        if (m3_GetResults(impl_->run_frame, 2, retptrs) != nullptr) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        return RunvOutcome{RunvResult{status, eng::GuestPointer{ptr}}};
+        return FrameRunOutcome{FrameRunResult{status, eng::GuestPointer{ptr}}};
     }
     if (result == kHostAbortSentinel) {
-        // runv on an import-free P6-frame module cannot reach a host import,
+        // run_frame on an import-free P6-frame module cannot reach a host import,
         // but a bridge module (WH-3) can; map the sentinel faithfully as a
-        // host abort (distinct from a Wasm trap, mirroring Run2Outcome).
-        return RunvOutcome{eng::Run2HostAborted{}};
+        // host abort (distinct from a Wasm trap, mirroring WorkflowRunOutcome).
+        return FrameRunOutcome{eng::WorkflowRunHostAborted{}};
     }
     if (is_wasm_trap(result)) {
-        return RunvOutcome{eng::Run2Trapped{}};
+        return FrameRunOutcome{eng::WorkflowRunTrapped{}};
     }
     return std::unexpected(eng::EngineError::InstanceUnavailable);
 }

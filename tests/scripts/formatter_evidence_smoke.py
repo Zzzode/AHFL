@@ -50,7 +50,7 @@ def main() -> int:
         )
         value = json.loads(evidence.read_text(encoding="utf-8"))
         require(
-            value["schema"] == "ahfl.beta-evidence.formatter-idempotence.v1",
+            value["format"] == "ahfl.beta-evidence.formatter-idempotence",
             "unexpected formatter evidence schema",
         )
         require(value["criterion"] == "BETA-05", "evidence must target BETA-05")

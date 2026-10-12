@@ -1,0 +1,65 @@
+module try_operator::boundaries;
+
+import std::option as option;
+import std::result as result;
+
+fn option_to_text(value: option::Option<Int>) -> option::Option<String> effect Pure decreases 0 {
+    let number: Int = value?;
+    return option::Option::Some("present");
+}
+
+fn string_payload(value: option::Option<String>) -> option::Option<String> effect Pure decreases 0 {
+    let text: String = value?;
+    return option::Option::Some(text);
+}
+
+fn result_to_text(value: result::Result<Int, Int(0, 10)>) -> result::Result<String, Int> effect Pure decreases 0 {
+    let number: Int = value?;
+    return result::Result::Ok("present");
+}
+
+fn widen_success(value: option::Option<Int(0, 10)>) -> option::Option<Int> effect Pure decreases 0 {
+    let number: Int = value?;
+    return option::Option::Some(number);
+}
+
+fn constructor_operands() -> option::Option<Int> effect Pure decreases 0 {
+    let first: Int = option::Option::Some(7)?;
+    let second: Int = option::Option::None?;
+    return option::Option::Some(first + second);
+}
+
+fn result_constructor_operands() -> result::Result<Int, String> effect Pure decreases 0 {
+    let first: Int = result::Result::Ok(7)?;
+    let second: Int = result::Result::Err("stop")?;
+    return result::Result::Ok(first + second);
+}
+
+fn option_constructor_to_text() -> option::Option<String> effect Pure decreases 0 {
+    let number: Int = option::Option::Some(7)?;
+    return option::Option::Some("present");
+}
+
+fn result_constructor_to_text() -> result::Result<String, String> effect Pure decreases 0 {
+    let number: Int = result::Result::Ok(7)?;
+    return result::Result::Ok("present");
+}
+
+fn error_constructor_widening(error: Int(0, 10)) -> result::Result<String, Int> effect Pure decreases 0 {
+    let number: Int = result::Result::Err(error)?;
+    return result::Result::Ok("present");
+}
+
+fn generic_unwrap<T>(value: option::Option<T>) -> option::Option<T> effect Pure decreases 0 {
+    let item: T = value?;
+    return option::Option::Some(item);
+}
+
+fn generic_call() -> option::Option<Int> effect Pure decreases 0 {
+    return generic_unwrap<Int>(option::Option::Some(7));
+}
+
+fn preserve_names(value: result::Result<Int, String>, try_tmp_0: Int, err: Int) -> result::Result<Int, String> effect Pure decreases 0 {
+    let number: Int = value?;
+    return result::Result::Ok(number + try_tmp_0 + err);
+}

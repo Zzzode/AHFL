@@ -1,5 +1,5 @@
 {
-  "schema": "ahfl.product-scope-freeze.v1",
+  "format": "ahfl.product-scope-freeze",
   "rfc": "0012",
   "tracking_issue": "https://github.com/Zzzode/AHFL/issues/16",
   "reference_workflow": "examples/execution-demo",

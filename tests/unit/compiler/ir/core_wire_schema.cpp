@@ -81,8 +81,10 @@ using namespace ahfl::ir::core;
 // A builtin collection shell (List/Set/Map): a Struct nominal that carries the
 // role + arity + variance the verifier cross-checks against the descriptor SSOT,
 // and NO member templates (a builtin collection must not carry them).
-[[nodiscard]] CoreTypeDecl collection(std::string canonical, CoreNominalRole role,
-                                      std::uint32_t arity, std::vector<CoreVariance> variances) {
+[[nodiscard]] CoreTypeDecl collection(std::string canonical,
+                                      CoreNominalRole role,
+                                      std::uint32_t arity,
+                                      std::vector<CoreVariance> variances) {
     CoreTypeDecl decl;
     decl.kind = CoreTypeDecl::Kind::Struct;
     decl.name = std::move(canonical);
@@ -179,20 +181,22 @@ enum : std::uint32_t {
     p.types.push_back(std::move(option));
 
     // [3..5] std collections.
-    p.types.push_back(collection("std::collections::List", CoreNominalRole::List, 1,
-                                 {CoreVariance::Covariant}));
-    p.types.push_back(collection("std::collections::Set", CoreNominalRole::Set, 1,
-                                 {CoreVariance::Covariant}));
-    p.types.push_back(collection("std::collections::Map", CoreNominalRole::Map, 2,
+    p.types.push_back(
+        collection("std::collections::List", CoreNominalRole::List, 1, {CoreVariance::Covariant}));
+    p.types.push_back(
+        collection("std::collections::Set", CoreNominalRole::Set, 1, {CoreVariance::Covariant}));
+    p.types.push_back(collection("std::collections::Map",
+                                 CoreNominalRole::Map,
+                                 2,
                                  {CoreVariance::Invariant, CoreVariance::Covariant}));
 
     // --- value-type arena (topological) ------------------------------------
     p.value_types = {
-        CoreValueType{CoreVtInt{}},                                            // 0
-        CoreValueType{CoreVtBool{}},                                           // 1
-        CoreValueType{CoreVtString{}},                                         // 2
-        CoreValueType{CoreVtNominal{CoreTypeId{kPairTy}, {}, std::nullopt}},   // 3
-        CoreValueType{CoreVtNominal{CoreTypeId{kColorTy}, {}, std::nullopt}},  // 4
+        CoreValueType{CoreVtInt{}},                                           // 0
+        CoreValueType{CoreVtBool{}},                                          // 1
+        CoreValueType{CoreVtString{}},                                        // 2
+        CoreValueType{CoreVtNominal{CoreTypeId{kPairTy}, {}, std::nullopt}},  // 3
+        CoreValueType{CoreVtNominal{CoreTypeId{kColorTy}, {}, std::nullopt}}, // 4
         CoreValueType{
             CoreVtNominal{CoreTypeId{kOptionTy}, {CoreValueTypeId{kVtInt}}, std::nullopt}}, // 5
         CoreValueType{
@@ -201,20 +205,22 @@ enum : std::uint32_t {
             CoreVtNominal{CoreTypeId{kSetTy}, {CoreValueTypeId{kVtBool}}, std::nullopt}}, // 7
         CoreValueType{CoreVtNominal{CoreTypeId{kMapTy},
                                     {CoreValueTypeId{kVtString}, CoreValueTypeId{kVtInt}},
-                                    std::nullopt}},                                       // 8
-        CoreValueType{CoreVtTuple{{CoreValueTypeId{kVtInt}, CoreValueTypeId{kVtBool}}}},  // 9
-        CoreValueType{CoreVtFn{{}, CoreValueTypeId{kVtInt}}},                             // 10
-        CoreValueType{CoreVtClosure{CoreValueTypeId{kVtFn}, {}}},                         // 11
-        CoreValueType{CoreVtNever{}},                                                     // 12
-        CoreValueType{CoreVtTuple{{CoreValueTypeId{kVtNever}}}},                          // 13
+                                    std::nullopt}},                                      // 8
+        CoreValueType{CoreVtTuple{{CoreValueTypeId{kVtInt}, CoreValueTypeId{kVtBool}}}}, // 9
+        CoreValueType{CoreVtFn{{}, CoreValueTypeId{kVtInt}}},                            // 10
+        CoreValueType{CoreVtClosure{CoreValueTypeId{kVtFn}, {}}},                        // 11
+        CoreValueType{CoreVtNever{}},                                                    // 12
+        CoreValueType{CoreVtTuple{{CoreValueTypeId{kVtNever}}}},                         // 13
         CoreValueType{CoreVtNominal{CoreTypeId{kMapTy},
                                     {CoreValueTypeId{kVtInt}, CoreValueTypeId{kVtInt}},
                                     std::nullopt}}, // 14
     };
 
     // --- capability imports -------------------------------------------------
-    const auto add_cap = [&](std::string name, std::vector<CoreValueTypeId> params,
-                             CoreValueTypeId ret, std::size_t symbol_id) {
+    const auto add_cap = [&](std::string name,
+                             std::vector<CoreValueTypeId> params,
+                             CoreValueTypeId ret,
+                             std::size_t symbol_id) {
         CoreCapabilityDecl c;
         c.symbol_ref.kind = ir::SymbolRefKind::Capability;
         c.symbol_ref.canonical_name = "app::" + name;
@@ -226,10 +232,14 @@ enum : std::uint32_t {
     };
     add_cap("StructCap", {CoreValueTypeId{kVtPair}}, CoreValueTypeId{kVtColor}, 10);
     add_cap("OptListCap", {CoreValueTypeId{kVtOptionInt}}, CoreValueTypeId{kVtListInt}, 11);
-    add_cap("CollCap", {CoreValueTypeId{kVtSetBool}, CoreValueTypeId{kVtMapStrInt}},
-            CoreValueTypeId{kVtTupleIB}, 12);
-    add_cap("ScalarCap", {CoreValueTypeId{kVtInt}, CoreValueTypeId{kVtString}},
-            CoreValueTypeId{kVtBool}, 13);
+    add_cap("CollCap",
+            {CoreValueTypeId{kVtSetBool}, CoreValueTypeId{kVtMapStrInt}},
+            CoreValueTypeId{kVtTupleIB},
+            12);
+    add_cap("ScalarCap",
+            {CoreValueTypeId{kVtInt}, CoreValueTypeId{kVtString}},
+            CoreValueTypeId{kVtBool},
+            13);
     add_cap("FnCap", {CoreValueTypeId{kVtFn}}, CoreValueTypeId{kVtBool}, 14);
     add_cap("ClosureCap", {CoreValueTypeId{kVtClosure}}, CoreValueTypeId{kVtBool}, 15);
     add_cap("NeverCap", {CoreValueTypeId{kVtTupleNever}}, CoreValueTypeId{kVtBool}, 16);
@@ -278,8 +288,8 @@ enum : std::uint32_t {
     CoreProgram &p = g.program;
 
     // [0] List<T>
-    p.types.push_back(collection("std::collections::List", CoreNominalRole::List, 1,
-                                 {CoreVariance::Covariant}));
+    p.types.push_back(
+        collection("std::collections::List", CoreNominalRole::List, 1, {CoreVariance::Covariant}));
 
     // [1] struct Box<T> { a: List<T>(4), b: List<T>(8) }
     CoreTypeDecl box;
@@ -346,20 +356,22 @@ enum : std::uint32_t {
 
     // value-type arena (topological).
     p.value_types = {
-        CoreValueType{CoreVtInt{}},                                             // 0
-        CoreValueType{CoreVtString{}},                                          // 1
-        CoreValueType{CoreVtBool{}},                                            // 2
-        CoreValueType{CoreVtNominal{CoreTypeId{kGenBoxTy},
-                                    {CoreValueTypeId{0}}, std::nullopt}},        // 3 Box<Int>
-        CoreValueType{CoreVtNominal{CoreTypeId{kGenTreeTy}, {}, std::nullopt}},  // 4 Tree
+        CoreValueType{CoreVtInt{}},    // 0
+        CoreValueType{CoreVtString{}}, // 1
+        CoreValueType{CoreVtBool{}},   // 2
+        CoreValueType{
+            CoreVtNominal{CoreTypeId{kGenBoxTy}, {CoreValueTypeId{0}}, std::nullopt}}, // 3 Box<Int>
+        CoreValueType{CoreVtNominal{CoreTypeId{kGenTreeTy}, {}, std::nullopt}},        // 4 Tree
         CoreValueType{CoreVtNominal{CoreTypeId{kGenResultTy},
                                     {CoreValueTypeId{0}, CoreValueTypeId{1}},
-                                    std::nullopt}},                             // 5 Result<Int,String>
+                                    std::nullopt}}, // 5 Result<Int,String>
     };
     g.box_int = CoreValueTypeId{3};
 
-    const auto add_cap = [&](std::string name, std::vector<CoreValueTypeId> params,
-                             CoreValueTypeId ret, std::size_t symbol_id) {
+    const auto add_cap = [&](std::string name,
+                             std::vector<CoreValueTypeId> params,
+                             CoreValueTypeId ret,
+                             std::size_t symbol_id) {
         const CoreCapabilityId id{static_cast<std::uint32_t>(p.capabilities.size())};
         CoreCapabilityDecl c;
         c.symbol_ref.kind = ir::SymbolRefKind::Capability;
@@ -392,16 +404,16 @@ struct ScalarProgram {
 
     // value-type arena (topological). Bounded refinements carry their bounds.
     p.value_types = {
-        CoreValueType{CoreVtUnit{}},                                                 // 0
-        CoreValueType{CoreVtFloat{}},                                                // 1
-        CoreValueType{CoreVtDecimal{3}},                                             // 2
-        CoreValueType{CoreVtDuration{}},                                             // 3
-        CoreValueType{CoreVtTimestamp{}},                                            // 4
-        CoreValueType{CoreVtUuid{}},                                                 // 5
-        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{-5, 5}}},      // 6
-        CoreValueType{CoreVtString{std::pair<std::int64_t, std::int64_t>{2, 4}}},    // 7
-        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 100}}},     // 8 Line.len
-        CoreValueType{CoreVtString{std::pair<std::int64_t, std::int64_t>{1, 8}}},    // 9 Line.label
+        CoreValueType{CoreVtUnit{}},                                              // 0
+        CoreValueType{CoreVtFloat{}},                                             // 1
+        CoreValueType{CoreVtDecimal{3}},                                          // 2
+        CoreValueType{CoreVtDuration{}},                                          // 3
+        CoreValueType{CoreVtTimestamp{}},                                         // 4
+        CoreValueType{CoreVtUuid{}},                                              // 5
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{-5, 5}}},   // 6
+        CoreValueType{CoreVtString{std::pair<std::int64_t, std::int64_t>{2, 4}}}, // 7
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 100}}},  // 8 Line.len
+        CoreValueType{CoreVtString{std::pair<std::int64_t, std::int64_t>{1, 8}}}, // 9 Line.label
     };
 
     // enum Shape { Dot (unit), Line{len, label} (struct payload) }.
@@ -424,9 +436,14 @@ struct ScalarProgram {
     c.symbol_ref.canonical_name = "app::ScalarsCap";
     c.symbol_ref.id = 30;
     c.name = "ScalarsCap";
-    c.param_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2},
-                     CoreValueTypeId{3}, CoreValueTypeId{4}, CoreValueTypeId{5},
-                     CoreValueTypeId{6}, CoreValueTypeId{7}};
+    c.param_types = {CoreValueTypeId{0},
+                     CoreValueTypeId{1},
+                     CoreValueTypeId{2},
+                     CoreValueTypeId{3},
+                     CoreValueTypeId{4},
+                     CoreValueTypeId{5},
+                     CoreValueTypeId{6},
+                     CoreValueTypeId{7}};
     c.return_type = CoreValueTypeId{static_cast<std::uint32_t>(p.value_types.size())};
     // Shape nominal value type (the enum result).
     p.value_types.push_back(CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}});
@@ -452,7 +469,7 @@ TEST_CASE("wire projection lowers scalar capability signatures") {
     const auto result = project_core_wire_schema(program, caps({kScalarCap}));
     REQUIRE(result.ok());
     const auto &table = *result.table;
-    CHECK(table.format_version == 1);
+
     REQUIRE(table.capabilities.size() == 1);
     const auto &cap = table.capabilities[0];
     CHECK(cap.capability.value == kScalarCap);
@@ -566,7 +583,7 @@ TEST_CASE("wire projection is deterministic and reprojection-verifiable") {
     CHECK(verify_core_wire_schema_table(program, selection, *first.table).empty());
 }
 
-TEST_CASE("table verifier rejects a tampered reprojection and a bad format version") {
+TEST_CASE("table verifier rejects a tampered reprojection") {
     const CoreProgram program = make_wire_program();
     const auto selection = caps({kScalarCap});
     const auto projected = project_core_wire_schema(program, selection);
@@ -581,13 +598,6 @@ TEST_CASE("table verifier rejects a tampered reprojection and a bad format versi
                 node.shape = CoreWireSchemaUnit{};
             }
         }
-        const auto diagnostics = verify_core_wire_schema_table(program, selection, tampered);
-        CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
-    }
-
-    SUBCASE("unsupported format version fails the local pass") {
-        CoreWireSchemaTable tampered = *projected.table;
-        tampered.format_version = 2;
         const auto diagnostics = verify_core_wire_schema_table(program, selection, tampered);
         CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
     }
@@ -720,11 +730,12 @@ TEST_CASE("wire projection of a two-generic-field struct is UAF-safe (P0 regress
     CHECK(res.variants[0].wire_name == "Ok");
     CHECK(res.variants[0].payload_kind == CoreWirePayloadKind::Tuple);
     REQUIRE(res.variants[0].slots.size() == 1);
-    CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(table, res.variants[0].slots[0].type)));
+    CHECK(
+        std::holds_alternative<CoreWireSchemaInt>(shape_of(table, res.variants[0].slots[0].type)));
     CHECK(res.variants[1].wire_name == "Err");
     REQUIRE(res.variants[1].slots.size() == 1);
-    CHECK(
-        std::holds_alternative<CoreWireSchemaString>(shape_of(table, res.variants[1].slots[0].type)));
+    CHECK(std::holds_alternative<CoreWireSchemaString>(
+        shape_of(table, res.variants[1].slots[0].type)));
 
     CHECK(project_core_wire_schema(g.program, {g.gen_cap}).table == result.table);
 }
@@ -893,31 +904,29 @@ TEST_CASE("wire projection lowers an enum variant with a Struct payload") {
     CHECK(verify_core_wire_schema_table(s.program, {s.cap}, table).empty());
 }
 
-// RFC 0026 P6-7 frame-bridge v2 rung V2-D: the CoreProgram-side verifier must
+// RFC 0026 P6-7 workflow frame bridge: the CoreProgram-side verifier must
 // thread the per-node workflow boundary roots through its deterministic
 // reprojection. Pre-fix verify_core_wire_schema_table forced
-// node_boundaries = nullopt, so a transported V2-D table could NEVER be
+// node_boundaries = nullopt, so a transported workflow table could NEVER be
 // checked against a CoreProgram (spurious mismatch, or the comparison skipped
 // and a drifted table accepted).
-TEST_CASE("public verifier reprojects V2-D workflow per-node boundary roots") {
+TEST_CASE("public verifier reprojects workflow per-node boundary roots") {
     const CoreProgram program = make_wire_program();
     // Two workflow nodes: inputs Int/String (vt 0/2), outputs Bool/Int (vt 1/0).
     std::vector<CoreValueTypeId> node_inputs{CoreValueTypeId{0}, CoreValueTypeId{2}};
     std::vector<CoreValueTypeId> node_outputs{CoreValueTypeId{1}, CoreValueTypeId{0}};
     auto boundaries = std::make_pair(node_inputs, node_outputs);
-    const auto projected =
-        project_core_wire_schema(program, {}, std::nullopt, boundaries);
+    const auto projected = project_core_wire_schema(program, {}, std::nullopt, boundaries);
     REQUIRE(projected.ok());
     REQUIRE(projected.table->frame_roots.has_value());
     CHECK(projected.table->frame_roots->node_inputs.size() == 2);
     CHECK(projected.table->frame_roots->node_outputs.size() == 2);
 
     // With the boundaries threaded through, the canonical reprojection matches.
-    CHECK(verify_core_wire_schema_table(program, {}, *projected.table, std::nullopt,
-                                        boundaries)
+    CHECK(verify_core_wire_schema_table(program, {}, *projected.table, std::nullopt, boundaries)
               .empty());
     // Without the parameter the canonical projection carries no per-node roots,
-    // so the V2-D table is rejected at the reprojection gate (the pre-fix
+    // so the workflow table is rejected at the reprojection gate (the pre-fix
     // verifier could never accept a workflow frame table).
     const auto without = verify_core_wire_schema_table(program, {}, *projected.table);
     CHECK(has_code(without, std::string(wire_schema::kInvalid)));
@@ -931,10 +940,8 @@ TEST_CASE("public verifier reprojects V2-D workflow per-node boundary roots") {
     REQUIRE(decoded.ok());
     REQUIRE(decoded.table.has_value());
     REQUIRE(decoded.table->frame_roots.has_value());
-    CHECK(decoded.table->frame_roots->node_inputs ==
-           projected.table->frame_roots->node_inputs);
-    CHECK(verify_core_wire_schema_table(program, {}, *decoded.table, std::nullopt,
-                                        boundaries)
+    CHECK(decoded.table->frame_roots->node_inputs == projected.table->frame_roots->node_inputs);
+    CHECK(verify_core_wire_schema_table(program, {}, *decoded.table, std::nullopt, boundaries)
               .empty());
 }
 
@@ -1032,8 +1039,8 @@ namespace {
 
 // Wrap a finished node vector + result node in a one-capability table so the
 // public local verifier can be exercised on a hand-built (transported) table.
-[[nodiscard]] CoreWireSchemaTable
-wrap_result_table(std::vector<CoreWireSchemaNode> nodes, CoreWireSchemaNodeId result) {
+[[nodiscard]] CoreWireSchemaTable wrap_result_table(std::vector<CoreWireSchemaNode> nodes,
+                                                    CoreWireSchemaNodeId result) {
     CoreWireSchemaTable table;
     table.nodes = std::move(nodes);
     CoreWireCapabilitySchema cap;
@@ -1049,7 +1056,7 @@ wrap_result_table(std::vector<CoreWireSchemaNode> nodes, CoreWireSchemaNodeId re
 TEST_CASE("local verifier rejects an Option with a null-encoding direct child (P0-9)") {
     SUBCASE("Option<Unit> is rejected as UNSUPPORTED") {
         std::vector<CoreWireSchemaNode> nodes;
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});                       // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});                          // 0
         nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
         const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
         const auto diagnostics = verify_core_wire_schema_table_local(table);
@@ -1059,9 +1066,11 @@ TEST_CASE("local verifier rejects an Option with a null-encoding direct child (P
 
     SUBCASE("Option<Option<Int>> is rejected as UNSUPPORTED") {
         std::vector<CoreWireSchemaNode> nodes;
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                        // 0
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1 inner
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{1}}}); // 2 outer
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+        nodes.push_back(
+            CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1 inner
+        nodes.push_back(
+            CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{1}}}); // 2 outer
         const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{2});
         const auto diagnostics = verify_core_wire_schema_table_local(table);
         CHECK(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
@@ -1082,7 +1091,7 @@ TEST_CASE("local verifier rejects an Option with a null-encoding direct child (P
 TEST_CASE("local verifier still accepts Option of a non-null-encoding child (P0-9)") {
     SUBCASE("Option<Int> stays legal") {
         std::vector<CoreWireSchemaNode> nodes;
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                        // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                           // 0
         nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
         const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
         CHECK(verify_core_wire_schema_table_local(table).empty());
@@ -1095,8 +1104,9 @@ TEST_CASE("local verifier still accepts Option of a non-null-encoding child (P0-
         CoreWireSchemaStruct node_struct;
         node_struct.wire_name = "app::Node";
         node_struct.fields.push_back(CoreWireSchemaField{"next", CoreWireSchemaNodeId{1}});
-        nodes.push_back(CoreWireSchemaNode{node_struct});                                   // 0 Node
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1 Option<Node>
+        nodes.push_back(CoreWireSchemaNode{node_struct}); // 0 Node
+        nodes.push_back(
+            CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1 Option<Node>
         const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
         CHECK(verify_core_wire_schema_table_local(table).empty());
     }
@@ -1297,7 +1307,7 @@ TEST_CASE("local verifier rejects reserved wire-name collisions (P0-11)") {
 
     SUBCASE("a genuine CoreWireSchemaOption stays legal") {
         std::vector<CoreWireSchemaNode> nodes;
-        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                        // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                           // 0
         nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
         const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
         CHECK(verify_core_wire_schema_table_local(table).empty());
@@ -1354,10 +1364,9 @@ constexpr std::string_view kSecretName = "SECRET_WIRE_NAME_MARKER_ZZZ";
 
 [[nodiscard]] bool any_diag_contains(const std::vector<CoreLowerDiagnostic> &diagnostics,
                                      std::string_view needle) {
-    return std::any_of(diagnostics.begin(), diagnostics.end(),
-                       [&](const CoreLowerDiagnostic &d) {
-                           return d.message.find(needle) != std::string::npos;
-                       });
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [&](const CoreLowerDiagnostic &d) {
+        return d.message.find(needle) != std::string::npos;
+    });
 }
 
 // A Decimal(scale) node is the cleanest signed-LEB carrier: `scale` is the only
@@ -1424,16 +1433,16 @@ TEST_CASE("wire decoder round-trips a hand-built table exercising every node sha
     // Uuid, Option, Sequence List + Set(capacity), Map(capacity), Struct, Enum
     // (Unit + Tuple + Struct payload kinds), Tuple.
     std::vector<CoreWireSchemaNode> nodes;
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});          // 0 Unit
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}});          // 1 Bool
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{{{-5, 5}}}});  // 2 Int bounded
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});           // 3 Int unbounded
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaFloat{}});         // 4 Float
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});            // 0 Unit
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}});            // 1 Bool
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{{{-5, 5}}}});    // 2 Int bounded
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});             // 3 Int unbounded
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaFloat{}});           // 4 Float
     nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{{{0, 16}}}}); // 5 String len bounds
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDecimal{2}});      // 6 Decimal scale
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDuration{}});      // 7 Duration
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaTimestamp{}});     // 8 Timestamp
-    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUuid{}});          // 9 Uuid
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDecimal{2}});        // 6 Decimal scale
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDuration{}});        // 7 Duration
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaTimestamp{}});       // 8 Timestamp
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUuid{}});            // 9 Uuid
     // 10 Option<Int(3)>
     nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{3}}});
     CoreWireSchemaSequence list;
@@ -1456,14 +1465,16 @@ TEST_CASE("wire decoder round-trips a hand-built table exercising every node sha
     CoreWireSchemaEnum en;
     en.wire_name = "app::Shape";
     en.variants.push_back(CoreWireSchemaVariant{"None", CoreWirePayloadKind::Unit, {}});
-    en.variants.push_back(CoreWireSchemaVariant{
-        "Pos", CoreWirePayloadKind::Tuple,
-        {CoreWireSchemaField{"", CoreWireSchemaNodeId{2}},
-         CoreWireSchemaField{"", CoreWireSchemaNodeId{4}}}});
-    en.variants.push_back(CoreWireSchemaVariant{
-        "Named", CoreWirePayloadKind::Struct,
-        {CoreWireSchemaField{"a", CoreWireSchemaNodeId{10}},
-         CoreWireSchemaField{"b", CoreWireSchemaNodeId{11}}}});
+    en.variants.push_back(
+        CoreWireSchemaVariant{"Pos",
+                              CoreWirePayloadKind::Tuple,
+                              {CoreWireSchemaField{"", CoreWireSchemaNodeId{2}},
+                               CoreWireSchemaField{"", CoreWireSchemaNodeId{4}}}});
+    en.variants.push_back(
+        CoreWireSchemaVariant{"Named",
+                              CoreWirePayloadKind::Struct,
+                              {CoreWireSchemaField{"a", CoreWireSchemaNodeId{10}},
+                               CoreWireSchemaField{"b", CoreWireSchemaNodeId{11}}}});
     nodes.push_back(CoreWireSchemaNode{en}); // 15 enum (Unit + Tuple + Struct payloads)
     CoreWireSchemaStruct st;
     st.wire_name = "app::Bag";
@@ -1488,7 +1499,7 @@ TEST_CASE("wire decoder round-trips a hand-built table exercising every node sha
 }
 
 TEST_CASE("wire decoder accepts an empty (no-node, no-cap) table round-trip") {
-    CoreWireSchemaTable table; // format_version 1, zero nodes, zero caps
+    CoreWireSchemaTable table; // zero nodes, zero caps
     const auto encoded = encode_core_wire_schema_table(table);
     REQUIRE(encoded.ok());
     const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
@@ -1496,6 +1507,28 @@ TEST_CASE("wire decoder accepts an empty (no-node, no-cap) table round-trip") {
     CHECK(*decoded.table == table);
     CHECK(decoded.table->nodes.empty());
     CHECK(decoded.table->capabilities.empty());
+    CHECK((*encoded.bytes == std::vector<std::uint8_t>{'A', 'H', 'F', 'L', 'W', 'S', 0, 0, 0}));
+    auto missing_presence = *encoded.bytes;
+    missing_presence.pop_back();
+    CHECK_FALSE(decode_core_wire_schema_table(missing_presence).ok());
+}
+
+TEST_CASE("wire decoder requires an explicit node count for agent frame roots") {
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});
+    table.frame_roots = CoreWireFrameRoots{{0}, {0}, {}, {}};
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    CHECK(*decoded.table == table);
+    CHECK(encoded.bytes->back() == 0); // Explicitly no workflow node roots.
+    auto missing_count = *encoded.bytes;
+    missing_count.pop_back();
+    CHECK_FALSE(decode_core_wire_schema_table(missing_count).ok());
+    auto trailing = *encoded.bytes;
+    trailing.push_back(0);
+    CHECK_FALSE(decode_core_wire_schema_table(trailing).ok());
 }
 
 TEST_CASE("wire decoder rejects header / framing corruption") {
@@ -1521,13 +1554,7 @@ TEST_CASE("wire decoder rejects header / framing corruption") {
         const auto decoded = decode_core_wire_schema_table(magic);
         CHECK(!decoded.ok());
     }
-    SUBCASE("unsupported format version") {
-        auto bytes = good;
-        bytes[6] = 2; // version LEB byte immediately after magic
-        const auto decoded = decode_core_wire_schema_table(bytes);
-        CHECK(!decoded.ok());
-        CHECK(!decoded.table.has_value());
-    }
+
     SUBCASE("trailing bytes after a valid payload") {
         auto bytes = good;
         bytes.push_back(0x00);
@@ -1548,8 +1575,9 @@ TEST_CASE("wire decoder rejects header / framing corruption") {
 
 TEST_CASE("wire decoder rejects an unknown node kind tag") {
     // A single-node table whose node tag byte is an unknown shape id.
-    // Hand-assemble: magic + version(1) + node_count(1) + tag(0xFF).
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 0xFF};
+    // Hand-assemble: magic + node_count(1) + tag(0xFF).
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0xFF};
+    bytes.push_back(0x00); // Explicitly absent frame roots.
     const auto decoded = decode_core_wire_schema_table(bytes);
     CHECK(!decoded.ok());
     CHECK(!decoded.table.has_value());
@@ -1558,8 +1586,9 @@ TEST_CASE("wire decoder rejects an unknown node kind tag") {
 
 TEST_CASE("wire decoder rejects non-binary discriminant tags at each discriminant gate") {
     SUBCASE("Int optional_bounds tag != 0/1") {
-        // magic + v1 + node_count(1) + Int(2) + bounds tag(0x02, illegal).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 2, 0x02};
+        // magic + node_count(1) + Int(2) + bounds tag(0x02, illegal).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 2, 0x02};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1569,8 +1598,8 @@ TEST_CASE("wire decoder rejects non-binary discriminant tags at each discriminan
         // Sequence(10) + kind List(0) + element(node 0) + capacity tag(0x03, illegal).
         // node 0 is the sequence itself (self element keeps it in-range for the tag
         // check, which runs before reachability).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01,
-                                        10,  0x00, 0x00, 0x03};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 10, 0x00, 0x00, 0x03};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1578,7 +1607,8 @@ TEST_CASE("wire decoder rejects non-binary discriminant tags at each discriminan
     }
     SUBCASE("Sequence kind != List/Set") {
         // Sequence(10) + kind(0x02, illegal).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 10, 0x02};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 10, 0x02};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1587,8 +1617,9 @@ TEST_CASE("wire decoder rejects non-binary discriminant tags at each discriminan
     SUBCASE("Enum variant payload_kind != Unit/Tuple/Struct") {
         // Enum(13) + name("E") + variant_count(1) + variant name("V") +
         // payload_kind(0x03, illegal).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 13,
-                                        1,   'E', 0x01, 1,   'V', 0x03};
+        std::vector<std::uint8_t> bytes{
+            'A', 'H', 'F', 'L', 'W', 'S', 0x01, 13, 1, 'E', 0x01, 1, 'V', 0x03};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1597,9 +1628,9 @@ TEST_CASE("wire decoder rejects non-binary discriminant tags at each discriminan
 }
 
 TEST_CASE("wire decoder rejects a non-canonical LEB integer via the re-encode gate") {
-    // format_version encoded non-shortest: 0x81 0x00 == 1 with a redundant group.
-    // magic + [0x81,0x00] (version=1 overlong) + node_count(0) + cap_count(0).
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x81, 0x00, 0x00, 0x00};
+    // An overlong zero node count must fail canonical re-encoding.
+    // magic + node_count(0 overlong) + cap_count(0) + frame_present(0).
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x80, 0x00, 0x00, 0x00};
     const auto decoded = decode_core_wire_schema_table(bytes);
     CHECK(!decoded.ok());
     CHECK(!decoded.table.has_value());
@@ -1610,12 +1641,13 @@ TEST_CASE("wire decoder rejects an out-of-range final u64 LEB group") {
     // node_count with a 10th group at shift 63 carrying payload 0x02: only 0/1 fit
     // there, so this overflows the u64 domain and reports out-of-range (distinct
     // from the >64-bit overlong gate, which needs an 11th group). Bytes: magic +
-    // version(1) + 9x continuation-zero (0x80) + terminating group 0x02.
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01};
+    // 9x continuation-zero (0x80) + terminating group 0x02.
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S'};
     for (int i = 0; i < 9; ++i) {
         bytes.push_back(0x80);
     }
     bytes.push_back(0x02);
+    bytes.push_back(0x00); // Explicitly absent frame roots.
     const auto decoded = decode_core_wire_schema_table(bytes);
     CHECK(!decoded.ok());
     CHECK(!decoded.table.has_value());
@@ -1624,7 +1656,8 @@ TEST_CASE("wire decoder rejects an out-of-range final u64 LEB group") {
 
 TEST_CASE("wire decoder rejects a count that exceeds the remaining bytes") {
     // node_count = 0xFF (255) but no node bodies follow.
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0xFF, 0x01};
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0xFF, 0x01};
+    bytes.push_back(0x00); // Explicitly absent frame roots.
     const auto decoded = decode_core_wire_schema_table(bytes);
     CHECK(!decoded.ok());
     CHECK(!decoded.table.has_value());
@@ -1632,8 +1665,9 @@ TEST_CASE("wire decoder rejects a count that exceeds the remaining bytes") {
 }
 
 TEST_CASE("wire decoder rejects a string length that exceeds the remaining bytes") {
-    // magic + version(1) + node_count(1) + tag Struct(12) + name_len(0xFF) + 'x'.
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 12, 0xFF, 0x01, 'x'};
+    // magic + node_count(1) + tag Struct(12) + name_len(0xFF) + 'x'.
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 12, 0xFF, 0x01, 'x'};
+    bytes.push_back(0x00); // Explicitly absent frame roots.
     const auto decoded = decode_core_wire_schema_table(bytes);
     CHECK(!decoded.ok());
     CHECK(!decoded.table.has_value());
@@ -1683,9 +1717,14 @@ TEST_CASE("wire decoder ok()/has_errors()/table are a consistent tri-state") {
 // s64 field on any shape, so an encode->decode->equal round-trip exercises s64 at
 // exactly the requested boundary.
 TEST_CASE("wire decoder round-trips signed LEB canonical boundaries via Decimal scale") {
-    for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{63}, std::int64_t{64},
-                                     std::int64_t{127}, std::int64_t{128}, std::int64_t{-1},
-                                     std::int64_t{-64}, std::int64_t{-65},
+    for (const std::int64_t scale : {std::int64_t{0},
+                                     std::int64_t{63},
+                                     std::int64_t{64},
+                                     std::int64_t{127},
+                                     std::int64_t{128},
+                                     std::int64_t{-1},
+                                     std::int64_t{-64},
+                                     std::int64_t{-65},
                                      std::numeric_limits<std::int64_t>::max(),
                                      std::numeric_limits<std::int64_t>::min()}) {
         const auto bytes = encode_decimal_scale(scale);
@@ -1703,14 +1742,15 @@ TEST_CASE("wire decoder round-trips signed LEB canonical boundaries via Decimal 
 TEST_CASE("wire decoder rejects malformed signed LEB encodings") {
     // Decimal scale == +0 is canonically one byte 0x00. A non-shortest +0 as
     // 0x80 0x00 (a redundant continuation of a positive) must fail the canonical
-    // re-encode gate. Bytes: magic + v1 + node_count(1) + tag Decimal(5) + scale
+    // re-encode gate. Bytes: magic + node_count(1) + tag Decimal(5) + scale
     // 0x80 0x00 + cap_count(0).
     // A Decimal node needs a capability whose result points at it, or verify_local
     // rejects it as an orphan BEFORE the canonical re-encode gate is reached. The
     // suffix `cap_count(1) cap_id(0) source_symbol(7) params(0) result(node 0)`.
     SUBCASE("redundant positive sign group") {
-        std::vector<std::uint8_t> bytes{'A',  'H',  'F',  'L',  'W',  'S',  0x01, 0x01,
-                                        5,    0x80, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00};
+        std::vector<std::uint8_t> bytes{
+            'A', 'H', 'F', 'L', 'W', 'S', 0x01, 5, 0x80, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1719,8 +1759,9 @@ TEST_CASE("wire decoder rejects malformed signed LEB encodings") {
     SUBCASE("redundant negative sign group") {
         // scale == -1 is canonically 0x7f. A non-shortest -1 as 0xff 0x7f (a
         // redundant sign-extension of a negative) must fail the canonical gate.
-        std::vector<std::uint8_t> bytes{'A',  'H',  'F',  'L',  'W',  'S',  0x01, 0x01,
-                                        5,    0xff, 0x7f, 0x01, 0x00, 0x07, 0x00, 0x00};
+        std::vector<std::uint8_t> bytes{
+            'A', 'H', 'F', 'L', 'W', 'S', 0x01, 5, 0xff, 0x7f, 0x01, 0x00, 0x07, 0x00, 0x00};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1729,13 +1770,14 @@ TEST_CASE("wire decoder rejects malformed signed LEB encodings") {
     SUBCASE("out-of-range signed final group (shift == 63)") {
         // s64 is a distinct reader from u64. A Decimal scale whose 10th group at
         // shift 63 carries payload 0x01 (only a pure sign group 0x00/0x7f fits
-        // there) overflows int64 and reports out-of-range. Bytes: magic + v1 +
+        // there) overflows int64 and reports out-of-range. Bytes: magic +
         // node_count(1) + Decimal(5) + 9x continuation-zero (0x80) + 0x01.
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 5};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 5};
         for (int i = 0; i < 9; ++i) {
             bytes.push_back(0x80);
         }
         bytes.push_back(0x01);
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1745,13 +1787,14 @@ TEST_CASE("wire decoder rejects malformed signed LEB encodings") {
         // A Decimal scale with 10 continuation groups drives shift from 63 to 70
         // on the 10th read; the attempted 11th group is rejected before consumption
         // by the shift >= 64 overlong gate (distinct from the shift == 63
-        // out-of-range gate). Bytes: magic + v1 + node_count(1) + Decimal(5) + 10x
+        // out-of-range gate). Bytes: magic + node_count(1) + Decimal(5) + 10x
         // continuation-zero (0x80) + 0x00.
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 5};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 5};
         for (int i = 0; i < 10; ++i) {
             bytes.push_back(0x80);
         }
         bytes.push_back(0x00);
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1763,8 +1806,8 @@ TEST_CASE("wire decoder separates u32-domain overflow from u64 overflow") {
     SUBCASE("a valid u64 that exceeds the 32-bit domain (node_count) is rejected") {
         // node_count encoded as 0x1_0000_0000 (2^32): a legal 5-byte u64 that is
         // out of the u32 domain used for counts/ids. LEB of 2^32 = 80 80 80 80 10.
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01,
-                                        0x80, 0x80, 0x80, 0x80, 0x10};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x80, 0x80, 0x80, 0x80, 0x10};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1792,11 +1835,12 @@ TEST_CASE("wire decoder separates u32-domain overflow from u64 overflow") {
         // source_symbol as a >64-bit run: 10 continuation groups drive shift from
         // 63 to 70 on the 10th read; the attempted 11th group is rejected before
         // consumption by the shift >= 64 overlong gate (distinct from out-of-range).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x00, 0x01, 0x00};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x00, 0x01, 0x00};
         for (int i = 0; i < 10; ++i) {
             bytes.push_back(0x80); // continuation, payload 0
         }
         bytes.push_back(0x01); // attempted 11th group -> rejected before consumption
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1807,8 +1851,8 @@ TEST_CASE("wire decoder separates u32-domain overflow from u64 overflow") {
 TEST_CASE("wire decoder count at the reserved 32-bit sentinel is rejected before reserve") {
     // node_count == kInvalid (UINT32_MAX) = LEB ff ff ff ff 0f. Must be rejected by
     // bounded_count's sentinel gate BEFORE any reserve, independent of remaining.
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01,
-                                    0xff, 0xff, 0xff, 0xff, 0x0f};
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0xff, 0xff, 0xff, 0xff, 0x0f};
+    bytes.push_back(0x00); // Explicitly absent frame roots.
     const auto decoded = decode_core_wire_schema_table(bytes);
     CHECK(!decoded.ok());
     CHECK(!decoded.table.has_value());
@@ -1819,7 +1863,7 @@ TEST_CASE("wire decoder cap-id: kInvalid / order / duplicate reject, large-spars
     // Helper: assemble a two-cap, single-Int-node table whose two capability ids
     // are the given values, both roots pointing at node 0.
     auto assemble = [](std::uint32_t cap0, std::uint32_t cap1) {
-        std::vector<std::uint8_t> b{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 2 /*Int*/};
+        std::vector<std::uint8_t> b{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 2 /*Int*/};
         auto leb = [&](std::uint64_t v) {
             do {
                 std::uint8_t c = v & 0x7fU;
@@ -1843,6 +1887,7 @@ TEST_CASE("wire decoder cap-id: kInvalid / order / duplicate reject, large-spars
         leb(9);
         leb(0);
         leb(0);
+        b.push_back(0x00); // Explicitly absent frame roots.
         return b;
     };
     SUBCASE("strictly increasing large sparse non-invalid ids are accepted") {
@@ -1875,18 +1920,20 @@ TEST_CASE("wire decoder cap-id: kInvalid / order / duplicate reject, large-spars
 TEST_CASE("wire decoder local-verifier negatives entered via raw bytes") {
     SUBCASE("orphan node (unreachable) is rejected") {
         // Two Int nodes, root = node 0; node 1 is unreachable.
-        // magic + v1 + node_count(2) + Int(2)+bounds-absent + Int(2)+bounds-absent
+        // magic + node_count(2) + Int(2)+bounds-absent + Int(2)+bounds-absent
         // + cap_count(1) + cap_id(0) + source_symbol(7) + params(0) + result(0).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x02,
-                                        2,   0x00, 2,   0x00, 0x01, 0x00, 0x07, 0x00, 0x00};
+        std::vector<std::uint8_t> bytes{
+            'A', 'H', 'F', 'L', 'W', 'S', 0x02, 2, 0x00, 2, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(any_diag_contains(decoded.diagnostics, "orphan node"));
     }
     SUBCASE("a NodeId reference out of the table range is rejected") {
         // Single Option node whose child is node 9 (only node 0 exists).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01,
-                                        9,   9,   0x01, 0x00, 0x07, 0x00, 0x00};
+        std::vector<std::uint8_t> bytes{
+            'A', 'H', 'F', 'L', 'W', 'S', 0x01, 9, 9, 0x01, 0x00, 0x07, 0x00, 0x00};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1896,23 +1943,24 @@ TEST_CASE("wire decoder local-verifier negatives entered via raw bytes") {
         // Struct{ _type: Int }, root, with the struct wire_name set to the secret
         // marker. This exercises the parse-succeeds -> local-verifier-fails path and
         // asserts the reserved-name diagnostic does NOT echo the (attacker-supplied)
-        // struct name. magic + v1 + node_count(2) + Int(2)+absent + Struct(12) +
+        // struct name. magic + node_count(2) + Int(2)+absent + Struct(12) +
         // name(kSecretName) + field_count(1) + field name("_type") + field type(0) +
         // cap_count(1) cap_id0 sym7 params0 result(node 1).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x02, 2, 0x00, 12};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x02, 2, 0x00, 12};
         auto push_str = [&](std::string_view s) {
             bytes.push_back(static_cast<std::uint8_t>(s.size()));
             bytes.insert(bytes.end(), s.begin(), s.end());
         };
-        push_str(kSecretName);       // struct wire_name = secret marker
-        bytes.push_back(0x01);       // field_count
-        push_str("_type");           // reserved field name
-        bytes.push_back(0x00);       // field type -> node 0
-        bytes.push_back(0x01);       // cap_count
-        bytes.push_back(0x00);       // cap_id 0
-        bytes.push_back(0x07);       // source_symbol
-        bytes.push_back(0x00);       // params 0
-        bytes.push_back(0x01);       // result -> node 1 (struct)
+        push_str(kSecretName); // struct wire_name = secret marker
+        bytes.push_back(0x01); // field_count
+        push_str("_type");     // reserved field name
+        bytes.push_back(0x00); // field type -> node 0
+        bytes.push_back(0x01); // cap_count
+        bytes.push_back(0x00); // cap_id 0
+        bytes.push_back(0x07); // source_symbol
+        bytes.push_back(0x00); // params 0
+        bytes.push_back(0x01); // result -> node 1 (struct)
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(any_diag_contains(decoded.diagnostics, "reserved wire name '_type'"));
@@ -1920,21 +1968,22 @@ TEST_CASE("wire decoder local-verifier negatives entered via raw bytes") {
     }
     SUBCASE("nullable Option (Option<Unit>) is rejected") {
         // Option -> Unit: Unit encodes as null, so None and Some(Unit) collide.
-        // magic + v1 + node_count(2) + Unit(0) + Option(9)+child(0) + cap_count(1)
+        // magic + node_count(2) + Unit(0) + Option(9)+child(0) + cap_count(1)
         // cap_id0 sym7 params0 result(node 1).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x02,
-                                        0,   9,   0,   0x01, 0x00, 0x07, 0x00, 0x01};
+        std::vector<std::uint8_t> bytes{
+            'A', 'H', 'F', 'L', 'W', 'S', 0x02, 0, 9, 0, 0x01, 0x00, 0x07, 0x00, 0x01};
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(any_diag_contains(decoded.diagnostics, "encodes as JSON null"));
     }
     SUBCASE("an ordinary Enum wire_name std::option::Option (reserved) is rejected") {
         // A tag-13 Enum whose wire_name collides with the value_json Option
-        // special-case name. Bytes: magic + v1 + node_count(1) + Enum(13) +
+        // special-case name. Bytes: magic + node_count(1) + Enum(13) +
         // name("std::option::Option") + variant_count(1) + variant name("None") +
         // payload_kind Unit(0) + slots(0) + cap_count(1) cap_id0 sym7 params0
         // result(node 0).
-        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 13};
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 13};
         auto push_str = [&](std::string_view s) {
             bytes.push_back(static_cast<std::uint8_t>(s.size()));
             bytes.insert(bytes.end(), s.begin(), s.end());
@@ -1949,6 +1998,7 @@ TEST_CASE("wire decoder local-verifier negatives entered via raw bytes") {
         bytes.push_back(0x07); // source_symbol
         bytes.push_back(0x00); // params 0
         bytes.push_back(0x00); // result -> node 0
+        bytes.push_back(0x00); // Explicitly absent frame roots.
         const auto decoded = decode_core_wire_schema_table(bytes);
         CHECK(!decoded.ok());
         CHECK(!decoded.table.has_value());
@@ -1986,15 +2036,15 @@ TEST_CASE("wire decoder handles a very deep acyclic reachable chain without recu
     CHECK(*reencoded.bytes == *encoded.bytes);
 }
 
-// RFC 0026 P6-7 V2-D: a workflow frame-root table carries kInvalid agent roots
+// RFC 0026 P6-7: a workflow frame-root table carries kInvalid agent roots
 // plus the per-node input/output boundary roots. The raw codec must round-trip
 // them and the local verifier must accept the node roots as reachability roots.
-TEST_CASE("wire codec round-trips V2-D per-node workflow frame roots") {
+TEST_CASE("wire codec round-trips per-node workflow frame roots") {
     CoreWireSchemaTable table;
-    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});  // 0
     table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}}); // 1
     CoreWireFrameRoots roots;
-    roots.input = CoreWireSchemaNodeId{};  // kInvalid workflow agent roots
+    roots.input = CoreWireSchemaNodeId{}; // kInvalid workflow agent roots
     roots.output = CoreWireSchemaNodeId{};
     roots.node_inputs = {CoreWireSchemaNodeId{0}};
     roots.node_outputs = {CoreWireSchemaNodeId{1}};

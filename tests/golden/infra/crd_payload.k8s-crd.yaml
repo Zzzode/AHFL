@@ -1,0 +1,128 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: schemas-89b6b89e78.ahfl.io
+  labels:
+    app.kubernetes.io/managed-by: ahfl
+  annotations:
+    ahfl.io/agent: "std::collections::Schema"
+    ahfl.io/module: "std::collections"
+spec:
+  group: ahfl.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: ["On", "Off"]
+                initialState:
+                  type: string
+                  default: "On"
+                finalStates:
+                  type: array
+                  items:
+                    type: string
+                  default: ["Off"]
+                input:
+                  type: object
+                  properties:
+                    "yes":
+                      type: string
+                    "flag":
+                      type: string
+                      enum: ["Yes", "No", "Null"]
+                    "message":
+                      type: object
+                      maxProperties: 1
+                      oneOf:
+                        - required: ["Accepted"]
+                        - required: ["Rejected"]
+                      properties:
+                        "Accepted":
+                          type: string
+                        "Rejected":
+                          type: object
+                          properties:
+                            "reason":
+                              type: string
+                            "code":
+                              type: integer
+                              format: int64
+                          required: ["reason", "code"]
+                    "labels":
+                      type: array
+                      maxItems: 4
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                    "attributes":
+                      type: object
+                      maxProperties: 8
+                      additionalProperties:
+                        type: integer
+                        format: int64
+                    "values":
+                      type: array
+                      maxItems: 6
+                      items:
+                        type: integer
+                        format: int64
+                  required: ["yes", "flag", "message", "labels", "attributes", "values"]
+                output:
+                  type: object
+                  properties:
+                    "yes":
+                      type: string
+                    "flag":
+                      type: string
+                      enum: ["Yes", "No", "Null"]
+                    "message":
+                      type: object
+                      maxProperties: 1
+                      oneOf:
+                        - required: ["Accepted"]
+                        - required: ["Rejected"]
+                      properties:
+                        "Accepted":
+                          type: string
+                        "Rejected":
+                          type: object
+                          properties:
+                            "reason":
+                              type: string
+                            "code":
+                              type: integer
+                              format: int64
+                          required: ["reason", "code"]
+                    "labels":
+                      type: array
+                      maxItems: 4
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                    "attributes":
+                      type: object
+                      maxProperties: 8
+                      additionalProperties:
+                        type: integer
+                        format: int64
+                    "values":
+                      type: array
+                      maxItems: 6
+                      items:
+                        type: integer
+                        format: int64
+                  required: ["yes", "flag", "message", "labels", "attributes", "values"]
+  scope: Namespaced
+  names:
+    plural: schemas-89b6b89e78
+    singular: schema-89b6b89e78
+    kind: "Schema"

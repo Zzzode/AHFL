@@ -1665,3 +1665,36 @@ fn call() -> Node effect Pure decreases 0 {
     CHECK(count_bound_not_satisfied(result) >= 1);
     CHECK(has_anchored_bound_violation(result));
 }
+
+TEST_CASE("Generic method parsing preserves qualified single type arguments") {
+    for (const std::string expression :
+         {"value.map<lib::Item>(item)", "(value).map<lib::Item>(item)"}) {
+        const std::string source =
+            "fn parsed(value: Int, item: Int) -> Int effect Pure decreases 0 { return " +
+            expression + "; }";
+        const ahfl::Frontend frontend;
+        const auto parsed = frontend.parse_text("qualified_method_type.ahfl", source);
+        REQUIRE_FALSE(parsed.has_errors());
+        REQUIRE(parsed.program != nullptr);
+        REQUIRE(parsed.program->declarations.size() == 1);
+        const auto *function =
+            std::get_if<ahfl::ast::FnDecl>(&parsed.program->declarations.front());
+        REQUIRE(function != nullptr);
+        REQUIRE(function->body != nullptr);
+        REQUIRE(function->body->statements.size() == 1);
+        const auto *returned = function->body->statements.front()->return_stmt.get();
+        REQUIRE(returned != nullptr);
+        REQUIRE(returned->value != nullptr);
+        const auto *method = std::get_if<ahfl::ast::MethodCallExpr>(&returned->value->node);
+        REQUIRE(method != nullptr);
+        CHECK(method->method == "map");
+        REQUIRE(method->type_args.size() == 1);
+        const auto *type = std::get_if<ahfl::ast::NamedType>(&method->type_args.front()->node);
+        REQUIRE(type != nullptr);
+        REQUIRE(type->name != nullptr);
+        CHECK(type->name->segments == std::vector<std::string>{"lib", "Item"});
+        CHECK(type->name->spelling() == "lib::Item");
+        REQUIRE(method->arguments.size() == 1);
+        CHECK(method->arguments.front()->is<ahfl::ast::PathExpr>());
+    }
+}

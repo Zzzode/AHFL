@@ -7,14 +7,12 @@ using namespace smv_detail;
 
 void SmvPrinter::collect_state_variables() {
     for (const auto *agent : index_.agents()) {
-        if (agent_has_contract(*agent)) {
-            const auto state_var = agent_state_var(*agent);
-            state_variables_.push_back(state_var + " : {" + join(agent->states, ", ") + "};");
-            add_symbol_mapping(state_var,
-                               with_source("agent " + agent->name + " state",
-                                           agent->provenance.source_path,
-                                           agent->provenance.source_range));
-        }
+        const auto state_var = agent_state_var(*agent);
+        state_variables_.push_back(state_var + " : {" + join(agent->states, ", ") + "};");
+        add_symbol_mapping(state_var,
+                           with_source("agent " + agent->name + " state",
+                                       agent->provenance.source_path,
+                                       agent->provenance.source_range));
     }
 
     for (const auto &workflow : workflows_) {
@@ -131,10 +129,8 @@ void SmvPrinter::collect_defines() {
 
 void SmvPrinter::collect_assignments() {
     for (const auto *agent : index_.agents()) {
-        if (agent_has_contract(*agent)) {
-            collect_state_machine_assignments(
-                *agent, agent_state_var(*agent), build_effective_adjacency(*agent));
-        }
+        collect_state_machine_assignments(
+            *agent, agent_state_var(*agent), build_effective_adjacency(*agent));
     }
 
     for (const auto &workflow : workflows_) {

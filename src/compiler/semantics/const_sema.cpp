@@ -281,7 +281,7 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 // sugar lowering targets (list_from_array / set_from_array /
                 // map_from_entries) and enum-variant ADT constructors are
                 // accepted as const expressions when every argument is itself
-                // a constant. This mirrors the legacy sugar-literal const-
+                // a constant. This mirrors the sugar-literal const-
                 // folding behaviour dropped with the grammar productions.
                 static constexpr std::string_view kVariadicBuiltins[] = {
                     "list_from_array",
@@ -611,7 +611,7 @@ ConstInitializerValidationPolicy describe_const_initializer_validation(
         .context_label = "const initializer",
         .expectation =
             TypeExpectation{
-                .expected = declared_type.clone(),
+                .expected = &declared_type,
                 .origin_kind = TypeExpectationOriginKind::Annotation,
                 .origin_range = annotation_range,
                 .description = "declared type of const '" + std::string(const_name) + "'",
@@ -627,7 +627,7 @@ ConstStructDefaultValidationPolicy classify_const_struct_default_validation(
             .context_label = "struct field default",
             .expectation =
                 TypeExpectation{
-                    .expected = field_type.clone(),
+                    .expected = &field_type,
                     .origin_kind = TypeExpectationOriginKind::SchemaBoundary,
                     .origin_range = field_range,
                     .description = std::string(to_string(SchemaBoundaryKind::AgentContextDefault)),
@@ -641,7 +641,7 @@ ConstStructDefaultValidationPolicy classify_const_struct_default_validation(
         .context_label = "struct field default",
         .expectation =
             TypeExpectation{
-                .expected = field_type.clone(),
+                .expected = &field_type,
                 .origin_kind = TypeExpectationOriginKind::Annotation,
                 .origin_range = field_range,
                 .description = "struct field default",
@@ -1841,7 +1841,7 @@ void ConstSema::check_enum_variant_defaults() {
                         &delegate_->symbol_table(),
                     };
                     const auto expectation = TypeExpectation{
-                        .expected = field_info.type->clone(),
+                        .expected = field_info.type,
                         .origin_kind = TypeExpectationOriginKind::Annotation,
                         .origin_range = field_info.declaration_range,
                         .description = "enum variant field default '" + variant_info.name + "." +

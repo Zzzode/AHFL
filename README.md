@@ -17,45 +17,32 @@
   </p>
 </p>
 
-AHFL (Agent Handoff Flow Language) is a strongly typed DSL and C++23 compiler for modeling and executing auditable agent workflows.
+AHFL (Agent Handoff Flow Language) is a strongly typed domain-specific language (DSL) and C++23 compiler for modeling and executing auditable agent workflows.
 
-## Project Status
+## What You Can Do
 
-AHFL is in beta-gated development. Breaking changes remain possible; see the
-[migration policy](docs/reference/migration-policy.zh.md). Product capability is
-defined by criterion-specific release evidence, not by source files, handlers,
-goldens, or aggregate test counts.
+AHFL is a beta tool for workflows that need explicit execution order,
+capability boundaries, failure handling, replay, and audit. Language and command
+changes may affect your projects when upgrading.
 
-### Verified Beta Capabilities
+- <!-- beta-capability:BETA-01 schema=ahfl.beta-evidence.run-profiles --> Save workflow inputs and options in manifest run profiles, then select a profile with `ahflc run --profile`.
+- <!-- beta-capability:BETA-02 schema=ahfl.beta-evidence.runtime-identity --> Use numeric IDs in execution reports to associate workflows, nodes, agents, capabilities, invocations, values, and events.
+- <!-- beta-capability:BETA-03 schema=ahfl.beta-evidence.event-projections --> Inspect the same execution as readable text, JSON, or JSONL, and use its events for replay and audit.
+- <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix --> Use terminal events to identify the outcome of a run, including success, failure, cancellation, and timeout.
+- <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence --> Format AHFL source while preserving comments, attributes, effects, generics, imports, and visibility; formatting it again produces no further changes.
+- <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration --> Use the standard library generic types `List`, `Map`, `Set`, and `Option` for collections and optional values.
+- <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke --> Install the CLI and language server with the standard library, or install a platform VSIX that bundles the language server and standard library.
+- <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze --> Find available commands and output artifacts in the CLI reference, and use `ahflc --help` to inspect the installed compiler.
 
-- <!-- beta-capability:BETA-01 schema=ahfl.beta-evidence.run-profiles.v1 --> Manifest run profiles launch the reference workflow without repeated CLI configuration.
-- <!-- beta-capability:BETA-02 schema=ahfl.beta-evidence.runtime-identity.v1 --> Runtime workflow, node, agent, capability, invocation, value, and event associations use strong numeric IDs.
-- <!-- beta-capability:BETA-03 schema=ahfl.beta-evidence.event-projections.v1 --> One flat event store drives human, JSON, JSONL, replay, and audit projections.
-- <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix.v1 --> Accepted success and failure lifecycle paths have unique terminal events.
-- <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence.v1 --> The AHFL formatter is lossless and idempotent over std/ and formatter fixtures, and its CI gate is blocking.
-- <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration.v1 --> Core containers resolve as nominal stdlib generics with no legacy runtime Option representation or migration flag.
-- <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke.v1 --> Clean-prefix installs contain ahflc, ahfl-lsp, and the sysroot; platform VSIX packages contain the release LSP and sysroot and pass isolated installation.
-- <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze.v1 --> The beta product surface is frozen; new actions, backends, and artifacts require an accepted RFC.
+Start with the [incident-triage workflow](examples/execution-demo/README.md): it
+connects three agents and calls an LLM through an OpenAI-compatible endpoint.
+For source-level contracts and temporal verification, see the
+[assurance guide](docs/tutorials/assurance.zh.md).
 
-The evidence contract lives in [`config/beta-gate.json`](config/beta-gate.json).
-Capabilities not listed above may exist as compiler modules, experimental
-backends, or development tooling, but this README does not claim beta readiness
-for them. In particular, native Protobuf transport, multi-region operation,
-official registry service, browser playground, and Marketplace publication
-remain outside the verified beta surface.
-
-## What AHFL Is For
-
-AHFL is intended as a typed control and assurance layer for workflows where
-execution order, capability boundaries, failure handling, replay, and audit
-must remain explicit. The beta reference scenario is
-[`examples/execution-demo`](examples/execution-demo): a multi-agent incident
-workflow with deterministic nodes, an HTTP-backed LLM capability, and a
-canonical event stream with replay/audit projections.
-
-Formal emitters, additional infrastructure backends, and deeper IDE features
-remain available for development and evaluation, but are governed separately
-from the verified beta runtime path.
+Native Protobuf transport, multi-region operation, an official package registry,
+a hosted browser playground, and Marketplace distribution are outside the
+verified beta capabilities. The local playground is available for evaluation;
+see its [setup instructions](tools/playground/README.md).
 
 ## Language Preview
 
@@ -102,7 +89,7 @@ workflow RefundAuditWorkflow {
 | C++ compiler | C++23 support. GCC 13+, Clang 17+, or Apple Clang 15+ recommended. |
 | CMake | 3.22+ |
 | Ninja | Recommended generator used by the presets. |
-| NuSMV / nuXmv | Optional, only needed for external model checking. |
+| NuSMV / Z3 | Bundled and built from source for control and opt-in data verification. |
 | Node.js | Optional, only needed for VS Code extension development or packaging. |
 
 ### Build from source
@@ -111,17 +98,31 @@ workflow RefundAuditWorkflow {
 git clone https://github.com/Zzzode/AHFL.git
 cd AHFL
 
+AHFL_BUILD_JOBS=$(getconf _NPROCESSORS_ONLN)
 cmake --preset dev
-cmake --build --preset build-dev
+cmake --build --preset build-dev -j"$AHFL_BUILD_JOBS"
 ```
 
 ### Run the compiler
 
+Use `check` to find type errors and verify declared state-machine and workflow
+rules. Add `--verify-data-contracts` to prove data rules from their stated
+preconditions. Those proofs do not establish that a flow implementation meets
+the rules, and the runtime does not automatically check host predicates. See
+the [refund rules example](examples/refund-rules/README.md).
+
+Before running the incident workflow, follow its
+[provider setup](examples/execution-demo/README.md). The example reads its API
+key from an environment variable.
+
 ```bash
-# Type-check a source file.
+# Check types and the default finite control model.
 ./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 
-# Run the beta reference workflow from its manifest profile.
+# Request a bounded refund rule contract implication proof.
+./build/dev/src/tooling/cli/ahflc check --manifest examples/refund-rules/ahfl.toml --verify-data-contracts
+
+# Run the incident workflow from its manifest profile.
 cd examples/execution-demo
 ../../build/dev/src/tooling/cli/ahflc run --output-format json
 
@@ -129,137 +130,47 @@ cd examples/execution-demo
 ../../build/dev/src/tooling/cli/ahflc --help
 ```
 
-The committed LLM configuration uses an environment secret handle. See the
-[reference workflow guide](examples/execution-demo/README.md) and
-[execution guide](docs/reference/user-guide-execution.zh.md) before running a
-provider-backed workflow.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    Source[AHFL source] --> Parse[ANTLR parser]
-    Parse --> AST[AST]
-    AST --> Resolve[Resolver]
-    Resolve --> Typecheck[TypeChecker]
-    Typecheck --> TypedHIR[Typed HIR]
-    TypedHIR --> Validate[Validator]
-    Validate --> IR[AHFL-IR]
-    IR --> Backends[Backends and artifact emitters]
-    IR --> OptIR[Opt IR artifacts]
-    Backends --> Native[Native runtime artifacts]
-    Backends --> Formal[SMV formal backend]
-    Native --> Runtime[Runtime and provider handoff]
-    TypedHIR --> LSP[LSP features]
-```
-
-The normal backend contract is AHFL-IR. Opt IR is an explicit diagnostic artifact, not the default input for backend emission or LSP state.
-
-## Repository Layout
-
-```text
-grammar/              ANTLR grammar
-include/ahfl/         Public compiler headers
-src/base/             Shared support, JSON, and validation utilities
-src/compiler/         Syntax, semantics, IR, passes, handoff, and backends
-src/pipeline/         Runtime-adjacent artifact models and builders
-src/runtime/          WASM-embedded runtime, workflow engine, and providers
-src/tooling/          CLI, LSP, DAP, formatter, package, profiling, and test tooling
-tests/                Unit, golden, integration, and benchmark tests
-tools/vscode/         VS Code extension client and packaging workflow
-docs/                 Specs, design notes, plans, and reference documentation
-examples/             Example AHFL programs
-```
+For provider options, inputs, and execution reports, see the
+[execution guide](docs/tutorials/execution.zh.md).
 
 ## Documentation
 
 | Topic | Entry point |
 | --- | --- |
 | Documentation index | [docs/README.md](docs/README.md) |
-| User guide | [docs/reference/user-guide-overview.zh.md](docs/reference/user-guide-overview.zh.md) |
+| User guide | [docs/tutorials/README.md](docs/tutorials/README.md) |
 | Language specification | [docs/spec/core-language.zh.md](docs/spec/core-language.zh.md) |
 | CLI reference | [docs/reference/cli-commands.zh.md](docs/reference/cli-commands.zh.md) |
 | IR format | [docs/reference/ir-format.zh.md](docs/reference/ir-format.zh.md) |
-| Project and workspace usage | [docs/reference/project-usage.zh.md](docs/reference/project-usage.zh.md) |
+| Project and workspace usage | [docs/tutorials/packages.zh.md](docs/tutorials/packages.zh.md) |
 | Runtime events and recovery | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
 | VS Code LSP extension | [docs/reference/lsp-vscode-extension.zh.md](docs/reference/lsp-vscode-extension.zh.md) |
 | Contributor guide | [docs/reference/contributor-guide.zh.md](docs/reference/contributor-guide.zh.md) |
 
-## VS Code and LSP
+## Edit workflows in VS Code
 
-Build the LSP server during the normal CMake build:
+The language server supplies diagnostics, completion, and navigation through
+the Language Server Protocol (LSP). Build it with:
 
 ```bash
-cmake --build --preset build-dev --target ahfl-lsp
+cmake --build --preset build-dev --target ahfl-lsp -j"$(getconf _NPROCESSORS_ONLN)"
 ```
 
-Package a user-facing platform VSIX with a bundled release LSP:
+Create and install a platform VSIX extension package that bundles the language
+server and standard library:
 
 ```bash
 scripts/package-vscode-vsix-release.sh
 code --install-extension tools/vscode/dist/ahfl-language-<version>-<target>.vsix
 ```
 
-See [docs/reference/lsp-vscode-extension.zh.md](docs/reference/lsp-vscode-extension.zh.md) for development, packaging, and Marketplace release details.
-
-## Development
-
-```bash
-# Build variants
-cmake --preset dev
-cmake --preset release
-cmake --preset asan
-cmake --preset tsan
-
-# Build and test
-cmake --build --preset build-dev
-ctest --preset test-dev --output-on-failure
-
-# Formatting
-cmake --build --preset build-format
-cmake --build --preset build-format-check
-
-# Documentation sync gate
-python3 scripts/check-ir-doc-sync.py
-ctest --preset test-dev --output-on-failure -R '^ahfl\.docs\.ir_sync_gate$'
-```
-
-Parser regeneration is explicit and uses the locked ANTLR toolchain:
-
-```bash
-ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh
-ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --check
-```
-
-### Golden-file tests
-
-The test suite ships with checked-in reference (golden) files under
-`tests/golden/**` that pin the exact output of compiler artifact emitters.
-
-- Run the full golden-lock baseline:
-  ```bash
-  ctest --preset test-dev --output-on-failure -R '^p5_smv_golden_lock$'
-  ```
-- A passing run reports **0 diffs** across all SMV formal cases; on
-  failure, the harness prints a copy-pasteable `diff -u` command plus a
-  unified diff inline so the change is immediately reviewable.
-
-**PR requirement.** If your change intentionally updates any golden
-output -- e.g. a compiler pass, backend, or diagnostic format change --
-you **must** attach the `diff` output produced by the failing test to
-the PR description and commit the updated golden files in the **same
-patch** as the source change. Reviewers should be able to verify that
-the source diff and the golden diff are two sides of the same coin.
+Open an `.ahfl` file to get diagnostics, completion, and navigation. See the
+[VS Code guide](docs/reference/lsp-vscode-extension.zh.md) for configuration and troubleshooting.
 
 ## Contributing
 
-1. Open a focused issue or discussion for behavior changes.
-2. Keep each commit to one logical change.
-3. Use Conventional Commits, for example `fix(parser): reject invalid state transition`.
-4. Mark breaking changes with a `BREAKING CHANGE:` footer and explain the migration path.
-5. Run the relevant tests, `git diff --check`, and formatting checks before opening a pull request.
-
-See [docs/reference/contributor-guide.zh.md](docs/reference/contributor-guide.zh.md) for contributor workflow and validation guidance.
+For compiler development and contribution workflow, use the
+[contributor guide](docs/reference/contributor-guide.zh.md).
 
 ## License
 

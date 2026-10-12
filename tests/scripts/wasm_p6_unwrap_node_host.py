@@ -89,8 +89,7 @@ const someModule = await WebAssembly.compile(someBytes);
 if (WebAssembly.Module.imports(someModule).length !== 0)
   throw new Error("unwrap agent expanded import authority");
 const {exports: c} = await WebAssembly.instantiate(someModule, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 const expectedInitial = Number(process.argv[3]);
 const expectedEntered = process.argv[4].split(",").map(Number);

@@ -3,15 +3,15 @@
 // p6_frame_driver.cpp). Every module is emitted in-process through the real
 // wasm backend (no shelling out, no hand-built bytes for the execution tests)
 // and admitted through the production admit_core_wasm_frame_sections path, so
-// the tests prove the REAL pipeline: emit -> admit -> pack -> wasm3 runv ->
+// the tests prove the REAL pipeline: emit -> admit -> pack -> wasm3 run_frame ->
 // authorize root -> read output -> canonical value JSON.
 //
 // Pinned behaviors (the slice contract's eight families):
 //   1. scalar round-trip (bool/i64) canonical-JSON byte equality;
-//   2. payload-enum + nested-struct inline offsets (v2b_enum_string);
+//   2. payload-enum + nested-struct inline offsets (enum_string);
 //   3. collection backing incl p6_frame_two_containers (disjoint placements);
 //   4. String arena pack + rodata region accepted + scratch/OOB fail-closed;
-//   5. runv root auth rejection (1024 identity / 12288 computed);
+//   5. run_frame root auth rejection (1024 identity / 12288 computed);
 //   6. schema fail-closed family (string bounds, bool word, enum tag,
 //      len>capacity, placement overrun, int range);
 //   7. region zeroing (padding/stale bytes never read);
@@ -32,7 +32,7 @@
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/ahfl_host.h"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
@@ -119,7 +119,7 @@ emit_and_admit(const std::filesystem::path &source_path) {
 
     // final_kind from the codegen C++ descriptor (decision doc section 11.2):
     // the admitted layout section does not carry it, and input_layout ==
-    // output_layout cannot infer it (v2b_string_passthrough is computed).
+    // output_layout cannot infer it (string_passthrough is computed).
     const wh::P6FinalKind final_kind =
         (emitted.descriptor->frame.final_kind == "computed")
             ? wh::P6FinalKind::Computed
@@ -218,16 +218,16 @@ void test_scalar_roundtrip(const std::filesystem::path &repo_root) {
     // p6_aggregate: i64 struct fields, identity final.
     run_case(repo_root, "p6_aggregate.case.json", "scalar.i64_aggregate");
 
-    // v2b_bounded_string: bool input, rodata String output, computed final.
-    run_case(repo_root, "v2b_bounded_string.case.json", "scalar.bool_rodata");
+    // bounded_string: bool input, rodata String output, computed final.
+    run_case(repo_root, "bounded_string.case.json", "scalar.bool_rodata");
 }
 
 // --- 2. payload enum + nested struct ----------------------------------------
 
 void test_payload_enum(const std::filesystem::path &repo_root) {
-    // v2b_enum_string: computed final with a String-payload enum variant.
+    // enum_string: computed final with a String-payload enum variant.
     // No case.json exists; construct the input + expected output manually.
-    const auto source = repo_root / "tests/golden/wasm/v2b_enum_string.ahfl";
+    const auto source = repo_root / "tests/golden/wasm/enum_string.ahfl";
     auto fixture = emit_and_admit(source);
     check(fixture.has_value(), "enum_string.emit_and_admit");
     if (!fixture.has_value()) {
@@ -284,16 +284,16 @@ void test_collection_backing(const std::filesystem::path &repo_root) {
 // --- 4. String arena + rodata ------------------------------------------------
 
 void test_string_arenas(const std::filesystem::path &repo_root) {
-    // v2b_string_passthrough: computed final, String arena passthrough.
-    run_case(repo_root, "v2b_string_passthrough.case.json", "string.arena");
+    // string_passthrough: computed final, String arena passthrough.
+    run_case(repo_root, "string_passthrough.case.json", "string.arena");
 
-    // v2b_computed_string: computed final, rodata String + i64.
-    run_case(repo_root, "v2b_computed_string.case.json", "string.rodata");
+    // computed_string: computed final, rodata String + i64.
+    run_case(repo_root, "computed_string.case.json", "string.rodata");
 }
 
-// --- 5. runv root authorization ----------------------------------------------
+// --- 5. run_frame root authorization ----------------------------------------------
 
-void test_runv_root_auth(const std::filesystem::path &repo_root) {
+void test_run_frame_root_auth(const std::filesystem::path &repo_root) {
     const auto source = repo_root / "tests/golden/wasm/p6_aggregate.ahfl";
     auto fixture = emit_and_admit(source);
     check(fixture.has_value(), "root_auth.emit_and_admit");
@@ -308,7 +308,7 @@ void test_runv_root_auth(const std::filesystem::path &repo_root) {
         page, fixture->admitted.layout, fixture->admitted.output_binding,
         irc::kP6AggregateOutputBase, wh::P6FinalKind::Identity);
     check(!rejected.has_value() &&
-              rejected.error() == wh::FrameReadError::RunvRootUnauthorized,
+              rejected.error() == wh::FrameReadError::FrameRunRootUnauthorized,
           "root_auth.identity_rejects_output_base");
 
     // Strict identity success: write a=100, b=7 as little-endian i64 at the
@@ -334,19 +334,19 @@ void test_runv_root_auth(const std::filesystem::path &repo_root) {
     }
 
     // Boundary probes on the identity final: every value_ptr other than 1024
-    // must be rejected with RunvRootUnauthorized.
+    // must be rejected with FrameRunRootUnauthorized.
     for (const auto ptr : {std::uint32_t{1025}, std::uint32_t{12287},
                            std::uint32_t{0}, std::uint32_t{65535}}) {
         auto probe = wh::encode_p6_output(
             page, fixture->admitted.layout, fixture->admitted.output_binding,
             ptr, wh::P6FinalKind::Identity);
         check(!probe.has_value() &&
-                  probe.error() == wh::FrameReadError::RunvRootUnauthorized,
+                  probe.error() == wh::FrameReadError::FrameRunRootUnauthorized,
               "root_auth.identity_rejects_ptr_" + std::to_string(ptr));
     }
 
-    // v2b_bounded_string is computed final: value_ptr must equal 12288.
-    const auto csource = repo_root / "tests/golden/wasm/v2b_bounded_string.ahfl";
+    // bounded_string is computed final: value_ptr must equal 12288.
+    const auto csource = repo_root / "tests/golden/wasm/bounded_string.ahfl";
     auto cfixture = emit_and_admit(csource);
     check(cfixture.has_value(), "root_auth.computed.emit_and_admit");
     if (!cfixture.has_value()) {
@@ -356,18 +356,18 @@ void test_runv_root_auth(const std::filesystem::path &repo_root) {
         page, cfixture->admitted.layout, cfixture->admitted.output_binding,
         irc::kP6AggregateInputBase, wh::P6FinalKind::Computed);
     check(!crejected.has_value() &&
-              crejected.error() == wh::FrameReadError::RunvRootUnauthorized,
+              crejected.error() == wh::FrameReadError::FrameRunRootUnauthorized,
           "root_auth.computed_rejects_input_base");
 
     // Boundary probes on the computed final: every value_ptr other than 12288
-    // must be rejected with RunvRootUnauthorized.
+    // must be rejected with FrameRunRootUnauthorized.
     for (const auto ptr : {std::uint32_t{1025}, std::uint32_t{12287},
                            std::uint32_t{0}, std::uint32_t{65535}}) {
         auto probe = wh::encode_p6_output(
             page, cfixture->admitted.layout, cfixture->admitted.output_binding,
             ptr, wh::P6FinalKind::Computed);
         check(!probe.has_value() &&
-                  probe.error() == wh::FrameReadError::RunvRootUnauthorized,
+                  probe.error() == wh::FrameReadError::FrameRunRootUnauthorized,
               "root_auth.computed_rejects_ptr_" + std::to_string(ptr));
     }
 
@@ -410,10 +410,10 @@ void test_runv_root_auth(const std::filesystem::path &repo_root) {
 // --- 6. schema fail-closed family --------------------------------------------
 
 void test_schema_fail_closed(const std::filesystem::path &repo_root) {
-    // 6a. String length bounds: v2b_bounded_string output is String(0,8).
+    // 6a. String length bounds: bounded_string output is String(0,8).
     //     A PtrLen with len=99 must fail with StringLengthOutOfBounds.
     {
-        const auto source = repo_root / "tests/golden/wasm/v2b_bounded_string.ahfl";
+        const auto source = repo_root / "tests/golden/wasm/bounded_string.ahfl";
         auto fixture = emit_and_admit(source);
         check(fixture.has_value(), "fail_closed.string_bounds.emit");
         if (!fixture.has_value()) {
@@ -453,7 +453,6 @@ void test_schema_fail_closed(const std::filesystem::path &repo_root) {
         section.payload_arena_capacity = 4096;
 
         irc::CoreWireSchemaTable wire;
-        wire.format_version = 1;
         irc::CoreWireSchemaNode node;
         node.shape = irc::CoreWireSchemaBool{};
         wire.nodes.push_back(node);
@@ -510,7 +509,6 @@ void test_schema_fail_closed(const std::filesystem::path &repo_root) {
         section.payload_arena_capacity = 4096;
 
         irc::CoreWireSchemaTable wire;
-        wire.format_version = 1;
         irc::CoreWireSchemaNode node;
         node.shape = irc::CoreWireSchemaFloat{};
         wire.nodes.push_back(node);
@@ -559,10 +557,10 @@ void test_schema_fail_closed(const std::filesystem::path &repo_root) {
         }
     }
 
-    // 6c. Enum tag out of range: v2b_enum_string output is Out{result:Match}
+    // 6c. Enum tag out of range: enum_string output is Out{result:Match}
     //     with Miss=0, Hit=1. A tag of 2 must fail with EnumTagOutOfRange.
     {
-        const auto source = repo_root / "tests/golden/wasm/v2b_enum_string.ahfl";
+        const auto source = repo_root / "tests/golden/wasm/enum_string.ahfl";
         auto fixture = emit_and_admit(source);
         check(fixture.has_value(), "fail_closed.enum_tag.emit");
         if (!fixture.has_value()) {
@@ -609,7 +607,7 @@ void test_schema_fail_closed(const std::filesystem::path &repo_root) {
     // 6e. String outside authorized region: a PtrLen pointing into scratch
     //     must fail with StringOutsideAuthorizedRegion.
     {
-        const auto source = repo_root / "tests/golden/wasm/v2b_bounded_string.ahfl";
+        const auto source = repo_root / "tests/golden/wasm/bounded_string.ahfl";
         auto fixture = emit_and_admit(source);
         check(fixture.has_value(), "fail_closed.string_region.emit");
         if (!fixture.has_value()) {
@@ -644,7 +642,6 @@ void test_schema_fail_closed(const std::filesystem::path &repo_root) {
         section.payload_arena_capacity = 4096;
 
         irc::CoreWireSchemaTable wire;
-        wire.format_version = 1;
         irc::CoreWireSchemaNode node;
         node.shape = irc::CoreWireSchemaInt{
             std::pair<std::int64_t, std::int64_t>{0, 100}};
@@ -759,12 +756,12 @@ void test_region_zeroing(const std::filesystem::path &repo_root) {
 
 void test_oracle_parity(const std::filesystem::path &repo_root) {
     // >=3 fixtures: scalar (p6_aggregate), rodata-String
-    // (v2b_bounded_string), arena-String (v2b_string_passthrough).
+    // (bounded_string), arena-String (string_passthrough).
     // These are already exercised by run_case in tests 1 and 4; the parity
     // assertion is the .output_json_parity check inside run_case.
     run_case(repo_root, "p6_aggregate.case.json", "parity.aggregate");
-    run_case(repo_root, "v2b_bounded_string.case.json", "parity.bounded_string");
-    run_case(repo_root, "v2b_string_passthrough.case.json", "parity.string_passthrough");
+    run_case(repo_root, "bounded_string.case.json", "parity.bounded_string");
+    run_case(repo_root, "string_passthrough.case.json", "parity.string_passthrough");
 }
 
 // --- page precondition (P2-6 review fix-forward) ------------------------------
@@ -857,7 +854,7 @@ int main() {
     test_payload_enum(repo);
     test_collection_backing(repo);
     test_string_arenas(repo);
-    test_runv_root_auth(repo);
+    test_run_frame_root_auth(repo);
     test_schema_fail_closed(repo);
     test_region_zeroing(repo);
     test_oracle_parity(repo);

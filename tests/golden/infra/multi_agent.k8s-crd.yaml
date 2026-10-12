@@ -22,54 +22,47 @@ spec:
               properties:
                 state:
                   type: string
-                  enum: [Idle, Analyzing, Done]
+                  enum: ["Idle", "Analyzing", "Done"]
                 initialState:
                   type: string
-                  default: Idle
+                  default: "Idle"
                 finalStates:
                   type: array
                   items:
                     type: string
-                  default: [Done]
+                  default: ["Done"]
                 capabilities:
                   type: array
                   items:
                     type: string
-                  default: [infra::multi_agent::Analyze]
+                  default: ["infra::multi_agent::Analyze"]
                 input:
-                  $ref: "#/definitions/infra__multi_agent__ReviewInput"
+                  type: object
+                  properties:
+                    "text":
+                      type: string
+                    "score":
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10
+                  required: ["text", "score"]
                 context:
-                  $ref: "#/definitions/infra__multi_agent__ReviewContext"
+                  type: object
+                  properties:
+                    "stage":
+                      type: string
                 output:
-                  $ref: "#/definitions/infra__multi_agent__ReviewOutput"
-          definitions:
-            infra__multi_agent__ReviewContext:
-              type: object
-              properties:
-                stage:
-                  type: string
-            infra__multi_agent__ReviewInput:
-              type: object
-              properties:
-                text:
-                  type: string
-                score:
-                  type: integer
-                  format: int64
-                  minimum: 0
-                  maximum: 10
-              required: [text, score]
-            infra__multi_agent__ReviewOutput:
-              type: object
-              properties:
-                verdict:
-                  type: string
-              required: [verdict]
+                  type: object
+                  properties:
+                    "verdict":
+                      type: string
+                  required: ["verdict"]
   scope: Namespaced
   names:
     plural: revieweras-5c37c18386
     singular: reviewera-5c37c18386
-    kind: ReviewerA
+    kind: "ReviewerA"
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -95,51 +88,44 @@ spec:
               properties:
                 state:
                   type: string
-                  enum: [Idle, Sanitizing, Done]
+                  enum: ["Idle", "Sanitizing", "Done"]
                 initialState:
                   type: string
-                  default: Idle
+                  default: "Idle"
                 finalStates:
                   type: array
                   items:
                     type: string
-                  default: [Done]
+                  default: ["Done"]
                 capabilities:
                   type: array
                   items:
                     type: string
-                  default: [infra::multi_agent::Sanitize]
+                  default: ["infra::multi_agent::Sanitize"]
                 input:
-                  $ref: "#/definitions/infra__multi_agent__ReviewInput"
+                  type: object
+                  properties:
+                    "text":
+                      type: string
+                    "score":
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      maximum: 10
+                  required: ["text", "score"]
                 context:
-                  $ref: "#/definitions/infra__multi_agent__ReviewContext"
+                  type: object
+                  properties:
+                    "stage":
+                      type: string
                 output:
-                  $ref: "#/definitions/infra__multi_agent__ReviewOutput"
-          definitions:
-            infra__multi_agent__ReviewContext:
-              type: object
-              properties:
-                stage:
-                  type: string
-            infra__multi_agent__ReviewInput:
-              type: object
-              properties:
-                text:
-                  type: string
-                score:
-                  type: integer
-                  format: int64
-                  minimum: 0
-                  maximum: 10
-              required: [text, score]
-            infra__multi_agent__ReviewOutput:
-              type: object
-              properties:
-                verdict:
-                  type: string
-              required: [verdict]
+                  type: object
+                  properties:
+                    "verdict":
+                      type: string
+                  required: ["verdict"]
   scope: Namespaced
   names:
     plural: reviewerbs-5c37c181d3
     singular: reviewerb-5c37c181d3
-    kind: ReviewerB
+    kind: "ReviewerB"

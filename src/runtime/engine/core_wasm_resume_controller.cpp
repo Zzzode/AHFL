@@ -49,7 +49,7 @@ constexpr std::uint64_t kU32Max = std::numeric_limits<std::uint32_t>::max();
 // D2b-4: the host-bound dedup consultation context carried phase 1 -> prepared.
 // The checkpoint namespace (wf, ckpt) is read from the snapshot's AUTHENTICATED
 // manifest, never re-supplied; the authority id is host-bound once; the
-// authority pointer is optional and borrowed (nullptr = pre-D2b-4 behavior).
+// authority pointer is optional and borrowed (nullptr disables dedup consultation).
 struct DedupContext {
     core_wasm_idempotency_token::IdempotencyAuthorityId authority_id{};
     ir::core::CoreWorkflowId workflow{};
@@ -173,7 +173,7 @@ struct PreparedState {
     std::uint64_t pending_expected_generation{0};
 
     // D2b-8: the last after-frontier live call site the controller issued a
-    // verdict for, retained so a PENDING run2 exit can form the new pending
+    // verdict for, retained so a PENDING run_workflow exit can form the new pending
     // coordinate. The arg_hash cannot be re-derived (it was computed from the
     // module's param frame, which the controller does not retain), so it is
     // stored explicitly at the after-frontier verdict point.
@@ -336,7 +336,7 @@ capability_identity_matches(const VerifiedCoreWasmSchemaModule &module,
 // WH-5b.2: whether a manifest node is a P6 bridge node (scheduler-boundary
 // identity + non-empty in-runner bridge-site table). A P6 bridge node's
 // cap_call_count is 0 (its completion is a tag-0 identity event), but it
-// carries in-handler bridge imports accounted in the manifest v2 bridge-sites
+// carries in-handler bridge imports accounted in the manifest bridge-sites
 // table. Distinct from a pure identity node (cap_call_count 0 + no bridge
 // sites), which has no memo/pending state.
 [[nodiscard]] bool
@@ -659,10 +659,11 @@ build_prepared(VerifiedCoreWasmSchemaModule module,
 
 // The two-pass TOTAL linear-memory preflight. Pass 1 scans every future-live Result
 // binding (call sites STRICTLY after the frontier) recording Unbounded / SizeOverflow
-// (Unbounded has priority, decided before any arithmetic). Pass 2 checked-u64 sums the
-// event region heap_base (over module.node_count()) + entry actual + each committed memo
-// occurrence actual + (the injected result actual, if any) + each future-live bound,
-// then applies the u32 host-transfer-domain gate AND the supplied capacity verdict.
+// (Unbounded has priority, decided before any arithmetic). Pass 2 advances the
+// event-region heap cursor for each entry, memo occurrence, injected result and
+// future-live bound using checked-u64 addition followed by eight-byte alignment,
+// matching the current allocator. Then apply the u32 host-transfer-domain and
+// supplied-capacity gates.
 [[nodiscard]] std::optional<ResumePrepareReason>
 total_preflight(const detail::PreparedState &st, LinearMemoryCapacityBytes capacity,
                 std::optional<std::uint64_t> injected_actual) {
@@ -705,26 +706,32 @@ total_preflight(const detail::PreparedState &st, LinearMemoryCapacityBytes capac
         return ResumePrepareReason::ResourceExhausted;
     }
     std::uint64_t total = *heap_base;
-    const auto checked_add = [&](std::uint64_t addend) noexcept -> bool {
-        if (total > kU64Max - addend) {
+    const auto checked_allocate = [&](std::uint64_t length) noexcept -> bool {
+        if (total > kU64Max - length) {
             return false;
         }
-        total += addend;
+        const std::uint64_t end = total + length;
+        if (end > kU64Max - 7u) {
+            return false;
+        }
+        // heap_base and every prior allocation are aligned. A zero-length
+        // allocation therefore leaves the cursor unchanged, as alloc(0) does.
+        total = (end + 7u) & ~std::uint64_t{7u};
         return true;
     };
-    if (!checked_add(st.entry_span.size())) {
+    if (!checked_allocate(st.entry_span.size())) {
         return ResumePrepareReason::ResourceExhausted;
     }
     for (const auto &memo : st.callsite_memo) {
-        if (memo.has_value() && !checked_add(memo->size())) {
+        if (memo.has_value() && !checked_allocate(memo->size())) {
             return ResumePrepareReason::ResourceExhausted;
         }
     }
-    if (injected_actual.has_value() && !checked_add(*injected_actual)) {
+    if (injected_actual.has_value() && !checked_allocate(*injected_actual)) {
         return ResumePrepareReason::ResourceExhausted;
     }
     for (const std::uint64_t b : live_bounds) {
-        if (!checked_add(b)) {
+        if (!checked_allocate(b)) {
             return ResumePrepareReason::ResourceExhausted;
         }
     }
@@ -1088,7 +1095,7 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
         return std::unexpected(verdict.error());
     }
     // D2b-8: retain the live call site + its computed arg_hash so a PENDING
-    // run2 exit can form the new pending coordinate (the arg_hash cannot be
+    // run_workflow exit can form the new pending coordinate (the arg_hash cannot be
     // re-derived -- the param frame is not retained).
     st.last_live_call_site = j;
     st.last_live_arg_hash = arg_hash;
@@ -1204,7 +1211,7 @@ ack_publish_injected(PreparedResume &prepared,
 // Terminal.
 // ---------------------------------------------------------------------------
 std::expected<FinishRunPlan, ResumeStepError>
-finish_run(PreparedResume &prepared, const Run2Exit &exit) {
+finish_run(PreparedResume &prepared, const WorkflowRunExit &exit) {
     detail::PreparedState &st = detail::PreparedState::unwrap(prepared);
     // D2b-5: an after-frontier live verdict parks in AwaitingLiveResult. The
     // driver served the result (seal -> invoke -> record -> pack) and the
@@ -1213,11 +1220,11 @@ finish_run(PreparedResume &prepared, const Run2Exit &exit) {
         st.phase = Phase::Failed;
         return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
     }
-    if (std::holds_alternative<Run2Trapped>(exit)) {
+    if (std::holds_alternative<WorkflowRunTrapped>(exit)) {
         st.phase = Phase::Failed;
         return std::unexpected(ResumeStepError{ResumeStepReason::ModuleTrap});
     }
-    const auto &ret = std::get<Run2Returned>(exit);
+    const auto &ret = std::get<WorkflowRunReturned>(exit);
     // ABI status classification (fail-closed: any unknown raw status is an error).
     if (ret.raw_status == AHFL_CAP_PENDING) {
         // D2b-8: a PENDING exit is valid ONLY after a ReadyForLive verdict parked

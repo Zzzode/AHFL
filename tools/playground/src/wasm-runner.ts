@@ -8,12 +8,12 @@
  * the input JSON is supplied by the UI.
  *
  * The host packs the input JSON into the P4-D frame at the entry node's I
- * block, calls run2, and walks the workflow output slot back to JSON. Every
+ * block, calls run_workflow, and walks the workflow output slot back to JSON. Every
  * offset/stride/capacity comes from the module's own execution descriptor
- * (ahfl.wasm-execution-descriptor.v1), never a host re-derivation.
+ * (ahfl.wasm-execution-descriptor), never a host re-derivation.
  *
- * Capability workflows are supported through the frame-bridge v2 ABI (RFC
- * 0026 P6-7, rung V2-C): every capability import has functype
+ * Capability workflows are supported through the frame bridge ABI (RFC
+ * 0026 P6-7, rung capability-bridge): every capability import has functype
  * (block_ptr:i32) -> (status:i32, result_root_ptr:i32). The host walks the
  * dense P4-D argument spans at the bridge control block, builds the same wire
  * argument envelope the native transport uses, and packs a configurable mock
@@ -23,7 +23,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// Descriptor types (mirror ahfl.wasm-execution-descriptor.v1)
+// Descriptor types (mirror ahfl.wasm-execution-descriptor)
 // ---------------------------------------------------------------------------
 
 export interface WireField {
@@ -176,8 +176,7 @@ export interface WorkflowNode {
     schedule_pos: number;
     runner: number;
     has_capability: boolean;
-    capability_ordinal: number;
-    source_symbol: number;
+    capabilities: Array<{ ordinal: number; source_symbol: number }>;
     p6_block_ordinal: number;
 }
 
@@ -260,12 +259,11 @@ const kPageSize = 65536;
 
 interface WasmExports {
     memory: WebAssembly.Memory;
-    run2: (ptr: number, len: number) => [number, number, number];
+    run_workflow: (ptr: number, len: number) => [number, number, number];
     alloc: (len: number) => number;
     workflow_node_count: WebAssembly.Global;
     workflow_completed_count: WebAssembly.Global;
     transition_count: WebAssembly.Global;
-    ahfl_abi_version: WebAssembly.Global;
 }
 
 function dv(memory: WebAssembly.Memory): DataView {
@@ -827,7 +825,7 @@ function decodeStateTrace(
 }
 
 // ---------------------------------------------------------------------------
-// Capability bridge (frame-bridge v2, ported from node_embedded_host.mjs)
+// Capability bridge (frame bridge, ported from node_embedded_host.mjs)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1150,7 +1148,7 @@ function makeBridgeCallback(
  * Compile, instantiate, and run a workflow WASM module.
  *
  * Capability-free modules run with an empty import object. Modules that
- * import capabilities are run with bridge host functions (frame-bridge v2
+ * import capabilities are run with bridge host functions (frame bridge
  * ABI): each capability invocation packs `capabilityMocks[short-name]` (or a
  * wire-shape skeleton default) into the call site's result placement. Throws
  * on a non-workflow descriptor, an unexpected host module, or any frame/ABI
@@ -1188,7 +1186,7 @@ export async function runWasmWorkflow(
 
     // Resolve the mock response for every declared capability: the caller's
     // mock wins, otherwise a wire-shape skeleton of the result type. The mock
-    // JSON is parsed up front so a bad edit fails before run2 starts.
+    // JSON is parsed up front so a bad edit fails before run_workflow starts.
     const calls: CapabilityCall[] = [];
     const mocks = new Map<string, unknown>();
     const defaults = defaultCapabilityMocks(descriptor);
@@ -1271,22 +1269,22 @@ export async function runWasmWorkflow(
     packValue(memory, frameLane, W, L, parsedInput, entryWireRoot, entryBlock.input_layout,
               entryBlock.input_base, backing, arena);
 
-    const tuple = e.run2(entryBlock.input_base, entryBlock.input_size);
+    const tuple = e.run_workflow(entryBlock.input_base, entryBlock.input_size);
     const status = tuple[0];
     const suspended = status === 2;
     if (!suspended && status !== 0) {
-        throw new Error(`wasm-runner: run2 returned non-OK status ${status}`);
+        throw new Error(`wasm-runner: run_workflow returned non-OK status ${status}`);
     }
 
     let outputJson: string | null = null;
     if (!suspended) {
         if (tuple[1] !== frameLane.output_base) {
             throw new Error(
-                `wasm-runner: run2 returned ${tuple[1]} != output slot ${frameLane.output_base}`);
+                `wasm-runner: run_workflow returned ${tuple[1]} != output slot ${frameLane.output_base}`);
         }
         if (tuple[2] !== frameLane.output_size) {
             throw new Error(
-                `wasm-runner: run2 length ${tuple[2]} != ${frameLane.output_size}`);
+                `wasm-runner: run_workflow length ${tuple[2]} != ${frameLane.output_size}`);
         }
         if (e.workflow_completed_count.value !== nodeCount) {
             throw new Error(

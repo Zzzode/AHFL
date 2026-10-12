@@ -147,7 +147,6 @@ struct WildcardPattern {};
 /// Binding pattern: name or name @ nested.
 struct BindingPattern {
     std::string name;
-    bool is_mut{false};
     Owned<MatchPattern> nested{};
 };
 

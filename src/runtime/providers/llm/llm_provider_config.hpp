@@ -39,7 +39,7 @@ struct LLMCapabilityTokenBudget {
 struct LLMProviderConfig {
     std::string endpoint;       // API endpoint, e.g. "https://open.bigmodel.cn/api/paas/v4"
     std::string model;          // Model name, e.g. "glm-4"
-    std::string api_key;        // API key, only allowed as a compatibility path
+    std::string api_key;        // API key for the configured endpoint
     std::string api_key_secret; // Environment variable secret handle, takes precedence over api_key
     std::string oauth2_token_secret;   // OAuth2 access token secret handle
     std::string mtls_client_cert_path; // mTLS client certificate path reference
@@ -51,10 +51,13 @@ struct LLMProviderConfig {
     bool mtls_verify_tls{true};
     std::string auth_scheme{"bearer"}; // bearer, api_key_header, OAuth2 bearer, or mTLS
     std::string auth_header{"Authorization"};
-    double temperature = 0.1; // Low temperature ensures deterministic output
-    int max_tokens = 1024;
-    int max_prompt_tokens = 3072;
-    int max_total_tokens = 4096;
+    std::optional<double>
+        temperature{}; // Omit by default; let the model choose its sampling policy.
+    std::optional<int> max_tokens{};
+    std::optional<int> max_prompt_tokens{};
+    std::optional<int> max_total_tokens{};
+    std::optional<int> model_context_window_tokens{};
+    std::optional<int> model_max_output_tokens{};
     double prompt_token_cost_per_million = 0.0;
     double completion_token_cost_per_million = 0.0;
     double max_total_cost_usd = 0.0;

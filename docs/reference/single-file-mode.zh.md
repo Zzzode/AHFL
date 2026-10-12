@@ -1,8 +1,6 @@
 # AHFL 单文件模式参考
 
-本文定义无 `ahfl.toml` 的 `.ahfl` 文件在 CLI 与 LSP 中的用户可见语义。
-规范性语言边界见 [core-language.zh.md](../spec/core-language.zh.md)，设计来源见
-[RFC 0008](../rfcs/0008-single-file-std-primitive-semantics.zh.md)。
+没有 `ahfl.toml` 时，可以检查和格式化独立 `.ahfl` 文件，但不能导入其他模块。需要标准库或多文件工程时，用 `ahflc init --single-file` 创建 package。语言规则见[核心语言规范](../spec/core-language.zh.md)。
 
 ## 名字来源
 
@@ -18,14 +16,14 @@ Primitive 类型是语言内建类型，不从 `std::*` import 获得。`std` �
 提供 facade impl，例如 `impl String`，但这些方法仍属于 std package module，
 不属于 language primitive prelude。
 
-## DetachedSourceUnit
+## 单文件模式的能力与限制
 
 没有 manifest 的文件进入 `DetachedSourceUnit` 模式。该模式允许：
 
 1. 解析和格式化当前文件。
 2. 使用当前文件内声明的局部类型和符号。
 3. 使用 language primitive prelude。
-4. 在 LSP 中通过 active sysroot 跳转 primitive canonical home。
+4. 在编辑器中跳转到配置的标准库里对应内建类型的定义。
 
 该模式禁止：
 
@@ -50,7 +48,7 @@ Primitive 类型是语言内建类型，不从 `std::*` import 获得。`std` �
 ## 初始化为 package
 
 `ahflc init --single-file path/to/file.ahfl` 是 detached 文件升级到正式 package 的显式入口。
-它不会让裸文件隐式获得 std；它会在文件所在目录创建 RFC 0005 `ahfl.toml`：
+它会在文件所在目录创建 `ahfl.toml`：
 
 1. 新文件路径会创建 starter source，并写入 `module <prefix>::<file-stem>;`。
 2. 已存在但没有 module 声明的 source 会在文件头部补入 module 声明。
@@ -64,11 +62,9 @@ Primitive 类型是语言内建类型，不从 `std::*` import 获得。`std` �
 LSP 打开 detached 文件时会发布 `N::detached_source_unit` information diagnostic。
 在 primitive token 上：
 
-1. `textDocument/definition` 与 `textDocument/typeDefinition` 使用 active sysroot 的
-   `SysrootPrimitiveIndex` 返回 canonical home，例如 `String` 到 `std/string.ahfl`。
-2. `textDocument/implementation` 不返回 std facade impl candidates。
-3. 若 active sysroot 缺少某个 primitive home，或没有 default ToolchainProfile，
-   server 发布 `W::primitive_home_unavailable` warning。
+1. “Go to Definition” 与 “Go to Type Definition” 跳到配置的标准库中的定义位置，例如 `String` 到 `std/string.ahfl`。
+2. “Go to Implementations” 不列出标准库对内建类型提供的实现。
+3. 若标准库缺少对应类型的源文件，或没有可用 sysroot，编辑器显示 `W::primitive_home_unavailable` warning。
 
 Detached mode 下，completion/code action 不提供 import completion、organize imports
 或自动导入 std module 的修复动作。

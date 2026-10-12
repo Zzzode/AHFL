@@ -1,22 +1,20 @@
 #pragma once
 
 // RFC 0026 KR6.5 E4-B2-A1: canonical, authenticated durable-resume control record
-// codec (`ahfl.wasm-resume.v1`, raw payload magic "AHFLWR").
+// codec (`ahfl.wasm-resume`, raw payload magic "AHFLWR").
 //
 // This is the FOUNDATION record codec for the full-workflow per-node replay ledger
 // designed in docs/design/core-ir-kr6-5-e4b-wire-resume-seam.zh.md §4.2. It is a
 // pure byte<->model codec plus an HMAC authenticator; it holds no key material of
-// its own and computes no Wasm digests. It is GREENFIELD and additive: it does not
-// touch the existing `ahfl.workflow-recovery.v1|v2` JSON store, compiler_ir, the
-// public C ABI, or any emitted Wasm bytes, and it has no production persistence
-// caller yet (the first is the future B2-D host).
+// its own and computes no Wasm digests. The runtime uses this record for the
+// full-workflow per-node replay ledger.
 //
 // Wire layout: `body || auth_header || tag`, where `auth_header` is a fixed 25
-// bytes {alg_version u8, key_id 16 bytes, generation u64 little-endian} and `tag`
+// bytes {alg_id u8, key_id 16 bytes, generation u64 little-endian} and `tag`
 // is a fixed 32-byte HMAC-SHA256 -- a fixed 57-byte tail located from EOF. The
 // trust root is a single HMAC over the exact on-wire prefix `[0, tag)`; the
-// prefix's leading `magic || format_version` are the authenticated artifact-class /
-// version domain separator. Admission is two-pass: an untrusted bounds-only pass 1
+// prefix's leading `magic` is the authenticated artifact-class
+// domain separator. Admission is two-pass: an untrusted bounds-only pass 1
 // (never reads a body count, never allocates on an attacker count) verifies the
 // framing + key_id + tag, and only then does a trusted pass 2 decode the body.
 
@@ -54,9 +52,17 @@ struct PayloadSlotId {
 // and never compares them against a loaded artifact (that comparison is B2-D).
 using DigestHex = std::array<char, 64>;
 
-enum class ResumeState : std::uint8_t { Suspended = 0, Injected = 1 };
-enum class EntryKind : std::uint8_t { Workflow = 0 };
-enum class NodeKind : std::uint8_t { Identity = 0, Capability = 1 };
+enum class ResumeState : std::uint8_t {
+    Suspended = 0,
+    Injected = 1
+};
+enum class EntryKind : std::uint8_t {
+    Workflow = 0
+};
+enum class NodeKind : std::uint8_t {
+    Identity = 0,
+    Capability = 1
+};
 
 struct ResumeMemoEntry {
     InvocationOrdinal invocation_ordinal{};
@@ -87,7 +93,7 @@ struct ResumeNode {
 };
 
 struct ResumeAuthHeader {
-    std::uint8_t alg_version{1}; // 1 = HMAC-SHA256
+    std::uint8_t alg_id{1}; // 1 = HMAC-SHA256
     std::array<std::uint8_t, 16> key_id{};
     std::uint64_t generation{0};
     [[nodiscard]] friend bool operator==(const ResumeAuthHeader &,
@@ -98,7 +104,6 @@ struct ResumeAuthHeader {
 // carried alongside so a decoded record round-trips, and `tag`/HMAC live at the
 // codec boundary (not stored in the model).
 struct CoreWasmResumeRecord {
-    std::uint32_t format_version{1};
     std::uint32_t guarantees{0}; // bit0 rollback_protected, bit1 confidential_at_rest
     DigestHex module_sha256{};
     DigestHex wire_schema_sha256{};
@@ -106,7 +111,7 @@ struct CoreWasmResumeRecord {
     EntryKind entry_kind{EntryKind::Workflow};
     ir::core::CoreWorkflowId entry_id{};
     // The caller-provided workflow ENTRY frame for the fresh replay: a fresh
-    // instance's run2(ptr,len) is fed these exact opaque bytes. REQUIRED
+    // instance's run_workflow(ptr,len) is fed these exact opaque bytes. REQUIRED
     // (non-invalid) and DISTINCT from every node's every memo.result_slot -- input
     // provenance never shares slot authority with result provenance. The entry
     // frame is admitted OPAQUE (AHFLWS carries no entry schema); each capability
@@ -126,7 +131,9 @@ struct CoreWasmResumeEncodeResult {
     std::vector<ir::core::CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return bytes.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return bytes.has_value() && !has_errors();
+    }
 };
 
 // Result of admitting an on-wire record. `record` is populated ONLY after the HMAC
@@ -136,7 +143,9 @@ struct CoreWasmResumeDecodeResult {
     std::vector<ir::core::CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return record.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return record.has_value() && !has_errors();
+    }
 };
 
 // Encode a record and append its authentication tag. The model is validated for the
@@ -149,8 +158,8 @@ encode_and_authenticate(const CoreWasmResumeRecord &record,
                         std::span<const std::uint8_t> key_bytes);
 
 // Two-pass admission of an on-wire record. Pass 1 (untrusted, bounds-only) checks
-// minimum length, magic + format_version, the fixed 57-byte tail offsets,
-// `alg_version`, and equality of the record `key_id` against `expected_key_id`
+// minimum length, magic, the fixed 57-byte tail offsets,
+// `alg_id`, and equality of the record `key_id` against `expected_key_id`
 // (fixed-work, no-early-exit best-effort comparison) -- it NEVER reads a body count
 // and NEVER allocates on an attacker-supplied count. The HMAC is then recomputed
 // over the exact prefix `[0, tag)` and compared to the record tag (again fixed-work

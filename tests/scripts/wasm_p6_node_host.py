@@ -115,8 +115,7 @@ const condModule = await WebAssembly.compile(condBytes);
 if (WebAssembly.Module.imports(condModule).length !== 0)
   throw new Error("scalar agent expanded import authority");
 const {exports: c} = await WebAssembly.instantiate(condModule, {});
-if (c.ahfl_abi_version.value !== 1)
-  throw new Error("abi version mismatch");
+
 
 const expectedInitial = Number(process.argv[3]);
 // The frozen oracle includes the initial state before any transition;
@@ -158,15 +157,7 @@ if (JSON.stringify(observedPath) !== JSON.stringify(expectedSequence))
 if (c.transition_count.value !== expectedTransitions)
   throw new Error(`transition_count ${c.transition_count.value} != ${expectedTransitions}`);
 
-// The legacy run() ABI must reach the same final id with the same counter.
-const input = new TextEncoder().encode("identity");
-const ptr = c.alloc(input.length);
-new Uint8Array(c.memory.buffer, ptr, input.length).set(input);
-const outPtr = c.run(ptr, input.length);
-if (outPtr !== ptr || c.current_state() !== expectedSequence[expectedSequence.length - 1] ||
-    c.transition_count.value !== expectedTransitions)
-  throw new Error("legacy run() did not reach the same final state");
-c.dealloc(ptr, input.length);
+if ("run" in c) throw new Error("removed pointer-only entry is exported");
 
 // --- integer divide-by-zero: step() traps, state and counter unchanged ---
 const trapBytes = load(process.argv[6]);

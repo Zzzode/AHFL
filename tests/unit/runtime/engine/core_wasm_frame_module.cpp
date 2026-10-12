@@ -17,13 +17,13 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
-#include "compiler/backends/wasm/core_wasm_codegen.hpp"
-#include "common/project_input_support.hpp"
 #include "base/support/sha256.hpp"
+#include "common/project_input_support.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "runtime/engine/core_wasm_frame_module.hpp"
 
-// RFC 0026 P6-7 rung A: host-side admission of the `ahfl.core-layout.v1` +
-// boundary-root `ahfl.wire-schema.v1` section pair from REAL emitted P6-frame
+// RFC 0026 P6-7 rung A: host-side admission of the `ahfl.core-layout` +
+// boundary-root `ahfl.wire-schema` section pair from REAL emitted P6-frame
 // modules. Proves module-side and host-side readers agree over the
 // digest-authenticated module bytes, plus fail-closed framing negatives
 // (truncated, unknown intervening section, reordered/duplicated sections).
@@ -75,8 +75,7 @@ emit_fixture_full(const std::filesystem::path &fixture) {
         return std::nullopt;
     }
     return backends::emit_core_wasm(
-        core.program, *layouts.table,
-        {ir::core::CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+        core.program, *layouts.table, {ir::core::CoreAgentId{0}, backends::WasmProfileKind::Wasi});
 }
 
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
@@ -99,8 +98,8 @@ void put_uleb(std::vector<std::uint8_t> &out, std::uint64_t value) {
     } while (value != 0);
 }
 
-[[nodiscard]] std::vector<std::uint8_t>
-make_custom_section(std::string_view name, std::span<const std::uint8_t> body) {
+[[nodiscard]] std::vector<std::uint8_t> make_custom_section(std::string_view name,
+                                                            std::span<const std::uint8_t> body) {
     std::vector<std::uint8_t> payload;
     put_uleb(payload, name.size());
     payload.insert(payload.end(), name.begin(), name.end());
@@ -112,7 +111,8 @@ make_custom_section(std::string_view name, std::span<const std::uint8_t> body) {
     return record;
 }
 
-void append_custom(std::vector<std::uint8_t> &module, std::string_view name,
+void append_custom(std::vector<std::uint8_t> &module,
+                   std::string_view name,
                    std::span<const std::uint8_t> body) {
     const auto record = make_custom_section(name, body);
     module.insert(module.end(), record.begin(), record.end());
@@ -159,8 +159,8 @@ find_custom_section_span(std::span<const std::uint8_t> module_bytes, std::string
         std::size_t q = content;
         auto name_len = read_uleb(module_bytes, q);
         if (!name_len.has_value() || q + *name_len <= module_bytes.size()) {
-            const std::string_view name(
-                reinterpret_cast<const char *>(module_bytes.data() + q), *name_len);
+            const std::string_view name(reinterpret_cast<const char *>(module_bytes.data() + q),
+                                        *name_len);
             if (name == wanted) {
                 return std::pair{start, pos};
             }
@@ -186,25 +186,26 @@ struct ChainTables {
 [[nodiscard]] ChainTables make_struct_chain(std::uint32_t depth) {
     ChainTables out;
     out.layouts.target = irc::TargetDataLayout{};
-    out.wire.format_version = 1;
+
     // Node 0: the narrow-Int i32 leaf shared by layout and schema.
     out.layouts.layouts.push_back(
         irc::CoreLayout{4, 4, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
     irc::CoreWireSchemaNode leaf;
-    leaf.shape = irc::CoreWireSchemaInt{
-        std::pair<std::int64_t, std::int64_t>{-2147483648LL, 2147483647LL}};
+    leaf.shape =
+        irc::CoreWireSchemaInt{std::pair<std::int64_t, std::int64_t>{-2147483648LL, 2147483647LL}};
     out.wire.nodes.push_back(leaf);
     for (std::uint32_t i = 1; i <= depth; ++i) {
         const irc::CoreLayoutId child{i - 1U};
-        out.layouts.layouts.push_back(irc::CoreLayout{
-            4, 4, false,
-            irc::CoreLayoutStruct{std::vector<std::uint64_t>{0},
-                                  std::vector<irc::CoreLayoutId>{child}}});
+        out.layouts.layouts.push_back(
+            irc::CoreLayout{4,
+                            4,
+                            false,
+                            irc::CoreLayoutStruct{std::vector<std::uint64_t>{0},
+                                                  std::vector<irc::CoreLayoutId>{child}}});
         irc::CoreWireSchemaNode node;
         auto shape = irc::CoreWireSchemaStruct{};
         shape.wire_name = "S" + std::to_string(i);
-        shape.fields.push_back(
-            irc::CoreWireSchemaField{"f0", irc::CoreWireSchemaNodeId{i - 1U}});
+        shape.fields.push_back(irc::CoreWireSchemaField{"f0", irc::CoreWireSchemaNodeId{i - 1U}});
         node.shape = std::move(shape);
         out.wire.nodes.push_back(std::move(node));
     }
@@ -219,31 +220,36 @@ struct ChainTables {
 // 16416. Canonical as built; tests mutate copies to prove host re-derivation.
 [[nodiscard]] irc::CoreFrameLayoutSection make_container_section() {
     irc::CoreFrameLayoutSection section;
+    section.rodata_base = irc::kP6RodataBase;
     section.table.target = irc::TargetDataLayout{};
     section.table.layouts.push_back(
         irc::CoreLayout{8, 8, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::I64}});
-    section.table.layouts.push_back(
-        irc::CoreLayout{8, 4, false,
-                        irc::CoreLayoutContainer{irc::CoreLayoutId{0}, std::nullopt,
-                                                 /*capacity=*/4, /*stride=*/8,
-                                                 /*value_offset=*/0, /*backing_size=*/32}});
+    section.table.layouts.push_back(irc::CoreLayout{8,
+                                                    4,
+                                                    false,
+                                                    irc::CoreLayoutContainer{irc::CoreLayoutId{0},
+                                                                             std::nullopt,
+                                                                             /*capacity=*/4,
+                                                                             /*stride=*/8,
+                                                                             /*value_offset=*/0,
+                                                                             /*backing_size=*/32}});
     section.input_layout = irc::CoreLayoutId{1};
     section.output_layout = irc::CoreLayoutId{1};
-    section.placements.push_back(
-        irc::CoreFrameBackingPlacement{/*edge_index=*/0, /*container_layout=*/{1},
-                                       /*base=*/16384, /*extent=*/32});
+    section.placements.push_back(irc::CoreFrameBackingPlacement{/*edge_index=*/0,
+                                                                /*container_layout=*/{1},
+                                                                /*base=*/16384,
+                                                                /*extent=*/32});
     section.payload_arena_base = 16416;
     section.payload_arena_capacity = 0;
     return section;
 }
 
-// Raw frame-layout payload prefix (magic/version/target + the two boundary
+// Raw frame-layout payload prefix (magic/target + the two boundary
 // roots), followed by whatever count/payload bytes a test appends. A giant
 // count placed here must fail bounded_count BEFORE any vector reserve.
-[[nodiscard]] std::vector<std::uint8_t>
-frame_payload_prefix_with_roots(std::uint32_t input_root, std::uint32_t output_root) {
-    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'C', 'L', /*version=*/1,
-                                    /*target=*/0};
+[[nodiscard]] std::vector<std::uint8_t> frame_payload_prefix_with_roots(std::uint32_t input_root,
+                                                                        std::uint32_t output_root) {
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'C', 'L', /*target=*/0};
     put_uleb(bytes, input_root);
     put_uleb(bytes, output_root);
     return bytes;
@@ -254,8 +260,8 @@ frame_payload_prefix_with_roots(std::uint32_t input_root, std::uint32_t output_r
 int main() {
     const auto repo = test_support::repo_root_from_source_file(__FILE__);
 
-    for (const char *rel : {"tests/golden/wasm/p6_aggregate.ahfl",
-                            "tests/golden/wasm/p6_collection.ahfl"}) {
+    for (const char *rel :
+         {"tests/golden/wasm/p6_aggregate.ahfl", "tests/golden/wasm/p6_collection.ahfl"}) {
         const auto bytes = emit_fixture(repo / rel);
         check(bytes.has_value(), std::string("emit ") + rel);
         if (!bytes.has_value()) {
@@ -272,11 +278,9 @@ int main() {
             check(s.layout.output_layout.value < s.layout.table.layouts.size(),
                   std::string(rel) + " output root resolves");
             // Both frame bindings were minted and root at the boundary nodes.
-            check(s.input_binding.root().value <
-                      s.input_binding.table().nodes.size(),
+            check(s.input_binding.root().value < s.input_binding.table().nodes.size(),
                   std::string(rel) + " input binding rooted at a schema node");
-            check(s.output_binding.root().value <
-                      s.output_binding.table().nodes.size(),
+            check(s.output_binding.root().value < s.output_binding.table().nodes.size(),
                   std::string(rel) + " output binding rooted at a schema node");
             check(s.module_sha256 == fr::ArtifactDigest(support::sha256(*bytes)),
                   std::string(rel) + " module digest matches parsed bytes");
@@ -328,22 +332,18 @@ int main() {
             check(lane.placements.size() == 2,
                   "descriptor names two per-edge container placements");
             if (lane.placements.size() == 2) {
-                check(lane.placements[0].edge_index == 0 &&
-                          lane.placements[1].edge_index == 1,
+                check(lane.placements[0].edge_index == 0 && lane.placements[1].edge_index == 1,
                       "two placements use dense edge indices 0 and 1");
-                check(lane.placements[0].base == 16384 &&
-                          lane.placements[1].base == 16416,
+                check(lane.placements[0].base == 16384 && lane.placements[1].base == 16416,
                       "two placements are disjoint on the sum-of-prior rule");
-                check(lane.placements[0].extent == 32 &&
-                          lane.placements[1].extent == 32,
+                check(lane.placements[0].extent == 32 && lane.placements[1].extent == 32,
                       "each List<Int>(4) placement spans its own 32-byte backing");
             }
             auto admitted = fr::admit_core_wasm_frame_sections(emitted->artifact->bytes);
             check(admitted.ok(), "two-containers module admits");
             if (admitted.ok()) {
                 const auto &placements = admitted.sections->layout.placements;
-                check(placements.size() == 2,
-                      "admitted section carries two disjoint placements");
+                check(placements.size() == 2, "admitted section carries two disjoint placements");
                 if (placements.size() == 2) {
                     check(placements[0].container_layout != placements[1].container_layout,
                           "the two placements name distinct per-occurrence container layouts");
@@ -364,21 +364,17 @@ int main() {
         const auto bytes = emit_fixture(repo / "tests/golden/wasm/p6_collection.ahfl");
         check(bytes.has_value(), "emit p6_collection for framing negatives");
         if (bytes.has_value()) {
-            const auto layout_span =
-                find_custom_section_span(*bytes, "ahfl.core-layout.v1");
-            const auto schema_span =
-                find_custom_section_span(*bytes, "ahfl.wire-schema.v1");
+            const auto layout_span = find_custom_section_span(*bytes, "ahfl.core-layout");
+            const auto schema_span = find_custom_section_span(*bytes, "ahfl.wire-schema");
             check(layout_span.has_value() && schema_span.has_value(),
                   "p6_collection frames both frame sections");
             if (layout_span.has_value() && schema_span.has_value()) {
-                const std::vector<std::uint8_t> prefix(
-                    bytes->begin(), bytes->begin() + layout_span->first);
-                const std::vector<std::uint8_t> layout_record(
-                    bytes->begin() + layout_span->first,
-                    bytes->begin() + layout_span->second);
-                const std::vector<std::uint8_t> schema_record(
-                    bytes->begin() + schema_span->first,
-                    bytes->begin() + schema_span->second);
+                const std::vector<std::uint8_t> prefix(bytes->begin(),
+                                                       bytes->begin() + layout_span->first);
+                const std::vector<std::uint8_t> layout_record(bytes->begin() + layout_span->first,
+                                                              bytes->begin() + layout_span->second);
+                const std::vector<std::uint8_t> schema_record(bytes->begin() + schema_span->first,
+                                                              bytes->begin() + schema_span->second);
                 static constexpr std::array<std::uint8_t, 1> junk_body{0x00};
                 const std::vector<std::uint8_t> unknown_record =
                     make_custom_section("unknown.intervening", junk_body);
@@ -399,8 +395,7 @@ int main() {
                            rebuild({layout_record, layout_record, schema_record}))
                            .ok(),
                       "duplicate core-layout section rejected");
-                check(!fr::admit_core_wasm_frame_sections(
-                           rebuild({schema_record, layout_record}))
+                check(!fr::admit_core_wasm_frame_sections(rebuild({schema_record, layout_record}))
                            .ok(),
                       "schema-before-layout section ordering rejected");
                 check(!fr::admit_core_wasm_frame_sections(
@@ -429,8 +424,8 @@ int main() {
 
         // Giant LAYOUT count: sentinel value, then a value just below it but far
         // beyond the remaining byte count.
-        for (const std::uint64_t giant : {static_cast<std::uint64_t>(0xFFFFFFFFU),
-                                         static_cast<std::uint64_t>(0xFFFFFFFEU)}) {
+        for (const std::uint64_t giant :
+             {static_cast<std::uint64_t>(0xFFFFFFFFU), static_cast<std::uint64_t>(0xFFFFFFFEU)}) {
             auto payload = frame_payload_prefix_with_roots(0, 0);
             put_uleb(payload, giant);
             auto decoded = decode_safely(payload);
@@ -449,12 +444,12 @@ int main() {
         table_prefix.push_back(1); // shape = scalar
         table_prefix.push_back(1); // repr = I64
         // node 1: container List<Int>(4)
-        table_prefix.push_back(8); // size
-        table_prefix.push_back(4); // align
-        table_prefix.push_back(0); // not zero-sized
-        table_prefix.push_back(8); // shape = container
-        table_prefix.push_back(0); // element layout id 0
-        table_prefix.push_back(0); // no map-value edge
+        table_prefix.push_back(8);  // size
+        table_prefix.push_back(4);  // align
+        table_prefix.push_back(0);  // not zero-sized
+        table_prefix.push_back(8);  // shape = container
+        table_prefix.push_back(0);  // element layout id 0
+        table_prefix.push_back(0);  // no map-value edge
         put_uleb(table_prefix, 4);  // capacity
         put_uleb(table_prefix, 8);  // stride
         put_uleb(table_prefix, 0);  // value_offset
@@ -476,18 +471,17 @@ int main() {
             put_uleb(payload, 0); // value-layout mapping count
             put_uleb(payload, static_cast<std::uint64_t>(0xFFFFFFFFU));
             auto decoded = decode_safely(payload);
-            check(!decoded.ok() && !threw,
-                  "giant placement count fails closed without reserving");
+            check(!decoded.ok() && !threw, "giant placement count fails closed without reserving");
         }
 
         // Giant STRUCT field counts (two equal counts, both beyond remaining).
         {
             auto payload = frame_payload_prefix_with_roots(0, 0);
-            put_uleb(payload, 1); // one layout follows
-            payload.push_back(4); // size
-            payload.push_back(4); // align
-            payload.push_back(0); // not zero-sized
-            payload.push_back(6); // shape = struct
+            put_uleb(payload, 1);                                       // one layout follows
+            payload.push_back(4);                                       // size
+            payload.push_back(4);                                       // align
+            payload.push_back(0);                                       // not zero-sized
+            payload.push_back(6);                                       // shape = struct
             put_uleb(payload, static_cast<std::uint64_t>(0xFFFFFFFEU)); // offset count
             put_uleb(payload, static_cast<std::uint64_t>(0xFFFFFFFEU)); // layout count
             auto decoded = decode_safely(payload);
@@ -498,13 +492,13 @@ int main() {
         // Giant ENUM variant counts.
         {
             auto payload = frame_payload_prefix_with_roots(0, 0);
-            put_uleb(payload, 1); // one layout follows
-            payload.push_back(4); // size
-            payload.push_back(4); // align
-            payload.push_back(0); // not zero-sized
-            payload.push_back(7); // shape = enum
-            put_uleb(payload, 4); // tag_size
-            put_uleb(payload, 0); // payload_offset
+            put_uleb(payload, 1);                                       // one layout follows
+            payload.push_back(4);                                       // size
+            payload.push_back(4);                                       // align
+            payload.push_back(0);                                       // not zero-sized
+            payload.push_back(7);                                       // shape = enum
+            put_uleb(payload, 4);                                       // tag_size
+            put_uleb(payload, 0);                                       // payload_offset
             put_uleb(payload, static_cast<std::uint64_t>(0xFFFFFFFEU)); // payload layouts
             put_uleb(payload, static_cast<std::uint64_t>(0xFFFFFFFEU)); // payload sizes
             auto decoded = decode_safely(payload);
@@ -529,13 +523,12 @@ int main() {
             // re-derived stride*capacity disagrees, so the layout node is
             // rejected before the placement arm can trust it.
             auto shrunk_backing = canonical;
-            auto &shrunk_container = std::get<irc::CoreLayoutContainer>(
-                shrunk_backing.table.layouts[1].shape);
+            auto &shrunk_container =
+                std::get<irc::CoreLayoutContainer>(shrunk_backing.table.layouts[1].shape);
             shrunk_container.backing_size = 8;
             shrunk_backing.placements[0].extent = 8;
             shrunk_backing.payload_arena_base = 16392;
-            if (const auto bad = irc::encode_core_frame_layout_section(shrunk_backing);
-                bad.ok()) {
+            if (const auto bad = irc::encode_core_frame_layout_section(shrunk_backing); bad.ok()) {
                 check(!irc::decode_core_frame_layout_section(*bad.bytes).ok(),
                       "shipped backing size below stride*capacity rejected");
             }
@@ -546,15 +539,14 @@ int main() {
             auto shrunk_extent = canonical;
             shrunk_extent.placements[0].extent = 8;
             shrunk_extent.payload_arena_base = 16392;
-            if (const auto bad = irc::encode_core_frame_layout_section(shrunk_extent);
-                bad.ok()) {
+            if (const auto bad = irc::encode_core_frame_layout_section(shrunk_extent); bad.ok()) {
                 check(!irc::decode_core_frame_layout_section(*bad.bytes).ok(),
                       "placement extent below stride*capacity rejected");
             }
         }
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-C: the per-module bridge
+    // RFC 0026 P6-7 capability frame bridge: the per-module bridge
     // control-frame span and the dense, pairwise-disjoint per-call-site result
     // placements. A canonical one-site section round-trips through the encoder
     // and decoder and agrees with the projected wire capability; every tampered
@@ -580,18 +572,19 @@ int main() {
         };
         auto make_pair = [&]() -> BridgePair {
             BridgePair out;
-            // v3 carries the per-call-site private scalar/PtrLen spill window.
-            out.section.format_version = 3;
+            // The per-call-site private scalar/PtrLen spill window.
+
             out.section.table.target = irc::TargetDataLayout{};
             // Layout 0: i32 scalar (Bool). Layout 1: String PtrLen.
             // Layout 2: one-PtrLen struct (8 bytes, one field at offset 0).
             out.section.table.layouts.push_back(
-                irc::CoreLayout{4, 4, false,
-                                irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+                irc::CoreLayout{4, 4, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
             out.section.table.layouts.push_back(
                 irc::CoreLayout{8, 4, false, irc::CoreLayoutPtrLen{}});
             out.section.table.layouts.push_back(
-                irc::CoreLayout{8, 4, false,
+                irc::CoreLayout{8,
+                                4,
+                                false,
                                 irc::CoreLayoutStruct{std::vector<std::uint64_t>{0},
                                                       std::vector<irc::CoreLayoutId>{{1}}}});
             out.section.input_layout = irc::CoreLayoutId{0};
@@ -612,13 +605,16 @@ int main() {
                 /*block_offset=*/0,
                 /*param_layouts=*/{irc::CoreLayoutId{1}, irc::CoreLayoutId{0}},
                 /*result_layout=*/{2},
-                kResultBase, kResultExtent, kResultPayloadBase, kResultPayloadCap,
-                /*spill_base=*/kSpillBase, /*spill_extent=*/kSpillExtent});
+                kResultBase,
+                kResultExtent,
+                kResultPayloadBase,
+                kResultPayloadCap,
+                /*spill_base=*/kSpillBase,
+                /*spill_extent=*/kSpillExtent});
 
             // Parallel wire graph: 0 bool, 1 string, 2 struct {s: string}.
-            out.wire.format_version = 1;
-            out.wire.nodes.push_back(
-                irc::CoreWireSchemaNode{irc::CoreWireSchemaBool{}});
+
+            out.wire.nodes.push_back(irc::CoreWireSchemaNode{irc::CoreWireSchemaBool{}});
             out.wire.nodes.push_back(
                 irc::CoreWireSchemaNode{irc::CoreWireSchemaString{std::nullopt}});
             auto result_shape = irc::CoreWireSchemaStruct{};
@@ -627,9 +623,9 @@ int main() {
                 irc::CoreWireSchemaField{"s", irc::CoreWireSchemaNodeId{1}});
             out.wire.nodes.push_back(irc::CoreWireSchemaNode{std::move(result_shape)});
             out.wire.capabilities.push_back(irc::CoreWireCapabilitySchema{
-                /*capability=*/{}, /*source_symbol=*/42,
-                /*params=*/{irc::CoreWireSchemaNodeId{1},
-                            irc::CoreWireSchemaNodeId{0}},
+                /*capability=*/{},
+                /*source_symbol=*/42,
+                /*params=*/{irc::CoreWireSchemaNodeId{1}, irc::CoreWireSchemaNodeId{0}},
                 /*result=*/irc::CoreWireSchemaNodeId{2}});
             return out;
         };
@@ -648,16 +644,7 @@ int main() {
         check(irc::verify_frame_bridge_sites(canonical.section, canonical.wire).empty(),
               "canonical bridge site agrees with the projected wire capability");
 
-        // A v1 payload may never carry bridge spans: the v1 encoder rejects a
-        // section that names a control frame (the additive fields are v2-only).
-        {
-            auto v1 = canonical.section;
-            v1.format_version = 1;
-            check(!irc::encode_core_frame_layout_section(v1).ok(),
-                  "a v1 frame-layout section cannot carry bridge spans");
-        }
-
-        // A v2 section with NO bridge sites still requires a zero control span.
+        // A section with NO bridge sites still requires a zero control span.
         {
             auto empty = canonical.section;
             empty.bridge_call_sites.clear();
@@ -727,27 +714,22 @@ int main() {
         {
             auto f64_pair = canonical;
             f64_pair.section.table.layouts.push_back(
-                irc::CoreLayout{8, 8, false,
-                                irc::CoreLayoutScalar{irc::CoreScalarRepr::F64}});
-            const auto f64_id = static_cast<std::uint32_t>(
-                f64_pair.section.table.layouts.size() - 1);
-            f64_pair.wire.nodes.push_back(
-                irc::CoreWireSchemaNode{irc::CoreWireSchemaFloat{}});
-            const auto f64_wire = static_cast<std::uint32_t>(
-                f64_pair.wire.nodes.size() - 1);
+                irc::CoreLayout{8, 8, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::F64}});
+            const auto f64_id =
+                static_cast<std::uint32_t>(f64_pair.section.table.layouts.size() - 1);
+            f64_pair.wire.nodes.push_back(irc::CoreWireSchemaNode{irc::CoreWireSchemaFloat{}});
+            const auto f64_wire = static_cast<std::uint32_t>(f64_pair.wire.nodes.size() - 1);
             f64_pair.section.bridge_call_sites[0].param_layouts[0] = {f64_id};
             f64_pair.wire.capabilities[0].params[0] = {f64_wire};
             check(irc::verify_frame_layout_wire_consistency(
-                      f64_pair.section.table, {f64_id}, f64_pair.wire,
-                      {f64_wire})
-                          .empty(),
+                      f64_pair.section.table, {f64_id}, f64_pair.wire, {f64_wire})
+                      .empty(),
                   "f64 scalar is a structurally consistent layout/wire pair");
-            check(irc::verify_frame_bridge_sites(f64_pair.section, f64_pair.wire)
-                          .empty(),
+            check(irc::verify_frame_bridge_sites(f64_pair.section, f64_pair.wire).empty(),
                   "an f64 bridge argument inside the frame-walk subset is admitted");
         }
 
-        // v3: the per-site private spill windows must exactly partition the
+        // The per-site private spill windows must exactly partition the
         // module spill region in dense order. These are geometric, decode-time
         // obligations (verify_local), so a tampered section encodes but fails
         // admission on decode. A shortened window leaves part of the spill
@@ -758,25 +740,16 @@ int main() {
             bad.bridge_call_sites[0].spill_extent = kSpillExtent / 2;
             const auto enc = irc::encode_core_frame_layout_section(bad);
             check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
-                  "a v3 bridge spill window that does not partition the spill region fails closed");
+                  "a bridge spill window that does not partition the spill region fails closed");
         }
         {
             auto bad = canonical.section;
             bad.bridge_call_sites[0].spill_base = kSpillBase + 8;
             const auto enc = irc::encode_core_frame_layout_section(bad);
             check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
-                  "a v3 bridge spill window off the dense spill cursor fails closed");
-        }
-        {
-            // A v2 section cannot carry the v3 per-site spill words: the
-            // encoder rejects the versioned fields.
-            auto v2 = canonical.section;
-            v2.format_version = 2;
-            check(!irc::encode_core_frame_layout_section(v2).ok(),
-                  "a v2 frame-layout section cannot carry v3 per-site spill windows");
+                  "a bridge spill window off the dense spill cursor fails closed");
         }
     }
-
 
     // over a DECODED, untrusted pair is iterative, so a legal but deep acyclic
     // struct chain completes without exhausting the C++ stack. The pre-fix
@@ -809,16 +782,15 @@ int main() {
         if (emitted.has_value()) {
             check(!emitted->ok() && !emitted->artifact.has_value(),
                   "oversized backing rejects with no partial artifact");
-            const bool resource =
-                std::ranges::any_of(emitted->diagnostics, [](const auto &diag) {
-                    return diag.code == backends::core_wasm_diag::kResourceExhausted;
-                });
+            const bool resource = std::ranges::any_of(emitted->diagnostics, [](const auto &diag) {
+                return diag.code == backends::core_wasm_diag::kResourceExhausted;
+            });
             check(resource, "oversized backing reports wasm.RESOURCE_EXHAUSTED");
         }
     }
 
-    // RFC 0026 P6-7 frame-bridge v2 rung V2-C, byte obligations: the bridge
-    // functype is strictly ADDITIVE. The emitted v2c module carries exactly
+    // RFC 0026 P6-7 capability frame bridge, byte obligations: the bridge
+    // functype is strictly additive. The emitted bridge module carries exactly
     // ONE `(i32)->(i32,i32)` functype in its Type(1) section (one bridge
     // capability) and the descriptor tags that import mode="bridge"; a
     // non-bridge P6 module carries NONE (its capability tuple lane is the old
@@ -856,23 +828,22 @@ int main() {
             if (!span.has_value()) {
                 return static_cast<std::size_t>(0);
             }
-            static constexpr std::array<std::uint8_t, 4> kBridgeFunctype{
-                0x60, 0x01, 0x7f, 0x02};
+            static constexpr std::array<std::uint8_t, 4> kBridgeFunctype{0x60, 0x01, 0x7f, 0x02};
             static constexpr std::array<std::uint8_t, 2> kI32I32{0x7f, 0x7f};
             std::size_t count = 0;
             for (std::size_t i = span->content;
-                 i + kBridgeFunctype.size() + kI32I32.size() <=
-                     span->content + span->size;
+                 i + kBridgeFunctype.size() + kI32I32.size() <= span->content + span->size;
                  ++i) {
                 if (module[i] != kBridgeFunctype[0]) {
                     continue;
                 }
-                if (!std::equal(kBridgeFunctype.begin(), kBridgeFunctype.end(),
+                if (!std::equal(kBridgeFunctype.begin(),
+                                kBridgeFunctype.end(),
                                 module.begin() + static_cast<std::ptrdiff_t>(i)) ||
-                    !std::equal(kI32I32.begin(), kI32I32.end(),
+                    !std::equal(kI32I32.begin(),
+                                kI32I32.end(),
                                 module.begin() +
-                                    static_cast<std::ptrdiff_t>(
-                                        i + kBridgeFunctype.size()))) {
+                                    static_cast<std::ptrdiff_t>(i + kBridgeFunctype.size()))) {
                     continue;
                 }
                 ++count;
@@ -880,23 +851,21 @@ int main() {
             return count;
         };
 
-        const auto bridge =
-            emit_fixture_full(repo / "tests/golden/wasm/v2c_multi_arg_bridge.ahfl");
+        const auto bridge = emit_fixture_full(repo / "tests/golden/wasm/multi_arg_bridge.ahfl");
         check(bridge.has_value() && bridge->ok() && bridge->artifact.has_value(),
-              "emit v2c multi-arg bridge fixture");
+              "emit multi-arg bridge fixture");
         if (bridge.has_value() && bridge->ok() && bridge->artifact.has_value()) {
             const auto &bytes = bridge->artifact->bytes;
             check(count_bridge_functypes(bytes) == 1,
-                  "v2c module appends exactly one (i32)->(i32,i32) bridge functype");
+                  "bridge module appends exactly one (i32)->(i32,i32) bridge functype");
             check(!find_standard_section(bytes, kDataSection).has_value(),
-                  "v2c module without a String literal emits no Data section");
-            check(bridge->descriptor.has_value(), "v2c module carries a descriptor");
+                  "bridge module without a String literal emits no Data section");
+            check(bridge->descriptor.has_value(), "bridge module carries a descriptor");
             if (bridge->descriptor.has_value()) {
                 const auto &imports = bridge->descriptor->imports;
-                check(imports.size() == 1,
-                      "v2c module carries exactly one capability import");
+                check(imports.size() == 1, "bridge module carries exactly one capability import");
                 check(bridge->descriptor->frame.bridge_call_sites.size() == 1,
-                      "v2c descriptor lane names exactly one bridge call site");
+                      "bridge descriptor lane names exactly one bridge call site");
             }
         }
 

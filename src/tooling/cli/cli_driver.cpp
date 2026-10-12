@@ -380,8 +380,7 @@ single_file_shape_from_module(std::optional<std::string> declared_module,
 [[nodiscard]] std::string single_file_manifest_text(const SingleFilePackageShape &shape,
                                                     std::string_view source_filename) {
     std::ostringstream manifest;
-    manifest << "manifest_version = 1\n\n"
-             << "[package]\n"
+    manifest << "[package]\n"
              << "name = " << toml_basic_string(shape.package_name) << "\n"
              << "version = \"0.1.0\"\n"
              << "edition = \"2026\"\n"
@@ -1185,7 +1184,7 @@ package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNod
 
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
-        .format_version = std::string{ahfl::handoff::kFormatVersion},
+        .format = std::string{ahfl::handoff::kFormat},
         .name = package.name,
         .version = package.version,
     };
@@ -1272,7 +1271,7 @@ void export_pass_trace(const ahfl::passes::PassManager::RunResult &result,
     }
     const double total_ms = semantic_ms + function_ms;
 
-    out << "{\"schema\":\"ahfl.pass_trace.v2\",\"optimized\":true,\"total_ms\":" << total_ms
+    out << "{\"format\":\"ahfl.pass_trace\",\"optimized\":true,\"total_ms\":" << total_ms
         << ",\"semantic_ms\":" << semantic_ms << ",\"function_ms\":" << function_ms
         << ",\"passes\":[";
     bool first = true;
@@ -1861,7 +1860,7 @@ void export_cli_memory_report(const CommandLineOptions &options,
         return;
     }
 
-    out << "{\"schema\":\"ahfl.memory_report.v0\"";
+    out << "{\"format\":\"ahfl.memory_report\"";
     out << ",\"command\":";
     ahfl::write_escaped_json_string(out, current_action_label(options, effective_command));
     out << ",\"exit_code\":" << static_cast<int>(exit_code);
@@ -2411,6 +2410,12 @@ std::optional<ExitCode> CliDriver::validate_options() {
         }
         return !formal_stage_active(default_verification_mode(effective_command_));
     };
+
+    if (options_.verify_data_contracts && formal_stage_inactive()) {
+        std::cerr << "error: --verify-data-contracts requires --verify=on\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
 
     if (options_.model_checker.has_value() && formal_stage_inactive()) {
         std::cerr << "error: --model-checker requires --verify=on\n";
@@ -3244,9 +3249,9 @@ ExitCode CliDriver::publish_package() {
         }
     }
 
-    evidence->set("format_version",
-                  ahfl::json::JsonValue::make_string(dry_run ? "ahfl.publish_dry_run.v1"
-                                                             : "ahfl.publish.v1"));
+    evidence->set("format",
+                  ahfl::json::JsonValue::make_string(dry_run ? "ahfl.publish_dry_run"
+                                                             : "ahfl.publish"));
     evidence->set("package", ahfl::json::JsonValue::make_string(manifest->package_name));
     evidence->set("version", ahfl::json::JsonValue::make_string(manifest->package_version));
     evidence->set("registry_id", ahfl::json::JsonValue::make_string(registry_entry.registry_id));
@@ -3791,8 +3796,7 @@ ExitCode CliDriver::format_source_file() {
 // computed against, so the IR lowering, validation and summary must see the
 // same objects.
 //
-// RFC 0027 P5 (KR6.12) removed the AHFL_QUERY_LEGACY_PIPELINE escape hatch and
-// the direct resolve/typecheck tail: the engine is the only route. A cycle in
+// The query engine is the only frontend analysis route. A cycle in
 // this acyclic frontend graph is impossible; if the engine reports one it is an
 // internal error, surfaced as such instead of silently routing around the query
 // layer.

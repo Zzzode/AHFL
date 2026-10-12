@@ -6,7 +6,7 @@
 // / ceilings they close over, so the measurement *row* and the opt-in
 // machine-readable report live here once instead of being duplicated (and
 // silently allowed to drift) per binary. This is also the single definition of
-// the `ahfl.bench-report.v1` schema that
+// the `ahfl.bench-report` schema that
 // `tests/scripts/benchmark_trend_gate.py` consumes.
 //
 // Report emission is opt-in and side-effect-free when not requested: either
@@ -42,7 +42,7 @@
 
 namespace ahfl::bench {
 
-inline constexpr std::string_view kBenchReportSchema = "ahfl.bench-report.v1";
+inline constexpr std::string_view kBenchReportSchema = "ahfl.bench-report";
 
 // One measured module. Both benches fill every field, so the two reports are
 // directly comparable and the trend gate guards any budget without a second row
@@ -103,7 +103,7 @@ struct BenchMetric {
     return std::nullopt;
 }
 
-// Serialize `metrics` to `path` as the `ahfl.bench-report.v1` document. Defined
+// Serialize `metrics` to `path` as the `ahfl.bench-report` document. Defined
 // in bench_harness.cpp, the one TU that owns the private JSON-writer dependency
 // (`base/support/json.hpp`). Returns false when the file cannot be created or
 // written, so a caller can turn a bad report path into a hard failure rather

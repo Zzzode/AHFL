@@ -8,21 +8,21 @@
 
 namespace ahfl {
 
-inline constexpr std::string_view kTypedProgramCacheSchemaVersion = "AHFL_TYPED_HIR_CACHE_V1";
-inline constexpr std::string_view kConstValueArtifactSchemaVersion = "AHFL_CONST_VALUE_ARTIFACT_V1";
+inline constexpr std::string_view kTypedProgramCacheFormat = "ahfl.typed-hir-cache";
+inline constexpr std::string_view kConstValueArtifactFormat = "ahfl.const-value-artifact";
 
 struct TypedProgramCacheMetadata {
-    std::string schema_version{std::string(kTypedProgramCacheSchemaVersion)};
-    std::string source_graph_revision;
-    std::string source_content_hash;
-    std::string resolver_snapshot_version;
+    std::string format{std::string(kTypedProgramCacheFormat)};
+    std::string source_graph_digest;
+    std::string source_content_digest;
+    std::string resolver_snapshot_digest;
 };
 
 enum class TypedProgramCacheLoadStatus {
     Hit,
-    SchemaMismatch,
-    SourceRevisionMismatch,
-    SourceContentHashMismatch,
+    FormatMismatch,
+    SourceGraphMismatch,
+    SourceContentDigestMismatch,
     ResolverSnapshotMismatch,
     InvalidPayload,
 };

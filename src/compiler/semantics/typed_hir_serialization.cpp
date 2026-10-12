@@ -4,6 +4,7 @@
 
 #include "base/json/json_value.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -607,7 +608,7 @@ enum_variant_payload_kind_from_name(std::string_view name) {
 
     if (const auto *info = std::get_if<ContractTypeInfo>(&payload)) {
         auto value = Json::make_object();
-        value->set("symbol", j_symbol_id(info->symbol));
+        value->set("source_id", j_source_id(info->source_id));
         value->set("target_name", Json::make_string(info->target_name));
         value->set("target_symbol", j_symbol_id(info->target_symbol));
         value->set("target_range", j_range(info->target_range));
@@ -623,13 +624,6 @@ enum_variant_payload_kind_from_name(std::string_view name) {
             clause_json->set("decreases_is_wildcard",
                              Json::make_bool(clause.decreases_is_wildcard));
             clause_json->set("decreases_range", j_range(clause.decreases_range));
-            // P4.S3 legacy payload
-            auto decrs = Json::make_array();
-            for (const auto &d : clause.decreases_exprs) {
-                decrs->push(j_range(d.expr_range));
-            }
-            clause_json->set("decreases_exprs", std::move(decrs));
-            // P4.S6 canonical ranges (mirrors ir::ContractClause.decreases_terms)
             auto decreases_ranges = Json::make_array();
             for (const auto &r : clause.decreases_expr_ranges) {
                 decreases_ranges->push(j_range(r));
@@ -883,6 +877,8 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     return j_const_value(*value);
 }
 
+[[nodiscard]] std::unique_ptr<Json> j_adjustment_plan(const TypedAdjustmentPlan &plan);
+
 [[nodiscard]] std::unique_ptr<Json> j_expr(const TypedExpr &expr) {
     auto object = Json::make_object();
     object->set("kind", j_enum(expr.kind));
@@ -936,6 +932,21 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("enum_variant_payload_kind", j_optional_enum(expr.enum_variant_payload_kind));
     // RFC 0026 (3)-3b: per-arm root pattern indexes for a Match expression.
     object->set("match_arm_pattern_indexes", j_index_array(expr.match_arm_pattern_indexes));
+    if (expr.try_info.has_value()) {
+        const auto &info = *expr.try_info;
+        auto try_json = Json::make_object();
+        try_json->set("kind", j_enum(info.kind));
+        try_json->set("operand_enum_type", j_type(info.operand_enum_type));
+        try_json->set("return_enum_type", j_type(info.return_enum_type));
+        try_json->set("owner", j_symbol_id(info.owner));
+        try_json->set("failure_adjustment",
+                      info.failure_adjustment.has_value()
+                          ? j_adjustment_plan(*info.failure_adjustment)
+                          : Json::make_null());
+        object->set("try_info", std::move(try_json));
+    } else {
+        object->set("try_info", Json::make_null());
+    }
     return object;
 }
 
@@ -984,7 +995,7 @@ enum_variant_payload_kind_from_name(std::string_view name) {
 [[nodiscard]] std::unique_ptr<Json> j_decl(const TypedDecl &decl) {
     auto object = Json::make_object();
     object->set("kind", j_enum(decl.kind));
-    object->set("symbol", j_symbol_id(decl.symbol));
+    object->set("symbol", j_optional_symbol_id(decl.symbol));
     object->set("range", j_range(decl.range));
     object->set("source_id", j_source_id(decl.source_id));
     object->set("associated_agent_symbol", j_optional_symbol_id(decl.associated_agent_symbol));
@@ -1065,10 +1076,6 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("let_type", j_type(stmt.let_type));
     object->set("assign_target_root_kind", j_enum(stmt.assign_target_root_kind));
     object->set("assert_message", Json::make_string(stmt.assert_message));
-    // N-5: serialize AssertionKind via its canonical string form so old
-    // readers (that expect a "failure_kind" string field) can still parse
-    // the output produced by new code.
-    object->set("failure_kind", Json::make_string(to_string(stmt.assertion_kind)));
     object->set("assertion_kind", j_enum(static_cast<int>(stmt.assertion_kind)));
     object->set("pattern_index", j_int(stmt.pattern_index));
     if (stmt.let_adjustment.has_value()) {
@@ -1148,20 +1155,6 @@ class Reader {
         return *result;
     }
 
-    [[nodiscard]] bool
-    optional_bool_field(const Json &object, std::string_view key, bool default_value) {
-        const auto *value = field(object, key);
-        if (value == nullptr) {
-            return default_value;
-        }
-        const auto result = value->as_bool();
-        if (!result.has_value()) {
-            ok_ = false;
-            return default_value;
-        }
-        return *result;
-    }
-
     [[nodiscard]] std::int64_t int_field(const Json &object, std::string_view key) {
         const auto *value = field(object, key);
         if (value == nullptr) {
@@ -1203,17 +1196,6 @@ class Reader {
 
     [[nodiscard]] SourceRange range_field(const Json &object, std::string_view key) {
         return range_value(field(object, key));
-    }
-
-    [[nodiscard]] SourceRange optional_range_field(const Json &object, std::string_view key) {
-        const auto *value = field(object, key);
-        if (value == nullptr || value->kind != json::Kind::Object) {
-            return {};
-        }
-        return SourceRange{
-            .begin_offset = static_cast<std::size_t>(uint_field(*value, "begin")),
-            .end_offset = static_cast<std::size_t>(uint_field(*value, "end")),
-        };
     }
 
     [[nodiscard]] SourceRange range_value(const Json *value) {
@@ -1371,8 +1353,6 @@ class Reader {
                             type_field(*value, "return"),
                             effect_judgement_field(*value, "effect"));
         if (kind == "TypeVar")
-            // scope_id defaults to the unknown scope for artifacts written
-            // before RFC 0013 P2-S1 (R0).
             return types.type_var(u32_field(*value, "index"),
                                   u32_field(*value, "scope_id"),
                                   string_field(*value, "name"));
@@ -1401,9 +1381,9 @@ class Reader {
         return values;
     }
 
-    [[nodiscard]] std::optional<std::string> optional_string_field(const Json &object,
+    [[nodiscard]] std::optional<std::string> nullable_string_field(const Json &object,
                                                                    std::string_view key) {
-        const auto *value = object.get(key);
+        const auto *value = field(object, key);
         if (value == nullptr || value->is_null()) {
             return std::nullopt;
         }
@@ -1413,29 +1393,6 @@ class Reader {
             return std::nullopt;
         }
         return std::string{*text};
-    }
-
-    [[nodiscard]] std::uint32_t
-    optional_u32_field(const Json &object, std::string_view key, std::uint32_t default_value) {
-        const auto *value = object.get(key);
-        if (value == nullptr || value->is_null()) {
-            return default_value;
-        }
-        const auto integer = uint_value(value);
-        if (integer > std::numeric_limits<std::uint32_t>::max()) {
-            ok_ = false;
-            return default_value;
-        }
-        return static_cast<std::uint32_t>(integer);
-    }
-
-    [[nodiscard]] std::uint64_t
-    optional_u64_field(const Json &object, std::string_view key, std::uint64_t default_value) {
-        const auto *value = object.get(key);
-        if (value == nullptr || value->is_null()) {
-            return default_value;
-        }
-        return uint_value(value);
     }
 
     [[nodiscard]] std::vector<SymbolId> symbol_array_field(const Json &object,
@@ -1511,14 +1468,14 @@ class Reader {
     };
 }
 
-// RFC 0026 P4 (coercion): read a declaration-order variance vector. Only a
-// missing key or JSON null is "absent" (empty / legacy). A present value that is
+// RFC 0026 P4 (coercion): read a declaration-order variance vector. Only
+// explicit JSON null is absent. A present value that is
 // not an array, or any element that is not a known variance spelling, is a HARD
 // parse failure (Codex P0-2), not a silent Invariant.
 [[nodiscard]] std::vector<Variance>
 read_variance_array(Reader &reader, const Json &object, std::string_view key) {
     std::vector<Variance> values;
-    const auto *array = object.get(key);
+    const auto *array = reader.field(object, key);
     if (array == nullptr || array->is_null()) {
         return values;
     }
@@ -1638,6 +1595,7 @@ read_struct_fields(Reader &reader, const Json &object, std::string_view key) {
     std::vector<StructFieldInfo> values;
     const auto *array = reader.field(object, key);
     if (array == nullptr || array->kind != json::Kind::Array) {
+        reader.fail();
         return values;
     }
     values.reserve(array->array_items.size());
@@ -1652,6 +1610,7 @@ read_params(Reader &reader, const Json &object, std::string_view key) {
     std::vector<ParamTypeInfo> values;
     const auto *array = reader.field(object, key);
     if (array == nullptr || array->kind != json::Kind::Array) {
+        reader.fail();
         return values;
     }
     values.reserve(array->array_items.size());
@@ -1661,7 +1620,34 @@ read_params(Reader &reader, const Json &object, std::string_view key) {
     return values;
 }
 
-[[nodiscard]] CapabilityEffectTypeInfo read_capability_effect(Reader &reader, const Json &object) {
+[[nodiscard]] WhereClauseInfo read_where_clause(Reader &reader, const Json &object) {
+    WhereClauseInfo info;
+    const auto *bounds = reader.field(object, "where_clause");
+    if (bounds == nullptr || bounds->kind != json::Kind::Array) {
+        reader.fail();
+        return info;
+    }
+    info.bounds.reserve(bounds->array_items.size());
+    for (const auto &bound : bounds->array_items) {
+        if (bound == nullptr || bound->kind != json::Kind::Object) {
+            reader.fail();
+            return info;
+        }
+        info.bounds.push_back(WhereBoundInfo{
+            .subject_name = reader.string_field(*bound, "subject_name"),
+            .trait_names = reader.string_array_field(*bound, "trait_names"),
+            .source_range = reader.range_field(*bound, "source_range"),
+        });
+    }
+    return info;
+}
+
+[[nodiscard]] CapabilityEffectTypeInfo read_capability_effect(Reader &reader, const Json *value) {
+    if (value == nullptr || value->kind != json::Kind::Object) {
+        reader.fail();
+        return {};
+    }
+    const auto &object = *value;
     return CapabilityEffectTypeInfo{
         .declared = reader.bool_field(object, "declared"),
         .effect_kind = static_cast<int>(reader.int_field(object, "effect_kind")),
@@ -1736,9 +1722,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
             .local_name = reader.string_field(*value, "local_name"),
-            .type_param_names = value->get("type_param_names") == nullptr
-                                    ? std::vector<std::string>{}
-                                    : reader.string_array_field(*value, "type_param_names"),
+            .type_param_names = reader.string_array_field(*value, "type_param_names"),
             .aliased_type = reader.type_field(*value, "aliased_type"),
             .aliased_type_range = reader.range_field(*value, "aliased_type_range"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
@@ -1749,11 +1733,10 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         StructTypeInfo info{
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
-            .type_param_names = value->get("type_param_names") == nullptr
-                                    ? std::vector<std::string>{}
-                                    : reader.string_array_field(*value, "type_param_names"),
+            .type_param_names = reader.string_array_field(*value, "type_param_names"),
             .type_param_variances = read_variance_array(reader, *value, "type_param_variances"),
             .fields = read_struct_fields(reader, *value, "fields"),
+            .where_clause = read_where_clause(reader, *value),
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .field_index_ = {},
         };
@@ -1765,11 +1748,10 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         EnumTypeInfo info{
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
-            .type_param_names = value->get("type_param_names") == nullptr
-                                    ? std::vector<std::string>{}
-                                    : reader.string_array_field(*value, "type_param_names"),
+            .type_param_names = reader.string_array_field(*value, "type_param_names"),
             .type_param_variances = read_variance_array(reader, *value, "type_param_variances"),
             .variants = {},
+            .where_clause = read_where_clause(reader, *value),
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .variant_set_ = {},
         };
@@ -1829,8 +1811,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .canonical_name = reader.string_field(*value, "canonical_name"),
             .params = read_params(reader, *value, "params"),
             .return_type = reader.type_field(*value, "return_type"),
+            .where_clause = read_where_clause(reader, *value),
             .declaration_range = reader.range_field(*value, "declaration_range"),
-            .effect = read_capability_effect(reader, *reader.field(*value, "effect")),
+            .effect = read_capability_effect(reader, reader.field(*value, "effect")),
         };
     }
 
@@ -1945,7 +1928,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
 
     if (kind == "Contract") {
         ContractTypeInfo info{
-            .symbol = reader.symbol_id_field(*value, "symbol"),
+            .source_id = reader.optional_source_id_field(*value, "source_id"),
             .target_name = reader.string_field(*value, "target_name"),
             .target_symbol = reader.symbol_id_field(*value, "target_symbol"),
             .target_range = reader.range_field(*value, "target_range"),
@@ -1962,26 +1945,11 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                     .is_wildcard = reader.bool_field(*item, "is_wildcard"),
                     .expr_range = reader.range_field(*item, "expr_range"),
                     .source_range = reader.range_field(*item, "source_range"),
-                    // P4.S3 + P4.S6: decreases metadata; optional_* helpers handle
-                    // snapshots produced before this plumbing was introduced.
-                    .has_decreases = reader.optional_bool_field(*item, "has_decreases", false),
-                    .decreases_exprs = {},
-                    .decreases_is_wildcard =
-                        reader.optional_bool_field(*item, "decreases_is_wildcard", false),
+                    .has_decreases = reader.bool_field(*item, "has_decreases"),
+                    .decreases_is_wildcard = reader.bool_field(*item, "decreases_is_wildcard"),
                     .decreases_expr_ranges = {},
-                    .decreases_range = reader.optional_range_field(*item, "decreases_range"),
+                    .decreases_range = reader.range_field(*item, "decreases_range"),
                 };
-                // P4.S3 legacy payload (DecreasesExprInfo array)
-                if (const auto *decr_arr = reader.field(*item, "decreases_exprs");
-                    decr_arr != nullptr && decr_arr->kind == json::Kind::Array) {
-                    clause_info.decreases_exprs.reserve(decr_arr->array_items.size());
-                    for (const auto &decr_item : decr_arr->array_items) {
-                        clause_info.decreases_exprs.push_back(DecreasesExprInfo{
-                            .expr_range = reader.range_value(decr_item.get()),
-                        });
-                    }
-                }
-                // P4.S6 canonical payload (plain SourceRange array)
                 const auto *ranges = reader.field(*item, "decreases_expr_ranges");
                 if (ranges != nullptr && ranges->kind == json::Kind::Array) {
                     clause_info.decreases_expr_ranges.reserve(ranges->array_items.size());
@@ -2005,6 +1973,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .return_type = reader.type_field(*value, "return_type"),
             .return_type_range = reader.range_field(*value, "return_type_range"),
             .type_param_names = {},
+            .where_clause = read_where_clause(reader, *value),
             .effect =
                 FnEffectClauseInfo{
                     .kind = 0,
@@ -2013,11 +1982,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 },
             .has_body = reader.bool_field(*value, "has_body"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
-            .builtin_name = reader.optional_string_field(*value, "builtin_name"),
-            .body_block_index = reader.optional_u32_field(*value, "body_block_index", UINT32_MAX),
+            .builtin_name = reader.nullable_string_field(*value, "builtin_name"),
+            .body_block_index = reader.u32_field(*value, "body_block_index"),
         };
-        // type_param_names: tolerate legacy snapshots where the field was
-        // missing instead of an empty array.
         if (const auto *tps = reader.field(*value, "type_param_names");
             tps != nullptr && tps->kind == json::Kind::Array) {
             info.type_param_names = reader.string_array_field(*value, "type_param_names");
@@ -2043,14 +2010,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                     info.effect.capabilities.push_back(reader.symbol_id_value(item.get()));
                 }
             }
-            // P3c (effects judgement) + P4.S6 decreases: round-trip fields
-            // added after the baseline snapshot was produced. Missing fields
-            // default to Pure / false so legacy snapshots still parse.
-            const auto *jk_field = reader.field(*effect_obj, "judgement_kind");
-            const auto jk_int =
-                jk_field != nullptr
-                    ? static_cast<int>(reader.int_field(*effect_obj, "judgement_kind"))
-                    : static_cast<int>(EffectJudgement::Kind::Pure);
+            const auto jk_int = static_cast<int>(reader.int_field(*effect_obj, "judgement_kind"));
             CapabilitySymbolSet j_caps;
             if (const auto *jc = reader.field(*effect_obj, "judgement_capabilities");
                 jc != nullptr && jc->kind == json::Kind::Array) {
@@ -2072,8 +2032,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 info.effect.judgement = EffectJudgement::make_capability_set(std::move(j_caps));
                 break;
             }
-            info.effect.has_decreases =
-                reader.optional_bool_field(*effect_obj, "has_decreases", false);
+            info.effect.has_decreases = reader.bool_field(*effect_obj, "has_decreases");
         }
         return info;
     }
@@ -2082,12 +2041,12 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         TraitTypeInfo info{
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
-            .local_name = reader.optional_string_field(*value, "local_name").value_or(""),
+            .local_name = reader.string_field(*value, "local_name"),
             .type_param_names = {},
             .super_traits = {},
             .methods = {},
             .assoc_types = {},
-            .where_clause = {},
+            .where_clause = read_where_clause(reader, *value),
             .declaration_range = reader.range_field(*value, "declaration_range"),
         };
         if (const auto *tps = reader.field(*value, "type_param_names");
@@ -2099,20 +2058,6 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             info.super_traits.reserve(sts->array_items.size());
             for (const auto &item : sts->array_items) {
                 info.super_traits.push_back(reader.symbol_id_value(item.get()));
-            }
-        }
-        if (const auto *arr = reader.field(*value, "where_clause");
-            arr != nullptr && arr->kind == json::Kind::Array) {
-            info.where_clause.bounds.reserve(arr->array_items.size());
-            for (const auto &item : arr->array_items) {
-                WhereBoundInfo b;
-                b.subject_name = reader.string_field(*item, "subject_name");
-                if (const auto *tn = reader.field(*item, "trait_names");
-                    tn != nullptr && tn->kind == json::Kind::Array) {
-                    b.trait_names = reader.string_array_field(*item, "trait_names");
-                }
-                b.source_range = reader.range_field(*item, "source_range");
-                info.where_clause.bounds.push_back(std::move(b));
             }
         }
         if (const auto *methods = reader.field(*value, "methods");
@@ -2164,7 +2109,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
 
     if (kind == "Impl") {
         ImplTypeInfo info{
-            .index = static_cast<std::size_t>(reader.optional_u64_field(*value, "index", 0)),
+            .index = static_cast<std::size_t>(reader.uint_field(*value, "index")),
             .is_inherent = reader.bool_field(*value, "is_inherent"),
             .trait_symbol = reader.optional_symbol_id_field(*value, "trait_symbol"),
             .trait_name = reader.string_field(*value, "trait_name"),
@@ -2177,8 +2122,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .trait_ref_range = reader.range_field(*value, "trait_ref_range"),
             .target_type_range = reader.range_field(*value, "target_type_range"),
             .source_id = std::nullopt,
-            .package_prefix = reader.optional_string_field(*value, "package_prefix").value_or(""),
-            .module_name = reader.optional_string_field(*value, "module_name").value_or(""),
+            .package_prefix = reader.string_field(*value, "package_prefix"),
+            .module_name = reader.string_field(*value, "module_name"),
         };
         if (const auto *tps = reader.field(*value, "type_param_names");
             tps != nullptr && tps->kind == json::Kind::Array) {
@@ -2191,15 +2136,13 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ImplMethodInfo m;
                 m.name = reader.string_field(*item, "name");
                 m.symbol = reader.symbol_id_field(*item, "symbol");
-                m.visibility = visibility_from_string(
-                    reader.optional_string_field(*item, "visibility").value_or(""));
+                m.visibility = visibility_from_string(reader.string_field(*item, "visibility"));
                 m.return_type = reader.type_field(*item, "return_type");
                 m.return_type_range = reader.range_field(*item, "return_type_range");
-                m.has_body = reader.optional_bool_field(*item, "has_body", false);
+                m.has_body = reader.bool_field(*item, "has_body");
                 m.declaration_range = reader.range_field(*item, "declaration_range");
-                m.builtin_name = reader.optional_string_field(*item, "builtin_name");
-                m.body_block_index =
-                    reader.optional_u32_field(*item, "body_block_index", UINT32_MAX);
+                m.builtin_name = reader.nullable_string_field(*item, "builtin_name");
+                m.body_block_index = reader.u32_field(*item, "body_block_index");
                 if (const auto *tps = reader.field(*item, "type_param_names");
                     tps != nullptr && tps->kind == json::Kind::Array) {
                     m.type_param_names = reader.string_array_field(*item, "type_param_names");
@@ -2225,8 +2168,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ImplAssocItemInfo a;
                 a.name = reader.string_field(*item, "name");
                 a.type = reader.type_field(*item, "type");
-                a.visibility = visibility_from_string(
-                    reader.optional_string_field(*item, "visibility").value_or(""));
+                a.visibility = visibility_from_string(reader.string_field(*item, "visibility"));
                 a.declaration_range = reader.range_field(*item, "declaration_range");
                 info.assoc_items.push_back(std::move(a));
             }
@@ -2316,14 +2258,82 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
 
 [[nodiscard]] std::optional<ConstValue> read_optional_const_value(Reader &reader,
                                                                   const Json &object) {
-    const auto *value = object.get("const_value");
+    const auto *value = reader.field(object, "const_value");
     if (value == nullptr || value->is_null()) {
         return std::nullopt;
     }
     if (value->kind != json::Kind::Object) {
+        reader.fail();
         return std::nullopt;
     }
     return read_const_value(reader, *value);
+}
+
+[[nodiscard]] std::optional<TypedTryInfo> read_try_info(Reader &reader, const Json &object) {
+    const auto *try_json = reader.field(object, "try_info");
+    if (try_json == nullptr) {
+        return std::nullopt;
+    }
+    if (try_json->is_null()) {
+        if (static_cast<ast::ExprSyntaxKind>(reader.uint_field(object, "kind")) ==
+            ast::ExprSyntaxKind::Try) {
+            reader.fail();
+        }
+        return std::nullopt;
+    }
+    if (try_json->kind != json::Kind::Object) {
+        reader.fail();
+        return std::nullopt;
+    }
+    const auto kind = reader.uint_field(*try_json, "kind");
+    if (kind > std::to_underlying(TypedTryKind::Result) ||
+        static_cast<ast::ExprSyntaxKind>(reader.uint_field(object, "kind")) !=
+            ast::ExprSyntaxKind::Try) {
+        reader.fail();
+        return std::nullopt;
+    }
+    TypedTryInfo info{
+        .kind = static_cast<TypedTryKind>(kind),
+        .operand_enum_type = reader.type_field(*try_json, "operand_enum_type"),
+        .return_enum_type = reader.type_field(*try_json, "return_enum_type"),
+        .owner = reader.symbol_id_field(*try_json, "owner"),
+        .failure_adjustment = std::nullopt,
+    };
+    const auto *adjustment = reader.field(*try_json, "failure_adjustment");
+    if (adjustment != nullptr && !adjustment->is_null()) {
+        if (adjustment->kind != json::Kind::Object) {
+            reader.fail();
+            return std::nullopt;
+        }
+        info.failure_adjustment = read_adjustment_plan(reader, *adjustment);
+    }
+    if (info.operand_enum_type == nullptr || info.return_enum_type == nullptr ||
+        !info.operand_enum_type->holds<types::EnumT>() ||
+        !info.return_enum_type->holds<types::EnumT>()) {
+        reader.fail();
+        return info;
+    }
+    const auto &operand = *info.operand_enum_type->get_if<types::EnumT>();
+    const auto &returned = *info.return_enum_type->get_if<types::EnumT>();
+    const std::size_t arity = info.kind == TypedTryKind::Option ? 1 : 2;
+    if (operand.symbol != info.owner || returned.symbol != info.owner ||
+        operand.type_args.size() != arity || returned.type_args.size() != arity ||
+        std::ranges::any_of(operand.type_args, [](TypePtr arg) { return arg == nullptr; }) ||
+        std::ranges::any_of(returned.type_args, [](TypePtr arg) { return arg == nullptr; })) {
+        reader.fail();
+        return info;
+    }
+    if (info.kind == TypedTryKind::Result && operand.type_args[1] != returned.type_args[1] &&
+        !info.failure_adjustment.has_value()) {
+        reader.fail();
+    }
+    if (info.failure_adjustment.has_value() &&
+        (info.kind != TypedTryKind::Result ||
+         info.failure_adjustment->source != operand.type_args[1] ||
+         info.failure_adjustment->target != returned.type_args[1])) {
+        reader.fail();
+    }
+    return info;
 }
 
 [[nodiscard]] TypedExpr read_expr(Reader &reader, const Json &object) {
@@ -2358,10 +2368,10 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .enum_variant_owner = reader.optional_symbol_id_field(object, "enum_variant_owner"),
         .enum_variant_owner_name = reader.string_field(object, "enum_variant_owner_name"),
         .enum_variant_name = reader.string_field(object, "enum_variant_name"),
-        .enum_variant_payload_kind =
-            reader.template optional_enum_field<EnumVariantPayloadKind>(object,
-                                                                       "enum_variant_payload_kind"),
+        .enum_variant_payload_kind = reader.template optional_enum_field<EnumVariantPayloadKind>(
+            object, "enum_variant_payload_kind"),
         .match_arm_pattern_indexes = reader.index_array_field(object, "match_arm_pattern_indexes"),
+        .try_info = read_try_info(reader, object),
     };
 
     // C-5 (Wave-24): deserialize dispatch_target for MethodCall expressions.
@@ -2440,16 +2450,56 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
 }
 
 [[nodiscard]] TypedDecl read_decl(Reader &reader, const Json &object) {
-    return TypedDecl{
-        .kind = static_cast<ast::NodeKind>(reader.uint_field(object, "kind")),
-        .symbol = reader.symbol_id_field(object, "symbol"),
+    const auto kind = reader.uint_field(object, "kind");
+    if (kind > static_cast<std::uint64_t>(ast::NodeKind::ImplDecl)) {
+        reader.fail();
+        return {};
+    }
+    TypedDecl decl{
+        .kind = static_cast<ast::NodeKind>(kind),
+        .symbol = reader.optional_symbol_id_field(object, "symbol"),
         .range = reader.range_field(object, "range"),
         .source_id = reader.optional_source_id_field(object, "source_id"),
         .associated_agent_symbol =
             reader.optional_symbol_id_field(object, "associated_agent_symbol"),
         .type = reader.type_field(object, "type"),
-        .payload = read_payload(reader, *reader.field(object, "payload")),
+        .payload = [&]() -> TypedDeclPayload {
+            const auto *payload = reader.field(object, "payload");
+            return payload == nullptr ? TypedDeclPayload{} : read_payload(reader, *payload);
+        }(),
     };
+    // A declaration's own definition identity is distinct from its optional
+    // agent association. Zero is a real SymbolId, never an absence marker.
+    switch (decl.kind) {
+    case ast::NodeKind::ModuleDecl:
+    case ast::NodeKind::ImportDecl:
+    case ast::NodeKind::ImplDecl:
+    case ast::NodeKind::ContractDecl:
+    case ast::NodeKind::FlowDecl:
+        if (decl.symbol.has_value()) {
+            reader.fail();
+        }
+        break;
+    case ast::NodeKind::ConstDecl:
+    case ast::NodeKind::TypeAliasDecl:
+    case ast::NodeKind::StructDecl:
+    case ast::NodeKind::EnumDecl:
+    case ast::NodeKind::CapabilityDecl:
+    case ast::NodeKind::PredicateDecl:
+    case ast::NodeKind::AgentDecl:
+    case ast::NodeKind::WorkflowDecl:
+    case ast::NodeKind::FnDecl:
+    case ast::NodeKind::TraitDecl:
+        if (!decl.symbol.has_value()) {
+            reader.fail();
+        }
+        break;
+    case ast::NodeKind::Program:
+    case ast::NodeKind::UseDecl:
+        reader.fail();
+        break;
+    }
+    return decl;
 }
 
 [[nodiscard]] TypedBlock read_block(Reader &reader, const Json &object) {
@@ -2461,6 +2511,10 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
 }
 
 [[nodiscard]] TypedStatement read_statement(Reader &reader, const Json &object) {
+    const auto assertion_kind = reader.uint_field(object, "assertion_kind");
+    if (assertion_kind > static_cast<std::uint64_t>(AssertionKind::Unreachable)) {
+        reader.fail();
+    }
     return TypedStatement{
         .kind = static_cast<TypedStmtKind>(reader.uint_field(object, "kind")),
         .range = reader.range_field(object, "range"),
@@ -2477,28 +2531,22 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .assign_target_root_kind =
             static_cast<AssignTargetRootKind>(reader.uint_field(object, "assign_target_root_kind")),
         .assert_message = reader.string_field(object, "assert_message"),
-        // N-5: prefer new enum field; fall back to legacy string field so
-        // JSON archives produced before Wave-20 round-trip correctly.
-        .assertion_kind =
-            object.get("assertion_kind") != nullptr
-                ? static_cast<AssertionKind>(reader.int_field(object, "assertion_kind"))
-                : parse_assertion_kind(reader.string_field(object, "failure_kind")),
-        .pattern_index = reader.optional_u32_field(object, "pattern_index", UINT32_MAX),
-        .let_adjustment =
-            [&]() -> std::optional<TypedAdjustmentPlan> {
-                // Optional (Codex P0-2): only a missing key or JSON null is
-                // "absent". A present value of the wrong kind (not an object) is a
-                // hard failure, never a silent nullopt drop of a real plan.
-                const auto *plan = object.get("let_adjustment");
-                if (plan == nullptr || plan->is_null()) {
-                    return std::nullopt;
-                }
-                if (plan->kind != json::Kind::Object) {
-                    reader.fail();
-                    return std::nullopt;
-                }
-                return read_adjustment_plan(reader, *plan);
-            }(),
+        .assertion_kind = static_cast<AssertionKind>(assertion_kind),
+        .pattern_index = reader.u32_field(object, "pattern_index"),
+        .let_adjustment = [&]() -> std::optional<TypedAdjustmentPlan> {
+            // Nullable: only explicit JSON null is
+            // "absent". A present value of the wrong kind (not an object) is a
+            // hard failure, never a silent nullopt drop of a real plan.
+            const auto *plan = reader.field(object, "let_adjustment");
+            if (plan == nullptr || plan->is_null()) {
+                return std::nullopt;
+            }
+            if (plan->kind != json::Kind::Object) {
+                reader.fail();
+                return std::nullopt;
+            }
+            return read_adjustment_plan(reader, *plan);
+        }(),
     };
 }
 
@@ -2533,9 +2581,9 @@ read_array(Reader &reader, const Json &object, std::string_view key, Fn fn) {
 
 std::string serialize_typed_program_json(const TypedProgram &program) {
     auto root = Json::make_object();
-    root->set("format", Json::make_string("AHFL_TYPED_HIR_V1"));
-    root->set("const_value_artifact_schema",
-              Json::make_string(std::string(kConstValueArtifactSchemaVersion)));
+    root->set("format", Json::make_string("ahfl.typed-hir"));
+    root->set("const_value_artifact_format",
+              Json::make_string(std::string(kConstValueArtifactFormat)));
     root->set("symbols", j_array(program.symbols, j_symbol));
     root->set("references", j_array(program.references, j_reference));
     root->set("imports", j_array(program.imports, j_import));
@@ -2555,10 +2603,10 @@ namespace {
 
 [[nodiscard]] std::unique_ptr<Json> j_cache_metadata(const TypedProgramCacheMetadata &metadata) {
     auto object = Json::make_object();
-    object->set("schema_version", Json::make_string(metadata.schema_version));
-    object->set("source_graph_revision", Json::make_string(metadata.source_graph_revision));
-    object->set("source_content_hash", Json::make_string(metadata.source_content_hash));
-    object->set("resolver_snapshot_version", Json::make_string(metadata.resolver_snapshot_version));
+    object->set("format", Json::make_string(metadata.format));
+    object->set("source_graph_digest", Json::make_string(metadata.source_graph_digest));
+    object->set("source_content_digest", Json::make_string(metadata.source_content_digest));
+    object->set("resolver_snapshot_digest", Json::make_string(metadata.resolver_snapshot_digest));
     return object;
 }
 
@@ -2570,11 +2618,10 @@ namespace {
     }
 
     TypedProgramCacheMetadata metadata{
-        .schema_version = reader.string_field(*metadata_json, "schema_version"),
-        .source_graph_revision = reader.string_field(*metadata_json, "source_graph_revision"),
-        .source_content_hash = reader.string_field(*metadata_json, "source_content_hash"),
-        .resolver_snapshot_version =
-            reader.string_field(*metadata_json, "resolver_snapshot_version"),
+        .format = reader.string_field(*metadata_json, "format"),
+        .source_graph_digest = reader.string_field(*metadata_json, "source_graph_digest"),
+        .source_content_digest = reader.string_field(*metadata_json, "source_content_digest"),
+        .resolver_snapshot_digest = reader.string_field(*metadata_json, "resolver_snapshot_digest"),
     };
     if (!reader.ok()) {
         return std::nullopt;
@@ -2585,20 +2632,49 @@ namespace {
 [[nodiscard]] TypedProgramCacheLoadStatus
 cache_metadata_status(const TypedProgramCacheMetadata &actual,
                       const TypedProgramCacheMetadata &expected) {
-    if (actual.schema_version != expected.schema_version ||
-        actual.schema_version != kTypedProgramCacheSchemaVersion) {
-        return TypedProgramCacheLoadStatus::SchemaMismatch;
+    if (actual.format != expected.format || actual.format != kTypedProgramCacheFormat) {
+        return TypedProgramCacheLoadStatus::FormatMismatch;
     }
-    if (actual.source_graph_revision != expected.source_graph_revision) {
-        return TypedProgramCacheLoadStatus::SourceRevisionMismatch;
+    if (actual.source_graph_digest != expected.source_graph_digest) {
+        return TypedProgramCacheLoadStatus::SourceGraphMismatch;
     }
-    if (actual.source_content_hash != expected.source_content_hash) {
-        return TypedProgramCacheLoadStatus::SourceContentHashMismatch;
+    if (actual.source_content_digest != expected.source_content_digest) {
+        return TypedProgramCacheLoadStatus::SourceContentDigestMismatch;
     }
-    if (actual.resolver_snapshot_version != expected.resolver_snapshot_version) {
+    if (actual.resolver_snapshot_digest != expected.resolver_snapshot_digest) {
         return TypedProgramCacheLoadStatus::ResolverSnapshotMismatch;
     }
     return TypedProgramCacheLoadStatus::Hit;
+}
+
+// Every current writer field is mandatory, including nullable fields. Derive
+// the structural check from that writer so ignored unknown fields and old
+// missing fields cannot normalize into a successful current artifact.
+[[nodiscard]] bool matches_current_structure(const Json &input, const Json &current) {
+    if (input.kind != current.kind) {
+        return false;
+    }
+    if (input.is_object()) {
+        if (input.object_fields.size() != current.object_fields.size()) {
+            return false;
+        }
+        for (const auto &[name, value] : current.object_fields) {
+            const auto *actual = input.get(name);
+            if (actual == nullptr || !matches_current_structure(*actual, *value)) {
+                return false;
+            }
+        }
+    } else if (input.is_array()) {
+        if (input.array_items.size() != current.array_items.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < current.array_items.size(); ++i) {
+            if (!matches_current_structure(*input.array_items[i], *current.array_items[i])) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -2614,11 +2690,10 @@ std::optional<TypedProgram> deserialize_typed_program_json(std::string_view json
     if (root.kind != json::Kind::Object) {
         return std::nullopt;
     }
-    if (reader.string_field(root, "format") != "AHFL_TYPED_HIR_V1") {
+    if (reader.string_field(root, "format") != "ahfl.typed-hir") {
         return std::nullopt;
     }
-    if (reader.string_field(root, "const_value_artifact_schema") !=
-        kConstValueArtifactSchemaVersion) {
+    if (reader.string_field(root, "const_value_artifact_format") != kConstValueArtifactFormat) {
         return std::nullopt;
     }
 
@@ -2634,18 +2709,18 @@ std::optional<TypedProgram> deserialize_typed_program_json(std::string_view json
     program.statements = read_array<TypedStatement>(reader, root, "statements", read_statement);
     program.temporal_exprs =
         read_array<TypedTemporalExpr>(reader, root, "temporal_exprs", read_temporal);
-    if (root.get("patterns") != nullptr) {
-        program.patterns = read_array<TypedPattern>(reader, root, "patterns", read_pattern);
-    }
-    if (root.get("fn_call_sites") != nullptr) {
-        program.fn_call_sites = read_array<TypedProgram::FnCallSiteRecord>(
-            reader, root, "fn_call_sites", read_fn_call_site);
-    }
+    program.patterns = read_array<TypedPattern>(reader, root, "patterns", read_pattern);
+    program.fn_call_sites = read_array<TypedProgram::FnCallSiteRecord>(
+        reader, root, "fn_call_sites", read_fn_call_site);
 
     if (!reader.ok()) {
         return std::nullopt;
     }
 
+    const auto current = json::parse_json(serialize_typed_program_json(program));
+    if (!current.has_value() || !matches_current_structure(root, **current)) {
+        return std::nullopt;
+    }
     program.rebuild_indices();
     return program;
 }
@@ -2654,7 +2729,7 @@ std::string serialize_typed_program_cache_json(const TypedProgram &program,
                                                const TypedProgramCacheMetadata &metadata) {
     auto typed_program_json = json::parse_json(serialize_typed_program_json(program));
     auto root = Json::make_object();
-    root->set("format", Json::make_string(std::string(kTypedProgramCacheSchemaVersion)));
+    root->set("format", Json::make_string(std::string(kTypedProgramCacheFormat)));
     root->set("metadata", j_cache_metadata(metadata));
     root->set("typed_program",
               typed_program_json.has_value() ? std::move(*typed_program_json) : Json::make_null());
@@ -2671,8 +2746,8 @@ load_typed_program_cache_json(std::string_view json_text,
 
     Reader reader;
     const auto &root = **parsed;
-    if (reader.string_field(root, "format") != kTypedProgramCacheSchemaVersion) {
-        return {.status = TypedProgramCacheLoadStatus::SchemaMismatch, .program = std::nullopt};
+    if (reader.string_field(root, "format") != kTypedProgramCacheFormat) {
+        return {.status = TypedProgramCacheLoadStatus::FormatMismatch, .program = std::nullopt};
     }
 
     auto metadata = read_cache_metadata(reader, root);
@@ -2695,6 +2770,10 @@ load_typed_program_cache_json(std::string_view json_text,
         return {.status = TypedProgramCacheLoadStatus::InvalidPayload, .program = std::nullopt};
     }
 
+    const auto current = json::parse_json(serialize_typed_program_cache_json(*program, *metadata));
+    if (!current.has_value() || !matches_current_structure(root, **current)) {
+        return {.status = TypedProgramCacheLoadStatus::InvalidPayload, .program = std::nullopt};
+    }
     return {.status = TypedProgramCacheLoadStatus::Hit, .program = std::move(program)};
 }
 

@@ -1,7 +1,7 @@
 // RFC 0026 KR6.5 E4-B2-D2b foundation tests for the pure IdempotencyToken
 // authority. Hand-rolled check()/main(). Pins the LOCKED seam-doc preimage
 // (docs/design/core-ir-kr6-5-e4b-wire-resume-seam.zh.md section 3): the exact
-// 103-byte layout, little-endian order, the 19-byte ASCII domain, one-bit
+// 100-byte layout, little-endian order, the 16-byte ASCII domain, one-bit
 // sensitivity of every coordinate field, the raw-bytes-only 16-byte authority
 // identity, legal zero coordinates, and the fixed-vector separation from the
 // native process-local FNV-1a u64 idempotency identity. FOUNDATION only: no VM,
@@ -44,16 +44,16 @@ void check(bool ok, std::string_view name) {
     }
 }
 
-constexpr std::string_view kDomain{"AHFL-IDEMPOTENCY-v1"};
+constexpr std::string_view kDomain{"AHFL-IDEMPOTENCY"};
 
-void put_u32_le(std::array<std::uint8_t, 103> &buf, std::size_t off, std::uint32_t v) {
+void put_u32_le(std::array<std::uint8_t, 100> &buf, std::size_t off, std::uint32_t v) {
     buf[off + 0] = static_cast<std::uint8_t>(v & 0xFFu);
     buf[off + 1] = static_cast<std::uint8_t>((v >> 8) & 0xFFu);
     buf[off + 2] = static_cast<std::uint8_t>((v >> 16) & 0xFFu);
     buf[off + 3] = static_cast<std::uint8_t>((v >> 24) & 0xFFu);
 }
 
-void put_u64_le(std::array<std::uint8_t, 103> &buf, std::size_t off, std::uint64_t v) {
+void put_u64_le(std::array<std::uint8_t, 100> &buf, std::size_t off, std::uint64_t v) {
     for (std::size_t i = 0; i < 8; ++i) {
         buf[off + i] = static_cast<std::uint8_t>((v >> (i * 8)) & 0xFFu);
     }
@@ -61,7 +61,7 @@ void put_u64_le(std::array<std::uint8_t, 103> &buf, std::size_t off, std::uint64
 
 // Independent hand-assembly of the exact seam-doc preimage.
 Sha256Digest independent_preimage_hash(const IdempotencyCoordinate &c) {
-    std::array<std::uint8_t, 103> preimage{};
+    std::array<std::uint8_t, 100> preimage{};
     std::size_t pos = 0;
     for (char ch : kDomain) {
         preimage[pos++] = static_cast<std::uint8_t>(ch);
@@ -84,7 +84,7 @@ Sha256Digest independent_preimage_hash(const IdempotencyCoordinate &c) {
     for (std::uint8_t b : c.param_digest) {
         preimage[pos++] = b;
     }
-    check(pos == 103, "independent_preimage_is_103_bytes");
+    check(pos == 100, "independent_preimage_is_103_bytes");
     return sha256(std::span<const std::uint8_t>{preimage});
 }
 
@@ -155,8 +155,8 @@ std::uint64_t native_fnv_idempotency_key(std::size_t workflow_index,
 int main() {
     // ---- (a) KAT: independent hand-assembly of the exact preimage ----------
     {
-        check(kDomain.size() == 19, "domain_is_exactly_19_bytes");
-        check(kDomain == "AHFL-IDEMPOTENCY-v1", "domain_spelling");
+        check(kDomain.size() == 16, "domain_is_exactly_19_bytes");
+        check(kDomain == "AHFL-IDEMPOTENCY", "domain_spelling");
 
         const IdempotencyCoordinate c = baseline_coordinate();
         const IdempotencyToken token = compute_idempotency_token(c);
@@ -177,7 +177,7 @@ int main() {
         // an independent SHA-256 implementation over the hand-assembled
         // preimage: a silent layout/order/domain change cannot pass on two
         // agreeing in-process implementations.
-        check(hex == "589bbe289f16bb74dd7fa431d6b5483a1c2fba9e55d2e07c6a4576b0fd938127",
+        check(hex == "b15699df6549a36bfcd9dff8c4b0bbe2c03b244de9efe19cc255bc99336a3f16",
               "pinned_baseline_kat_digest");
     }
 

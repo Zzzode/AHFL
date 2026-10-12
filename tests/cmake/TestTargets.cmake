@@ -41,7 +41,7 @@ add_executable(ahfl_compiler_ir_tests
     unit/compiler/ir/core_lower.cpp
     unit/compiler/ir/core_lower_sysroot.cpp
     unit/compiler/ir/core_verify.cpp
-    unit/compiler/ir/core_wire_migration.cpp
+    unit/compiler/ir/core_wire_projection.cpp
     unit/compiler/ir/core_wire_schema.cpp
     unit/compiler/ir/identity_visitor.cpp
     unit/compiler/ir/mangling.cpp
@@ -124,14 +124,14 @@ target_link_libraries(ahfl_compiler_handoff_package_tests
 )
 ahfl_apply_project_warnings(ahfl_compiler_handoff_package_tests)
 
-add_executable(ahfl_compiler_handoff_package_compat_tests
-    unit/compiler/handoff/package_compat.cpp
+add_executable(ahfl_compiler_handoff_package_projection_tests
+    unit/compiler/handoff/package_projection.cpp
 )
-target_link_libraries(ahfl_compiler_handoff_package_compat_tests
+target_link_libraries(ahfl_compiler_handoff_package_projection_tests
     PRIVATE
         ahfl_compiler_backend_pipeline_handoff
 )
-ahfl_apply_project_warnings(ahfl_compiler_handoff_package_compat_tests)
+ahfl_apply_project_warnings(ahfl_compiler_handoff_package_projection_tests)
 
 add_executable(ahfl_dry_run_tests
     unit/pipeline/execution/dry_run/runner.cpp
@@ -547,6 +547,20 @@ target_link_libraries(ahfl_runtime_provider_llm_tests
 )
 ahfl_apply_project_warnings(ahfl_runtime_provider_llm_tests)
 
+add_executable(ahfl_runtime_llm_session_tests
+    unit/runtime/providers/llm/llm_session.cpp
+)
+target_link_libraries(ahfl_runtime_llm_session_tests PRIVATE ahfl_runtime_provider_llm)
+ahfl_apply_project_warnings(ahfl_runtime_llm_session_tests)
+
+add_executable(ahfl_cli_llm_run_lease_tests
+    unit/tooling/cli/llm_run_lease.cpp
+    ${PROJECT_SOURCE_DIR}/src/tooling/cli/llm_run_lease.cpp
+)
+target_link_libraries(ahfl_cli_llm_run_lease_tests PRIVATE ahfl_base_json ahfl_base_support)
+target_include_directories(ahfl_cli_llm_run_lease_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_cli_llm_run_lease_tests)
+
 # KR6.8 WH-9: the soak worker drives the embedded wasm3 runtime, so the
 # target exists only when the wasm backend is enabled.
 if(AHFL_ENABLE_BACKEND_WASM)
@@ -632,6 +646,9 @@ target_link_libraries(ahfl_counterexample_parse_tests
     PRIVATE
         ahfl_verification_formal
 )
+if(TARGET ahfl_compiler_backend_smv)
+    target_compile_definitions(ahfl_counterexample_parse_tests PRIVATE AHFL_ENABLE_BACKEND_FORMAL=1)
+endif()
 ahfl_apply_project_warnings(ahfl_counterexample_parse_tests)
 
 add_executable(ahfl_smt_encode_tests
@@ -1532,15 +1549,6 @@ target_link_libraries(ahfl_tooling_profiling_tests
 )
 ahfl_apply_project_warnings(ahfl_tooling_profiling_tests)
 
-add_executable(ahfl_tooling_abi_tests
-    unit/tooling/abi/abi_compat.cpp
-)
-target_link_libraries(ahfl_tooling_abi_tests
-    PRIVATE
-        ahfl_tooling_abi
-)
-ahfl_apply_project_warnings(ahfl_tooling_abi_tests)
-
 # RFC 0016 cache contract tests for the QueryEngine persistence layer
 # (RFC 0027 P5 / KR6.12). The hand-rolled incremental subsystem they used to
 # live beside is retired; only the deterministic persistent-cache contract
@@ -1638,7 +1646,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
 
     # RFC 0026 KR6.8 WH-4: the state-trace ring decoder tests. Emits REAL
     # P6-frame workflow modules in-process through the wasm backend, drives
-    # them on the real wasm3 engine through run2, and decodes the guest-written
+    # them on the real wasm3 engine through run_workflow, and decodes the guest-written
     # trace ring + node-event buffer. Links the wasm host target (decoder +
     # packer + engine), the wasm backend (emit_core_wasm), the engine
     # (node-event decoder), and the value SSOT (input construction).
@@ -1662,7 +1670,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_apply_project_warnings(ahfl_wasm_host_state_trace_tests)
 
     # RFC 0026 KR6.8 WH-4: the observation emitter tests. Pins the emitted
-    # ahfl.node-observation.v1 document byte-for-byte against the JS oracle's
+    # ahfl.node-observation document byte-for-byte against the JS oracle's
     # emitObservation (sorted keys, string escaping, raw-value embedding).
     add_executable(ahfl_wasm_host_observation_emitter_tests
         unit/runtime/wasm_host/observation_emitter.cpp
@@ -1791,8 +1799,8 @@ if(AHFL_ENABLE_BACKEND_WASM)
 
     # RFC 0026 KR6.8 WH-3: end-to-end resume test over the REAL wasm3 engine
     # with the production capability-import executor as the import callback.
-    # Drives the full invoke_run2 path (module -> import -> executor ->
-    # invoker -> reply -> classifier -> run2-return) for both lanes (opaque +
+    # Drives the full invoke_run_workflow path (module -> import -> executor ->
+    # invoker -> reply -> classifier -> run_workflow-return) for both lanes (opaque +
     # bridge), the Suspended->Injected->Consumed replay flow, and ImportAbort
     # on engine fault. Links the wasm host target (executor + engine), the
     # engine (A2 admission + schema module), the value SSOT (mock invoker
@@ -1941,7 +1949,7 @@ ahfl_apply_project_warnings(ahfl_property_smv_tests)
 # Test targets that directly include internal src/ headers need PRIVATE access
 foreach(_tgt
     ahfl_dry_run_tests
-    ahfl_compiler_handoff_package_compat_tests
+    ahfl_compiler_handoff_package_projection_tests
     ahfl_compiler_backends_registry_tests
     ahfl_cli_command_routing_tests
     ahfl_workflow_recovery_tests
@@ -2034,7 +2042,6 @@ foreach(_tgt
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests
     ahfl_tooling_profiling_tests
-    ahfl_tooling_abi_tests
     ahfl_tooling_cache_tests
     ahfl_tooling_package_tests
     ahfl_property_lowering_tests

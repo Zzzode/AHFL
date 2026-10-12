@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -53,6 +54,7 @@ def main() -> int:
     tests = run(
         [
             "ctest",
+            f"-j{os.cpu_count() or 1}",
             "--test-dir",
             str(build),
             "--output-on-failure",
@@ -124,7 +126,7 @@ def main() -> int:
             raise RuntimeError(f"missing canonical stdlib container identity: {canonical_name}")
 
     value: dict[str, object] = {
-        "schema": "ahfl.beta-evidence.stdlib-container-migration.v1",
+        "format": "ahfl.beta-evidence.stdlib-container-migration",
         "status": "passed",
         "criterion": "BETA-06",
         "source_revision": args.source_revision or compute_source_revision(repo),

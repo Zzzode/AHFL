@@ -5,7 +5,7 @@ Runs `ahflc emit opt-ir -O --pass-trace-export <tmp> <fixture>` and validates
 the emitted JSON document:
 
   1. Well-formed JSON.
-  2. schema == "ahfl.pass_trace.v2" and optimized == true.
+  2. schema == "ahfl.pass_trace" and optimized == true.
   3. total_ms / semantic_ms / function_ms are numbers; passes is a non-empty
      list; functions is a list (non-empty for the emit-opt-ir path).
   4. Each pass record carries name/duration_ms/modified/iteration and each
@@ -68,8 +68,8 @@ def main() -> int:
         print(f"pass trace is not valid JSON: {exc}", file=sys.stderr)
         return 1
 
-    if doc.get("schema") != "ahfl.pass_trace.v2":
-        print(f"unexpected schema: {doc.get('schema')!r}", file=sys.stderr)
+    if doc.get("format") != "ahfl.pass_trace":
+        print(f"unexpected schema: {doc.get('format')!r}", file=sys.stderr)
         return 1
     if doc.get("optimized") is not True:
         print(f"expected optimized==true, got {doc.get('optimized')!r}", file=sys.stderr)

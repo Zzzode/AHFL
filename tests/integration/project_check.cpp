@@ -422,6 +422,7 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
     const auto app_entry = app_root / "main.ahfl";
     const auto lib_entry = lib_root / "types.ahfl";
     const auto facade_app_entry = app_root / "facade_main.ahfl";
+    const auto facade_private_app_entry = app_root / "facade_private.ahfl";
     const auto lib_internal_entry = lib_root / "internal.ahfl";
     const auto lib_facade_entry = lib_root / "facade.ahfl";
 
@@ -459,6 +460,10 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
                          "    pub fn visible(self) -> Int effect Pure decreases 0 {\n"
                          "        return 1;\n"
                          "    }\n"
+                         "\n"
+                         "    fn hidden(self) -> Int effect Pure decreases 0 {\n"
+                         "        return 2;\n"
+                         "    }\n"
                          "}\n") ||
         !write_text_file(lib_facade_entry,
                          "module lib::facade;\n"
@@ -471,6 +476,14 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
                          "\n"
                          "fn check(w: facade::FacadeWidget) -> Int effect Pure decreases 0 {\n"
                          "    return w.visible();\n"
+                         "}\n") ||
+        !write_text_file(facade_private_app_entry,
+                         "module app::facade_private;\n"
+                         "\n"
+                         "import lib::facade as facade;\n"
+                         "\n"
+                         "fn check(w: facade::FacadeWidget) -> Int effect Pure decreases 0 {\n"
+                         "    return w.hidden();\n"
                          "}\n")) {
         std::cerr << "failed to write inherent method visibility fixture\n";
         return 1;
@@ -548,12 +561,65 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
 
     const auto facade_type_check_result =
         type_checker.check(facade_parse_result.graph, facade_resolve_result);
-    const auto facade_rendered = render_diagnostics(facade_type_check_result.diagnostics);
-    if (!facade_type_check_result.has_errors() ||
-        !contains_code(facade_type_check_result.diagnostics, "typecheck.UNKNOWN_CALLABLE") ||
-        !contains_text(facade_rendered, "lib::internal::FacadeWidget.visible")) {
+    if (facade_type_check_result.has_errors()) {
         print_diagnostics(facade_type_check_result.diagnostics);
-        std::cerr << "expected type facade not to re-export inherent impl methods\n";
+        std::cerr << "expected public inherent method to remain available through type facade\n";
+        return 1;
+    }
+
+    const auto canonical_type = facade_resolve_result.symbol_table.find_canonical(
+        ahfl::SymbolNamespace::Types, "lib::internal::FacadeWidget");
+    if (!canonical_type.has_value()) {
+        std::cerr << "expected facade receiver to retain its canonical type symbol\n";
+        return 1;
+    }
+    bool found_canonical_dispatch = false;
+    for (const auto &expr : facade_type_check_result.typed_program.expressions) {
+        if (expr.kind != ahfl::ast::ExprSyntaxKind::MethodCall) {
+            continue;
+        }
+        if (!expr.dispatch_target.has_value() || !expr.dispatch_target->is_inherent ||
+            expr.dispatch_target->method_name != "visible") {
+            std::cerr << "expected facade method call to have resolved inherent dispatch\n";
+            return 1;
+        }
+        const auto &impls = facade_type_check_result.environment.impls();
+        const auto impl = impls.find(expr.dispatch_target->impl_index);
+        if (impl == impls.end() || impl->second.target_symbol != canonical_type->get().id) {
+            std::cerr << "expected facade dispatch to target the canonical receiver symbol\n";
+            return 1;
+        }
+        found_canonical_dispatch = true;
+    }
+    if (!found_canonical_dispatch) {
+        std::cerr << "expected typed facade method call in the positive consumer\n";
+        return 1;
+    }
+
+    auto facade_private_input = facade_input;
+    facade_private_input.entry_files = {facade_private_app_entry};
+    facade_private_input.module_roots.front().exported_modules = {"facade_private"};
+    const auto facade_private_parse_result = ahfl::parse_project(frontend, facade_private_input);
+    if (facade_private_parse_result.has_errors()) {
+        print_diagnostics(facade_private_parse_result.diagnostics);
+        return 1;
+    }
+    const auto facade_private_resolve_result = resolver.resolve(facade_private_parse_result.graph);
+    if (facade_private_resolve_result.has_errors()) {
+        print_diagnostics(facade_private_resolve_result.diagnostics);
+        return 1;
+    }
+    const auto facade_private_type_check_result =
+        type_checker.check(facade_private_parse_result.graph, facade_private_resolve_result);
+    const auto facade_private_rendered =
+        render_diagnostics(facade_private_type_check_result.diagnostics);
+    if (!facade_private_type_check_result.has_errors() ||
+        !contains_code(facade_private_type_check_result.diagnostics,
+                       "typecheck.UNKNOWN_CALLABLE") ||
+        !contains_text(facade_private_rendered, "lib::internal::FacadeWidget.hidden") ||
+        contains_text(facade_private_rendered, "lib::internal::FacadeWidget.visible")) {
+        print_diagnostics(facade_private_type_check_result.diagnostics);
+        std::cerr << "expected private inherent method to remain hidden through type facade\n";
         return 1;
     }
 

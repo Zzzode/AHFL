@@ -18,16 +18,18 @@ harness:
   3. Determinism      -- emits the target twice and asserts byte-identical
                          output (infra artifacts must be reproducible).
 
-This is the pragmatic "snapshot gate" acceptance path: it does not require an
-external validator (kubeconform / openapi-spec-validator) to be installed, but
-still enforces that each artifact parses and carries its mandatory content.
+This snapshot gate enforces selected schema invariants, not Kubernetes server
+acceptance. Platform validation separately requires a configured API server
+and `kubectl apply --dry-run=server -f <artifact>`.
 
 Usage:
     infra_target_gate.py <ahflc> <tests_dir>
+    infra_target_gate.py <ahflc> <tests_dir> --server-kubeconfig <test-cluster> --kubectl <binary>
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
@@ -184,7 +186,8 @@ def check_openapi(text: str, golden: Path, ahflc: str, source: Path,
 
 
 def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: int,
-              expectations: dict) -> None:
+              expectations: dict, server_kubeconfig: Path | None = None,
+              kubectl: str = "kubectl") -> None:
     snapshot_ok(text, golden, "k8s-crd", ahflc, source)
     try:
         import yaml  # type: ignore
@@ -231,56 +234,59 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
             .get("schema", {})
             .get("openAPIV3Schema", {})
         )
-        definitions = openapi_schema.get("definitions", {})
-        properties = (
-            openapi_schema
-            .get("properties", {})
-            .get("spec", {})
-            .get("properties", {})
-        )
+        def check_schema(node, path, logical=False):
+            if not isinstance(node, dict):
+                raise SystemExit(f"FAIL: k8s-crd schema {path} is not a mapping")
+            for keyword in ("$ref", "definitions"):
+                if keyword in node:
+                    raise SystemExit(f"FAIL: k8s-crd schema {path} forbids {keyword}")
+            if node.get("uniqueItems") is True:
+                raise SystemExit(f"FAIL: k8s-crd schema {path} forbids uniqueItems:true")
+            if logical:
+                for keyword in ("type", "description", "default", "additionalProperties", "nullable"):
+                    if keyword in node:
+                        raise SystemExit(f"FAIL: k8s-crd {path} has structural field {keyword} in oneOf")
+            elif not isinstance(node.get("type"), str) or not node["type"]:
+                raise SystemExit(f"FAIL: k8s-crd schema {path} has no structural type")
+            for field, child in node.get("properties", {}).items():
+                check_schema(child, f"{path}.{field}", logical)
+            if "items" in node:
+                check_schema(node["items"], f"{path}[]", logical)
+            if node.get("type") == "array" and "items" not in node:
+                raise SystemExit(f"FAIL: k8s-crd schema {path} has no items")
+            if "additionalProperties" in node:
+                check_schema(node["additionalProperties"], f"{path}.*", logical)
+            for branch in node.get("oneOf", []):
+                check_schema(branch, f"{path}.oneOf", True)
+                if any(field not in node.get("properties", {}) for field in branch.get("required", [])):
+                    raise SystemExit(f"FAIL: k8s-crd {path} oneOf tag has no structural property")
+
+        check_schema(openapi_schema, "root")
+        properties = openapi_schema.get("properties", {}).get("spec", {}).get("properties", {})
         if "context" not in properties:
             no_context_seen += 1
-        else:
-            ctx = properties["context"]
-            if not isinstance(ctx, dict):
-                raise SystemExit(
-                    f"FAIL: k8s-crd {name!r} context port is not a mapping"
-                )
-            has_ref = isinstance(ctx.get("$ref"), str)
-            has_type = isinstance(ctx.get("type"), str)
-            if not has_ref and not has_type:
-                raise SystemExit(
-                    f"FAIL: k8s-crd {name!r} context port has no $ref or type "
-                    f"(placeholder string?)"
-                )
-            if has_ref:
-                ref = ctx["$ref"]
-                if not ref.startswith("#/definitions/"):
-                    raise SystemExit(
-                        f"FAIL: k8s-crd {name!r} context $ref {ref!r} is not a "
-                        f"local definitions ref"
-                    )
-                def_key = ref[len("#/definitions/"):]
-                if def_key not in definitions:
-                    raise SystemExit(
-                        f"FAIL: k8s-crd {name!r} context $ref {ref!r} does not "
-                        f"resolve to a definitions entry"
-                    )
-        # Every $ref in the document must resolve to a definitions entry.
-        all_refs: list[str] = []
-        collect_refs(openapi_schema, all_refs)
-        for ref in all_refs:
-            if not ref.startswith("#/definitions/"):
-                raise SystemExit(
-                    f"FAIL: k8s-crd {name!r} $ref {ref!r} is not a local "
-                    f"definitions ref"
-                )
-            def_key = ref[len("#/definitions/"):]
-            if def_key not in definitions:
-                raise SystemExit(
-                    f"FAIL: k8s-crd {name!r} $ref {ref!r} does not resolve to "
-                    f"a definitions entry"
-                )
+        if expectations.get("payload_collections"):
+            fields = properties["input"]["properties"]
+            if (properties["state"].get("enum") != ["On", "Off"] or
+                    properties["initialState"].get("default") != "On" or
+                    fields["flag"].get("enum") != ["Yes", "No", "Null"] or
+                    fields["yes"].get("type") != "string"):
+                raise SystemExit("FAIL: k8s-crd YAML source names lost their string identity")
+            message = fields["message"]
+            if (message.get("type") != "object" or message.get("maxProperties") != 1 or
+                    message.get("oneOf") != [{"required": ["Accepted"]}, {"required": ["Rejected"]}]):
+                raise SystemExit("FAIL: k8s-crd payload enum does not enforce exclusive tags")
+            if message["properties"]["Rejected"].get("required") != ["reason", "code"]:
+                raise SystemExit("FAIL: k8s-crd struct enum payload lost required fields")
+            if (fields["labels"].get("x-kubernetes-list-type") != "set" or
+                    fields["labels"].get("maxItems") != 4):
+                raise SystemExit("FAIL: k8s-crd Set lost uniqueness or capacity")
+            if (fields["attributes"].get("maxProperties") != 8 or
+                    fields["attributes"].get("additionalProperties", {}).get("type") != "integer"):
+                raise SystemExit("FAIL: k8s-crd Map lost value type or capacity")
+            if (fields["values"].get("maxItems") != 6 or
+                    fields["values"].get("items", {}).get("type") != "integer"):
+                raise SystemExit("FAIL: k8s-crd List lost item type or capacity")
         # The fully qualified identity must survive, but only outside RFC 1123
         # identity fields.
         annotations = metadata.get("annotations", {})
@@ -299,10 +305,34 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
     if len(set(names)) != len(names):
         raise SystemExit(f"FAIL: k8s-crd metadata.names are not unique: {names}")
 
+    if server_kubeconfig is not None:
+        proc = subprocess.run(
+            [kubectl, "--kubeconfig", str(server_kubeconfig), "apply", "--dry-run=server", "-f", "-"],
+            input=text, capture_output=True, text=True, check=False, timeout=60,
+        )
+        if proc.returncode != 0:
+            raise SystemExit(f"FAIL: Kubernetes server rejected {source.name}: {proc.stderr}")
+        print(f"  ok k8s-crd: Kubernetes server dry-run accepted {len(documents)} CRDs")
+
     print(
         f"  ok k8s-crd: snapshot, {len(documents)} YAML docs parse, "
         f"{len(names)} unique RFC 1123 metadata.name (<=253 bytes)"
     )
+
+
+def check_crd_rejections(ahflc: str, tests_dir: Path) -> None:
+    for stem, reason in (
+        ("crd_recursive", "recursive types"),
+        ("crd_tuple", "positional tuples"),
+        ("crd_unsupported", "no concrete JSON representation"),
+    ):
+        source = tests_dir / "golden" / "infra" / f"{stem}.ahfl"
+        proc = subprocess.run([ahflc, "emit", "k8s-crd", str(source)],
+                              capture_output=True, text=True, check=False)
+        if (proc.returncode == 0 or proc.stdout.strip() or reason not in proc.stderr or
+                "internal error" in proc.stderr.lower()):
+            raise SystemExit(f"FAIL: k8s-crd {stem} must reject before emission: {proc.stderr}")
+    print("  ok k8s-crd: recursive, tuple and untyped enum payloads reject before emission")
 
 
 def check_terraform(text: str, golden: Path, ahflc: str, source: Path, edges) -> None:
@@ -350,11 +380,16 @@ def check_determinism(ahflc: str, target: str, source: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print(__doc__)
-        return 2
-    ahflc = sys.argv[1]
-    tests_dir = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("ahflc")
+    parser.add_argument("tests_dir", type=Path)
+    parser.add_argument("--server-kubeconfig", type=Path,
+                        help="validate CRDs against an explicitly selected test API server")
+    parser.add_argument("--kubectl", default="kubectl",
+                        help="kubectl executable used for optional server validation")
+    args = parser.parse_args()
+    ahflc = args.ahflc
+    tests_dir = args.tests_dir
     infra_dir = tests_dir / "golden" / "infra"
 
     print("=== infra target backend gate ===")
@@ -375,7 +410,8 @@ def main() -> int:
             "k8s-crd": (
                 infra_dir / f"{stem}.k8s-crd.yaml",
                 lambda text, golden: check_k8s(
-                    text, golden, ahflc, source, agent_count, expectations
+                    text, golden, ahflc, source, agent_count, expectations,
+                    args.server_kubeconfig, args.kubectl
                 ),
             ),
             "terraform": (
@@ -390,6 +426,14 @@ def main() -> int:
             text = emit(ahflc, target, source)
             checker(text, golden)
             check_determinism(ahflc, target, source)
+
+    source = infra_dir / "crd_payload.ahfl"
+    text = emit(ahflc, "k8s-crd", source)
+    check_k8s(text, infra_dir / "crd_payload.k8s-crd.yaml", ahflc, source, 1,
+              {"no_context_ports": 1, "payload_collections": True},
+              args.server_kubeconfig, args.kubectl)
+    check_determinism(ahflc, "k8s-crd", source)
+    check_crd_rejections(ahflc, tests_dir)
 
     print("=== all infra target gates passed ===")
     return 0

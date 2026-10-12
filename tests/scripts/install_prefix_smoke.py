@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -49,7 +50,7 @@ def main() -> int:
             "clean install configure failed:\n" + configure.stdout + configure.stderr,
         )
         build_result = run(
-            ["cmake", "--build", str(build), "--target", "ahflc", "ahfl-lsp", "-j8"],
+            ["cmake", "--build", str(build), "--target", "ahflc", "ahfl-lsp", f"-j{os.cpu_count() or 1}"],
             repo,
         )
         require(
@@ -108,7 +109,7 @@ def main() -> int:
         result_path.write_text(
             json.dumps(
                 {
-                    "schema": "ahfl.install-prefix-smoke.v1",
+                    "format": "ahfl.install-prefix-smoke",
                     "version": "0.59.0",
                     "inventory": inventory,
                     "cli": "bin/ahflc",

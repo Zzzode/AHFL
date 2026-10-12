@@ -1,4 +1,4 @@
-ahfl.ir.v2
+ahfl.ir
 formal_observations {
   observation agent__refund_audit_RefundAudit__called__refund_audit_OrderQuery: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::OrderQuery)
   observation agent__refund_audit_RefundAudit__called__refund_audit_AuditDecision: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::AuditDecision)

@@ -56,6 +56,7 @@ flowchart TD
     Docs --> Design["design/"]
     Docs --> Plans["plans/"]
     Docs --> Reference["reference/"]
+    Docs --> Tutorials["tutorials/"]
     Docs --> Rfcs["rfcs/"]
     Docs --> DocsReadme["README.md"]
 
@@ -84,7 +85,12 @@ flowchart TD
 
 ### `docs/reference`
 
-放长期参考资料，例如 how-to、glossary 和命令参考。
+放长期参考资料，例如命令参数、artifact 契约、glossary 和贡献者操作手册。
+
+### `docs/tutorials`
+
+集中放面向使用者的入门教程、任务导向用户指南、工程使用说明和可运行示例。
+阅读入口为 `docs/tutorials/README.md`；新增用户教程应放在此目录，规范与格式契约仍归各自类别。
 
 ### `docs/rfcs`
 

@@ -1,7 +1,7 @@
 {
-  "format_version": "ahfl.execution-plan.v1",
+  "format": "ahfl.execution-plan",
   "source_package_identity": {
-    "format_version": "ahfl.native-package.v1",
+    "format": "ahfl.native-package",
     "name": "workflow-value-flow",
     "version": "0.1.0"
   },

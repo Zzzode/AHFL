@@ -33,6 +33,8 @@ struct ProviderEntry {
     std::string auth_scheme{};
     std::string auth_header{};
     std::string model{};
+    std::optional<int> model_context_window_tokens{};
+    std::optional<int> model_max_output_tokens{};
     int priority{0};
     ProviderStatus status{ProviderStatus::Available};
 };

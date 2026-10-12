@@ -1,53 +1,53 @@
 {
-  "schema": "ahfl.readme-capabilities.v1",
+  "format": "ahfl.readme-capabilities",
   "claims": [
     {
       "id": "BETA-01",
-      "evidence_schema": "ahfl.beta-evidence.run-profiles.v1",
-      "english": "Manifest run profiles launch the reference workflow without repeated CLI configuration.",
-      "chinese": "Manifest run profile 可直接启动 reference workflow，无需重复提供 CLI 配置。"
+      "evidence_schema": "ahfl.beta-evidence.run-profiles",
+      "english": "Save workflow inputs and options in manifest run profiles, then select a profile with `ahflc run --profile`.",
+      "chinese": "将工作流输入和选项保存为 manifest 运行配置，再用 `ahflc run --profile` 选择配置。"
     },
     {
       "id": "BETA-02",
-      "evidence_schema": "ahfl.beta-evidence.runtime-identity.v1",
-      "english": "Runtime workflow, node, agent, capability, invocation, value, and event associations use strong numeric IDs.",
-      "chinese": "Runtime 的 workflow、node、agent、capability、invocation、value 与 event 关联使用强类型数值 ID。"
+      "evidence_schema": "ahfl.beta-evidence.runtime-identity",
+      "english": "Use numeric IDs in execution reports to associate workflows, nodes, agents, capabilities, invocations, values, and events.",
+      "chinese": "通过执行报告中的数值 ID 关联工作流、节点、Agent、能力、调用、值和事件。"
     },
     {
       "id": "BETA-03",
-      "evidence_schema": "ahfl.beta-evidence.event-projections.v1",
-      "english": "One flat event store drives human, JSON, JSONL, replay, and audit projections.",
-      "chinese": "单一 flat event store 驱动 human、JSON、JSONL、replay 与 audit 投影。"
+      "evidence_schema": "ahfl.beta-evidence.event-projections",
+      "english": "Inspect the same execution as readable text, JSON, or JSONL, and use its events for replay and audit.",
+      "chinese": "以文本、JSON 或 JSONL 查看同一次执行，并使用执行事件回放和审计。"
     },
     {
       "id": "BETA-04",
-      "evidence_schema": "ahfl.beta-evidence.lifecycle-matrix.v1",
-      "english": "Accepted success and failure lifecycle paths have unique terminal events.",
-      "chinese": "已接受的成功与失败生命周期路径都具有唯一 terminal event。"
+      "evidence_schema": "ahfl.beta-evidence.lifecycle-matrix",
+      "english": "Use terminal events to identify the outcome of a run, including success, failure, cancellation, and timeout.",
+      "chinese": "通过终止事件识别运行结果，包括成功、失败、取消和超时。"
     },
     {
       "id": "BETA-05",
-      "evidence_schema": "ahfl.beta-evidence.formatter-idempotence.v1",
-      "english": "The AHFL formatter is lossless and idempotent over std/ and formatter fixtures, and its CI gate is blocking.",
-      "chinese": "AHFL formatter 对 std/ 与 formatter fixtures 无损且幂等，并由阻断式 CI gate 检查。"
+      "evidence_schema": "ahfl.beta-evidence.formatter-idempotence",
+      "english": "Format AHFL source while preserving comments, attributes, effects, generics, imports, and visibility; formatting it again produces no further changes.",
+      "chinese": "格式化 AHFL 源码时保留注释、属性、效果标注、泛型、导入和可见性；重复格式化不会继续改变结果。"
     },
     {
       "id": "BETA-06",
-      "evidence_schema": "ahfl.beta-evidence.stdlib-container-migration.v1",
-      "english": "Core containers resolve as nominal stdlib generics with no legacy runtime Option representation or migration flag.",
-      "chinese": "核心容器解析为 nominal stdlib 泛型，不再保留 legacy runtime Option 表示或迁移开关。"
+      "evidence_schema": "ahfl.beta-evidence.stdlib-container-migration",
+      "english": "Use the standard library generic types `List`, `Map`, `Set`, and `Option` for collections and optional values.",
+      "chinese": "使用标准库泛型类型 `List`、`Map`、`Set` 和 `Option` 表达集合和可选值。"
     },
     {
       "id": "BETA-08",
-      "evidence_schema": "ahfl.beta-evidence.install-smoke.v1",
-      "english": "Clean-prefix installs contain ahflc, ahfl-lsp, and the sysroot; platform VSIX packages contain the release LSP and sysroot and pass isolated installation.",
-      "chinese": "Clean-prefix 安装包含 ahflc、ahfl-lsp 与 sysroot；platform VSIX 包含 release LSP 与 sysroot，并通过隔离安装。"
+      "evidence_schema": "ahfl.beta-evidence.install-smoke",
+      "english": "Install the CLI and language server with the standard library, or install a platform VSIX that bundles the language server and standard library.",
+      "chinese": "安装附带标准库的 CLI 和语言服务器，或安装内置语言服务器和标准库的平台 VSIX 扩展包。"
     },
     {
       "id": "BETA-10",
-      "evidence_schema": "ahfl.beta-evidence.product-scope-freeze.v1",
-      "english": "The beta product surface is frozen; new actions, backends, and artifacts require an accepted RFC.",
-      "chinese": "Beta 产品面保持冻结；新增 action、backend 或 artifact 必须先有 accepted RFC。"
+      "evidence_schema": "ahfl.beta-evidence.product-scope-freeze",
+      "english": "Find available commands and output artifacts in the CLI reference, and use `ahflc --help` to inspect the installed compiler.",
+      "chinese": "通过 CLI 参考查找可用命令和输出产物，并用 `ahflc --help` 查看已安装编译器的选项。"
     }
   ],
   "forbidden_claim_patterns": [

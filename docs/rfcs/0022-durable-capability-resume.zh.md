@@ -30,7 +30,7 @@ memoization**(Temporal / DBOS 式 durable execution 模型)——挂起点持久
 调用按 `(ordinal, cap_id)` 返回 memo 结果**且不重新执行**(避免 `durable_write` /
 `financial_write` 二次触发),直到到达仍 pending 的调用点带着结果继续。本 RFC 同时明确
 重放**可靠性(soundness)前提**——节点内 capability 之间的求值必须确定性可复现——并
-列出 AHFL 当前**尚未满足该前提**、必须在实现前关闭的具体缺口(nondet 内建、`unordered_map`
+记录初稿时**尚未满足该前提**、随后关闭的具体缺口(nondet 内建、`unordered_map`
 字段序列化)。这是 [RFC 0021](0021-capability-embedding-abi.zh.md) slice 4,因其为语义级
 改动(而非接线)而单独立项。
 
@@ -61,7 +61,7 @@ memoization**(Temporal / DBOS 式 durable execution 模型)——挂起点持久
 1. **确立 durable resume 模型**:确定性重放 + capability 结果 memoization。挂起态为纯
    可序列化数据,可跨进程 / serverless 冷启动恢复。
 2. **明确重放 soundness 前提并使之成立**:节点内 capability 之间求值确定性可复现;列出
-   并关闭 AHFL 当前未满足该前提的缺口。
+   并关闭 初稿中未满足该前提的缺口。
 3. **定义挂起态记录(resume record)**:index/id-based,捕获恢复一个具体 call site 所需
    的最小状态(节点 coord、节点 input、pending call 身份、memo 表)。
 4. **exactly-once 效应保证**:重放**绝不**重新执行已完成的 capability;`durable_write` /
@@ -118,7 +118,7 @@ invocation-ordinal 序列与每个 ordinal 处相同的 resolved args*。这要�
 **已保证(AHFL 现有设计)**:文法无循环/可变赋值;节点 input 单次注入;求值期间 context
 只读;`Set` / `Map` 运行时值已 order-normalized + 去重。此片段是纯的。
 
-**未保证——本 RFC 必须关闭的缺口**(均已核实存在):
+**已关闭的确定性缺口**（下列记录描述实现前问题和所采用的修复）：
 
 1. `wall_clock_now` / `time_now`(`builtins.cpp:905`,读真实系统时钟)与 `uuid_new` /
    `uuid_new_v4`(`builtins.cpp:967`,基于 `std::random_device`)是语言可调用的 Nondet
@@ -184,9 +184,10 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
   **迁移**:用 capability 声明 + 宿主实现替代;提供迁移期诊断指向替代 capability。
   影响面 = 使用这 4 个 nondet 内建的源码。
 - **内部(非用户 API)**:`StructValue` / `EnumValue` 字段存储从 `unordered_map` 改为
-  ordinal vector;`WorkflowRecoverySnapshot` 扩展 node input + memo 表(schema bump
-  `ahfl.workflow-recovery.v2`);`CapabilityCallStatus` 增 `Pending`。这些不是用户 API。
-- 现有 recovery 快照 v1 与 v2 不兼容,但 recovery 快照是 experimental,未承诺稳定。
+  ordinal vector；`WorkflowRecoverySnapshot` 包含 node input + memo 表（当前格式
+  `ahfl.workflow-recovery`）；`CapabilityCallStatus` 增 `Pending`。这些不是用户 API。
+- 持久快照只接受 `format: "ahfl.workflow-recovery"` 的当前完整结构，必填 `suspended`
+  为对象或显式 null。历史结构、缺字段、重复 JSON 投影和类型不符全部拒绝；不自动迁移。
 
 ## Implementation Plan
 
@@ -198,8 +199,7 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
    c. nondet 内建(time / uuid)重分类为 host capability + 迁移诊断。
 2. **PENDING 映射**:`CapabilityCallStatus::Pending` + invoker 把 ABI 的 `AHFL_CAP_PENDING`
    映射进 C++ 结果;`EvalResult` 增 `Suspended` 控制流逃逸(穿透 eval 递归到节点循环)。
-3. **resume record + memo 表**:扩展 `WorkflowRecoverySnapshot`(node input + memo,schema
-   v2);节点求值捕获/回放 memo;effect-suppressed 重放模式。
+3. **resume record + memo 表**:完整 `WorkflowRecoverySnapshot`（node input + memo + suspended）；节点求值捕获/回放 memo;effect-suppressed 重放模式。
 4. **exactly-once**:idempotency key + write-ahead intent(等级 ≥ durable_write)。
 5. **fail-closed 校验**:注入/ memo Value 的 interned-type 校验 + SourceRange 诊断。
 6. **测试**:见 Test Plan。
@@ -219,15 +219,15 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
 - **soundness 回归**:重分类后 `wall_clock_now` 等作为语言内建不再可用 → 编译期诊断
   golden;可恢复节点内未 memoize 的 nondet → 编译期诊断。
 - **回归**:`ctest --preset test-dev`;现有 workflow_recovery / capability_bridge /
-  evaluator / value_json 测试无回归(或按 schema v2 更新)。
+  evaluator / value_json 测试无回归，并覆盖当前完整结构和旧结构拒绝。
 
 ## Rollout and Stabilization
 
 1. `draft` → `review`:清零 Open Questions,runtime + language owner sign-off。
 2. `accepted` 后按 Implementation Plan 切片(确定性前置必须先于 memo 核心)。
 3. `implemented`:模型、resume record、memo、exactly-once、fail-closed 校验、测试落库。
-4. `stabilized`:`docs/spec` 定义 durable-resume 语义与 nondet-capability 迁移;recovery
-   schema v2 承诺稳定则标记 stable-artifact。
+4. `stabilized`：`docs/spec` 定义 durable-resume 语义与 nondet-capability 替代；
+   当前完整 recovery 结构严格读写闭环，不承诺历史读端或跨结构升级。
 
 ## Alternatives
 
@@ -287,13 +287,14 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
   idempotency key + write-ahead intent、5 fail-closed 类型校验)落库并测试;durable-resume
   语义 + nondet-capability 迁移写入 `docs/spec/core-language.zh.md` §3.4.1;端到端
   capstone(`tests/integration/durable_resume_capstone.cpp`)证明"挂起 → 跨进程冷启动 →
-  确定恢复"。**recovery schema v2 标记为 stable-artifact**:`kWorkflowRecoverySchemaV2`
-  承诺向后兼容——已持久化的 v2 resume record 在后续版本仍可加载;v1 是 v2 的未触碰子集,
-  两者 load 路径共存。schema 演进只能 append-only(新字段可选、老 reader 忽略),破坏性
-  变更须发新 schema 版本号。
+  确定恢复"。当时将 recovery 标记为 stable-artifact 并提出多格式加载承诺；该承诺已被
+  2026-10-12 的单一当前契约替代：当前只读写完整 `ahfl.workflow-recovery` 结构，
+  不保留旧 loader、不缺省历史字段、不升级旧快照。
 - 2026-08-25: Test-Plan 覆盖补全 —— 原生 `ahfl_host.h` ABI 的 PENDING→suspend/resume
   (`native_wasm_differential.cpp::test_native_pending_suspends_and_resumes`)、shell 端
   suspend→resume 往返(`ahflc.run.durable_resume_flags.smoke` + `examples/durable-resume/`)、
   以及 Test Plan 的"多次挂起"用例(同节点两个 capability 连续两次 PENDING,append-only
   memo 正确重建:`workflow_runtime.cpp::test_two_suspensions_on_one_node_rebuild_memo_append_only`)。
   Test Plan 全部用例现有对应测试。
+
+- 2026-10-12: 当前恢复格式仅使用 `ahfl.workflow-recovery`，必填 `suspended`。持久 memo 仅保存精确 `result_wire_json` 和 `result_present`，连同数字 `node_id` 按当前位置的强类型 binding 解码；旧格式加载和普通 JSON 重复投影已删除。

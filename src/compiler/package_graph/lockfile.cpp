@@ -281,25 +281,6 @@ bool require_object(const json::JsonValue &value,
     return std::string{*text};
 }
 
-[[nodiscard]] std::optional<int> read_int(const json::JsonValue &object,
-                                          std::string_view field,
-                                          std::vector<Diagnostic> &diagnostics) {
-    const auto *value = required_field(object, field, diagnostics, range_of(object));
-    if (value == nullptr) {
-        return std::nullopt;
-    }
-    const auto number = value->as_int();
-    if (!number.has_value() || *number < std::numeric_limits<int>::min() ||
-        *number > std::numeric_limits<int>::max()) {
-        add_error(diagnostics,
-                  std::string{kLockfileSyntax},
-                  "lockfile field '" + std::string{field} + "' must be an integer",
-                  range_of(*value));
-        return std::nullopt;
-    }
-    return static_cast<int>(*number);
-}
-
 [[nodiscard]] std::optional<PackageId> read_package_id(const json::JsonValue &object,
                                                        std::string_view field,
                                                        std::vector<Diagnostic> &diagnostics) {
@@ -696,8 +677,7 @@ Lockfile make_lockfile(const PackageGraph &graph, const std::filesystem::path &l
 
 std::string serialize_lockfile(const Lockfile &lockfile) {
     auto root = json::JsonValue::make_object();
-    root->set("format_version", json::JsonValue::make_string(lockfile.format_version));
-    root->set("resolver_version", json::JsonValue::make_int(lockfile.resolver_version));
+    root->set("format", json::JsonValue::make_string(lockfile.format));
     root->set("root_package", json::JsonValue::make_string(lockfile.root_package));
 
     auto packages = json::JsonValue::make_array();
@@ -737,17 +717,13 @@ LockfileResult parse_lockfile_json(std::string_view input) {
 
     reject_unknown_fields(
         root,
-        {"format_version", "resolver_version", "root_package", "packages", "edges"},
+        {"format", "root_package", "packages", "edges"},
         "root",
         result.diagnostics);
 
     Lockfile lockfile;
-    if (auto format = read_string(root, "format_version", result.diagnostics); format.has_value()) {
-        lockfile.format_version = *format;
-    }
-    if (auto resolver = read_int(root, "resolver_version", result.diagnostics);
-        resolver.has_value()) {
-        lockfile.resolver_version = *resolver;
+    if (auto format = read_string(root, "format", result.diagnostics); format.has_value()) {
+        lockfile.format = *format;
     }
     if (auto root_name = read_string(root, "root_package", result.diagnostics);
         root_name.has_value()) {
@@ -809,15 +785,10 @@ LockfileResult parse_lockfile_json(std::string_view input) {
         }
     }
 
-    if (lockfile.format_version != "ahfl.lock.v1") {
+    if (lockfile.format != "ahfl.lock") {
         add_error(result.diagnostics,
                   std::string{kLockfileSyntax},
-                  "lockfile format_version must be 'ahfl.lock.v1'");
-    }
-    if (lockfile.resolver_version != 1) {
-        add_error(result.diagnostics,
-                  std::string{kLockfileSyntax},
-                  "lockfile resolver_version must be 1");
+                  "lockfile format must be 'ahfl.lock'");
     }
 
     if (!result.has_errors()) {
@@ -832,13 +803,10 @@ check_lockfile_drift(const PackageGraph &graph,
                      const std::optional<std::filesystem::path> &lockfile_directory) {
     std::vector<Diagnostic> diagnostics;
 
-    if (lockfile.format_version != "ahfl.lock.v1") {
+    if (lockfile.format != "ahfl.lock") {
         add_error(diagnostics,
                   std::string{kPackageGraph},
-                  "lockfile format_version must be 'ahfl.lock.v1'");
-    }
-    if (lockfile.resolver_version != 1) {
-        add_error(diagnostics, std::string{kPackageGraph}, "lockfile resolver_version must be 1");
+                  "lockfile format must be 'ahfl.lock'");
     }
 
     if (const auto *root = root_package(graph);

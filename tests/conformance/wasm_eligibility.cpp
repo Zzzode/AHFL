@@ -206,7 +206,7 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     const Skip required_skip = [&] {
         if (verdict == WasmEligibilityVerdict::RunnableOrchestration) {
             // RFC 0026 P6-7 rung E: a p6-frame module now has a real packed
-            // input + runv + frame-encode observation, so it requires NO skip.
+            // input + run_frame + frame-encode observation, so it requires NO skip.
             return Skip::None;
         }
         if (verdict == WasmEligibilityVerdict::BlockedComputation) {

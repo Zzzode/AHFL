@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -74,7 +75,7 @@ def main() -> int:
     install = run(["python3", "tests/scripts/install_prefix_smoke.py", str(repo)], repo)
     require_success(install, "clean prefix install smoke")
     install_result = parse_last_json_object(install.stdout)
-    if install_result.get("schema") != "ahfl.install-prefix-smoke.v1":
+    if install_result.get("format") != "ahfl.install-prefix-smoke":
         raise RuntimeError("unexpected install prefix result schema")
 
     migration = run(
@@ -83,12 +84,13 @@ def main() -> int:
             "--test-dir",
             str(build),
             "--output-on-failure",
+            f"-j{os.cpu_count() or 1}",
             "-R",
             "^(ahfl\\.package_graph\\.core_all|ahfl\\.runtime\\.workflow_recovery_all)$",
         ],
         repo,
     )
-    require_success(migration, "version and schema migration smoke")
+    require_success(migration, "current artifact contract smoke")
 
     packaged = run(["bash", "scripts/package-vscode-vsix-release.sh"], repo)
     require_success(packaged, "platform VSIX packaging")
@@ -118,7 +120,7 @@ def main() -> int:
         raise RuntimeError("VSIX install smoke did not report installed extension")
 
     value: dict[str, object] = {
-        "schema": "ahfl.beta-evidence.install-smoke.v1",
+        "format": "ahfl.beta-evidence.install-smoke",
         "status": "passed",
         "criterion": "BETA-08",
         "source_revision": args.source_revision or compute_source_revision(repo),
@@ -137,12 +139,12 @@ def main() -> int:
             "bundled_sysroot": True,
             "isolated_install": True,
         },
-        "schema_compatibility": {
-            "lockfile_v1": "accepted",
-            "unknown_lockfile_version": "rejected",
-            "workflow_recovery_v1": "accepted",
-            "unknown_recovery_schema": "rejected",
-            "legacy_recovery_shape": "rejected",
+        "artifact_admission": {
+            "current_lockfile": "accepted",
+            "unknown_lockfile_format": "rejected",
+            "current_workflow_recovery": "accepted",
+            "unknown_recovery_format": "rejected",
+            "incomplete_recovery_shape": "rejected",
         },
         "commands": [
             "python3 tests/scripts/install_prefix_smoke.py .",
@@ -150,7 +152,7 @@ def main() -> int:
             "pnpm run test:package-inventory",
             "pnpm run test:vsix-install",
             (
-                f"ctest --test-dir {build} --output-on-failure -R "
+                f"ctest --test-dir {build} -j{os.cpu_count() or 1} --output-on-failure -R "
                 "'^(ahfl\\.package_graph\\.core_all|"
                 "ahfl\\.runtime\\.workflow_recovery_all)$'"
             ),

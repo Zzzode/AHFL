@@ -1,4 +1,7 @@
 add_library(ahfl_runtime_provider_llm STATIC
+    model_capacity.cpp
+    llm_session_store.cpp
+    context_compactor.cpp
     llm_provider_config.cpp
     http_client.cpp
     prompt_builder.cpp

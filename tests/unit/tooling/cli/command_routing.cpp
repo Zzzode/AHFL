@@ -257,14 +257,19 @@ int main() {
 
     {
         ahfl::cli::CommandLineOptions options;
-        constexpr std::string_view args[] = {
-            "check", "--verify=on", "--checker-timeout-seconds", "2", "app.ahfl"};
+        constexpr std::string_view args[] = {"check",
+                                             "--verify=on",
+                                             "--verify-data-contracts",
+                                             "--checker-timeout-seconds",
+                                             "2",
+                                             "app.ahfl"};
         const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
         check(!parse_result.has_value(), "parse_options: checker timeout has no immediate exit");
         check(options.selected_command == ahfl::cli::CommandKind::Check,
               "parse_options: checker timeout preserves check command");
         check(options.verify_mode.has_value() && *options.verify_mode == "on",
               "parse_options: --verify=on captured");
+        check(options.verify_data_contracts, "parse_options: data-contract opt-in captured");
         check(options.checker_timeout_seconds.has_value() &&
                   *options.checker_timeout_seconds == "2",
               "parse_options: --checker-timeout-seconds captured");

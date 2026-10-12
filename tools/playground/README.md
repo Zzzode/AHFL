@@ -1,44 +1,59 @@
 # AHFL Playground
 
-Browser-based playground for the AHFL compiler. Write AHFL code, compile, verify, and format — all in the browser.
+Use this local playground to edit AHFL source, inspect diagnostics, verify
+control rules, format code, and download a compiled WebAssembly (WASM) workflow.
+You need Node.js, npm, and a local `ahflc` binary. Compilation runs on your
+machine through the development server; keep that server running while using
+the editor.
 
-## Architecture
+## Start the editor
 
-- **Frontend**: Vite + TypeScript + Monaco Editor (AHFL syntax highlighting)
-- **Backend**: Dev-server middleware that spawns the local `ahflc` binary
-- **Compiler**: Real `ahflc` (not a stub) — compile, verify, and format use the actual compiler
-
-## Quick Start
+From the repository root:
 
 ```bash
-# From the repository root:
-cmake --build --preset build-dev -j$(nproc)
-
-# Start the playground (auto-detects ahflc at build/dev/src/tooling/cli/ahflc):
+cmake --preset dev
+cmake --build --preset build-dev -j"$(getconf _NPROCESSORS_ONLN)"
 cd tools/playground
 npm install
 npm run dev
 ```
 
-Open http://localhost:5173.
+Open [the local editor](http://localhost:5173). If Vite selects another port,
+use the URL printed in the terminal. Stop the server with `Ctrl+C` when done.
 
-### Custom ahflc path
+To use a different compiler, set its absolute path before starting the server:
 
 ```bash
 AHFLC_PATH=/path/to/ahflc npm run dev
 ```
 
-## Features
+## Check, build, and run your code
 
-- **Compile**: `ahflc check` — type-check and report diagnostics
-- **Verify**: `ahflc check --verify=on` — formal verification with NuSMV/Z3
-- **Build**: `ahflc build` — compile to a WASM binary with download link
-- **Format**: `ahflc fmt` — format source in place
-- **Monaco Editor**: AHFL syntax highlighting, dark theme
-- **Structured Output**: diagnostics, stats, and verification results rendered as readable cards (not raw CLI text)
+1. Enter AHFL source in the editor or choose an included example.
+2. Select **Compile** or **Verify** to check types and control rules and
+   view diagnostics. Data-contract proofs
+   require the CLI's `--verify-data-contracts` option; see the
+   [assurance guide](../../docs/tutorials/assurance.zh.md).
+3. Select **Format** to update the editor's source layout.
+4. Select **Build** to download `output.wasm`. Your source must declare a
+   `pub workflow` entry point. Building here does not perform verification;
+   use **Verify** separately before relying on control-rule results.
+5. Select **Run** to build and execute a workflow in the browser. Edit
+   **Workflow Input (JSON)** and select **Execute** to try another input. If
+   the workflow calls capabilities, supply their JSON mock responses and use
+   **Re-run with mocks**. These mocks do not call your external services.
 
-## Current Status
+The result view shows diagnostics, output values, capability calls, and state
+traces. For multi-file projects, dependencies, real provider calls, or host
+integration, use the [CLI guides](../../docs/tutorials/README.md).
 
-This is the server-side wrapper slice: the playground spawns a local `ahflc`
-process. The long-term goal is a WASM-compiled compiler for fully client-side
-operation (no server needed).
+## Resolve common problems
+
+- **Failed to start ahflc**: build the compiler or set `AHFLC_PATH` to an
+  executable binary, then restart the development server.
+- **No pub workflow found**: add a public workflow before using **Build** or
+  **Run**.
+- **Verification failure**: inspect the reported diagnostic and model result;
+  a successful build does not establish a verification result.
+- **Missing capability response**: fill in the mock JSON for each listed
+  capability before executing again.

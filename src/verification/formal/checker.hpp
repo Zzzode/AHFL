@@ -9,8 +9,10 @@
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/backends/smv.hpp"
 #include "verification/formal/model_checker_backend.hpp"
 #include "verification/formal/state_space_estimator.hpp"
+#include "verification/formal/smv_output.hpp"
 
 namespace ahfl::formal {
 
@@ -28,9 +30,15 @@ struct FormalCheckerOptions {
     ModelCheckerKind backend_kind{ModelCheckerKind::NuXmv};
     std::chrono::seconds checker_timeout{60};
     bool explain = false;
+    bool verify_data_contracts = false;
     std::size_t bmc_depth{20};
     bool bmc_use_bmc_engine{false};
     bool bmc_boundary_invariants{false};
+};
+
+struct FormalSpecificationResult {
+    std::size_t specification_id{0};
+    SmvSpecificationVerdictKind verdict{SmvSpecificationVerdictKind::Inconclusive};
 };
 
 struct FormalVerificationResult {
@@ -46,6 +54,19 @@ struct FormalVerificationResult {
     bool model_path_retained{false};
     int exit_code{-1};
     std::size_t expected_specification_count{0};
+    bool checker_invoked{false};
+    bool verify_data_contracts{false};
+    std::vector<SmvSpecification> specifications;
+    std::vector<FormalSpecificationResult> specification_results;
+    std::size_t generated_control_proven_count{0};
+    std::size_t generated_control_bounded_count{0};
+    std::size_t user_temporal_proven_count{0};
+    std::size_t user_temporal_bounded_count{0};
+    std::size_t user_temporal_conditional_count{0};
+    std::size_t user_temporal_unsupported_count{0};
+    std::size_t user_temporal_data_dependent_count{0};
+    std::size_t environment_assumption_count{0};
+    std::vector<std::string> conditional_specifications;
     std::vector<std::string> proven_specifications;
     std::vector<std::string> failing_specifications;
     /// BMC verdicts ("no counterexample found with bound 0..K"): validated

@@ -327,7 +327,7 @@ class TypeRelationContext {
 
     // ---- Flat trace API ------------------------------------------------------
 
-    // Legacy-compatible setter. Mirrors TypeRelationOptions::enable_trace.
+    // Trace control. Mirrors TypeRelationOptions::enable_trace.
     void enable_trace(bool v) noexcept {
         options_.enable_trace = v;
     }

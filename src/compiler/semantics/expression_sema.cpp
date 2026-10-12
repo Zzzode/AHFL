@@ -62,8 +62,8 @@ TypePtr ExpressionValueFactory::make_error_type() const {
     return types_->error_type();
 }
 
-TypePtr ExpressionValueFactory::clone_or_any(MaybeCRef<Type> type) const {
-    return type.has_value() ? type->get().clone() : make_type(TypeKind::Any);
+TypePtr ExpressionValueFactory::type_or_any(MaybeCRef<Type> type) const {
+    return type.has_value() ? &type->get() : make_type(TypeKind::Any);
 }
 
 ExpressionValue ExpressionValueFactory::typed(TypePtr type, bool is_pure) const {
@@ -163,7 +163,7 @@ TypePtr apply_expression_flow_narrowing(TypePtr type,
         const auto optional = stdlib_bridge::std_container_type_view(*type);
         if (optional.has_value() && optional->kind == stdlib_bridge::StdContainerKind::Option &&
             optional->first != nullptr) {
-            type = optional->first->clone();
+            type = optional->first;
         }
     }
 
@@ -285,7 +285,7 @@ TypePtr resolve_expression_field_access(const Type &base_type,
         return types.error_type();
     }
 
-    return field->get().type ? field->get().type->clone() : types.error_type();
+    return field->get().type ? field->get().type : types.error_type();
 }
 
 ExpressionValue resolve_expression_path(const ast::PathSyntax &path,
@@ -306,7 +306,7 @@ ExpressionValue resolve_expression_path(const ast::PathSyntax &path,
         };
     }
 
-    auto current = root->second->clone();
+    auto current = root->second;
     std::vector<std::string> traversed_members;
     for (const auto &member : path.members) {
         current = resolve_expression_field_access(

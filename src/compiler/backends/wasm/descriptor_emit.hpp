@@ -9,11 +9,11 @@
 namespace ahfl::backends {
 
 /// Schema identifier for the embedded-host execution descriptor. Unlike the
-/// conformance descriptor (`ahfl.conformance-wasm-descriptor.v1`), this
+/// conformance descriptor (`ahfl.conformance-wasm-descriptor`), this
 /// document carries no scenarios: the embedded host (playground, generic JS
 /// host) supplies its own input JSON and drives the Core-Wasm ABI directly.
 inline constexpr std::string_view kWasmdExecutionDescriptorFormat =
-    "ahfl.wasm-execution-descriptor.v1";
+    "ahfl.wasm-execution-descriptor";
 
 /// Populates the descriptor-derived JSON fields shared by every embedded-host
 /// execution descriptor onto `root`: the reachable-import catalogue, the

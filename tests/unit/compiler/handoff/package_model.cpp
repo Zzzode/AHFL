@@ -56,7 +56,7 @@ namespace {
 [[nodiscard]] ahfl::handoff::PackageMetadata make_project_workflow_value_flow_metadata() {
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
-        .format_version = std::string(ahfl::handoff::kFormatVersion),
+        .format = std::string(ahfl::handoff::kFormat),
         .name = "workflow-value-flow",
         .version = "0.2.0",
     };
@@ -119,7 +119,7 @@ int run_project_workflow_value_flow(const std::filesystem::path &project_manifes
 
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
-        .format_version = "broken-version",
+        .format = "broken-version",
         .name = "workflow-value-flow",
         .version = "0.1.0",
     };
@@ -141,7 +141,7 @@ int run_project_workflow_value_flow(const std::filesystem::path &project_manifes
         std::move(metadata));
 
     if (!package.metadata.identity.has_value() ||
-        package.metadata.identity->format_version != ahfl::handoff::kFormatVersion ||
+        package.metadata.identity->format != ahfl::handoff::kFormat ||
         package.metadata.identity->name != "workflow-value-flow" ||
         package.metadata.identity->version != "0.1.0") {
         std::cerr << "unexpected package identity\n";
@@ -375,7 +375,7 @@ int run_execution_plan_project_workflow_value_flow(
         return 1;
     }
 
-    if (plan.plan->format_version != ahfl::handoff::kExecutionPlanFormatVersion ||
+    if (plan.plan->format != ahfl::handoff::kExecutionPlanFormat ||
         !plan.plan->source_package_identity.has_value() ||
         plan.plan->source_package_identity->name != "workflow-value-flow" ||
         plan.plan->source_package_identity->version != "0.2.0" ||

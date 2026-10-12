@@ -1,8 +1,8 @@
-# Core-IR KR6.5 E2: Capability Boundary and `run2` -- Design
+# Core-IR KR6.5 E2: Capability Boundary and `run_workflow` -- Design
 
 > Status: **DRAFT rev 1** (RFC 0026 P5 / KR6.5).
 > E1 already proves the deterministic Core-IR orchestration spine. E2 adds one
-> terminal capability call and an append-only value-return ABI. It does not add
+> terminal capability call and an explicit-status value-return ABI. It does not add
 > expression lowering, general frame serialization, workflow scheduling, or
 > durable resume.
 
@@ -10,8 +10,7 @@
 
 E1 emits a real deterministic wasm binary, but its only value boundary is a
 validated identity alias. It deliberately rejects `CoreCapabilityCallStmt` and
-keeps the v1 `run(i32, i32) -> i32` export, whose pointer-only result cannot
-report output length or capability status.
+uses current explicit-status entry contracts and rejects removed exports.
 
 The existing Core capability model also has two standalone-proof holes that
 must not be papered over inside codegen:
@@ -219,7 +218,7 @@ name remains SymbolId-based even when its table position differs.
 
 ### 3.1 Wire frame is not Core layout
 
-The input buffer supplied to `run2` is already one connection-negotiated
+The input buffer supplied to `run_workflow` is already one connection-negotiated
 `AHFL_WIRE_VALUE_JSON` frame. For the accepted single-Struct-argument form, it
 is byte-for-byte the same frame that native
 `serialize_args_for_wire_json([struct])` sends. E2 forwards its pointer and
@@ -241,56 +240,29 @@ E2 still requires a fully verified `CoreLayoutTable`, and validates that every
 accepted input/parameter/result/output logical type has a non-pending layout
 entry. It performs no layout arithmetic and mutates neither input artifact.
 
-## 4. Append-only `run2` decision
+## 4. Explicit status and output boundary
 
-E2 adds one export without changing or removing any E1 export:
+The workflow entry is `run_workflow(input_ptr,input_len) -> (status,output_ptr,output_len)`.
+Agent execution uses `run_frame() -> (status,value_ptr)` with the admitted frame
+layout. Neither module exports a pointer-only `run` or an ABI-version global.
 
-```wat
-(export "run2"
-  (func (param i32 i32) (result i32 i32 i32)))
-```
+A capability invocation returns the explicit `ahfl_cap` tuple. OK must carry a
+valid result boundary; ERROR returns no output; PENDING records the suspension
+coordinate and transfers the argument lifetime to the host. Unknown status or a
+PENDING result with an invalid pointer fails closed. No branch invents a length
+or silently drops status. On successful owned output, the caller reads it and
+uses the same module's `dealloc` exactly once.
 
-Its inputs are `(input_ptr,input_len)` and its outputs are
-`(status,output_ptr,output_len)`. The tuple intentionally mirrors `ahfl_cap`, so
-status and length are never hidden. This is an append-only symbol addition;
-the existing ABI version stays 1 and the existing `run(i32,i32)->i32`
-signature is never mutated.
+### 4.1 Current entry validation
 
-For an E1 identity final, `run2` returns
-`(AHFL_CAP_OK,input_ptr,input_len)` and preserves the E1 alias ownership rule.
-For an E2 capability final, it invokes the selected import exactly once and
-normalizes its results as follows:
-
-- `OK` with nonzero pointer and nonzero length: return the host result pointer
-  and length unchanged;
-- `OK` with an empty/invalid result frame: return `(ERROR,0,0)`;
-- `ERROR`: return `(ERROR,0,0)`;
-- `PENDING` with a null result pointer: latch suspension and return
-  `(PENDING,0,0)`;
-- `PENDING` with a non-null result pointer, or any unknown status: fail closed
-  as `(ERROR,0,0)`.
-
-No branch fabricates a result length. The module does not free a capability
-result that it returns. On `OK`, ownership transfers to the outer caller, which
-must read it and call the same module's `dealloc` exactly once. On `ERROR`, the
-caller frees nothing. On `PENDING`, ownership of the argument frame transfers
-to the capability host for the suspension lifetime, as specified by
-`ahfl_host.h`; the outer caller must not free it as a completed-run input.
-
-### 4.1 The old `run` cannot lose status or length
-
-For an identity-only E1 plan, `run` keeps its current alias behavior. If an E2
-plan contains any terminal capability action, `run` traps before calling any
-capability. It must not call `run2` and discard status/length, return a pointer
-whose length is unknowable, or silently use the E1 identity exception.
-
-This behavior is structural and testable: the capability artifact's v1 `run`
-body contains no import call and reaches `unreachable` before any effect.
+Tests check the current entry signature and absence of removed exports. The
+historical pointer-only trap body and its dedicated probe have been deleted;
+there is no historical entry to call or negotiate.
 
 ### 4.2 Pending is propagated but not resumed in E2
 
 E2 adds a private mutable `pending_latched` i32 global. A `PENDING` import result
-sets it before returning. A later `run2` call on the same module instance sees
+sets it before returning. A later `run_workflow` call on the same module instance sees
 the latch and traps before reading or transferring ownership of the newly
 supplied input and before invoking the capability. Returning `PENDING` again
 would be ambiguous: it could incorrectly imply that the second input frame had
@@ -310,11 +282,11 @@ invent a second pending-coordinate scheme. E4 must reuse RFC 0022's
 
 ## 5. Orchestration and encoder changes
 
-`run2` resets the declared initial state and transition count, follows the same
+`run_workflow` resets the declared initial state and transition count, follows the same
 validated acyclic goto plan as E1, and executes the reached final action. Gotos
 increment `transition_count`; a capability call does not. `step()` remains the
 E1 state-transition observation API and never invokes a capability because it
-has no frame parameters. The only E2 capability execution entry is `run2`.
+has no frame parameters. The only E2 capability execution entry is `run_workflow`.
 
 The in-tree binary encoder adds only standard wasm32 features needed by E2:
 
@@ -324,7 +296,7 @@ The in-tree binary encoder adds only standard wasm32 features needed by E2:
 - locals for status/result pointer/result length;
 - `call`, exact status comparisons, normalization branches, and `return`;
 - the private pending latch global;
-- append-only `run2` export.
+- current `run_workflow` export.
 
 All type/function/global/export indices come from a fixed table derived from
 the sorted reachable capability ids. No hash-map iteration controls bytes.
@@ -345,7 +317,7 @@ E2 retains every E1 diagnostic and adds:
 | `wasm.INVALID_CAPABILITY_ABI` | out-of-range SymbolId or encoder ABI import-table invariant failure |
 | `wasm.UNSUPPORTED_CAPABILITY_FRAME` | valid Core call needs P6 serialization, chaining, or a noncanonical frame source/result |
 
-Runtime `ERROR`/`PENDING` are `run2` status results, not compile diagnostics.
+Runtime `ERROR`/`PENDING` are `run_workflow` status results, not compile diagnostics.
 Malformed host results are normalized fail-closed as described in section 4.
 
 The following valid Core shapes are explicitly rejected with no artifact:
@@ -359,7 +331,7 @@ The following valid Core shapes are explicitly rejected with no artifact:
 - a capability not in the target agent whitelist;
 - a called capability whose verified SymbolId is outside the uint32 ABI domain;
 - any signature/layout mismatch;
-- any attempt to use v1 `run` as a value-return capability entry.
+- any attempt to use the removed pointer-only entry.
 
 ## 7. Test and evidence plan
 
@@ -375,12 +347,11 @@ The following valid Core shapes are explicitly rejected with no artifact:
    duplicate SymbolId, and workflow call type checking.
 4. Binary parser asserts exact `ahfl_cap.cap_<SymbolId>` import bytes and exact
    `(i32,i32)->(i32,i32,i32)` type, sorted imports, shifted function indices,
-   append-only `run2`, and unchanged legacy exports.
-5. Structural `run2` probes cover identity OK forwarding, one terminal import
+   current `run_workflow` and exact export signatures.
+5. Structural `run_workflow` probes cover identity OK forwarding, one terminal import
    call, OK/ERROR/PENDING/unknown normalization, and the pending latch trapping
    before a repeated import call.
-6. Capability artifacts' v1 `run` traps before effects; E1 identity artifacts'
-   v1 `run` remains byte/behavior compatible.
+6. Modules do not export the removed pointer-only entry or an ABI-version global.
 7. Double emission is byte-identical; profile pair is byte-identical;
    `CoreProgram` and `CoreLayoutTable` snapshots do not change.
 8. Every fail-closed shape in section 6 returns the exact diagnostic and no
@@ -440,7 +411,7 @@ E2 lands as one review series with two non-amended commits after this design:
 1. **E2-C1 Core foundation**: materialized capability signatures, persisted
    agent whitelist/source ranges, lowering, equality, standalone verifier, and
    focused Core tests. No wasm consumer is enabled in this commit.
-2. **E2-C2 codegen and evidence**: E2 plan validator, exact imports, run2,
+2. **E2-C2 codegen and evidence**: E2 plan validator, exact imports, run_workflow,
    status normalization/pending latch, deterministic encoder changes, CLI and
    optional real-engine probes.
 

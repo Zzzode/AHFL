@@ -146,9 +146,7 @@ async function runBuild(source: string): Promise<ApiResult> {
     const normalized = normalizeModuleDecl(source);
     writeFileSync(sourceFile, normalized, 'utf-8');
 
-    const manifest = `manifest_version = 1
-
-[package]
+    const manifest = `[package]
 name = "playground"
 version = "0.1.0"
 edition = "2026"

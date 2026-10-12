@@ -19,6 +19,8 @@
 #include "runtime/providers/llm/response_cache.hpp"
 #include "runtime/providers/llm/response_parser.hpp"
 #include "runtime/providers/llm/tool_calling.hpp"
+#include "runtime/providers/llm/llm_session_store.hpp"
+#include "runtime/providers/llm/model_capacity.hpp"
 
 namespace ahfl::llm_provider {
 
@@ -48,8 +50,7 @@ enum class LLMResponseCacheAuditEventKind {
 struct LLMResponseCacheAuditEvent {
     LLMResponseCacheAuditEventKind kind{LLMResponseCacheAuditEventKind::Miss};
     std::string model{};
-    std::string cache_key_version{};
-    std::string key_fingerprint{};
+    std::string key_digest{};
     std::size_t system_prompt_bytes{0};
     std::size_t user_prompt_bytes{0};
     std::size_t response_bytes{0};
@@ -112,7 +113,6 @@ struct LLMTokenUsageEvent {
 
 enum class LLMTokenBudgetEventKind {
     PromptAccepted,
-    PromptTruncated,
     PromptRejected,
     UsageWithinBudget,
     UsageExceededBudget,
@@ -170,12 +170,22 @@ struct LLMTokenBudgetEvent {
 class LLMCapabilityProvider {
   public:
     /// A tool executor that can run tools and return results.
-    using ToolExecutor = std::function<ToolCallResult(const ToolCall &)>;
+    struct ToolExecutionContext {
+        std::uint64_t session_id{0};
+        std::uint64_t turn_id{0};
+        std::uint64_t tool_ordinal{0};
+        std::uint64_t definition_id{0};
+        runtime::CapabilityInvocationContext outer_context{};
+        support::Sha256Digest binding_digest{};
+        std::uint64_t idempotency_key{0};
+    };
+    using ToolExecutor =
+        std::function<ToolCallResult(const ToolCall &, const ToolExecutionContext &)>;
 
     LLMCapabilityProvider(const ir::Program &program, LLMProviderConfig config);
     LLMCapabilityProvider(const ir::Program &program,
                           LLMProviderConfig config,
-                          HttpClient::ChatCompletionsTransport transport);
+                          HttpClient::RequestTransport transport);
 
     // Invoke a capability, obtaining results via the LLM
     [[nodiscard]] runtime::CapabilityCallResult invoke(const std::string &capability_name,
@@ -185,6 +195,20 @@ class LLMCapabilityProvider {
                         const std::string &capability_name,
                         const std::vector<runtime::Value> &args);
     [[nodiscard]] runtime::ContextualCapabilityInvoker as_contextual_invoker();
+
+    void set_session_store(std::shared_ptr<LLMSessionStore> store);
+    [[nodiscard]] std::expected<bool, std::string>
+    can_resume(const runtime::CapabilityInvocationContext &context,
+               const std::string &name,
+               const std::vector<runtime::Value> &args);
+    [[nodiscard]] std::expected<std::optional<runtime::CapabilityCallResult>, std::string>
+    replay_completed(const runtime::CapabilityInvocationContext &context,
+                     const std::string &name,
+                     const std::vector<runtime::Value> &args);
+    [[nodiscard]] runtime::CapabilityCallResult
+    resume_pending(const runtime::CapabilityInvocationContext &context,
+                   const std::string &name,
+                   const std::vector<runtime::Value> &args);
 
     // Register all capabilities with the registry
     void register_all(runtime::CapabilityRegistry &registry);
@@ -208,7 +232,7 @@ class LLMCapabilityProvider {
     const ir::Program &program_;
     ir::ProgramIndex index_;
     LLMProviderConfig config_;
-    std::optional<HttpClient::ChatCompletionsTransport> transport_;
+    std::optional<HttpClient::RequestTransport> transport_;
     PromptBuilder prompt_builder_;
     ResponseParser response_parser_;
     std::unique_ptr<ResponseCache> response_cache_;
@@ -253,6 +277,32 @@ class LLMCapabilityProvider {
     mutable std::unordered_map<NodeBudgetKey, CumulativeBudgetTotals, NodeBudgetKeyHash>
         node_budget_totals_;
 
+    std::shared_ptr<LLMSessionStore> session_store_;
+    mutable ModelCapacityResolver capacity_resolver_;
+    mutable LLMSession *active_session_{nullptr};
+    [[nodiscard]] std::expected<EffectiveRequestBudget, std::string>
+    request_budget(const LLMProviderConfig &config, ProviderId id = 0) const;
+    [[nodiscard]] std::string session_binding(const runtime::CapabilityInvocationContext &,
+                                              const std::string &,
+                                              const std::vector<runtime::Value> &) const;
+    [[nodiscard]] runtime::CapabilityCallResult
+    run_session(const runtime::CapabilityInvocationContext &,
+                const std::string &,
+                const std::vector<runtime::Value> &,
+                bool resume);
+    [[nodiscard]] std::expected<void, std::string> persist_session() const;
+
+    [[nodiscard]] std::expected<void, std::string>
+    reserve_session_request(const LLMProviderConfig &,
+                            const runtime::CapabilityInvocationContext &,
+                            const std::string &,
+                            std::size_t) const;
+    [[nodiscard]] std::expected<void, std::string>
+    acknowledge_session_response(const LLMProviderConfig &,
+                                 const runtime::CapabilityInvocationContext &,
+                                 const HttpResponse &,
+                                 std::size_t) const;
+
     // Tool calling state
     std::vector<ToolDefinition> tools_;
     ToolExecutor tool_executor_;
@@ -260,21 +310,16 @@ class LLMCapabilityProvider {
     // Build the request JSON sent to the LLM (simple two-message format)
     [[nodiscard]] std::string build_request_json(const LLMProviderConfig &config,
                                                  const std::string &system_prompt,
-                                                 const std::string &user_prompt) const;
-
-    // Extract content text from the LLM response body (backward compat wrapper)
-    [[nodiscard]] std::string extract_content_from_response(const std::string &response_body) const;
+                                                 const std::string &user_prompt,
+                                                 const EffectiveRequestBudget &budget) const;
 
     // Extract structured response including tool_calls from LLM response body
     [[nodiscard]] LLMResponseContent extract_response(const std::string &response_body) const;
 
-    // Build a full multi-turn request JSON with tool definitions
-    [[nodiscard]] std::string
-    build_full_request_json(const std::vector<std::pair<std::string, std::string>> &messages) const;
-    [[nodiscard]] runtime::CapabilityCallResult invoke_with_context_impl(
-        const runtime::CapabilityInvocationContext &context,
-        const std::string &capability_name,
-        const std::vector<runtime::Value> &args);
+    [[nodiscard]] runtime::CapabilityCallResult
+    invoke_with_context_impl(const runtime::CapabilityInvocationContext &context,
+                             const std::string &capability_name,
+                             const std::vector<runtime::Value> &args);
 
     struct ProviderCandidate {
         std::string name;
@@ -302,7 +347,7 @@ class LLMCapabilityProvider {
     chat_with_provider_fallback(
         std::string_view capability_name,
         const runtime::CapabilityInvocationContext &context,
-        const std::function<std::string(const LLMProviderConfig &)> &request_factory,
+        const std::function<std::string(const LLMProviderConfig &, const EffectiveRequestBudget &)> &request_factory,
         const std::function<void(std::string_view chunk)> *on_stream_chunk = nullptr,
         SSEParser *stream_parser = nullptr) const;
     void record_response_cache_event(LLMResponseCacheAuditEventKind kind,

@@ -8,7 +8,7 @@
 // It consumes ONLY the machine-readable descriptor the manifest-driven C++
 // producer emitted plus the compiled module bytes -- no bespoke per-probe
 // key=value lines. It drives the stable Core-Wasm ABI
-// (alloc/run2/step/current_state, the transition and workflow counters, the
+// (alloc/run_workflow/step/current_state, the transition and workflow counters, the
 // ahfl_cap import, the node-event buffer) and:
 //
 //   1. reconstructs the SAME canonical observation document shape the in-process
@@ -18,7 +18,7 @@
 //
 //   2. on FRESH module instances, runs the capability ABI normalization matrix
 //      (OK / OK-null / OK-zero-len / ERROR / PENDING / PENDING-nonnull / unknown
-//      + the pending latch, the legacy-run pre-effect trap, and -- for a
+//      + the pending latch, the removed-entry pre-effect trap, and -- for a
 //      capability workflow -- the node-event record layout, the corrupt-count
 //      defensive gate, and the checked-alloc sequence). These are the real-engine
 //      robustness contracts the retired bespoke Node probes pinned, now driven by
@@ -59,8 +59,8 @@ if (typeof WebAssembly === "undefined" || typeof WebAssembly.instantiate !== "fu
 
 const args = parseArgs(process.argv.slice(2));
 const descriptor = JSON.parse(fs.readFileSync(args.descriptor, "utf8"));
-if (descriptor.schema !== "ahfl.conformance-wasm-descriptor.v1") {
-  fail(`unexpected descriptor schema ${descriptor.schema}`);
+if (descriptor.format !== "ahfl.conformance-wasm-descriptor") {
+  fail(`unexpected descriptor format ${descriptor.format}`);
 }
 const scenario = descriptor.scenarios.find((s) => s.name === args.scenario);
 if (scenario === undefined) fail(`descriptor has no scenario '${args.scenario}'`);
@@ -97,7 +97,8 @@ function descriptorMatchesCommonKat(lane, nodeCount) {
   const bySchedule = [...lane.nodes].sort((a, b) => a.schedule_pos - b.schedule_pos);
   const [first, second] = bySchedule;
   return first.schedule_pos === 0 && first.has_capability &&
-         first.capability_ordinal === 0 && first.source_symbol === 1 &&
+         first.capabilities.length === 1 &&
+         first.capabilities[0].ordinal === 0 && first.capabilities[0].source_symbol === 1 &&
          second.schedule_pos === 1 && !second.has_capability;
 }
 
@@ -146,7 +147,7 @@ function assertEventRegionZero(exports, label, includeHeader) {
 // ok / ok-null / ok-zero-len / error / pending / pending-nonnull / unknown /
 // corrupt-count. One instance per mode (the pending-latch and normalization
 // contracts are per-instance).
-// RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the capability BRIDGE lane.
+// RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): the capability BRIDGE lane.
 // A bridge import has functype (block_ptr:i32) -> (status:i32, result_root_ptr).
 // The host walks the dense P4-D argument spans at the control block, builds the
 // SAME wire argument envelope the native transport uses (0 args => {}, one
@@ -394,7 +395,7 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
     //  * agent lane: the packed input frame, the fixed context frame, the
     //    constructor scratch arena, and every OTHER call site's disjoint
     //    result placement;
-    //  * V2-D workflow lane: every packaged node's I_k / C_k / scratch_k
+    //  * workflow-frame workflow lane: every packaged node's I_k / C_k / scratch_k
     //    block span (a bridge in a non-final handler may project the node
     //    input or an earlier handler's context/scratch) and every OTHER call
     //    site's result placement. The current site's own result is excluded
@@ -539,7 +540,7 @@ function emitObservation({ status, states, capabilities, capabilityArguments, ou
     [`"case"`, jsonString(descriptor.case)],
     ...(outputRaw !== null ? [[`"output_json"`, outputRaw]] : []),
     [`"scenario"`, jsonString(scenario.name)],
-    [`"schema"`, jsonString("ahfl.node-observation.v1")],
+    [`"format"`, jsonString("ahfl.node-observation")],
     [`"state_sequence"`, emitStateSequence(states)],
     [`"status"`, jsonString(status)],
     [`"transition_count"`, String(transitions)],
@@ -564,12 +565,12 @@ function expectTraps(fn, label) {
 
 // ---- RFC 0026 P6-7 p6-frame lane ---------------------------------------------
 //
-// A p6-frame module does NOT carry canonical wire JSON over run2. The host
+// A p6-frame module does NOT carry canonical wire JSON over run_workflow. The host
 // (1) packs the scenario's canonical input JSON into the fixed P4-D input
 // regions using the descriptor's verified layout + wire-schema tables, (2)
-// invokes runv() -> (status, value_ptr), and (3) walks the returned frame's
+// invokes run_frame() -> (status, value_ptr), and (3) walks the returned frame's
 // P4-D bytes back to JSON. The descriptor tables mirror the module's
-// `ahfl.core-layout.v1` / `ahfl.wire-schema.v1` sections value-for-value, so
+// `ahfl.core-layout` / `ahfl.wire-schema` sections value-for-value, so
 // every offset/stride/capacity comes from the module's own layout, never a
 // host re-derivation. The C++ comparator canonicalizes the resulting JSON
 // (key order, escaping), so the host only needs a structurally faithful DOM.
@@ -1163,8 +1164,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = 
       }
       // Region membership (untrusted module-written PtrLen): authorize the
       // union of the packed input frame-payload arena and, with frame-bridge
-      // v2 V2-B, the fixed read-only rodata span [rodata_base, +extent) the
-      // module's Data section initialized. A V2-C bridge result span is added
+      // v2 string-frame, the fixed read-only rodata span [rodata_base, +extent) the
+      // module's Data section initialized. A capability-bridge bridge result span is added
       // later; anything else (scratch/heap pointer, wrap-around) fails closed
       // without echoing bytes. KR6.6: the runtime construct-heap span
       // [construct_heap_base, 65536) is also authorized (String concat
@@ -1311,20 +1312,20 @@ function packP6Input(probe) {
   return {lane, W, L, backing};
 }
 
-// Encodes the runv result frame after the run.
+// Encodes the run_frame result frame after the run.
 function encodeP6Output(probe, packed) {
   const e = probe.exports;
   const {lane, W, L, backing} = packed;
-  const tuple = e.runv();
-  if (tuple[0] !== 0) frameFail(`runv returned non-OK status ${tuple[0]}`);
+  const tuple = e.run_frame();
+  if (tuple[0] !== 0) frameFail(`run_frame returned non-OK status ${tuple[0]}`);
   const authorizedBase =
       (lane.final_kind === "computed" || lane.final_kind === "capability")
           ? lane.output_base : lane.input_base;
   if (tuple[1] !== authorizedBase) {
-    frameFail(`runv value_ptr ${tuple[1]} is not the authorized base ${authorizedBase} ` +
+    frameFail(`run_frame value_ptr ${tuple[1]} is not the authorized base ${authorizedBase} ` +
               `for a '${lane.final_kind}' final`);
   }
-  // V2-C: a computed final may materialize a String projected from a capability
+  // capability-bridge: a computed final may materialize a String projected from a capability
   // bridge result through the context frame; its payload bytes live in that
   // call site's disjoint result placement. Authorize every bridge result
   // payload arena for the output-frame walk.
@@ -1338,8 +1339,8 @@ function encodeP6Output(probe, packed) {
   return stringifyValue(output);
 }
 
-// V2-C: collect the state sequence on a FRESH instance via step(). A frame
-// bridge puts real effects inside non-final handlers, and runv() walks
+// capability-bridge: collect the state sequence on a FRESH instance via step(). A frame
+// bridge puts real effects inside non-final handlers, and run_frame() walks
 // init->final itself, so an explicit step() walk on the canonical instance
 // would fire every bridge capability a second time (the evaluator runs the
 // flow exactly once). The instrumentation instance's bridge replays are
@@ -1382,13 +1383,13 @@ async function runAgent(compiled) {
   const lane = descriptor.agent_lane;
   const probe = await makeInstance(compiled, "scenario");
   const e = probe.exports;
-  if (e.ahfl_abi_version.value !== 1) fail("abi version mismatch");
+
   if (e.current_state() !== lane.initial_state) {
     fail(`agent initial state ${e.current_state()} != ${lane.initial_state}`);
   }
 
-  // V2-C: a frame-bridge module invokes capabilities from non-final handlers.
-  // runv() is the one canonical run (it walks init->final on its own); the
+  // capability-bridge: a frame-bridge module invokes capabilities from non-final handlers.
+  // run_frame() is the one canonical run (it walks init->final on its own); the
   // state sequence is collected on a separate instrumentation instance so the
   // bridge effects fire exactly once on the canonical instance.
   // RFC 0026 dual-track elimination: every module is P6-frame, so the bridge
@@ -1432,7 +1433,7 @@ async function runAgent(compiled) {
     }
   }
 
-  // RFC 0026 P6-7: a p6-frame agent invokes runv on the packed frame and
+  // RFC 0026 P6-7: a p6-frame agent invokes run_frame on the packed frame and
   // encodes the output. This is the sole return path.
   const outputRaw = encodeP6Output(probe, p6);
   return {
@@ -1493,11 +1494,9 @@ function readEventRecords(lane, nodeCount, e) {
       }
       if (node.has_capability) {
         if (record.tag !== 1) fail(`record ${i} capability node tag is not 1`);
-        if (record.capability !== node.capability_ordinal) {
-          fail(`record ${i} capability ordinal ${record.capability} != ${node.capability_ordinal}`);
-        }
-        if (record.sourceSymbol !== BigInt(node.source_symbol)) {
-          fail(`record ${i} source_symbol ${record.sourceSymbol} != ${node.source_symbol}`);
+        const capability = node.capabilities.find((c) => c.ordinal === record.capability);
+        if (capability === undefined || record.sourceSymbol !== BigInt(capability.source_symbol)) {
+          fail(`record ${i} capability identity disagrees with the descriptor`);
         }
       } else {
         if (record.tag !== 0) fail(`record ${i} identity node tag is not 0`);
@@ -1561,11 +1560,11 @@ async function runWorkflowP6(compiled) {
     packValue(e, frameLane, W, L, JSON.parse(probe.scenarioInput),
               entryWireRoot, entryBlock.input_layout,
               entryBlock.input_base, backing, arena);
-    var run2Ptr = entryBlock.input_base;
-    var run2Len = entryBlock.input_size;
+    var run_workflowPtr = entryBlock.input_base;
+    var run_workflowLen = entryBlock.input_size;
   }
 
-  const tuple = e.run2(run2Ptr, run2Len);
+  const tuple = e.run_workflow(run_workflowPtr, run_workflowLen);
   let outputRaw = null;
   // WH-5b.2: a bridge PENDING arm latches and returns (PENDING,0,0) from the
   // P6 runner. The workflow suspends: no output slot, no completed-count
@@ -1573,21 +1572,21 @@ async function runWorkflowP6(compiled) {
   // observation.
   const suspended = tuple[0] === 2;
   if (!suspended && tuple[0] !== 0) {
-    fail(`p6 workflow run2 returned non-OK status ${tuple[0]}`);
+    fail(`p6 workflow run_workflow returned non-OK status ${tuple[0]}`);
   }
   if (!suspended) {
     if (tuple[1] !== frameLane.output_base) {
-      fail(`p6 workflow run2 returned ${tuple[1]} != output slot ${frameLane.output_base}`);
+      fail(`p6 workflow run_workflow returned ${tuple[1]} != output slot ${frameLane.output_base}`);
     }
     if (tuple[2] !== frameLane.output_size) {
-      fail(`p6 workflow run2 length ${tuple[2]} != ${frameLane.output_size}`);
+      fail(`p6 workflow run_workflow length ${tuple[2]} != ${frameLane.output_size}`);
     }
     if (e.workflow_completed_count.value !== nodeCount) {
       fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
     }
     // Encode the workflow output slot against the workflow output root. String
     // payloads are authorized in rodata, the entry payload arena, or any bridge
-    // call site's disjoint result placement (V2-D emission half 2). KR6.6: the
+    // call site's disjoint result placement (workflow-frame emission half 2). KR6.6: the
     // runtime construct-heap span [construct_heap_base, 65536) is also
     // authorized (String concat result payloads).
     const stringRegions = [];
@@ -1614,7 +1613,7 @@ async function runWorkflowP6(compiled) {
                              stringRegions);
     outputRaw = stringifyValue(output);
   }
-  // V2-D emission half 2: the state sequence is REAL runtime evidence.
+  // workflow-frame emission half 2: the state sequence is REAL runtime evidence.
   // Every node is P6-frame, so every node writes its states to the trace
   // ring; the node-event records the scheduler writes per completed node
   // are validated below but carry no state recovery (that path was deleted
@@ -1705,7 +1704,7 @@ async function runWorkflowP6(compiled) {
   for (const nodeStates of statesPerNode) {
     states.push(...nodeStates);
   }
-  // V2-D emission half 2: in-handler capability bridges record their
+  // workflow-frame emission half 2: in-handler capability bridges record their
   // capabilities + argument envelopes on probe events (no node-event records).
   const capabilities = probe.events.map((event) => event.name);
   const capabilityArguments = probe.events.map((event) => event.argument);
@@ -1735,28 +1734,28 @@ async function runAbiProbes(compiled) {
 
   if (!isWorkflow) {
     // ---- agent lane ----
-    // V2-C: a frame-bridge agent performs its capability in non-final handlers,
+    // capability-bridge: a frame-bridge agent performs its capability in non-final handlers,
     // behind the (i32)->(i32,i32) protocol. Its normalization probes use the
-    // packed P4-D frame + runv, NEVER the legacy opaque entry points: run2/run
+    // packed P4-D frame + run_frame, through the current frame entry
     // have no defined contract on this lane and writing opaque JSON over the
     // fixed input frame would corrupt the bridge argument spans.
     const hasBridge = (descriptor.frame_lane?.bridge_call_sites?.length ?? 0) > 0;
     if (hasBridge) {
       // OK path: every dense bridge call site fires exactly once on one
       // completed run (one capability may legally own several sites that share
-      // one import ordinal -- the chain/loop shape), and runv returns the
+      // one import ordinal -- the chain/loop shape), and run_frame returns the
       // computed output base.
       const bridgeCallCount = descriptor.frame_lane.bridge_call_sites.length;
       {
         const p = await makeInstance(compiled, "scenario");
         packP6Input(p);
-        const tuple = p.exports.runv();
+        const tuple = p.exports.run_frame();
         if (tuple[0] !== 0 || p.calls !== bridgeCallCount) {
-          fail(`bridge runv OK normalization mismatch: ${tuple}, calls=${p.calls}, ` +
+          fail(`bridge run_frame OK normalization mismatch: ${tuple}, calls=${p.calls}, ` +
                `expected=${bridgeCallCount}`);
         }
         if (tuple[1] !== descriptor.frame_lane.output_base) {
-          fail("bridge runv returned a value_ptr other than the computed output base");
+          fail("bridge run_frame returned a value_ptr other than the computed output base");
         }
       }
       // Every non-OK bridge status (error / pending / unknown) traps single-run;
@@ -1766,10 +1765,10 @@ async function runAbiProbes(compiled) {
         const p = await makeInstance(compiled, mode);
         packP6Input(p);
         let trapped = false;
-        try { p.exports.runv(); }
+        try { p.exports.run_frame(); }
         catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
         if (!trapped || p.calls !== 1) {
-          fail(`bridge runv ${mode} did not trap after exactly one call (trapped=${trapped}, ` +
+          fail(`bridge run_frame ${mode} did not trap after exactly one call (trapped=${trapped}, ` +
                `calls=${p.calls})`);
         }
       }
@@ -1778,19 +1777,19 @@ async function runAbiProbes(compiled) {
     // RFC 0026 dual-track elimination: every agent is P6-frame. A capability
     // agent always carries bridge call sites (the bridge is the sole capability
     // calling convention), so the hasBridge path above is the only capability
-    // probe. Agents without bridge call sites are identity agents: runv is the
+    // probe. Agents without bridge call sites are identity agents: run_frame is the
     // sole defined observation entry. Pack the P4-D frame on a FRESH instance
-    // and assert runv returns OK with the descriptor-authorized root (the input
+    // and assert run_frame returns OK with the descriptor-authorized root (the input
     // base for an identity final, the output base for a computed final).
     {
       const p = await makeInstance(compiled, "ok");
       const packed = packP6Input(p);
-      const tuple = p.exports.runv();
-      if (tuple[0] !== 0) fail("p6-frame runv did not return OK");
+      const tuple = p.exports.run_frame();
+      if (tuple[0] !== 0) fail("p6-frame run_frame did not return OK");
       const authorized = (packed.lane.final_kind === "computed" ||
                           packed.lane.final_kind === "capability")
           ? packed.lane.output_base : packed.lane.input_base;
-      if (tuple[1] !== authorized) fail("p6-frame runv returned an unauthorized value_ptr");
+      if (tuple[1] !== authorized) fail("p6-frame run_frame returned an unauthorized value_ptr");
     }
     return;
   }
@@ -1801,24 +1800,25 @@ async function runAbiProbes(compiled) {
     expectTraps(() => p.exports[name](), `workflow ${name}()`);
   }
 
-  // Every workflow is P6-frame. run2 drives the frame lane and is already
+  // Every workflow is P6-frame. run_workflow drives the frame lane and is already
   // fully exercised by runWorkflowP6 (packed I block, fixed output slot);
-  // the legacy identity/capability normalization probes are deleted.
+  // Removed pointer-only entries must remain absent.
   {
     const p = await makeInstance(compiled, "ok");
-    expectTraps(() => p.exports.run(...p.writeInput()), "p6 workflow legacy run()");
-    if (p.calls !== 0) fail("legacy workflow run() reached a capability");
+    if ("run" in p.exports) fail("removed pointer-only entry is exported");
+    if (p.calls !== 0) fail("instantiation reached a capability");
   }
   // Checked bump allocator: over-capacity returns 0 without advancing, then the
-  // next allocations start at the descriptor heap base and advance exactly.
-  // Only capability workflows use the checked allocator; identity workflows
-  // use the unchecked variant.
+  // next allocations start at the descriptor heap base and preserve alignment.
+  // Probe capability workflows against the checked allocation contract.
   if (descriptor.imports.length > 0) {
     const p = await makeInstance(compiled, "ok");
     if (p.exports.alloc(70000) !== 0) fail("over-capacity alloc did not return 0");
     const heapBase = descriptor.heap_base;
+    if (heapBase % 8 !== 0) fail("descriptor heap base is unaligned");
     if (p.exports.alloc(1) !== heapBase) fail("post-fail alloc did not return heap_base");
-    if (p.exports.alloc(1) !== heapBase + 1) fail("successful alloc did not advance");
+    if (p.exports.alloc(1) !== heapBase + 8) fail("successful alloc did not advance by aligned extent");
+    if (p.exports.alloc(0) !== heapBase + 16) fail("zero probe advanced the aligned cursor");
   }
 }
 

@@ -1,8 +1,8 @@
 {
-  "format_version": "ahfl.dry-run-trace.v1",
-  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "format": "ahfl.dry-run-trace",
+  "source_execution_plan_format": "ahfl.execution-plan",
   "source_package_identity": {
-    "format_version": "ahfl.native-package.v1",
+    "format": "ahfl.native-package",
     "name": "workflow-value-flow",
     "version": "0.1.0"
   },

@@ -32,7 +32,7 @@ flowchart TD
     subgraph L1["L1 语言与编译器核心"]
         C1["Frontend<br/>ANTLR → AST"]
         C2["Semantics<br/>Resolver / TypeCheck / Validate"]
-        C3["IR (ahfl.ir.v2)<br/>语义枢纽"]
+        C3["IR (ahfl.ir)<br/>语义枢纽"]
         C4["Passes / Opt"]
         C5["Backends<br/>Core / SMV / ExecutionPlan / Infra"]
         C6["Runtime<br/>IR 解释器 + Event Kernel"]
@@ -110,7 +110,7 @@ flowchart LR
 
 ### 2.3 IR：三层塔与语义枢纽
 
-IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系统的**唯一语义源**。
+IR（`ahfl.ir`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系统的**唯一语义源**。
 经 [RFC 0026](../rfcs/0026-ir-tower-and-execution-model.zh.md) 重构后，IR 不再是单层结构，
 而是**三层塔**（three-layer tower），每层有明确的职责与消费者：
 
@@ -217,7 +217,7 @@ CLI 管线架构见 [cli-pipeline-architecture.zh.md](cli-pipeline-architecture.
 
 - 执行事件 → human / JSON / JSONL report、replay、audit、scheduler、checkpoint 投影
 - OTel-compatible adapter：canonical events → deterministic OTLP spans
-- Recovery：加载器接受 `ahfl.workflow-recovery.v1`/`v2`，wasm lane 写 v2；Pending 挂起 → 冷启动 fresh instance 整模块重放 + 精确 memo 回喂（零重复 live side effect），证据为 `durable_resume_capstone` / `long_soak_smoke`
+- Recovery：加载器只接受当前 `ahfl.workflow-recovery` 精确结构；Pending 挂起 → 冷启动 fresh instance 整模块重放 + 精确 memo 回喂（零重复 live side effect），证据为 `durable_resume_capstone` / `long_soak_smoke`
 
 ### 4.4 部署视图（Infra Backends）
 
@@ -304,7 +304,7 @@ Serverless 托管、多租户平台、多 region 控制面——目前**只有�
 | 运行时 | [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md) |
 | 语义与类型检查 | [semantics-architecture.zh.md](semantics-architecture.zh.md)、[ast-model-architecture.zh.md](ast-model-architecture.zh.md) |
 | CLI 与工具链 | [cli-pipeline-architecture.zh.md](cli-pipeline-architecture.zh.md)、[lsp-hover-architecture.zh.md](lsp-hover-architecture.zh.md)、[diagnostics-architecture.zh.md](diagnostics-architecture.zh.md) |
-| 模块与包 | [module-loading.zh.md](module-loading.zh.md)、[module-resolution-rules.zh.md](module-resolution-rules.zh.md)、[RFC 0005 包配置系统](../rfcs/0005-package-configuration-system.zh.md)、[project-usage.zh.md](../reference/project-usage.zh.md) |
+| 模块与包 | [module-loading.zh.md](module-loading.zh.md)、[module-resolution-rules.zh.md](module-resolution-rules.zh.md)、[RFC 0005 包配置系统](../rfcs/0005-package-configuration-system.zh.md)、[packages.zh.md](../tutorials/packages.zh.md) |
 | 实现状态与 backlog | [project-status.zh.md](../plans/project-status.zh.md)、[issue-backlog-global-gaps.zh.md](../plans/issue-backlog-global-gaps.zh.md) |
 | 仓库目录约定 | [repository-layout.zh.md](repository-layout.zh.md)、[AGENTS.md](../../AGENTS.md) |
 

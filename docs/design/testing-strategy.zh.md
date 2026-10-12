@@ -10,7 +10,7 @@
 
 - [native-runtime-architecture.zh.md](./native-runtime-architecture.zh.md)
 - [native-runtime-artifacts.zh.md](../reference/native-runtime-artifacts.zh.md)
-- [native-handoff-usage.zh.md](../reference/native-handoff-usage.zh.md)
+- [native-handoff.zh.md](../tutorials/native-handoff.zh.md)
 
 ### 目标
 
@@ -129,7 +129,7 @@ ctest --preset test-dev --output-on-failure -L 'reference-consumer'
 - [semantics-architecture.zh.md](./semantics-architecture.zh.md)
 - [ir-backend-architecture.zh.md](./ir-backend-architecture.zh.md)
 - [formal-backend.zh.md](./formal-backend.zh.md)
-- [project-usage.zh.md](../reference/project-usage.zh.md)
+- [packages.zh.md](../tutorials/packages.zh.md)
 - [backend-capability-matrix.zh.md](../reference/backend-capability-matrix.zh.md)
 
 ### 目标

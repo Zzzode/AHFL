@@ -8,7 +8,7 @@
 - [source-graph.zh.md](./source-graph.zh.md)
 - [semantics-architecture.zh.md](./semantics-architecture.zh.md)
 - [testing-strategy.zh.md](./testing-strategy.zh.md)
-- [project-usage.zh.md](../reference/project-usage.zh.md)
+- [packages.zh.md](../tutorials/packages.zh.md)
 
 ## 目标
 

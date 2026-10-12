@@ -13,7 +13,6 @@ namespace ahfl::ir {
 
 void ProgramVisitor::visit(const Program &program) {
     aborted_ = false;
-    on_program(program);
     for (const auto &declaration : program.declarations) {
         if (aborted_) {
             break;
@@ -22,41 +21,28 @@ void ProgramVisitor::visit(const Program &program) {
     }
 }
 
-// Legacy hook defaults (no-ops)
-void ProgramVisitor::on_program(const Program & /*program*/) {}
-void ProgramVisitor::on_decl(const Decl & /*declaration*/) {}
-void ProgramVisitor::on_expr(const Expr & /*expr*/) {}
-void ProgramVisitor::on_temporal_expr(const TemporalExpr & /*expr*/) {}
-void ProgramVisitor::on_statement(const Statement & /*statement*/) {}
-void ProgramVisitor::on_workflow_node(const WorkflowNode & /*node*/) {}
-
-// Pre/post hook defaults — delegate to legacy hooks
-VisitAction ProgramVisitor::visit_decl_pre(const Decl &declaration) {
-    on_decl(declaration);
+// Pre/post hook defaults
+VisitAction ProgramVisitor::visit_decl_pre(const Decl & /*declaration*/) {
     return VisitAction::Continue;
 }
 void ProgramVisitor::visit_decl_post(const Decl & /*declaration*/) {}
 
-VisitAction ProgramVisitor::visit_expr_pre(const Expr &expr) {
-    on_expr(expr);
+VisitAction ProgramVisitor::visit_expr_pre(const Expr & /*expr*/) {
     return VisitAction::Continue;
 }
 void ProgramVisitor::visit_expr_post(const Expr & /*expr*/) {}
 
-VisitAction ProgramVisitor::visit_temporal_expr_pre(const TemporalExpr &expr) {
-    on_temporal_expr(expr);
+VisitAction ProgramVisitor::visit_temporal_expr_pre(const TemporalExpr & /*expr*/) {
     return VisitAction::Continue;
 }
 void ProgramVisitor::visit_temporal_expr_post(const TemporalExpr & /*expr*/) {}
 
-VisitAction ProgramVisitor::visit_statement_pre(const Statement &statement) {
-    on_statement(statement);
+VisitAction ProgramVisitor::visit_statement_pre(const Statement & /*statement*/) {
     return VisitAction::Continue;
 }
 void ProgramVisitor::visit_statement_post(const Statement & /*statement*/) {}
 
-VisitAction ProgramVisitor::visit_workflow_node_pre(const WorkflowNode &node) {
-    on_workflow_node(node);
+VisitAction ProgramVisitor::visit_workflow_node_pre(const WorkflowNode & /*node*/) {
     return VisitAction::Continue;
 }
 void ProgramVisitor::visit_workflow_node_post(const WorkflowNode & /*node*/) {}
@@ -371,7 +357,7 @@ void ProgramVisitor::visit_block(const Block &block) {
 
 bool ProgramRewriter::rewrite(Program &program) {
     aborted_ = false;
-    bool modified = on_program(program);
+    bool modified = false;
     for (auto &declaration : program.declarations) {
         if (aborted_) {
             break;
@@ -381,57 +367,37 @@ bool ProgramRewriter::rewrite(Program &program) {
     return modified;
 }
 
-// Legacy hook defaults
-bool ProgramRewriter::on_program(Program & /*program*/) {
-    return false;
-}
-bool ProgramRewriter::on_decl(Decl & /*declaration*/) {
-    return false;
-}
-bool ProgramRewriter::on_expr(Expr & /*expr*/) {
-    return false;
-}
-bool ProgramRewriter::on_temporal_expr(TemporalExpr & /*expr*/) {
-    return false;
-}
-bool ProgramRewriter::on_statement(Statement & /*statement*/) {
-    return false;
-}
-bool ProgramRewriter::on_workflow_node(WorkflowNode & /*node*/) {
-    return false;
-}
-
-// Pre/post hook defaults — delegate to legacy hooks
-RewriteAction ProgramRewriter::rewrite_decl_pre(Decl &declaration) {
-    return {VisitAction::Continue, on_decl(declaration)};
+// Pre/post hook defaults
+RewriteAction ProgramRewriter::rewrite_decl_pre(Decl & /*declaration*/) {
+    return {VisitAction::Continue, false};
 }
 bool ProgramRewriter::rewrite_decl_post(Decl & /*declaration*/) {
     return false;
 }
 
-RewriteAction ProgramRewriter::rewrite_expr_pre(Expr &expr) {
-    return {VisitAction::Continue, on_expr(expr)};
+RewriteAction ProgramRewriter::rewrite_expr_pre(Expr & /*expr*/) {
+    return {VisitAction::Continue, false};
 }
 bool ProgramRewriter::rewrite_expr_post(Expr & /*expr*/) {
     return false;
 }
 
-RewriteAction ProgramRewriter::rewrite_temporal_expr_pre(TemporalExpr &expr) {
-    return {VisitAction::Continue, on_temporal_expr(expr)};
+RewriteAction ProgramRewriter::rewrite_temporal_expr_pre(TemporalExpr & /*expr*/) {
+    return {VisitAction::Continue, false};
 }
 bool ProgramRewriter::rewrite_temporal_expr_post(TemporalExpr & /*expr*/) {
     return false;
 }
 
-RewriteAction ProgramRewriter::rewrite_statement_pre(Statement &statement) {
-    return {VisitAction::Continue, on_statement(statement)};
+RewriteAction ProgramRewriter::rewrite_statement_pre(Statement & /*statement*/) {
+    return {VisitAction::Continue, false};
 }
 bool ProgramRewriter::rewrite_statement_post(Statement & /*statement*/) {
     return false;
 }
 
-RewriteAction ProgramRewriter::rewrite_workflow_node_pre(WorkflowNode &node) {
-    return {VisitAction::Continue, on_workflow_node(node)};
+RewriteAction ProgramRewriter::rewrite_workflow_node_pre(WorkflowNode & /*node*/) {
+    return {VisitAction::Continue, false};
 }
 bool ProgramRewriter::rewrite_workflow_node_post(WorkflowNode & /*node*/) {
     return false;
@@ -700,28 +666,26 @@ bool ProgramRewriter::rewrite_statement(Statement &statement) {
                            return value.value != nullptr && rewrite_expr(*value.value);
                        },
                        [&](AssertStatement &value) {
-                           bool changed = value.condition != nullptr &&
-                                          rewrite_expr(*value.condition);
+                           bool changed =
+                               value.condition != nullptr && rewrite_expr(*value.condition);
                            if (value.message != nullptr) {
                                changed = rewrite_expr(*value.message) || changed;
                            }
                            return changed;
                        },
                        [&](UnwrapStatement &value) {
-                           return value.operand != nullptr &&
-                                  rewrite_expr(*value.operand);
+                           return value.operand != nullptr && rewrite_expr(*value.operand);
                        },
                        [&](RequiresStatement &value) {
-                           bool changed = value.condition != nullptr &&
-                                          rewrite_expr(*value.condition);
+                           bool changed =
+                               value.condition != nullptr && rewrite_expr(*value.condition);
                            if (value.message != nullptr) {
                                changed = rewrite_expr(*value.message) || changed;
                            }
                            return changed;
                        },
                        [&](UnreachableStatement &value) {
-                           return value.message != nullptr &&
-                                  rewrite_expr(*value.message);
+                           return value.message != nullptr && rewrite_expr(*value.message);
                        },
                        [&](ExprStatement &value) {
                            return value.expr != nullptr && rewrite_expr(*value.expr);

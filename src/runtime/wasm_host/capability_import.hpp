@@ -6,7 +6,7 @@
 // span walk), invokes the capability through the ContextualCapabilityInvoker,
 // and returns the ImportReply carrying the raw ahfl_cap_status verbatim (the
 // engine never classifies; the guest's compiled code is the classifier,
-// exactly as run2's raw_status is carried verbatim and classified by the D1b
+// exactly as run_workflow's raw_status is carried verbatim and classified by the D1b
 // controller).
 //
 // Bridge lane (i32)->(i32,i32): the single arg is the control-block pointer;
@@ -108,7 +108,7 @@ struct CapabilityImportState {
     /// non-Pending status the guest traps by design (the bridge lane
     /// has a graceful PENDING arm only). The callback records the human-
     /// readable capability failure here so the session can surface it in the
-    /// trap diagnostic instead of a bare "run2 trapped". Never carries raw
+    /// trap diagnostic instead of a bare "run_workflow trapped". Never carries raw
     /// guest addresses/bytes.
     std::optional<std::string> last_capability_error;
     /// WH-5c.1: the precise sub-reason when last_error is ArgDecodeFailed.

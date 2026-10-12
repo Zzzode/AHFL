@@ -86,7 +86,6 @@ function writePackageManifest(packageRoot, packageName, modulePrefix, exportedMo
   writeTextFile(
     path.join(packageRoot, 'ahfl.toml'),
     [
-      'manifest_version = 1',
       '',
       '[package]',
       `name = "${packageName}"`,
@@ -185,7 +184,7 @@ function writeDiagnosticsTranscript() {
     return;
   }
   const transcript = {
-    schema: 'ahfl.vscode.problemsTranscript.v1',
+    schema: 'ahfl.vscode.problemsTranscript',
     source: 'vscode.languages.getDiagnostics',
     snapshots: diagnosticsTranscript,
   };

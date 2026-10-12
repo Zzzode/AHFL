@@ -36,13 +36,13 @@ fn json_ut() -> Int effect Pure decreases 0 {
     let v_arr: option::Option<json::JsonValue> = json::parse(s_arr);
 
     // (1–7) all seven inputs parse successfully.
-    assert(option::is_some<json::JsonValue>(v_null));   // 1
-    assert(option::is_some<json::JsonValue>(v_true));   // 2
-    assert(option::is_some<json::JsonValue>(v_false));  // 3
-    assert(option::is_some<json::JsonValue>(v_int));    // 4
-    assert(option::is_some<json::JsonValue>(v_float));  // 5
-    assert(option::is_some<json::JsonValue>(v_text));   // 6
-    assert(option::is_some<json::JsonValue>(v_arr));    // 7
+    assert(v_null.is_some());   // 1
+    assert(v_true.is_some());   // 2
+    assert(v_false.is_some());  // 3
+    assert(v_int.is_some());    // 4
+    assert(v_float.is_some());  // 5
+    assert(v_text.is_some());   // 6
+    assert(v_arr.is_some());    // 7
     // Note: v_obj is intentionally NOT parsed here — some emitter variants
     // re-order object keys lexicographically; we exercise objects via the
     // predicate + lookup tests below which are order-independent.
@@ -51,96 +51,52 @@ fn json_ut() -> Int effect Pure decreases 0 {
     // Use Option::map / unwrap_or to apply predicates through the parsed
     // Option<JsonValue>. Each assertion checks that a particular predicate
     // returns true on the appropriate JsonValue kind.
-    assert(option::unwrap_or<Bool>(
-        option::map<json::JsonValue, Bool>(v_null,  \v: json::JsonValue -> json::is_null(v)),   false));  // 8
-    assert(option::unwrap_or<Bool>(
-        option::map<json::JsonValue, Bool>(v_true,  \v: json::JsonValue -> json::is_bool(v)),   false));  // 9
-    assert(option::unwrap_or<Bool>(
-        option::map<json::JsonValue, Bool>(v_int,   \v: json::JsonValue -> json::is_number(v)), false));  // 10
-    assert(option::unwrap_or<Bool>(
-        option::map<json::JsonValue, Bool>(v_float, \v: json::JsonValue -> json::is_number(v)), false));  // 11
-    assert(option::unwrap_or<Bool>(
-        option::map<json::JsonValue, Bool>(v_text,  \v: json::JsonValue -> json::is_string(v)), false));  // 12
-    assert(option::unwrap_or<Bool>(
-        option::map<json::JsonValue, Bool>(v_arr,   \v: json::JsonValue -> json::is_array(v)),  false));  // 13
+    assert((v_null.map<Bool>(\v: json::JsonValue -> json::is_null(v))).unwrap_or(false));  // 8
+    assert((v_true.map<Bool>(\v: json::JsonValue -> json::is_bool(v))).unwrap_or(false));  // 9
+    assert((v_int.map<Bool>(\v: json::JsonValue -> json::is_number(v))).unwrap_or(false));  // 10
+    assert((v_float.map<Bool>(\v: json::JsonValue -> json::is_number(v))).unwrap_or(false));  // 11
+    assert((v_text.map<Bool>(\v: json::JsonValue -> json::is_string(v))).unwrap_or(false));  // 12
+    assert((v_arr.map<Bool>(\v: json::JsonValue -> json::is_array(v))).unwrap_or(false));  // 13
     // Total so far: 13.
 
     // ===== 8 as_* accessors =====
     // True → as_bool = Some(true).
-    assert(option::unwrap_or<Bool>(
-        option::and_then<json::JsonValue, Bool>(
-            v_true, \v: json::JsonValue -> json::as_bool(v)), false) == true);  // 14
+    assert((v_true.and_then<Bool>(\v: json::JsonValue -> json::as_bool(v))).unwrap_or(false) == true);  // 14
     // False → as_bool = Some(false).
-    assert(option::is_some<Bool>(
-        option::and_then<json::JsonValue, Bool>(
-            v_false, \v: json::JsonValue -> json::as_bool(v))));  // 15
+    assert((v_false.and_then<Bool>(\v: json::JsonValue -> json::as_bool(v))).is_some());  // 15
     // 42 → as_int = Some(42).
-    assert(option::unwrap_or<Int>(
-        option::and_then<json::JsonValue, Int>(
-            v_int, \v: json::JsonValue -> json::as_int(v)), 0) == 42);  // 16
+    assert((v_int.and_then<Int>(\v: json::JsonValue -> json::as_int(v))).unwrap_or(0) == 42);  // 16
     // 3.14 → as_float = Some(3.14).
-    assert(option::is_some<Float>(
-        option::and_then<json::JsonValue, Float>(
-            v_float, \v: json::JsonValue -> json::as_float(v))));  // 17
+    assert((v_float.and_then<Float>(\v: json::JsonValue -> json::as_float(v))).is_some());  // 17
     // "hello" → as_string = Some("hello").
-    assert(option::unwrap_or<String>(
-        option::and_then<json::JsonValue, String>(
-            v_text, \v: json::JsonValue -> json::as_string(v)), "") == "hello");  // 18
+    assert((v_text.and_then<String>(\v: json::JsonValue -> json::as_string(v))).unwrap_or("") == "hello");  // 18
     // [1,2,3] → as_array = Some(List<JsonValue>).
-    assert(option::is_some<collections::List<json::JsonValue>>(
-        option::and_then<json::JsonValue, collections::List<json::JsonValue>>(
-            v_arr, \v: json::JsonValue -> json::as_array(v))));  // 19
+    assert((v_arr.and_then<collections::List<json::JsonValue>>(\v: json::JsonValue -> json::as_array(v))).is_some());  // 19
     // Null → as_int = None (cross-kind access returns None).
-    assert(option::is_none<Int>(
-        option::and_then<json::JsonValue, Int>(
-            v_null, \v: json::JsonValue -> json::as_int(v))));  // 20
+    assert((v_null.and_then<Int>(\v: json::JsonValue -> json::as_int(v))).is_none());  // 20
     // Bool → as_string = None (cross-kind access returns None).
-    assert(option::is_none<String>(
-        option::and_then<json::JsonValue, String>(
-            v_true, \v: json::JsonValue -> json::as_string(v))));  // 21
+    assert((v_true.and_then<String>(\v: json::JsonValue -> json::as_string(v))).is_none());  // 21
     // Total: 21.
 
     // ===== 4 at index for arrays =====
     // [1,2,3][0] = Some(1), [1,2,3][2] = Some(3), [1,2,3][3] = None, [1,2,3][-1] = None.
-    assert(option::unwrap_or<Int>(
-        option::and_then<json::JsonValue, Int>(
-            option::and_then<json::JsonValue, json::JsonValue>(
-                v_arr, \v: json::JsonValue -> json::at(v, 0)),
-            \w: json::JsonValue -> json::as_int(w)), 0) == 1);  // 22
-    assert(option::unwrap_or<Int>(
-        option::and_then<json::JsonValue, Int>(
-            option::and_then<json::JsonValue, json::JsonValue>(
-                v_arr, \v: json::JsonValue -> json::at(v, 2)),
-            \w: json::JsonValue -> json::as_int(w)), 0) == 3);  // 23
-    assert(option::is_none<json::JsonValue>(
-        option::and_then<json::JsonValue, json::JsonValue>(
-            v_arr, \v: json::JsonValue -> json::at(v, 3))));  // 24
-    assert(option::is_none<json::JsonValue>(
-        option::and_then<json::JsonValue, json::JsonValue>(
-            v_arr, \v: json::JsonValue -> json::at(v, -1))));  // 25
+    assert(((v_arr.and_then(\v: json::JsonValue -> json::at(v, 0))).and_then<Int>(\w: json::JsonValue -> json::as_int(w))).unwrap_or(0) == 1);  // 22
+    assert(((v_arr.and_then(\v: json::JsonValue -> json::at(v, 2))).and_then<Int>(\w: json::JsonValue -> json::as_int(w))).unwrap_or(0) == 3);  // 23
+    assert((v_arr.and_then(\v: json::JsonValue -> json::at(v, 3))).is_none());  // 24
+    assert((v_arr.and_then(\v: json::JsonValue -> json::at(v, -1))).is_none());  // 25
     // Total: 25.
 
     // ===== 4 object: parse + get key lookup =====
     let s_obj2: String = "{\"name\":\"alice\",\"age\":21}";
     let v_obj2: option::Option<json::JsonValue> = json::parse(s_obj2);
     // Parsing successful.
-    assert(option::is_some<json::JsonValue>(v_obj2));  // 26
+    assert(v_obj2.is_some());  // 26
     // get "name" returns Some("alice").
-    assert(option::unwrap_or<String>(
-        option::and_then<json::JsonValue, String>(
-            option::and_then<json::JsonValue, json::JsonValue>(
-                v_obj2, \v: json::JsonValue -> json::get(v, "name")),
-            \w: json::JsonValue -> json::as_string(w)), "") == "alice");  // 27
+    assert(((v_obj2.and_then(\v: json::JsonValue -> json::get(v, "name"))).and_then<String>(\w: json::JsonValue -> json::as_string(w))).unwrap_or("") == "alice");  // 27
     // get "age" returns Some(21).
-    assert(option::unwrap_or<Int>(
-        option::and_then<json::JsonValue, Int>(
-            option::and_then<json::JsonValue, json::JsonValue>(
-                v_obj2, \v: json::JsonValue -> json::get(v, "age")),
-            \w: json::JsonValue -> json::as_int(w)), 0) == 21);  // 28
+    assert(((v_obj2.and_then(\v: json::JsonValue -> json::get(v, "age"))).and_then<Int>(\w: json::JsonValue -> json::as_int(w))).unwrap_or(0) == 21);  // 28
     // get "missing" returns None.
-    assert(option::is_none<json::JsonValue>(
-        option::and_then<json::JsonValue, json::JsonValue>(
-            v_obj2, \v: json::JsonValue -> json::get(v, "missing"))));  // 29
+    assert((v_obj2.and_then(\v: json::JsonValue -> json::get(v, "missing"))).is_none());  // 29
 
     // ===== 1 nested array equality =====
     // Parse [1,2,3] twice; deep structural equality matches.
@@ -150,12 +106,8 @@ fn json_ut() -> Int effect Pure decreases 0 {
     // module when called on module-qualified types; we use emitter equality
     // as an equivalent structural-equality check that type-checks cleanly.)
     let v_arr_b: option::Option<json::JsonValue> = json::parse(s_arr);
-    let emitted1: String = option::unwrap_or<String>(
-        option::map<json::JsonValue, String>(
-            v_arr, \v: json::JsonValue -> json::emit(v)), "");
-    let emitted2: String = option::unwrap_or<String>(
-        option::map<json::JsonValue, String>(
-            v_arr_b, \v: json::JsonValue -> json::emit(v)), "");
+    let emitted1: String = (v_arr.map<String>(\v: json::JsonValue -> json::emit(v))).unwrap_or("");
+    let emitted2: String = (v_arr_b.map<String>(\v: json::JsonValue -> json::emit(v))).unwrap_or("");
     assert(emitted1 == emitted2);  // 30
     return 0;
 }

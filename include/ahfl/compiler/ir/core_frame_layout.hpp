@@ -1,10 +1,10 @@
 #pragma once
 
-// RFC 0026 P6-7 rung A: the deterministic `ahfl.core-layout.v1` custom section.
+// RFC 0026 P6-7 rung A: the deterministic `ahfl.core-layout` custom section.
 //
 // A P6-frame Core-Wasm agent (one that projects the raw P4-D input frame or
 // returns a computed final value) carries TWO verified custom sections at EOF:
-// the existing `ahfl.wire-schema.v1` table (extended with the agent boundary
+// the existing `ahfl.wire-schema` table (extended with the agent boundary
 // roots) and, immediately before it, this core-layout section. The section is
 // the host's physical-layout authority: it carries the finalized P4-D
 // `CoreLayoutTable`, the input/output boundary root layout ids, every
@@ -30,7 +30,7 @@
 
 namespace ahfl::ir::core {
 
-inline constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout.v1";
+inline constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout";
 
 /// One input-reached bounded container's disjoint backing placement. The edge
 /// index is the 0-based position at which the container was enumerated during
@@ -48,8 +48,7 @@ struct CoreFrameBackingPlacement {
                                          const CoreFrameBackingPlacement &) noexcept = default;
 };
 
-/// One per-call-site CAPABILITY BRIDGE result placement (frame-bridge v2 D3/D4,
-/// rung V2-C). The module builds the call's control block at
+/// One per-call-site CAPABILITY BRIDGE result placement. The module builds the call's control block at
 /// `bridge_control_base + block_offset`; the host walks the P4-D argument spans
 /// into wire JSON, invokes the capability, validates the result, and packs it
 /// at `result_base` with String payload bytes in the disjoint
@@ -78,15 +77,14 @@ struct CoreFrameBridgeCallSite {
     std::uint32_t result_extent{0};
     std::uint32_t result_payload_base{0};
     std::uint32_t result_payload_capacity{0};
-    /// V3 (frame-bridge v2 fix-forward): this call site's PRIVATE scalar/PtrLen
+    /// This call site's PRIVATE scalar/PtrLen
     /// spill window, `[spill_base, +spill_extent)`, inside the module-wide
     /// spill region immediately following the control blocks. The embedded
     /// host region-membership-tests every spilled scalar / PtrLen descriptor
-    /// against the site's own window (design section 4.3/5); both words are
-    /// absent (zero) on a decoded v2 payload.
+    /// against the site's own window (design section 4.3/5).
     std::uint32_t spill_base{0};
     std::uint32_t spill_extent{0};
-    /// V5: a capability-final bridge call site. The result placement is the
+    /// A capability-final bridge call site. The result placement is the
     /// node's O_k block (already a disjoint node-block span), so the workflow
     /// span-overlap check skips this site's result_base/result_extent.
     bool is_final{false};
@@ -95,9 +93,8 @@ struct CoreFrameBridgeCallSite {
                                          const CoreFrameBridgeCallSite &) noexcept = default;
 };
 
-/// The decoded `ahfl.core-layout.v1` payload.
+/// The decoded `ahfl.core-layout` payload.
 struct CoreFrameLayoutSection {
-    std::uint32_t format_version{1};
     CoreLayoutTable table;
     /// Boundary roots into `table.layouts`.
     CoreLayoutId input_layout{};
@@ -108,13 +105,13 @@ struct CoreFrameLayoutSection {
     /// Frame-payload arena span (packed input String bytes), [base, +capacity).
     std::uint32_t payload_arena_base{0};
     std::uint32_t payload_arena_capacity{0};
-    /// V2 (frame-bridge v2 D1, rung V2-B): read-only String literal pool span.
+    /// Read-only String literal pool span.
     /// Base is the constant kP6RodataBase (256); extent is the active Data(11)
     /// segment's byte length (0 when the module emits no Data section).
     std::uint32_t rodata_base{0};
     std::uint32_t rodata_extent{0};
 
-    /// V2 (frame-bridge v2 D3/D4, rung V2-C): the per-module capability bridge
+    /// The per-module capability bridge
     /// control-block page frame. It holds the dense call-site control blocks
     /// (`[bridge_control_base, +call_site_count * bridge_block_stride)`)
     /// followed by the private scalar/PtrLen spill slots
@@ -130,10 +127,8 @@ struct CoreFrameLayoutSection {
     std::vector<CoreFrameBridgeCallSite> bridge_call_sites;
 
     // ------------------------------------------------------------------
-    // V2-D workflow node-packaging extension (all fields empty/zero on an
-    // agent section and on an all-opaque workflow). Encoded as a trailing
-    // presence-gated block inside a format-version-2 payload, so an agent
-    // frame section keeps its rung V2-C bytes exactly.
+    // Workflow node-packaging block (all fields empty/zero on an agent section
+    // and on an all-opaque workflow). Its presence tag is always encoded.
     // ------------------------------------------------------------------
 
     /// One P6 workflow NODE's fixed node-frame block. WH-5c.2 (GAP 1,
@@ -162,10 +157,10 @@ struct CoreFrameLayoutSection {
     std::uint32_t entry_payload_base{0};
     std::uint32_t entry_payload_capacity{0};
     /// The fixed slot the scheduler copies a constructed workflow output into
-    /// and run2 returns (size is the workflow output root layout size).
+    /// and run_workflow returns (size is the workflow output root layout size).
     std::uint32_t workflow_output_base{0};
 
-    /// V2-D emission half 2: the fixed state-entry trace ring the packaged P6
+    /// The fixed state-entry trace ring the packaged P6
     /// runners append one (runner, state) 8-byte record to on EVERY dispatched
     /// state (including computed-goto branch successors and the computed
     /// final), giving the host real runtime state-sequence evidence across
@@ -180,9 +175,8 @@ struct CoreFrameLayoutSection {
     // address (aligned backing high-water). String concat result payloads
     // live in [construct_heap_base, 65536); the host authorizes this region
     // for output String reads. Zero on a module with no String concat (the
-    // construct heap is disabled, so the region is empty). Encoded as a
-    // trailing presence-gated block inside a format-version-4 payload, so a
-    // module without String concat keeps its exact bytes.
+    // construct heap is disabled, so the region is empty). The base word is
+    // always encoded, including zero.
     // ------------------------------------------------------------------
     std::uint32_t construct_heap_base{0};
 
@@ -195,7 +189,9 @@ struct CoreFrameLayoutEncodeResult {
     std::vector<CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return bytes.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return bytes.has_value() && !has_errors();
+    }
 };
 
 struct CoreFrameLayoutDecodeResult {
@@ -203,7 +199,9 @@ struct CoreFrameLayoutDecodeResult {
     std::vector<CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept;
-    [[nodiscard]] bool ok() const noexcept { return section.has_value() && !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return section.has_value() && !has_errors();
+    }
 };
 
 /// Encode the frame-layout section to its deterministic payload bytes.
@@ -234,14 +232,13 @@ verify_frame_layout_wire_consistency(const CoreLayoutTable &layouts,
                                      const CoreWireSchemaTable &wire,
                                      CoreWireSchemaNodeId wire_root);
 
-/// Admission-time cross-check of the V2-C capability bridge records against
+/// Admission-time cross-check of the capability bridge records against
 /// the admitted wire-schema table: every call site names a capability the
 /// wire table projects (by source SymbolId), its arity equals the projected
 /// parameter count, and every dense argument/result layout root is structurally
 /// consistent with its wire root. Empty diagnostics means every bridge record
 /// is admissible; a section with no bridge records always passes.
 [[nodiscard]] std::vector<CoreLowerDiagnostic>
-verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
-                          const CoreWireSchemaTable &wire);
+verify_frame_bridge_sites(const CoreFrameLayoutSection &section, const CoreWireSchemaTable &wire);
 
 } // namespace ahfl::ir::core

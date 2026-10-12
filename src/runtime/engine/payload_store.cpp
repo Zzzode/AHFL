@@ -30,6 +30,7 @@ using core_wasm_resume::CoreWasmResumeRecord;
 using core_wasm_resume::PayloadSlotId;
 using ir::core::CoreWorkflowId;
 
+#if defined(__linux__)
 // A record's smallest per-memo footprint on the wire is one entry, but the record
 // cap is a caller-supplied artifact byte budget; each distinct slot costs at least
 // one memo reference. A memo entry is at least 5 ULEB bytes (A1 kMinMemoEntryBytes),
@@ -81,6 +82,7 @@ derive_manifest_cap(std::uint64_t max_record_artifact_bytes) noexcept {
     }
     return checked_add(kManifestFixedOverhead, *slots_bytes);
 }
+#endif
 
 } // namespace
 
@@ -972,7 +974,7 @@ struct LivePointer {
     CommitManifest manifest;
     std::uint64_t manifest_artifact_size{0}; // whole current-manifest artifact byte size
     // The generation directory fd, opened once while authenticating the pointer +
-    // manifest and PINNED for the lifetime of this admission: legacy admission and
+    // manifest and PINNED for the lifetime of this admission: direct admission and
     // the staged ResumeSnapshot both reuse it, so a slot read never reopens the
     // generation by name (no rename/replacement window).
     FdGuard gen_dir;
@@ -1064,7 +1066,7 @@ admit_record_for(int gen_dir_fd, std::uint64_t root_dev, const StoreLimits &limi
 // the already-authenticated record. Derives the distinct expected set
 // ({entry_input_slot} U memo result slots), exact-set-equals the manifest, verifies
 // the tightened manifest-cap, and reads + cross-checks every slot artifact. Returns
-// the resolved slots. Used by BOTH legacy admit_available and ResumeSnapshot phase 2
+// the resolved slots. Used by BOTH direct admit_available and ResumeSnapshot phase 2
 // so the slot-admission invariants live in one place.
 [[nodiscard]] std::expected<std::vector<ResolvedSlot>, PayloadStoreError>
 admit_slots_for(int gen_dir_fd, std::uint64_t root_dev, const StoreLimits &limits,
@@ -1217,7 +1219,7 @@ std::expected<std::uint64_t, PayloadStoreError> IntegrityPayloadStore::publish_a
         return std::unexpected(live.error());
     }
     // Store owns generation assignment: set the record's auth header to {1,key_id,M}.
-    record.auth_header.alg_version = 1;
+    record.auth_header.alg_id = 1;
     std::copy(key_id.begin(), key_id.end(), record.auth_header.key_id.begin());
     record.auth_header.generation = target;
     return publish_generation(ckpt_fd, root_dev_, manifest_cap_, limits_, wf, ckpt, target,

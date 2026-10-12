@@ -1,6 +1,6 @@
 {
-  "format": "AHFL_OPT_IR_V1",
-  "source_program_version": "ahfl.ir.v2",
+  "format": "AHFL_OPT_IR",
+  "source_program_format": "ahfl.ir",
   "skipped_temporal": [
     {
       "scope": "contract::ir::expr_temporal::ExprAgent::clause::1",
@@ -16,8 +16,8 @@
       "kind": "running",
       "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
-        "begin": 2401,
-        "end": 2413
+        "begin": 2402,
+        "end": 2414
       }
     },
     {
@@ -25,8 +25,8 @@
       "kind": "completed",
       "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
-        "begin": 2428,
-        "end": 2442
+        "begin": 2429,
+        "end": 2443
       }
     },
     {
@@ -34,8 +34,8 @@
       "kind": "completed",
       "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
-        "begin": 2470,
-        "end": 2490
+        "begin": 2471,
+        "end": 2491
       }
     }
   ],
@@ -50,7 +50,7 @@
       },
       "source_range": {
         "begin": 1614,
-        "end": 2138
+        "end": 2139
       },
       "locals": [
         {
@@ -251,8 +251,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1822,
-            "end": 1834
+            "begin": 1823,
+            "end": 1835
           }
         },
         {
@@ -265,8 +265,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1822,
-            "end": 1836
+            "begin": 1823,
+            "end": 1837
           }
         },
         {
@@ -279,8 +279,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1822,
-            "end": 1841
+            "begin": 1823,
+            "end": 1842
           }
         },
         {
@@ -293,8 +293,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1821,
-            "end": 1846
+            "begin": 1822,
+            "end": 1847
           }
         },
         {
@@ -307,8 +307,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1857,
-            "end": 1867
+            "begin": 1858,
+            "end": 1868
           }
         },
         {
@@ -321,8 +321,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1851,
-            "end": 1868
+            "begin": 1852,
+            "end": 1869
           }
         },
         {
@@ -335,8 +335,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1821,
-            "end": 1868
+            "begin": 1822,
+            "end": 1869
           }
         },
         {
@@ -349,8 +349,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1821,
-            "end": 1868
+            "begin": 1822,
+            "end": 1869
           }
         },
         {
@@ -363,8 +363,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1894,
-            "end": 1904
+            "begin": 1895,
+            "end": 1905
           }
         },
         {
@@ -377,8 +377,8 @@
           },
           "is_temp": false,
           "source_range": {
-            "begin": 1883,
-            "end": 1905
+            "begin": 1884,
+            "end": 1906
           }
         },
         {
@@ -391,8 +391,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1918,
-            "end": 1928
+            "begin": 1919,
+            "end": 1929
           }
         },
         {
@@ -405,8 +405,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 2003,
-            "end": 2035
+            "begin": 2004,
+            "end": 2036
           }
         },
         {
@@ -426,8 +426,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1970,
-            "end": 2092
+            "begin": 1971,
+            "end": 2093
           }
         },
         {
@@ -440,8 +440,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 1969,
-            "end": 2098
+            "begin": 1970,
+            "end": 2099
           }
         },
         {
@@ -454,8 +454,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 2112,
-            "end": 2122
+            "begin": 2113,
+            "end": 2123
           }
         }
       ],
@@ -673,7 +673,7 @@
             "call_resume": null,
             "source_range": {
               "begin": 1676,
-              "end": 1808
+              "end": 1809
             }
           }
         },
@@ -718,8 +718,8 @@
                 }
               },
               "source_range": {
-                "begin": 1822,
-                "end": 1834
+                "begin": 1823,
+                "end": 1835
               }
             },
             {
@@ -751,8 +751,8 @@
                 }
               },
               "source_range": {
-                "begin": 1822,
-                "end": 1836
+                "begin": 1823,
+                "end": 1837
               }
             },
             {
@@ -784,8 +784,8 @@
                 }
               },
               "source_range": {
-                "begin": 1822,
-                "end": 1841
+                "begin": 1823,
+                "end": 1842
               }
             },
             {
@@ -817,8 +817,8 @@
                 }
               },
               "source_range": {
-                "begin": 1821,
-                "end": 1846
+                "begin": 1822,
+                "end": 1847
               }
             },
             {
@@ -844,8 +844,8 @@
                 }
               },
               "source_range": {
-                "begin": 1857,
-                "end": 1867
+                "begin": 1858,
+                "end": 1868
               }
             },
             {
@@ -871,8 +871,8 @@
                 }
               },
               "source_range": {
-                "begin": 1851,
-                "end": 1868
+                "begin": 1852,
+                "end": 1869
               }
             },
             {
@@ -904,8 +904,8 @@
                 }
               },
               "source_range": {
-                "begin": 1821,
-                "end": 1868
+                "begin": 1822,
+                "end": 1869
               }
             },
             {
@@ -931,8 +931,8 @@
                 }
               },
               "source_range": {
-                "begin": 1821,
-                "end": 1868
+                "begin": 1822,
+                "end": 1869
               }
             }
           ],
@@ -948,8 +948,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 1818,
-              "end": 2132
+              "begin": 1819,
+              "end": 2133
             }
           }
         },
@@ -980,8 +980,8 @@
                 }
               },
               "source_range": {
-                "begin": 1894,
-                "end": 1904
+                "begin": 1895,
+                "end": 1905
               }
             },
             {
@@ -1007,8 +1007,8 @@
                 }
               },
               "source_range": {
-                "begin": 1883,
-                "end": 1905
+                "begin": 1884,
+                "end": 1906
               }
             },
             {
@@ -1034,8 +1034,8 @@
                 }
               },
               "source_range": {
-                "begin": 1918,
-                "end": 1928
+                "begin": 1919,
+                "end": 1929
               }
             }
           ],
@@ -1051,8 +1051,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 1918,
-              "end": 1928
+              "begin": 1919,
+              "end": 1929
             }
           }
         },
@@ -1089,8 +1089,8 @@
                 }
               },
               "source_range": {
-                "begin": 2003,
-                "end": 2035
+                "begin": 2004,
+                "end": 2036
               }
             },
             {
@@ -1129,8 +1129,8 @@
                 }
               },
               "source_range": {
-                "begin": 1970,
-                "end": 2092
+                "begin": 1971,
+                "end": 2093
               }
             },
             {
@@ -1156,8 +1156,8 @@
                 }
               },
               "source_range": {
-                "begin": 1969,
-                "end": 2098
+                "begin": 1970,
+                "end": 2099
               }
             },
             {
@@ -1183,8 +1183,8 @@
                 }
               },
               "source_range": {
-                "begin": 1958,
-                "end": 2099
+                "begin": 1959,
+                "end": 2100
               }
             },
             {
@@ -1210,8 +1210,8 @@
                 }
               },
               "source_range": {
-                "begin": 2112,
-                "end": 2122
+                "begin": 2113,
+                "end": 2123
               }
             }
           ],
@@ -1227,8 +1227,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 2112,
-              "end": 2122
+              "begin": 2113,
+              "end": 2123
             }
           }
         },
@@ -1249,7 +1249,7 @@
             "call_resume": null,
             "source_range": {
               "begin": 1614,
-              "end": 2138
+              "end": 2139
             }
           }
         },
@@ -1269,8 +1269,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 1818,
-              "end": 2132
+              "begin": 1819,
+              "end": 2133
             }
           }
         },
@@ -1290,8 +1290,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 1818,
-              "end": 2132
+              "begin": 1819,
+              "end": 2133
             }
           }
         }
@@ -1306,8 +1306,8 @@
         "canonical_name": ""
       },
       "source_range": {
-        "begin": 2144,
-        "end": 2265
+        "begin": 2145,
+        "end": 2266
       },
       "locals": [
         {
@@ -1386,8 +1386,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 2201,
-            "end": 2209
+            "begin": 2202,
+            "end": 2210
           }
         },
         {
@@ -1407,8 +1407,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 2172,
-            "end": 2258
+            "begin": 2173,
+            "end": 2259
           }
         },
         {
@@ -1428,8 +1428,8 @@
           },
           "is_temp": true,
           "source_range": {
-            "begin": 2165,
-            "end": 2259
+            "begin": 2166,
+            "end": 2260
           }
         }
       ],
@@ -1461,8 +1461,8 @@
                 }
               },
               "source_range": {
-                "begin": 2201,
-                "end": 2209
+                "begin": 2202,
+                "end": 2210
               }
             },
             {
@@ -1501,8 +1501,8 @@
                 }
               },
               "source_range": {
-                "begin": 2172,
-                "end": 2258
+                "begin": 2173,
+                "end": 2259
               }
             },
             {
@@ -1535,8 +1535,8 @@
                 }
               },
               "source_range": {
-                "begin": 2165,
-                "end": 2259
+                "begin": 2166,
+                "end": 2260
               }
             }
           ],
@@ -1552,8 +1552,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 2165,
-              "end": 2259
+              "begin": 2166,
+              "end": 2260
             }
           }
         },
@@ -1573,8 +1573,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 2144,
-              "end": 2265
+              "begin": 2145,
+              "end": 2266
             }
           }
         }
@@ -2140,8 +2140,8 @@
         }
       },
       "source_range": {
-        "begin": 2343,
-        "end": 2376
+        "begin": 2344,
+        "end": 2377
       },
       "locals": [
         {
@@ -2159,14 +2159,14 @@
               "id": 1
             },
             "source_range": {
-              "begin": 2273,
-              "end": 2510
+              "begin": 2274,
+              "end": 2511
             }
           },
           "is_temp": false,
           "source_range": {
-            "begin": 2369,
-            "end": 2374
+            "begin": 2370,
+            "end": 2375
           }
         },
         {
@@ -2209,8 +2209,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 2369,
-              "end": 2374
+              "begin": 2370,
+              "end": 2375
             }
           }
         }
@@ -2232,8 +2232,8 @@
         }
       },
       "source_range": {
-        "begin": 2504,
-        "end": 2507
+        "begin": 2505,
+        "end": 2508
       },
       "locals": [
         {
@@ -2251,8 +2251,8 @@
               "id": 1
             },
             "source_range": {
-              "begin": 2273,
-              "end": 2510
+              "begin": 2274,
+              "end": 2511
             }
           },
           "is_temp": false,
@@ -2279,8 +2279,8 @@
           },
           "is_temp": false,
           "source_range": {
-            "begin": 2504,
-            "end": 2507
+            "begin": 2505,
+            "end": 2508
           }
         }
       ],
@@ -2301,8 +2301,8 @@
             "call_dest": null,
             "call_resume": null,
             "source_range": {
-              "begin": 2504,
-              "end": 2507
+              "begin": 2505,
+              "end": 2508
             }
           }
         }

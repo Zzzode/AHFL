@@ -297,7 +297,7 @@ All three resolved for review (2026-08-26):
    `N` bounds the number of entries, matching the `(k, v)` binder unit in
    RFC 0024's map unrolling.
 3. ~~Is a checked-narrowing operation needed for `List<T>` → `List<T>(N)`?~~
-   (resolved): **no, compile-time rejection is sufficient for v1.** An unbounded
+   (resolved): **no, compile-time rejection is sufficient for the current scope.** An unbounded
    value has no static capacity witness, so the assignment is a type error; a
    dynamic checked-narrowing (with a verification/runtime obligation) is a
    possible follow-up but out of scope here (consistent with the "no runtime
@@ -315,7 +315,7 @@ All three resolved for review (2026-08-26):
   enforcement, dependent lengths, and refinement predicates.
 - 2026-08-26: All three Open Questions resolved (capacity 0 legal; `Map(N)`
   counts entries; compile-time rejection suffices for unbounded→bounded, no
-  checked-narrowing in v1). Owners / shepherd assigned; tracking_issue /
+  checked-narrowing in ). Owners / shepherd assigned; tracking_issue /
   discussion set to none. Status draft → review → fcp → accepted: the design is a
   direct structural analog of the stabilized scalar refinement machinery
   (`Int(lo,hi)`), adds no new solver theory, and is additive/non-breaking, so

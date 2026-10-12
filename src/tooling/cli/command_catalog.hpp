@@ -27,7 +27,7 @@ enum class CommandKind {
     EmitIr,
     EmitIrJson,
     // RFC 0026 P9 / KR6.9: the layered Core-IR projection
-    // (`ahfl.core.v1`, `ir::core::print_core_ir_json`).
+    // (`ahfl.core`, `ir::core::print_core_ir_json`).
     EmitCoreIrJson,
     EmitOptIr,
     EmitOptIrJson,
@@ -52,9 +52,8 @@ enum class CommandKind {
 
 // RFC 0028: formal verification stage in the default compilation pipeline.
 // `Off`   — structural IR invariants only (pre-RFC behavior).
-// `On`  — structural + subset eligibility + SMT-BMC + full SMV model checking,
-//         fail-closed on missing solver, timeout, or refutation.
-// `Off` — structural verification only (no formal stage).
+// `On` — structural + control-model verification, fail-closed on missing
+//         checker, timeout, or refutation. Data contracts require explicit opt-in.
 enum class VerificationMode { Off, On };
 
 struct CommandLineOptions {
@@ -99,7 +98,7 @@ struct CommandLineOptions {
     std::optional<std::string_view> package_archive_output_path;
     std::optional<std::string_view> build_output_path;
     // When set, `ahflc build` also writes the embedded-host execution
-    // descriptor (ahfl.wasm-execution-descriptor.v1) to this path alongside
+    // descriptor (ahfl.wasm-execution-descriptor) to this path alongside
     // the WASM binary. Inert on non-build commands.
     std::optional<std::string_view> emit_descriptor_path;
     std::optional<std::string_view> package_registry_id;
@@ -126,6 +125,7 @@ struct CommandLineOptions {
     // parsed on-demand. nullopt = per-command default (on for check/run/build,
     // off for everything else).
     std::optional<std::string_view> verify_mode;
+    bool verify_data_contracts{false};
     std::vector<std::string_view> positional;
 };
 

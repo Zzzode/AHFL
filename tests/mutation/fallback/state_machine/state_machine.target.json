@@ -1,5 +1,5 @@
 {
-  "schema": "ahfl.mutation.target.v1",
+  "format": "ahfl.mutation.target",
   "target": "state_machine",
   "source": "state_machine.cpp",
   "test": "state_machine_test.cpp",

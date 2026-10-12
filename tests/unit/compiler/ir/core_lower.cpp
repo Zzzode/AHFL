@@ -299,7 +299,7 @@ TEST_CASE("lower_ahfl_to_core lowers an agent state machine into Core-IR") {
     REQUIRE(agent.finals.size() == 1);
     CHECK(agent.states[agent.finals[0].value] == "Done");
     REQUIRE(agent.transitions.size() == 2);
-    CHECK(result.program.format_version == std::string(ir::core::kCoreFormatVersion));
+    CHECK(result.program.format == std::string(ir::core::kCoreFormat));
 }
 
 TEST_CASE("lower_ahfl_to_core lowers a capability into an explicit import decl") {
@@ -2546,13 +2546,13 @@ TEST_CASE("(3)-3b P0-2: an if-let whose AST lookup fails does NOT degrade to wil
     auto st = frontend_state("iflet_lookup", kIfLetProgram);
     REQUIRE(st.has_value());
     auto &tp = st->typecheck->typed_program;
-    // Corrupt the if-let TypedStatement's range so find_ast_if_let_stmt (which
-    // matches by range) can no longer locate the AST statement. The lowerer must
-    // throw rather than lower the pattern as a wildcard.
+    // The current lookup uses the scrutinee's canonical node identity.
+    // Corrupt that identity while preserving ranges: it must fail closed.
     bool corrupted = false;
     for (auto &stmt : tp.statements) {
         if (stmt.kind == ahfl::TypedStmtKind::IfLet) {
-            stmt.range = ahfl::SourceRange{999990, 999999};
+            REQUIRE_FALSE(stmt.children_expr_index.empty());
+            tp.expressions.at(stmt.children_expr_index[0]).node_id = 0;
             corrupted = true;
             break;
         }

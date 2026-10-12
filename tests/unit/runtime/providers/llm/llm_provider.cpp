@@ -10,8 +10,10 @@
 #include "runtime/providers/llm/http_client.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
+#include "runtime/providers/llm/model_capacity.hpp"
 #include "runtime/providers/llm/prompt_builder.hpp"
 #include "runtime/providers/llm/response_parser.hpp"
+#include "runtime/providers/llm/response_cache.hpp"
 #include "runtime/providers/llm/tool_calling.hpp"
 
 #include <chrono>
@@ -19,8 +21,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -84,7 +88,7 @@ ir::TypeRef make_type_ref(const std::string &name) {
 
 ir::Program build_test_program() {
     ir::Program program;
-    program.format_version = std::string(kFormatVersion);
+    program.format = std::string(kFormat);
 
     // Enum: Category { General, Technical, Billing }
     ir::EnumDecl category_enum;
@@ -884,11 +888,12 @@ void test_http_client_uses_configured_auth_header() {
         "https://api.example.com/v1",
         "sk-test",
         30,
-        [&](const std::string &base_url,
-            const std::vector<std::pair<std::string, std::string>> &headers,
-            int timeout_seconds,
-            const std::string &request_json) -> ahfl::llm_provider::HttpResponse {
-            check(base_url == "https://api.example.com/v1", "http_client.auth.base_url");
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &base_url = request.url;
+            const auto &headers = request.headers;
+            const auto &timeout_seconds = request.timeout_seconds;
+            const auto &request_json = request.body.value_or("");
+            check(base_url == "https://api.example.com/v1/chat/completions", "http_client.auth.base_url");
             check(timeout_seconds == 30, "http_client.auth.timeout");
             check(request_json == R"({"ok":true})", "http_client.auth.request");
             saw_auth_header = has_header(headers, "x-api-key", "sk-test");
@@ -910,11 +915,12 @@ void test_http_client_uses_oauth2_bearer_token() {
         "https://api.example.com/v1",
         "oauth2-access-token",
         30,
-        [&](const std::string &base_url,
-            const std::vector<std::pair<std::string, std::string>> &headers,
-            int timeout_seconds,
-            const std::string &request_json) -> ahfl::llm_provider::HttpResponse {
-            check(base_url == "https://api.example.com/v1", "http_client.oauth2.base_url");
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &base_url = request.url;
+            const auto &headers = request.headers;
+            const auto &timeout_seconds = request.timeout_seconds;
+            const auto &request_json = request.body.value_or("");
+            check(base_url == "https://api.example.com/v1/chat/completions", "http_client.oauth2.base_url");
             check(timeout_seconds == 30, "http_client.oauth2.timeout");
             check(request_json == R"({"ok":true})", "http_client.oauth2.request");
             saw_auth_header = has_header(headers, "Authorization", "Bearer oauth2-access-token");
@@ -1052,7 +1058,283 @@ void test_llm_capability_provider_enforces_prompt_budget_before_http() {
     }
 }
 
-void test_llm_capability_provider_falls_back_after_http_failure() {
+void test_config_rejects_invalid_temperature() {
+    auto config = load_config(R"({"endpoint":"https://llm.example.com/v1","model":"test-model"})");
+    for (const auto temperature : {-0.1,
+                                   2.1,
+                                   std::numeric_limits<double>::infinity(),
+                                   std::numeric_limits<double>::quiet_NaN()}) {
+        config.temperature = temperature;
+        const auto error = validate_config(config);
+        check(error.has_value() && error->find("temperature") != std::string::npos,
+              "config.invalid_temperature_rejected");
+    }
+    for (const auto temperature : {0.0, 2.0}) {
+        config.temperature = temperature;
+        check(!validate_config(config).has_value(), "config.temperature_endpoints_valid");
+    }
+}
+
+void test_llm_capability_provider_minimal_config_and_overrides() {
+    const auto minimal =
+        load_config(R"({"endpoint":"https://llm.example.com/v1","model":"test-model"})");
+    check(!validate_config(minimal).has_value(), "config.minimal_valid");
+    check(!minimal.max_tokens && !minimal.max_prompt_tokens &&
+              !minimal.max_total_tokens && minimal.json_mode && minimal.max_tool_rounds == 5,
+          "config.minimal_default_policy");
+    check(!minimal.temperature.has_value(), "config.minimal_temperature_omitted");
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        auto program = build_test_program();
+        const bool with_tools = scenario % 2 != 0;
+        const bool explicit_overrides = scenario >= 2;
+        auto config =
+            explicit_overrides
+                ? load_config(
+                      R"({"endpoint":"https://llm.example.com/v1","model":"test-model","max_tokens":256,"max_prompt_tokens":2048,"max_total_tokens":2304,"json_mode":false,"temperature":0.2})")
+                : minimal;
+        std::size_t requests = 0;
+        const auto prefix = "provider.request_defaults." + std::to_string(scenario);
+        LLMCapabilityProvider provider(
+            program,
+            config,
+            [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+                const auto request_json = request.body.value_or("");
+                ++requests;
+                const auto parsed = json::parse_json(request_json);
+                check(parsed.has_value() && *parsed, prefix + ".valid_json");
+                if (parsed.has_value() && *parsed) {
+                    const auto *max_tokens = (*parsed)->get("max_tokens");
+                    check(max_tokens != nullptr &&
+                              max_tokens->as_int() == (explicit_overrides ? 256 : 1024),
+                          prefix + ".output_reserve");
+                    const auto *temperature = (*parsed)->get("temperature");
+                    if (explicit_overrides) {
+                        check(temperature != nullptr && temperature->as_float() == 0.2,
+                              prefix + ".explicit_temperature");
+                    } else {
+                        check(temperature == nullptr, prefix + ".default_temperature_omitted");
+                    }
+                    const auto *format = (*parsed)->get("response_format");
+                    if (explicit_overrides) {
+                        check(format == nullptr, prefix + ".json_mode_false_omitted");
+                    } else {
+                        const auto *type = format != nullptr ? format->get("type") : nullptr;
+                        check(type != nullptr && type->as_string() == "json_object",
+                              prefix + ".json_mode_default");
+                    }
+                    check(((*parsed)->get("tools") != nullptr) == with_tools,
+                          prefix + ".tools_shape");
+                }
+                return ahfl::llm_provider::HttpResponse{
+                    .status_code = 200,
+                    .body =
+                        R"({"choices":[{"message":{"content":"{\"category\":\"Technical\",\"confidence\":\"ok\"}"}}]})"};
+            });
+        if (with_tools) {
+            provider.set_tools({ToolDefinition{.name = "lookup",
+                                               .description = "Lookup context",
+                                               .params_schema_json = R"({"type":"object"})"}},
+                               [](const ToolCall &call, const LLMCapabilityProvider::ToolExecutionContext &) -> ToolCallResult {
+                                   return {.tool_call_id = call.id, .content = "unused"};
+                               });
+        }
+        std::vector<Value> args;
+        args.push_back(make_string("hello"));
+        const auto result = provider.invoke("ClassifyMessage", args);
+        check(result.status == CapabilityCallStatus::Success && requests == 1,
+              prefix + ".success_without_manual_config");
+    }
+}
+
+void test_llm_capability_provider_preserves_complete_utf8_arguments() {
+    auto program = build_test_program();
+    LLMProviderConfig config;
+    config.endpoint = "https://budget.example.com/v1";
+    config.model = "test-model";
+    config.max_prompt_tokens = 400;
+    config.max_tokens = 100;
+    config.max_total_tokens = 500;
+    std::size_t requests = 0;
+    std::string sent_user;
+    LLMCapabilityProvider provider(
+        program,
+        config,
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+                const auto request_json = request.body.value_or("");
+            ++requests;
+            auto parsed = json::parse_json(request_json);
+            if (parsed.has_value() && *parsed) {
+                const auto *messages = (*parsed)->get("messages");
+                if (messages != nullptr && messages->array_items.size() == 2) {
+                    sent_user = std::string(
+                        messages->array_items[1]->get("content")->as_string().value_or(""));
+                }
+            }
+            return ahfl::llm_provider::HttpResponse{
+                .status_code = 200,
+                .body =
+                    R"({"choices":[{"message":{"content":"{\"category\":\"Technical\",\"confidence\":\"ok\"}"}}]})"};
+        });
+    const std::string text = "完整退款数据：{\"金额\":1024}";
+    std::vector<Value> args;
+    args.push_back(make_string(text));
+    const auto expected_user = PromptBuilder(program).build_user_prompt("ClassifyMessage", args);
+    const auto good = provider.invoke("ClassifyMessage", args);
+    check(good.status == CapabilityCallStatus::Success && requests == 1,
+          "provider.complete_arguments.normal_success");
+    check(sent_user == expected_user, "provider.complete_arguments.utf8_and_json_unchanged");
+
+    std::string oversized;
+    for (int index = 0; index < 500; ++index) {
+        oversized += text;
+    }
+    provider.clear_token_budget_events();
+    std::vector<Value> oversized_args;
+    oversized_args.push_back(make_string(oversized));
+    const auto rejected = provider.invoke("ClassifyMessage", oversized_args);
+    check(rejected.failure_kind == CapabilityFailureKind::BudgetRejected && rejected.attempts == 0,
+          "provider.complete_arguments.oversized_rejected");
+    check(requests == 1, "provider.complete_arguments.oversized_no_http");
+    const auto &events = provider.token_budget_events();
+    check(events.size() == 1 && events.front().kind == LLMTokenBudgetEventKind::PromptRejected,
+          "provider.complete_arguments.reject_event");
+    if (!events.empty()) {
+        check(!events.front().truncated && events.front().user_prompt_tokens_after ==
+                                               events.front().user_prompt_tokens_before,
+              "provider.complete_arguments.no_prefix_truncation");
+        check(events.front().diagnostic_code ==
+                  error_codes::runtime::LLMPromptBudgetRejected.full_code(),
+              "provider.complete_arguments.reject_code");
+    }
+}
+
+void test_llm_capability_provider_budgets_complete_tool_conversations() {
+    // Check independently that schemas, results, assistant arguments and accumulated
+    // small messages all affect admission, without reimplementing the estimator.
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        auto program = build_test_program();
+        LLMProviderConfig config;
+        config.endpoint = "https://budget.example.com/v1";
+        config.model = "test-model";
+        config.max_prompt_tokens = 600;
+        config.max_tokens = 100;
+        config.max_total_tokens = 700;
+        config.max_tool_rounds = 30;
+        config.max_retries = 2;
+        if (scenario == 0) {
+            config.max_prompt_tokens = 3072;
+            config.max_tokens = 1024;
+            config.max_total_tokens = 4096;
+            config.capability_token_budgets.push_back(
+                LLMCapabilityTokenBudget{.capability_name = "ClassifyMessage",
+                                         .max_tokens = 100,
+                                         .max_prompt_tokens = 600,
+                                         .max_total_tokens = 700});
+        }
+
+        if (scenario == 3) {
+            config.max_prompt_tokens = 2000;
+            config.max_total_tokens = 2100;
+        }
+        std::size_t requests = 0;
+        std::size_t main_requests = 0;
+        std::size_t summary_requests = 0;
+        std::size_t executions = 0;
+        std::set<std::string> executed_calls;
+        bool typed_input_preserved = true;
+        bool history_reduced = false;
+        LLMCapabilityProvider provider(
+            program,
+            config,
+            [&](const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+                ++requests;
+                const auto parsed = json::parse_json(request.body.value_or(""));
+                const auto *messages = parsed && *parsed ? (**parsed).get("messages") : nullptr;
+                const auto *system = messages && !messages->array_items.empty()
+                                         ? messages->array_items[0]->get("content") : nullptr;
+                const bool summarizing = system && system->as_string().value_or("").find("Summarize the supplied") != std::string_view::npos;
+                if (summarizing) {
+                    ++summary_requests;
+                    return {200, R"({"choices":[{"message":{"content":"{\"summary\":\"Older lookup exchanges completed successfully.\"}"}}]})"};
+                }
+                ++main_requests;
+                if (messages && messages->array_items.size() >= 2) {
+                    const auto *user = messages->array_items[1]->get("content");
+                    typed_input_preserved &= user && user->as_string().value_or("").find("hello") != std::string_view::npos;
+                    if (summary_requests > 0 && messages->array_items.size() < 2 + (main_requests - 1) * 2) {
+                        history_reduced = true;
+                    }
+                } else {
+                    typed_input_preserved = false;
+                }
+                if (scenario == 3 && main_requests == 12) {
+                    return {200, R"({"choices":[{"message":{"content":"{\"category\":\"Technical\",\"confidence\":\"compacted\"}"}}]})"};
+                }
+                auto arguments = json::JsonValue::make_object();
+                arguments->set("query", json::JsonValue::make_string(std::string(scenario == 2 ? 3000 : scenario == 3 ? 400 : 60, 'a')));
+                auto function = json::JsonValue::make_object();
+                function->set("name", json::JsonValue::make_string("lookup"));
+                function->set("arguments", json::JsonValue::make_string(json::serialize_json(*arguments)));
+                auto call = json::JsonValue::make_object();
+                call->set("id", json::JsonValue::make_string("call_" + std::to_string(main_requests)));
+                call->set("type", json::JsonValue::make_string("function"));
+                call->set("function", std::move(function));
+                auto calls = json::JsonValue::make_array();
+                calls->push(std::move(call));
+                auto message = json::JsonValue::make_object();
+                message->set("content", json::JsonValue::make_null());
+                message->set("tool_calls", std::move(calls));
+                auto choice = json::JsonValue::make_object();
+                choice->set("message", std::move(message));
+                auto choices = json::JsonValue::make_array();
+                choices->push(std::move(choice));
+                auto response = json::JsonValue::make_object();
+                response->set("choices", std::move(choices));
+                return {200, json::serialize_json(*response)};
+            });
+        provider.set_tools(
+            {ToolDefinition{.name = "lookup",
+                            .description = "Lookup context",
+                            .params_schema_json = scenario == 0
+                                                      ? "{\"type\":\"object\",\"description\":\"" +
+                                                            std::string(3000, 's') + "\"}"
+                                                      : R"({"type":"object"})"}},
+            [&](const ToolCall &call, const LLMCapabilityProvider::ToolExecutionContext &) -> ToolCallResult {
+                ++executions;
+                executed_calls.insert(call.id);
+                return {.tool_call_id = call.id,
+                        .content = std::string(scenario == 1 ? 3000 : scenario == 3 ? 400 : 60, 'r')};
+            });
+        std::vector<Value> args;
+        args.push_back(make_string("hello"));
+        const auto result = provider.invoke("ClassifyMessage", args);
+        const auto prefix = "provider.full_conversation." + std::to_string(scenario);
+        check(result.attempts == requests, prefix + ".attempts_match_all_http");
+        check(executed_calls.size() == executions, prefix + ".tools_never_replayed");
+        if (scenario == 3) {
+            check(result.status == CapabilityCallStatus::Success, prefix + ".automatic_compact_success");
+            check(main_requests == 12 && executions == 11, prefix + ".main_rounds_and_exact_tool_count");
+            check(summary_requests > 0 && requests == main_requests + summary_requests,
+                  prefix + ".semantic_summary_requests_counted_separately");
+            check(typed_input_preserved && history_reduced, prefix + ".complete_input_and_shorter_history");
+        } else {
+            check(result.failure_kind == CapabilityFailureKind::BudgetRejected, prefix + ".rejected");
+            check(result.diagnostic_code == error_codes::runtime::LLMPromptBudgetRejected.full_code(),
+                  prefix + ".diagnostic_code");
+            check(summary_requests == 0 && executions == main_requests, prefix + ".unsafe_request_not_sent_or_replayed");
+            check(main_requests == (scenario == 0 ? 0 : 1), prefix + ".hard_budget_checked_before_next_http");
+            const auto &events = provider.token_budget_events();
+            check(!events.empty() && events.back().kind == LLMTokenBudgetEventKind::PromptRejected,
+                  prefix + ".reject_event");
+            if (!events.empty()) {
+                check(events.back().prompt_tokens > events.back().effective_prompt_tokens,
+                      prefix + ".complete_request_exceeds_limit");
+            }
+        }
+    }
+}
+
+void test_llm_capability_provider_falls_back_after_http_failure(bool explicit_temperature) {
     auto program = build_test_program();
     LLMProviderConfig config;
     config.endpoint = "https://primary.example.com/v1";
@@ -1060,6 +1342,9 @@ void test_llm_capability_provider_falls_back_after_http_failure() {
     config.api_key = "primary-key";
     config.auth_scheme = "api_key_header";
     config.auth_header = "x-primary-key";
+    if (explicit_temperature) {
+        config.temperature = 0.2;
+    }
     config.max_retries = 0;
     config.prompt_token_cost_per_million = 0.25;
     config.completion_token_cost_per_million = 1.25;
@@ -1081,23 +1366,30 @@ void test_llm_capability_provider_falls_back_after_http_failure() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [&](const std::string &base_url,
-            const std::vector<std::pair<std::string, std::string>> &headers,
-            int /*timeout_seconds*/,
-            const std::string &request_json) -> ahfl::llm_provider::HttpResponse {
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &base_url = request.url;
+            const auto &headers = request.headers;
+            const auto &request_json = request.body.value_or("");
             endpoints.push_back(base_url);
             saw_expected_auth_headers.push_back(
-                base_url == "https://primary.example.com/v1"
+                base_url == "https://primary.example.com/v1/chat/completions"
                     ? has_header(headers, "x-primary-key", "primary-key")
                     : has_header(headers, "x-backup-key", "backup-key"));
             auto parsed = ahfl::json::parse_json(request_json);
             if (parsed.has_value() && *parsed) {
+                const auto *temperature = (*parsed)->get("temperature");
+                if (explicit_temperature) {
+                    check(temperature != nullptr && temperature->as_float() == 0.2,
+                          "provider.fallback.explicit_temperature_preserved");
+                } else {
+                    check(temperature == nullptr, "provider.fallback.default_temperature_omitted");
+                }
                 const auto *model = (*parsed)->get("model");
                 if (model != nullptr && model->as_string().has_value()) {
                     models.push_back(std::string(*model->as_string()));
                 }
             }
-            if (base_url == "https://primary.example.com/v1") {
+            if (base_url == "https://primary.example.com/v1/chat/completions") {
                 return ahfl::llm_provider::HttpResponse{.status_code = 503, .body = "unavailable"};
             }
             return ahfl::llm_provider::HttpResponse{
@@ -1116,8 +1408,8 @@ void test_llm_capability_provider_falls_back_after_http_failure() {
     check(result.attempts == 2, "provider.fallback.attempts");
     check(endpoints.size() == 2, "provider.fallback.endpoint_count");
     if (endpoints.size() == 2) {
-        check(endpoints[0] == "https://primary.example.com/v1", "provider.fallback.primary_first");
-        check(endpoints[1] == "https://backup.example.com/v1", "provider.fallback.backup_second");
+        check(endpoints[0] == "https://primary.example.com/v1/chat/completions", "provider.fallback.primary_first");
+        check(endpoints[1] == "https://backup.example.com/v1/chat/completions", "provider.fallback.backup_second");
     }
     check(models.size() == 2, "provider.fallback.model_count");
     if (models.size() == 2) {
@@ -1197,10 +1489,8 @@ void test_llm_capability_provider_records_usage_budget_exceeded() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [](const std::string & /*base_url*/,
-           const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-           int /*timeout_seconds*/,
-           const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+        []([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
             return ahfl::llm_provider::HttpResponse{
                 .status_code = 200,
                 .body =
@@ -1264,10 +1554,8 @@ void test_llm_capability_provider_applies_capability_budget_policy() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [&](const std::string & /*base_url*/,
-            const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-            int /*timeout_seconds*/,
-            const std::string &request_json) -> ahfl::llm_provider::HttpResponse {
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &request_json = request.body.value_or("");
             auto parsed = ahfl::json::parse_json(request_json);
             if (parsed.has_value() && *parsed) {
                 const auto *max_tokens = (*parsed)->get("max_tokens");
@@ -1338,10 +1626,8 @@ void test_llm_capability_provider_records_workflow_node_cumulative_budget() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [](const std::string & /*base_url*/,
-           const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-           int /*timeout_seconds*/,
-           const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+        []([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
             return ahfl::llm_provider::HttpResponse{
                 .status_code = 200,
                 .body =
@@ -1446,11 +1732,9 @@ void test_llm_capability_provider_records_fallback_exhaustion() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [](const std::string &base_url,
-           const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-           int /*timeout_seconds*/,
-           const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
-            if (base_url == "https://primary.example.com/v1") {
+        []([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &base_url = request.url;
+            if (base_url == "https://primary.example.com/v1/chat/completions") {
                 return ahfl::llm_provider::HttpResponse{.status_code = 503, .body = "primary down"};
             }
             return ahfl::llm_provider::HttpResponse{.status_code = 502, .body = "backup down"};
@@ -1503,10 +1787,8 @@ void test_llm_capability_provider_parses_streaming_response() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [&](const std::string & /*base_url*/,
-            const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-            int /*timeout_seconds*/,
-            const std::string &request_json) -> ahfl::llm_provider::HttpResponse {
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &request_json = request.body.value_or("");
             auto parsed = ahfl::json::parse_json(request_json);
             if (parsed.has_value() && *parsed) {
                 const auto *stream = (*parsed)->get("stream");
@@ -1569,10 +1851,8 @@ void test_llm_capability_provider_rejects_incomplete_streaming_response() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [](const std::string & /*base_url*/,
-           const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-           int /*timeout_seconds*/,
-           const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+        []([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
             return ahfl::llm_provider::HttpResponse{
                 .status_code = 200,
                 .body = "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"category\\\":"
@@ -1608,6 +1888,60 @@ void test_llm_capability_provider_rejects_incomplete_streaming_response() {
     }
 }
 
+void test_response_cache_current_identity_and_snapshot() {
+    const std::string first_model{"a\0b", 3};
+    const std::string second_system{"b\0c", 3};
+    const auto first = response_cache_key_digest(first_model, "c", "d");
+    const auto second = response_cache_key_digest("a", second_system, "d");
+    check(is_response_cache_key_digest(first) && is_response_cache_key_digest(second) && first != second,
+          "cache.sha256.length_framing_distinguishes_embedded_nul_fields");
+    ResponseCache cache(8, std::chrono::seconds{60});
+    cache.put(first_model, "c", "d", "first");
+    cache.put("a", second_system, "d", "second");
+    check(cache.get(first_model, "c", "d") == std::optional<std::string>{"first"} &&
+          cache.get("a", second_system, "d") == std::optional<std::string>{"second"},
+          "cache.distinct_field_contents_do_not_alias");
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto absent_key = response_cache_key_digest("new", "system", "user");
+    const std::vector<ResponseCacheSnapshotEntry> malformed{
+        {.key_digest = absent_key, .response = "valid", .inserted_unix_seconds = now},
+        {.key_digest = "bad", .response = "invalid", .inserted_unix_seconds = now}};
+    check(cache.load_snapshot(malformed) == 0 && cache.size() == 2 &&
+          !cache.get("new", "system", "user").has_value(),
+          "cache.malformed_snapshot_rejected_atomically");
+
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ahfl_cache_schema_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+    auto program = build_test_program();
+    LLMProviderConfig config;
+    config.endpoint = "https://cache.example.com/v1";
+    config.model = "cache-model";
+    config.api_key = "cache-key";
+    config.response_cache_enabled = true;
+    config.response_cache_path = path.string();
+    const auto record = "{\"key_digest\":\"" + first + "\",\"response\":\"response\",\"inserted_unix_seconds\":" + std::to_string(now) + "}";
+    const auto malformed_entries = std::vector<std::string>{
+        "null", "{}", "{\"key_digest\":1}",
+        "{\"key_digest\":\"bad\",\"response\":\"response\",\"inserted_unix_seconds\":" + std::to_string(now) + "}",
+        record + "," + record};
+    std::vector<std::string> documents{
+        "{\"format\":\"ahfl.llm_response_cache\"}",
+        "{\"format\":\"ahfl.llm_response_cache\",\"entries\":{},\"key_version\":\"old\"}",
+        "{\"format\":\"ahfl.llm_response_cache\",\"entries\":[],\"key_version\":\"old\"}"};
+    for (const auto &entries : malformed_entries) {
+        documents.push_back("{\"format\":\"ahfl.llm_response_cache\",\"entries\":[" + entries + "]}");
+    }
+    for (const auto &document : documents) {
+        { std::ofstream stream(path); stream << document; }
+        LLMCapabilityProvider provider(program, config);
+        const auto &events = provider.response_cache_audit_events();
+        check(events.size() == 1 && events.front().kind == LLMResponseCacheAuditEventKind::SnapshotLoadFailed,
+              "cache.current_snapshot_rejects_missing_wrong_and_extra_fields");
+    }
+    std::filesystem::remove(path);
+}
+
 void test_llm_capability_provider_uses_response_cache_when_enabled() {
     auto program = build_test_program();
     LLMProviderConfig config;
@@ -1623,10 +1957,8 @@ void test_llm_capability_provider_uses_response_cache_when_enabled() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [&](const std::string & /*base_url*/,
-            const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-            int /*timeout_seconds*/,
-            const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
             ++request_count;
             return ahfl::llm_provider::HttpResponse{
                 .status_code = 200,
@@ -1658,12 +1990,10 @@ void test_llm_capability_provider_uses_response_cache_when_enabled() {
         check(events[2].kind == LLMResponseCacheAuditEventKind::Hit,
               "provider.cache.audit_third_hit");
         check(events[0].model == "cache-model", "provider.cache.audit_model");
-        check(events[0].cache_key_version == std::string(kResponseCacheKeyVersion),
-              "provider.cache.audit_key_version");
-        check(!events[0].key_fingerprint.empty(), "provider.cache.audit_fingerprint");
-        check(events[0].key_fingerprint == events[1].key_fingerprint,
+        check(!events[0].key_digest.empty(), "provider.cache.audit_fingerprint");
+        check(events[0].key_digest == events[1].key_digest,
               "provider.cache.audit_write_same_key");
-        check(events[1].key_fingerprint == events[2].key_fingerprint,
+        check(events[1].key_digest == events[2].key_digest,
               "provider.cache.audit_hit_same_key");
         check(events[0].system_prompt_bytes > 0, "provider.cache.audit_system_prompt_size");
         check(events[0].user_prompt_bytes > 0, "provider.cache.audit_user_prompt_size");
@@ -1700,10 +2030,8 @@ void test_llm_capability_provider_persists_response_cache() {
         LLMCapabilityProvider provider(
             program,
             config,
-            [&](const std::string & /*base_url*/,
-                const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-                int /*timeout_seconds*/,
-                const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+            [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
                 ++request_count;
                 return ahfl::llm_provider::HttpResponse{
                     .status_code = 200,
@@ -1740,23 +2068,23 @@ void test_llm_capability_provider_persists_response_cache() {
     cache_text << cache_file.rdbuf();
     check(cache_text.str().find("My server is down") == std::string::npos,
           "provider.persistent_cache.no_prompt_leak");
-    check(cache_text.str().find("ahfl.llm_response_cache.v0") != std::string::npos,
+    check(cache_text.str().find("key_version") == std::string::npos,
+          "provider.persistent_cache.single_format_identity");
+    check(cache_text.str().find("ahfl.llm_response_cache") != std::string::npos,
           "provider.persistent_cache.schema");
     {
         std::ofstream partial(
             ahfl::support::atomic_temporary_path(cache_path),
             std::ios::binary | std::ios::trunc);
-        partial << R"({"schema":"partial)";
+        partial << R"({"format":"partial)";
     }
 
     {
         LLMCapabilityProvider provider(
             program,
             config,
-            [&](const std::string & /*base_url*/,
-                const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-                int /*timeout_seconds*/,
-                const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+            [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
                 ++request_count;
                 return ahfl::llm_provider::HttpResponse{
                     .status_code = 500,
@@ -1810,10 +2138,8 @@ void test_llm_capability_provider_cache_disabled_by_default() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [&](const std::string & /*base_url*/,
-            const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-            int /*timeout_seconds*/,
-            const std::string & /*request_json*/) -> ahfl::llm_provider::HttpResponse {
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+
             ++request_count;
             return ahfl::llm_provider::HttpResponse{
                 .status_code = 200,
@@ -1852,10 +2178,8 @@ void test_llm_capability_provider_executes_tool_calling_round() {
     LLMCapabilityProvider provider(
         program,
         config,
-        [&](const std::string & /*base_url*/,
-            const std::vector<std::pair<std::string, std::string>> & /*headers*/,
-            int /*timeout_seconds*/,
-            const std::string &request_json) -> ahfl::llm_provider::HttpResponse {
+        [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            const auto &request_json = request.body.value_or("");
             ++request_count;
             auto parsed = ahfl::json::parse_json(request_json);
             if (parsed.has_value() && *parsed) {
@@ -1902,7 +2226,7 @@ void test_llm_capability_provider_executes_tool_calling_round() {
             .description = "Lookup support context",
             .params_schema_json = R"({"type":"object","properties":{"query":{"type":"string"}}})",
         }},
-        [&](const ToolCall &call) -> ToolCallResult {
+        [&](const ToolCall &call, const LLMCapabilityProvider::ToolExecutionContext &) -> ToolCallResult {
             executor_called = true;
             check(call.id == "call_1", "provider.tool_calling.call_id");
             check(call.name == "lookup", "provider.tool_calling.call_name");
@@ -1927,9 +2251,174 @@ void test_llm_capability_provider_executes_tool_calling_round() {
     check(executor_called, "provider.tool_calling.executor_called");
 }
 
+void test_model_capacity_resolution() {
+    LLMProviderConfig config;
+    config.endpoint = "https://api.openai.com/v1";
+    config.model = "gpt-6.1-sol";
+    int calls = 0;
+    HttpClient client(config.endpoint, "secret", 30,
+                      [&](const ahfl::support::HttpRequest &) -> ahfl::llm_provider::HttpResponse {
+                          ++calls;
+                          return {500, "unexpected request"};
+                      });
+    ModelCapacityResolver resolver;
+    const auto limits = resolver.resolve(config, client, 0);
+    check(calls == 0, "capacity.profile.no_discovery_http");
+    check(limits.source == ModelLimitSource::OfficialProfile && limits.profile_id == 2,
+          "capacity.profile.numeric_identity");
+    check(limits.context_window_tokens == 1050000 && limits.max_output_tokens == 128000,
+          "capacity.profile.physical_limits");
+    const auto automatic = resolve_request_budget(config, limits);
+    check(automatic && automatic->max_tokens == 1024 && automatic->max_prompt_tokens == 945000 &&
+              automatic->max_total_tokens == 1050000 && automatic->safety_reserve_tokens == 105000 &&
+              automatic->compact_threshold_tokens == 756000,
+          "capacity.profile.automatic_budget_and_compact_threshold");
+    check(completion_limit_field_name(limits.completion_limit_field) == "max_completion_tokens",
+          "capacity.profile.completion_field");
+    config.max_tokens = 128001;
+    check(!resolve_request_budget(config, limits), "capacity.profile.output_over_physical_rejected");
+    config.max_tokens = 256;
+    config.max_prompt_tokens = 2000;
+    config.max_total_tokens = 3000;
+    const auto capped = resolve_request_budget(config, limits);
+    check(capped && capped->max_tokens == 256 && capped->max_prompt_tokens == 2000 &&
+              capped->max_total_tokens == 3000, "capacity.profile.explicit_application_caps");
+    config.max_tokens.reset();
+    config.max_prompt_tokens.reset();
+    config.max_total_tokens.reset();
+    for (const auto endpoint : {"https://api.openai.com.evil/v1", "https://proxy.example/v1",
+                                "https://api.openai.com:8443/v1", "http://api.openai.com/v1",
+                                "https://api.openai.com/v1?x=1", "https://api.openai.com/v1/other"}) {
+        config.endpoint = endpoint;
+        const auto unknown = resolver.resolve(config, client, 1);
+        check(unknown.source == ModelLimitSource::Unknown && !unknown.context_window_tokens,
+              "capacity.untrusted_endpoint.no_official_capacity");
+    }
+    config.endpoint = "https://api.openai.com/v1";
+    config.model = "my-gpt-6.1-sol-alias";
+    const auto unknown = resolver.resolve(config, client, 2);
+    const auto conservative = resolve_request_budget(config, unknown);
+    check(conservative && conservative->max_tokens == 1024 && conservative->max_prompt_tokens == 3072 &&
+              conservative->max_total_tokens == 4096, "capacity.unknown.conservative_application_budget");
+    config.model_context_window_tokens = 10000;
+    config.model_max_output_tokens = 500;
+    const auto overridden = resolver.resolve(config, client, 2);
+    const auto override_budget = resolve_request_budget(config, overridden);
+    check(overridden.source == ModelLimitSource::ExplicitOverride && override_budget &&
+              override_budget->max_tokens == 500 && override_budget->max_prompt_tokens == 9000,
+          "capacity.explicit_override.automatic_output_clamped");
+    config.model_context_window_tokens = std::numeric_limits<int>::max();
+    config.model_max_output_tokens = std::numeric_limits<int>::max();
+    const auto large = resolve_request_budget(config, resolver.resolve(config, client, 2));
+    check(large && large->max_total_tokens == std::numeric_limits<int>::max() &&
+              large->max_prompt_tokens > 0 && large->compact_threshold_tokens > 0,
+          "capacity.integer_bounds.checked_reserve_arithmetic");
+}
+
+void test_model_capacity_openrouter_metadata() {
+    LLMProviderConfig config;
+    config.endpoint = "https://openrouter.ai/api/v1";
+    config.model = "openai/test:free";
+    int calls = 0;
+    std::string response = R"({"data":{"id":"openai/test:free","context_length":32000,"top_provider":{"context_length":16000,"max_completion_tokens":4096}}})";
+    HttpClient client(config.endpoint, "sk-test", 30,
+                      [&]([[maybe_unused]] const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+                          ++calls;
+                          check(request.method == "GET" && request.url == "https://openrouter.ai/api/v1/model/openai/test%3Afree" &&
+                                    !request.body, "capacity.metadata.real_get_contract");
+                          check(has_header(request.headers, "Authorization", "Bearer sk-test"),
+                                "capacity.metadata.authorization");
+                          return {200, response};
+                      });
+    ModelCapacityResolver resolver;
+    const auto limits = resolver.resolve(config, client, 4);
+    const auto budget = resolve_request_budget(config, limits);
+    check(limits.source == ModelLimitSource::ProviderMetadata && limits.context_window_tokens == 16000 &&
+              limits.max_output_tokens == 4096 && budget && budget->max_prompt_tokens == 14400,
+          "capacity.metadata.top_provider_conservative_limits");
+    check(limits.completion_limit_field == CompletionLimitField::MaxCompletionTokens,
+          "capacity.metadata.completion_limit_field");
+    static_cast<void>(resolver.resolve(config, client, 4));
+    check(calls == 1, "capacity.metadata.cached_per_candidate");
+    for (const auto invalid : {
+             R"({"data":{"id":"another/model","context_length":32000,"top_provider":{"max_completion_tokens":4096}}})",
+             R"({"data":{"id":"openai/test:free","context_length":32000.5,"top_provider":{"max_completion_tokens":4096}}})",
+             R"({"data":{"id":"openai/test:free","context_length":2147483648,"top_provider":{"max_completion_tokens":4096}}})",
+             R"({"data":{"id":"openai/test:free","context_length":-1,"top_provider":{"max_completion_tokens":4096}}})",
+             R"({"data":{"id":"openai/test:free","context_length":32000,"top_provider":{"max_completion_tokens":null}}})",
+             "not json"}) {
+        response = invalid;
+        ModelCapacityResolver invalid_resolver;
+        const auto rejected = invalid_resolver.resolve(config, client, 5);
+        check(rejected.source == ModelLimitSource::Unknown && !rejected.context_window_tokens,
+              "capacity.metadata.invalid_falls_back_unknown");
+        const auto before = calls;
+        static_cast<void>(invalid_resolver.resolve(config, client, 5));
+        check(calls == before, "capacity.metadata.failure_cached");
+    }
+}
+
+void test_model_capacity_is_resolved_per_fallback_request() {
+    auto program = build_test_program();
+    LLMProviderConfig config;
+    config.endpoint = "https://api.openai.com/v1";
+    config.model = "gpt-6.1-sol";
+    config.api_key = "sk-test";
+    config.max_retries = 0;
+    config.fallback_providers.push_back(ProviderEntry{
+        .name = "backup", .endpoint = "https://backup.example/v1", .api_key = "backup-key",
+        .model = "fallback-test", .model_context_window_tokens = 8000, .model_max_output_tokens = 256,
+    });
+    int requests = 0;
+    LLMCapabilityProvider provider(program, config,
+        [&](const ahfl::support::HttpRequest &request) -> ahfl::llm_provider::HttpResponse {
+            ++requests;
+            check(request.method == "POST", "capacity.fallback.no_incorrect_metadata_get");
+            const auto parsed = ahfl::json::parse_json(request.body.value_or(""));
+            check(parsed && *parsed, "capacity.fallback.request_json");
+            if (request.url == "https://api.openai.com/v1/chat/completions") {
+                if (parsed && *parsed) {
+                    const auto *completion = (*parsed)->get("max_completion_tokens");
+                    check(completion && completion->as_int() == 1024 && !(*parsed)->get("max_tokens"),
+                          "capacity.fallback.primary_profile_request_limit");
+                }
+                return {503, "primary unavailable"};
+            }
+            check(request.url == "https://backup.example/v1/chat/completions", "capacity.fallback.correct_endpoint");
+            if (parsed && *parsed) {
+                const auto *completion = (*parsed)->get("max_tokens");
+                check(completion && completion->as_int() == 256 && !(*parsed)->get("max_completion_tokens"),
+                      "capacity.fallback.independent_limits_and_completion_field");
+            }
+            return {200, R"({"choices":[{"message":{"content":"{\"category\":\"Technical\",\"confidence\":\"capacity\"}"}}]})"};
+        });
+    std::vector<Value> arguments;
+    arguments.push_back(make_string("hello"));
+    const auto result = provider.invoke("ClassifyMessage", arguments);
+    check(result.status == CapabilityCallStatus::Success && requests == 2,
+          "capacity.fallback.actual_provider_workflow");
+}
+
+void test_config_capacity_limits() {
+    auto config = load_config(R"({"endpoint":"https://example.com/v1","model":"test","model_context_window_tokens":32000,"model_max_output_tokens":4096,"fallback_providers":[{"name":"backup","endpoint":"https://backup.example/v1","model":"other","model_context_window_tokens":16000,"model_max_output_tokens":2048}]})");
+    check(config.model_context_window_tokens == 32000 && config.model_max_output_tokens == 4096,
+          "capacity.config.model_overrides_loaded");
+    check(config.fallback_providers.size() == 1 && config.fallback_providers[0].model_context_window_tokens == 16000 &&
+              config.fallback_providers[0].model_max_output_tokens == 2048,
+          "capacity.config.fallback_model_overrides_loaded");
+    for (const auto value : {"-1", "0", "null", "\"large\"", "2147483648", "3.5"}) {
+        const auto invalid = load_config(std::string(R"({"endpoint":"https://example.com/v1","model":"test","model_context_window_tokens":)") + value + "}");
+        check(validate_config(invalid).has_value(), "capacity.config.invalid_capacity_not_silently_auto");
+    }
+}
+
 } // namespace
 
 int main() {
+    test_model_capacity_resolution();
+    test_model_capacity_openrouter_metadata();
+    test_config_capacity_limits();
+    test_model_capacity_is_resolved_per_fallback_request();
     test_prompt_builder();
     test_response_parser_struct();
     test_response_parser_enum();
@@ -1954,13 +2443,19 @@ int main() {
     test_llm_capability_provider_unknown_capability_returns_error();
     test_provider_registry_selection_order();
     test_llm_capability_provider_enforces_prompt_budget_before_http();
-    test_llm_capability_provider_falls_back_after_http_failure();
+    test_config_rejects_invalid_temperature();
+    test_llm_capability_provider_minimal_config_and_overrides();
+    test_llm_capability_provider_preserves_complete_utf8_arguments();
+    test_llm_capability_provider_budgets_complete_tool_conversations();
+    test_llm_capability_provider_falls_back_after_http_failure(false);
+    test_llm_capability_provider_falls_back_after_http_failure(true);
     test_llm_capability_provider_records_usage_budget_exceeded();
     test_llm_capability_provider_applies_capability_budget_policy();
     test_llm_capability_provider_records_workflow_node_cumulative_budget();
     test_llm_capability_provider_records_fallback_exhaustion();
     test_llm_capability_provider_parses_streaming_response();
     test_llm_capability_provider_rejects_incomplete_streaming_response();
+    test_response_cache_current_identity_and_snapshot();
     test_llm_capability_provider_uses_response_cache_when_enabled();
     test_llm_capability_provider_persists_response_cache();
     test_llm_capability_provider_cache_disabled_by_default();

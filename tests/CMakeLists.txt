@@ -6,6 +6,17 @@ set(AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+# CMake invokes this script even in a library-only mbedTLS build. Catch missing
+# framework Python modules, whose import failure upstream CMake does not reject.
+add_test(NAME ahfl.build.mbedtls_config_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/third_party/mbedtls/upstream/scripts/config.py"
+            --help
+)
+set_tests_properties(ahfl.build.mbedtls_config_smoke PROPERTIES
+    LABELS "build;quality-gates"
+)
+
 add_test(NAME ahfl.architecture.boundaries
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-architecture.py"
 )
@@ -688,95 +699,95 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-A: COMPUTED FINALS on the
+    # RFC 0026 P6-7 frame bridge rung computed-final: COMPUTED FINALS on the
     # agent lane. A capability-free final that is not the canonical
     # `return input;` passthrough materializes a scalar / nested
     # aggregate / if-selected tag enum result into the fixed output frame
-    # (12288), and runv returns (OK, output_base). Node-only
+    # (12288), and run_frame returns (OK, output_base). Node-only
     # fixtures (NOT census cases): real Node v22 packs the raw input
-    # words, drives runv, and walks the output frame including zero
+    # words, drives run_frame, and walks the output frame including zero
     # padding. SKIPs (77) when node is unavailable.
-    add_test(NAME ahfl.wasm.v2a_computed_final_node
+    add_test(NAME ahfl.wasm.computed_final_node
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2a_computed_final_node_host.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_computed_final_node_host.py"
                 $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
-    set_tests_properties(ahfl.wasm.v2a_computed_final_node PROPERTIES
+    set_tests_properties(ahfl.wasm.computed_final_node PROPERTIES
         SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "V2-A computed-final Node embedded-engine execution passed"
+        PASS_REGULAR_EXPRESSION "computed-final computed-final Node embedded-engine execution passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;node"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-A fix-forward: a computed
+    # RFC 0026 P6-7 frame bridge rung computed-final fix-forward: a computed
     # final that copies a nested aggregate / payload-enum field off the
     # host-packed INPUT frame must fail closed (the inline-input-frame
     # expansion is a later rung) instead of dereferencing the inline
     # words as a module child address. Engine-independent: the gate is
     # the compile rejection and NO wasm artifact.
-    add_test(NAME ahfl.wasm.v2a_input_inline_reject
+    add_test(NAME ahfl.wasm.input_inline_reject
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2a_input_inline_reject.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_input_inline_reject.py"
                 $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
-    set_tests_properties(ahfl.wasm.v2a_input_inline_reject PROPERTIES
-        PASS_REGULAR_EXPRESSION "V2-A input-inline aggregate fail-closed compile-reject lane passed"
+    set_tests_properties(ahfl.wasm.input_inline_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "computed-final input-inline aggregate fail-closed compile-reject lane passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-B: in-module String(PtrLen)
+    # RFC 0026 P6-7 frame bridge rung string-frame: in-module String(PtrLen)
     # construction. The computed-final module emits ONE additive Data(11)
     # section initializing the rodata region with the hash-consed literal
-    # image; runv returns the inline PtrLen naming those bytes. Node-only
+    # image; run_frame returns the inline PtrLen naming those bytes. Node-only
     # fixtures (NOT census cases): real Node v22 parses the Data section
     # (rodata layout/hash-cons/extent KAT) and walks the canonical output
     # bytes. SKIPs (77) when node is unavailable.
-    add_test(NAME ahfl.wasm.v2b_string_literal_node
+    add_test(NAME ahfl.wasm.string_literal_node
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_string_literal_node_host.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_string_literal_node_host.py"
                 $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
-    set_tests_properties(ahfl.wasm.v2b_string_literal_node PROPERTIES
+    set_tests_properties(ahfl.wasm.string_literal_node PROPERTIES
         SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "V2-B in-module String"
+        PASS_REGULAR_EXPRESSION "string-frame in-module String"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;node"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-B fix-forward: the D6
+    # RFC 0026 P6-7 frame bridge rung string-frame fix-forward: the D6
     # input-payload arena meters every String OCCURRENCE, so a bounded
     # List<String(0,8)>(4) reserves capacity*bound = 32 bytes and a
     # nested-struct element (4+2 slots)*3 = 24, not the element subtree
     # once. Engine-independent pin of the compile-time arithmetic (the
     # Node lane packs all capacity elements; this gate runs with no Node).
-    add_test(NAME ahfl.wasm.v2b_arena_metering_gate
+    add_test(NAME ahfl.wasm.arena_metering_gate
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_arena_metering_gate.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_arena_metering_gate.py"
                 $<TARGET_FILE:ahfl_core_wasm_producer_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
     )
-    set_tests_properties(ahfl.wasm.v2b_arena_metering_gate PROPERTIES
+    set_tests_properties(ahfl.wasm.arena_metering_gate PROPERTIES
         PASS_REGULAR_EXPRESSION "String arena multiplicity metering gate passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-B: pin the Timestamp/UUID
+    # RFC 0026 P6-7 frame bridge rung string-frame: pin the Timestamp/UUID
     # computed-final decision — the module EMITS i64 words and a frame
     # section, yet the certified embedded host keeps both shapes outside
     # its pack/read walk subset (documented host-unobservable non-goal),
     # so the p6_scalar_kind rationale comment cannot drift again.
     # Decimal/Duration/Map are supported (WH-5c.7 Node host port).
-    add_test(NAME ahfl.wasm.v2b_builtin_frame_subset_gate
+    add_test(NAME ahfl.wasm.builtin_frame_subset_gate
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_builtin_frame_subset_gate.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_builtin_frame_subset_gate.py"
                 "${PROJECT_SOURCE_DIR}"
                 $<TARGET_FILE:ahfl_core_wasm_producer_probe>
     )
-    set_tests_properties(ahfl.wasm.v2b_builtin_frame_subset_gate PROPERTIES
+    set_tests_properties(ahfl.wasm.builtin_frame_subset_gate PROPERTIES
         PASS_REGULAR_EXPRESSION "emit-but-host-unobservable frame subset gate passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
@@ -894,30 +905,30 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # static-walk runner that would have skipped the capability is gone).
     # The baseline bare-goto capability workflow stays emitted with one
     # import, so the predicate does not sweep the capability lane.
-    add_test(NAME ahfl.wasm.v2d_computed_goto_preamble_reject
+    add_test(NAME ahfl.wasm.computed_goto_preamble_reject
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2d_computed_goto_preamble_reject.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_computed_goto_preamble_reject.py"
                 $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
     )
-    set_tests_properties(ahfl.wasm.v2d_computed_goto_preamble_reject PROPERTIES
-        PASS_REGULAR_EXPRESSION "V2-D scalar computed-goto preamble P6-bridge emission lane passed"
+    set_tests_properties(ahfl.wasm.computed_goto_preamble_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "workflow-frame scalar computed-goto preamble P6-bridge emission lane passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: a second packaged
+    # RFC 0026 P6-7 frame bridge rung workflow-frame fix-forward: a second packaged
     # computed-final node that reads a nested struct/enum off its inline
     # scheduler-materialized INPUT frame must fail closed
     # (wasm.UNSUPPORTED_WORKFLOW_FRAME): only the host-packed entry frame is
     # rewritten into pointer-tree form this rung. A flat-field computed-final
-    # workflow still emits, so the predicate does not sweep the V2-D lane.
-    add_test(NAME ahfl.wasm.v2d_nonentry_nested_frame_reject
+    # workflow still emits, so the predicate does not sweep the workflow-frame lane.
+    add_test(NAME ahfl.wasm.nonentry_nested_frame_reject
         COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2d_nonentry_nested_frame_reject.py"
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_nonentry_nested_frame_reject.py"
                 $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
     )
-    set_tests_properties(ahfl.wasm.v2d_nonentry_nested_frame_reject PROPERTIES
-        PASS_REGULAR_EXPRESSION "V2-D non-entry inline nested-frame fail-closed lane passed"
+    set_tests_properties(ahfl.wasm.nonentry_nested_frame_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "workflow-frame non-entry inline nested-frame fail-closed lane passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )

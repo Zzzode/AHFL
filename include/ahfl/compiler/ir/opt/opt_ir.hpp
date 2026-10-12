@@ -132,7 +132,7 @@ struct SkippedTemporalFragment {
 struct OptProgram {
     std::vector<OptFunction> functions;
     std::vector<SkippedTemporalFragment> skipped_temporal_fragments;
-    std::string source_program_version; // traces back to ir::Program::format_version
+    std::string source_program_format; // traces back to ir::Program::format
 };
 
 } // namespace ahfl::ir::opt

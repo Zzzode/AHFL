@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/runtime/enum_variant_e2e.ahfl",
   "kind": "workflow",
   "entry": "runtime::enum_variant_e2e::TicketWorkflow",
@@ -20,7 +20,7 @@
     "wasm": {
       "eligible": "orchestration",
       "node_observation_skip": "none",
-      "reason": "V2-D in-module scheduler computed-runner node: the packaged computed-final agent runs on its fixed I/C/scratch/O node block; the scheduler materializes the projected node input and copies the projected workflow return (String owner via rodata) into the fixed workflow output slot with zero-copy PtrLen shares"
+      "reason": "workflow-frame in-module scheduler computed-runner node: the packaged computed-final agent runs on its fixed I/C/scratch/O node block; the scheduler materializes the projected node input and copies the projected workflow return (String owner via rodata) into the fixed workflow output slot with zero-copy PtrLen shares"
     }
   }
 }

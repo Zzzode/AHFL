@@ -305,7 +305,7 @@ TypePtr TypeResolver::resolve_type_symbol(SymbolId id, SourceRange use_range) {
 TypePtr TypeResolver::resolve_type_alias(SymbolId id, SourceRange use_range) {
     if (const auto cached = alias_state_.resolved_alias_types.find(id.value);
         cached != alias_state_.resolved_alias_types.end()) {
-        return cached->second ? cached->second->clone() : make_error_type();
+        return cached->second ? cached->second : make_error_type();
     }
 
     if (!alias_state_.active_aliases.insert(id.value).second) {
@@ -326,7 +326,7 @@ TypePtr TypeResolver::resolve_type_alias(SymbolId id, SourceRange use_range) {
 
     auto resolved = resolve_alias_body_(id, *alias_decl->get().aliased_type);
     alias_state_.resolved_alias_types.emplace(id.value,
-                                              resolved ? resolved->clone() : make_error_type());
+                                              resolved ? resolved : make_error_type());
     alias_state_.active_aliases.erase(id.value);
     return resolved;
 }

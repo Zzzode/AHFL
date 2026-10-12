@@ -2,7 +2,7 @@
 
 // Engine-independent conformance case manifest (RFC 0026 P7 / KR6.7).
 //
-// A conformance case is a JSON sidecar (schema `ahfl.conformance-case.v1`)
+// A conformance case is a JSON sidecar (schema `ahfl.conformance-case`)
 // paired with an AHFL source file. It is the neutral contract consumed by
 // every execution engine (orchestration wasm, and the
 // future KR6.6 computation wasm lane). This header deliberately depends on
@@ -48,7 +48,7 @@
 
 namespace ahfl::conformance {
 
-inline constexpr std::string_view kConformanceCaseFormatVersion = "ahfl.conformance-case.v1";
+inline constexpr std::string_view kConformanceCaseFormatVersion = "ahfl.conformance-case";
 
 enum class CaseKind {
     Agent,
@@ -165,7 +165,7 @@ struct EngineMatrix {
 };
 
 struct ConformanceCase {
-    std::string format_version{std::string(kConformanceCaseFormatVersion)};
+    std::string format{std::string(kConformanceCaseFormatVersion)};
     /// Repo-relative POSIX path to the AHFL source (e.g.
     /// "tests/golden/wasm/e1_identity_agent.ahfl"). Never absolute, never
     /// parent-escaping.
@@ -435,7 +435,7 @@ class ConformanceCaseReader {
             return std::nullopt;
         }
 
-        std::optional<std::string> format_version;
+        std::optional<std::string> format;
         std::optional<std::string> source;
         std::optional<CaseKind> kind;
         std::optional<std::string> entry;
@@ -446,8 +446,8 @@ class ConformanceCaseReader {
         std::optional<EngineMatrix> engines;
 
         for (const auto &[key, value] : root_.object_fields) {
-            if (key == "format_version") {
-                format_version = require_string(*value, "format_version");
+            if (key == "format") {
+                format = require_string(*value, "format");
             } else if (key == "source") {
                 source = require_string(*value, "source");
             } else if (key == "kind") {
@@ -470,7 +470,7 @@ class ConformanceCaseReader {
             }
         }
 
-        require_present(format_version, "format_version");
+        require_present(format, "format");
         require_present(source, "source");
         require_present(kind, "kind");
         require_present(entry, "entry");
@@ -485,10 +485,10 @@ class ConformanceCaseReader {
             return std::nullopt;
         }
 
-        if (*format_version != kConformanceCaseFormatVersion) {
-            error("unsupported conformance case format_version '" + *format_version +
+        if (*format != kConformanceCaseFormatVersion) {
+            error("unsupported conformance case format '" + *format +
                       "' (expected '" + std::string(kConformanceCaseFormatVersion) + "')",
-                  field_range("format_version"));
+                  field_range("format"));
             return std::nullopt;
         }
 
@@ -533,7 +533,7 @@ class ConformanceCaseReader {
         }
 
         return ConformanceCase{
-            .format_version = std::move(*format_version),
+            .format = std::move(*format),
             .source = std::move(*source),
             .kind = *kind,
             .entry = std::move(*entry),

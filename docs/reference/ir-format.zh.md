@@ -1,87 +1,51 @@
 # AHFL-IR Format
 
-本文是 `docs/reference` 中 IR 格式参考的合并入口，统一覆盖原各版本 IR 格式文档。文本 / JSON IR 基础结构已合并到本文，不再保留独立入口。
+本文说明如何导出、读取和校验 AHFL 的中间表示（IR）。用文本 IR 阅读程序结构，用 JSON IR 接入脚本和分析工具，用 Opt IR 检查优化结果。
 
-关联文档：
-
-- [compiler-phase-boundaries.zh.md](../design/compiler-phase-boundaries.zh.md)
-- [project-usage.zh.md](./project-usage.zh.md)
-- [cli-commands.zh.md](./cli-commands.zh.md)
-- [backend-capability-matrix.zh.md](./backend-capability-matrix.zh.md)
-
-## 合并范围
-
-| 合并后保留的信息 |
-|------------------|
-| 文本 IR / JSON IR 双输出形态、顶层 program 结构、declaration provenance 与 declaration serialization。 |
-| project-aware provenance、`TypeRef` / `SymbolRef`、flow handler summary、workflow value summary、`formal_observations`。 |
-
-## 当前口径摘要
-
-1. 机器消费应优先使用 JSON IR，而不是解析文本 IR 展示字符串。
-2. AHFL-IR 格式是当前稳定的 IR 格式标识。
-3. 旧字符串字段保留为展示/兼容入口；稳定身份应优先读 `*_ref.canonical_name`。
-4. flow / workflow summary 是下游 consumer 的受限摘要，不替代完整 expression / statement tree。
-5. `formal_observations` 是 IR 与 formal backend 的共享 observation registry，不属于某个 backend 私有格式。
-6. Opt IR 是独立的优化诊断 artifact，通过 `ahflc emit opt-ir` 输出文本、通过 `ahflc emit opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON；它不是 Semantic JSON IR 的替代格式，也不是普通 backend contract。
-7. 三层 IR 定型后，`ir-json`（`ahfl.ir.v2`）是 AHFL-IR 层（verification/orchestration，`ir::Program`）的稳定一等投影，与 Core-IR 执行层投影 `ahflc emit core-ir-json`（`ahfl.core.v1`）并列；两者投影不同层，不存在取代或弃用关系。见「分层投影边界」。
+- 命令和选项见 [CLI 参考](./cli-commands.zh.md)。
+- 导出能力和限制见 [产物选择参考](./backend-capability-matrix.zh.md)。
+- 多文件工程的输入配置见[包指南](../tutorials/packages.zh.md)。
 
 ## 分层投影边界
 
-AHFL 的 IR 塔有三层，每层有自己的检查面投影：
+编译结果分为 AHFL-IR、Core-IR 和可执行 Wasm 三层。检查前两层时，按下表选择输出：
 
 | 层 | artifact id | 格式标识 | 角色 |
 |----|-------------|----------|------|
-| AHFL-IR（verification / orchestration，`ir::Program`） | `emit ir-json` | `ahfl.ir.v2` | 验证/编排层稳定投影；SMV、assurance 等下游消费该层 |
-| AHFL-IR（文本） | `emit ir` | `ahfl.ir.v2` | 同上，人类可读文本形式 |
-| Core-IR（execution，`CoreProgram`） | `emit core-ir-json` | `ahfl.core.v1` | 执行层投影 |
+| AHFL-IR（verification / orchestration，`ir::Program`） | `emit ir-json` | `ahfl.ir` | 验证/编排层稳定投影；SMV、assurance 等下游消费该层 |
+| AHFL-IR（文本） | `emit ir` | `ahfl.ir` | 同上，人类可读文本形式 |
+| Core-IR（execution，`CoreProgram`） | `emit core-ir-json` | `ahfl.core` | 执行层投影 |
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit core-ir-json examples/refund/audit.ahfl
+ahflc emit core-ir-json examples/refund/audit.ahfl
 ```
 
-层边界（RFC 0026 三层塔定型）：
+读取不同层时，请按 `format` 校验格式：
 
-1. `ir-json` / 文本 `ir` 是 AHFL-IR 层的永久检查面投影，不是过渡产物；其 writer、reader、CLI flag、artifact id 与 golden 全部受 round-trip 测试约束。
-2. Core-IR 投影服务执行层（WASM codegen 等），不替代 AHFL-IR 投影；验证与编排消费方继续读取 AHFL-IR。
-3. 两套 round-trip golden 各自守护对应层的投影稳定性：`ahfl.ir.json_round_trip`（AHFL-IR）与 `ahfl.ir.core_json_round_trip`（Core-IR）。
-4. 类比 rustc 同时提供 `--emit=mir` 与 `--emit=llvm-ir`：一个编译器暴露多个层的投影是常规工程实践，投影数量本身不构成技术债。
+1. `ir` / `ir-json` 提供验证与编排结构，包括声明、表达式、语句、时序公式与 `formal_observations`。
+2. `core-ir-json` 提供执行结构。JSON 顶层包含 `format`、`layer: "core"`、`types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances`。
+3. Core-IR 的 `value_types` 是程序级类型表；region 与 statement 递归嵌套。该输出不包含目标平台的物理内存布局。详细 schema 见 [Core-IR JSON 格式](../design/core-ir-p9-layered-json.zh.md)。
 
-分层 Core-IR 投影的口径：单个 bundled envelope（`format_version` + 固定 `layer: "core"` 判别符 + `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances`）、program-global `value_types` 是可交换的 hash-cons arena（按 arena 顺序序列化，reader 重新 interning 并断言 identity remap）、region/statement 递归嵌套并带 reader 深度上界。完整契约见设计文档 `docs/design/core-ir-p9-layered-json.zh.md`。
-
-## 定位
-
-稳定 IR 是 backend 的公共输入边界：
-
-1. 它只消费 validate 之后的语义模型。
-2. 它不是 parse tree 的序列化。
-3. 它保留 declaration、expression、statement、temporal formula 与 `formal_observations` 的结构化信息。
-4. 当前，它还稳定暴露 declaration provenance、结构化类型/符号引用、flow summary 和 workflow value summary。
-
-当前格式标识：
-
-- AHFL-IR 格式
-
-readonly 当前不是源码语法，也不是 AHFL-IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、AHFL-IR 与 JSON IR。
+`readonly` 不是源码语法，也不是 `TypeRef` / JSON IR 字段；读取类型时不要假定存在该标记。
 
 ## 两种输出形态
 
 文本 IR：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit ir examples/refund/audit.ahfl
+ahflc emit ir examples/refund/audit.ahfl
 ```
 
 JSON IR：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund/audit.ahfl
+ahflc emit ir-json examples/refund/audit.ahfl
 ```
 
 文本 IR 适合：
 
 - 人工阅读
-- golden diff
+- 比较两次编译输出
 - declaration ownership / summary 审查
 
 JSON IR 适合：
@@ -93,28 +57,28 @@ JSON IR 适合：
 Opt IR：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit opt-ir tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
-./build/dev/src/tooling/cli/ahflc emit opt-ir -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
-./build/dev/src/tooling/cli/ahflc emit opt-ir-json tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
-./build/dev/src/tooling/cli/ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+ahflc emit opt-ir examples/refund/audit.ahfl
+ahflc emit opt-ir -O examples/refund/audit.ahfl
+ahflc emit opt-ir-json examples/refund/audit.ahfl
+ahflc emit opt-ir-json -O examples/refund/audit.ahfl
 ```
 
-Opt IR 是 `ir::Program` 下方的 CFG/SSA 风格诊断表示。文本 dump 输出 function、local、basic block、statement、terminator、operand、type、source range，以及未降成 pure expression fragment 的 `skipped_temporal` 记录；`AHFL_OPT_IR_V1` JSON 输出同一模型的结构化机器可读 artifact。普通 backend、Semantic JSON IR、SMV、native / execution / assurance 输出仍消费 AHFL-IR (`ir::Program`)；`-O` 会先运行 AHFL-IR pass pipeline，因此普通 backend 输出可以变化。`emit opt-ir` / `emit opt-ir-json` 在此基础上还会运行 Opt IR passes 并打印优化后的 Opt IR。
+Opt IR 提供控制流图（CFG）和静态单赋值（SSA）形式的诊断信息，包含函数、局部变量、基本块、语句、终结指令、操作数、类型和源范围。无法作为纯表达式处理的时序原子记录在 `skipped_temporal` 中。
 
-Opt IR 当前生产路径是 artifact-only：它不会被 `--optimize` 回降到 AHFL-IR，也不会让普通 backend 隐式直连 Opt IR。
+`-O` 会优化 AHFL-IR，因此普通导出产物也可能变化；导出 Opt IR 时还会优化其函数与基本块。Opt IR 是 artifact-only 诊断产物；用 `ir-json` 读取验证与编排结构，用 `core-ir-json` 读取执行结构。
 
 Opt IR JSON 顶层结构：
 
 ```json
 {
-  "format": "AHFL_OPT_IR_V1",
-  "source_program_version": "ahfl.ir",
+  "format": "AHFL_OPT_IR",
+  "source_program_format": "ahfl.ir",
   "skipped_temporal": [],
   "functions": []
 }
 ```
 
-`skipped_temporal` 表示 `called`、`running`、`completed`、`in_state` 等 event/state temporal atom 被有意排除在 expression-function lowering 之外。它们不是静默丢失，而是以 scope、kind、reason 和 source range 进入 artifact：
+`skipped_temporal` 表示 `called`、`running`、`completed`、`in_state` 等事件或状态时序原子未被转换为纯表达式函数。读取 scope、kind、reason 和 source range 可定位无法优化的条款：
 
 ```text
 skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[1040,1055)
@@ -124,13 +88,13 @@ skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::
 
 IR program 当前包含三个稳定顶层字段：
 
-- `format_version`
+- `format`
 - `formal_observations`
 - `declarations`
 
 ```json
 {
-  "format_version": "ahfl.ir.v2",
+  "format": "ahfl.ir",
   "formal_observations": [],
   "declarations": []
 }
@@ -176,7 +140,7 @@ flow handler、workflow node 等后端可能需要重新定位诊断的位置上
 
 ## TypeRef / SymbolRef
 
-JSON IR 中，旧字符串字段仍然保留：
+JSON IR 中，以下字符串字段用于展示：
 
 - `type`
 - `input_type`
@@ -185,7 +149,7 @@ JSON IR 中，旧字符串字段仍然保留：
 - `target`
 - `capabilities`
 
-这些字段继续作为兼容展示值和旧 consumer 入口。新增的结构化伴随字段用于机器消费：
+机器读取类型和符号时，请使用对应的结构化字段：
 
 - `type_ref`
 - `aliased_type_ref`
@@ -207,20 +171,22 @@ JSON IR 中，旧字符串字段仍然保留：
 }
 ```
 
-复合类型会继续结构化展开：
+泛型类型使用声明的名义类型和 `type_args` 表示参数。例如，`Map<String, Int>` 的类型引用包含以下字段（`nominal_ref.id` 为本产物中的声明编号）：
 
 ```json
 {
-  "kind": "map",
-  "display_name": "Map<String, Int>",
-  "key_type": {
-    "kind": "string",
-    "display_name": "String"
+  "kind": "struct",
+  "display_name": "std::collections::Map<String, Int>",
+  "canonical_name": "std::collections::Map",
+  "nominal_ref": {
+    "kind": "type",
+    "canonical_name": "std::collections::Map",
+    "id": 2
   },
-  "value_type": {
-    "kind": "int",
-    "display_name": "Int"
-  }
+  "type_args": [
+    { "kind": "string", "display_name": "String" },
+    { "kind": "int", "display_name": "Int" }
+  ]
 }
 ```
 
@@ -238,28 +204,23 @@ JSON IR 中，旧字符串字段仍然保留：
 消费建议：
 
 1. 需要稳定身份时，优先读 `*_ref.canonical_name`，不要解析展示字符串。
-2. 需要保持旧版本兼容时，仍可读取原有字符串字段。
-3. 对未知 `*_ref` 子字段保持 forward-compatible 忽略能力。
+2. 展示名称时可以读取字符串字段；不要从其排版反推类型结构。
+3. 严格校验当前 `*_ref` 子字段；未知字段或缺少必填字段拒绝读取。
 
 ## ExprRef / Source Range / Type / Effect / ID
 
-当前 AHFL-IR 的普通 expression 由 `Program::expr_arena` 统一拥有，节点之间通过 `ExprRef` 引用，而不是嵌套 owning pointer tree。JSON IR 仍导出结构化 expression tree，消费方不需要直接理解 arena 内存布局，但应按下面规则处理稳定身份和诊断位置：
+JSON IR 中的 expression、statement 和 temporal expression 均按树结构遍历。请按以下规则读取：
 
-1. `Expr::id` 是 lowering 时分配的 program-local stable numeric ID，可用于同一次 IR 输出内的诊断和测试关联。
-2. `ExprRef` 是实现层 handle，不是当前 JSON IR 的跨版本 ABI；外部机器消费仍应读取 JSON 节点结构。
-3. expression、statement、declaration provenance、type ref 等位置携带的 `source_range` 使用 `[begin_offset, end_offset)` 半开区间。
-4. 表达式类型应读取结构化 `type_ref` / `resolved_type` 相关字段，不要从展示字符串反推类型。
-5. 每个 expression 都携带 Sema 推导的 `effect`：`pure`、`const_only`、`predicate_call`、`nondet`、`capability_call`、`external_effect` 或 `unknown`。
-
-`effect` 来自 Typed HIR 的 `ExprEffect`，不是 IR/backend 重扫 AST 的结果。assurance 和
-formal consumer 必须消费该字段及其 derived summary；如果 capability identity 与
-`inferred_effect` 矛盾，consumer 必须 fail closed。
-
-statement 与 temporal expression 当前不是 arena/ref ABI。它们在 JSON IR 中继续作为 owning tree 输出：statement 由 block 顺序拥有，temporal expression 由 contract clause 或 workflow safety/liveness formula 递归拥有。`Statement::id` 可用于同一次 IR 输出内的诊断和测试关联；temporal expression 没有跨 owner 稳定 handle。外部 consumer 需要遍历 statement / temporal 时，应遍历 JSON tree 本身，而不是期待 `StatementRef` / `TemporalRef`。
+1. expression 和 statement 的 `id` 是本次程序输出内的数值身份，可用于关联诊断；不要跨编译会话复用。
+2. `ExprRef` 是编译器内部句柄，不是 JSON 格式字段；外部工具应读取 JSON 节点。
+3. `source_range` 使用 `[begin_offset, end_offset)` 半开字节偏移区间。
+4. 表达式类型读取结构化 `type_ref` / `resolved_type` 字段，不从展示字符串反推。
+5. `effect` 描述表达式效果，取值为 `pure`、`const_only`、`predicate_call`、`nondet`、`capability_call`、`external_effect` 或 `unknown`。读取保证案例或形式化结果时，不能把缺失或未知效果当作 `pure`；能力身份与推导效果矛盾时应拒绝该输入。
+6. temporal expression 没有跨 owner 的稳定句柄；请从所属 contract clause 或 workflow safety/liveness 列表遍历。
 
 ## Path Root Kind
 
-JSON IR 中的 path expression 会输出 `root_kind`，用于冻结路径根的语义来源。当前合法取值为：
+JSON IR 中的 path expression 会输出 `root_kind`，用于区分路径根的语义来源。当前合法取值为：
 
 | `root_kind` | 含义 |
 |-------------|------|
@@ -270,13 +231,11 @@ JSON IR 中的 path expression 会输出 `root_kind`，用于冻结路径根的�
 | `local` | flow 内 let/local binding 路径 |
 | `identifier` | workflow node output 或其他普通 identifier 根 |
 
-Typed HIR serialization、AHFL-IR lowering、JSON IR、文本 IR、runtime assignment executor 与 Opt IR lowering 都消费同一组 root kind。下游 consumer 不应再通过 `root_name == "ctx"` 这类字符串约定推断语义；需要判断执行上下文、local binding 或 workflow node output 时，应优先读取 `root_kind`。
-
-当前 DSL golden 覆盖 `input/context/local/output/identifier` 的实际源码路径；`state` 作为 IR 结构能力由 IR printer / JSON 单元测试覆盖。
+判断路径是上下文、局部变量还是 workflow 节点输出时，读取 `root_kind`，不要通过 `root_name == "ctx"` 等名称约定推断。
 
 ## Flow Handler Summary
 
-在 `flow.state_handlers[]` 上新增稳定摘要字段：
+`flow.state_handlers[]` 的摘要字段：
 
 - `summary.goto_targets`
 - `summary.may_return`
@@ -305,12 +264,12 @@ Typed HIR serialization、AHFL-IR lowering、JSON IR、文本 IR、runtime assig
 
 ## Workflow Value Summary
 
-在 workflow 上新增两类稳定摘要：
+workflow 提供两类摘要：
 
 - `nodes[].input_summary`
 - `return_summary`
 
-其目标是把 workflow 值流里最关键的“读取来源”冻结下来，而不是让 downstream tooling 重新遍历表达式树猜测来源。
+用这些字段判断节点输入或返回值读取了哪些来源。
 
 读取来源当前仅有两类：
 
@@ -333,13 +292,19 @@ Typed HIR serialization、AHFL-IR lowering、JSON IR、文本 IR、runtime assig
 
 边界说明：
 
-1. 这层 summary 只冻结“值从哪里读”。
-2. 它不冻结执行顺序、缓存、调度或 path-sensitive dataflow。
+1. summary 只说明值的读取来源。
+2. 它不描述执行顺序、缓存、调度或各控制路径上的数据流。
 3. 需要完整表达式结构时，仍应读取 `input` / `return_value` 原始 IR 节点。
 
 ## `formal_observations`
 
 `formal_observations` 是 IR 与 formal backend 共享的 observation registry。
+
+对于 `ContractClause` scope，`clause_index` 是同一 resolved Agent 的所有合同
+按当前 IR 声明顺序展开后的累计条款编号，从 0 开始；计数包括 `decreases`
+等全部条款，空合同不占编号。不同 Agent 分别计数，`atom_index` 仍是单条款
+内的 atom 编号。workflow safety/liveness 的 `clause_index` 保持各列表内索引。
+反查条款时须找到实际所属合同，以其 `provenance` 获取源文件与范围。
 
 当前 observation 来源包括：
 
@@ -359,11 +324,11 @@ Opt IR 对 temporal 的处理与 `formal_observations` 不同：embedded pure bo
 1. 顶层 program 结构
 2. declaration kind 集合
 3. `provenance` 字段名与语义
-4. `TypeRef` / `SymbolRef` 作为旧字符串字段的结构化机器可读伴随字段
+4. `TypeRef` / `SymbolRef` 的结构化类型与符号信息
 5. flow summary 与 workflow value summary 的结构化含义
 6. `formal_observations` 的公共角色
 
-内部编译器会用 `Program::analysis_revision` 与 `AnalysisBundle::source_program_revision` 保证 derived analyses freshness；这是 pass / backend emission 的实现合同，不是当前 JSON IR 的外部 ABI 字段。外部 consumer 只应消费已经输出的 summary / observation 内容。
+`Program::analysis_revision` 是内部分析版本，不在 JSON IR 中输出。外部工具请读取导出的 summary / observation，不依赖编译器内存结构或分析缓存。
 
 当前不应被视为稳定 ABI 的内容：
 
@@ -374,35 +339,20 @@ Opt IR 对 temporal 的处理与 `formal_observations` 不同：embedded pure bo
 换句话说：
 
 - 机器消费优先依赖 JSON IR。
-- 人工审查和 golden diff 优先使用文本 IR。
+- 人工审查和输出比较优先使用文本 IR。
 
-## 版本与变更规则
+## 当前格式与变更规则
 
-AHFL-IR 当前格式标识为 `ahfl.ir.v2`。
+AHFL-IR 当前格式标识为 `ahfl.ir`。
 
-该格式标识同时出现在文本 IR 首行和 JSON IR 顶层字段。`include/ahfl/compiler/ir/ir.hpp` 中的 `ahfl::ir::kFormatVersion` 是实现侧事实来源。
+该格式标识同时出现在文本 IR 首行和 JSON IR 顶层字段。
 
-在不改变格式标识的前提下，允许的普通扩展包括：
+读取 `ahfl.ir` 时，严格校验当前字段及 `format`；缺少必填字段或未知字段拒绝。文本排版和 backend 内部辅助名称不属于稳定机器接口。
 
-1. 新增可忽略的 JSON 字段。
-2. 新增 text IR 展示行，但不改变既有字段语义。
-3. 新增 backend-private artifact，只要不改变 AHFL-IR contract。
-4. 新增 summary / observation 时同时保留原字段含义。
-
-必须视为格式标识 / golden / docs 同步事件的变化包括：
-
-1. 删除、重命名或改变 JSON IR machine-facing 字段语义。
-2. 改变 declaration、expression、statement、temporal formula 的结构含义。
-3. 改变 `TypeRef` / `SymbolRef` 的 identity 语义。
-4. 改变 `formal_observations` 的收集边界。
-5. 让普通 backend 隐式消费 Opt IR，或让 `--optimize` 绕过 AHFL-IR contract。
-
-`ahfl.ir.v2` 相比 v1 新增必填 expression `effect` 和 flow summary
-`inferred_effect`，用于把 Sema effect facts 正式贯穿到 assurance/formal。v1 consumer
-应明确拒绝或升级，不得把缺失 effect 静默当作 pure。
+expression 的 `effect` 和 flow summary 的 `inferred_effect` 是必填的语义信息。字段缺失时拒绝输入，不得把缺失效果静默当作 `pure`。
 
 Consumer 建议：
 
-1. 机器消费优先读取 JSON IR，并显式校验 `format_version`。
-2. 人工审查和 golden diff 可以使用文本 IR，但不应把纯排版当作稳定 ABI。
-3. 需要优化诊断时读取 `AHFL_OPT_IR_V1`，不要把 Opt IR 当作 Semantic JSON IR 的替代格式。
+1. 机器消费优先读取 JSON IR，并显式校验 `format`。
+2. 人工审查和输出比较可以使用文本 IR，但不应把纯排版当作稳定 ABI。
+3. 需要优化诊断时读取 `AHFL_OPT_IR`，不要把 Opt IR 当作 Semantic JSON IR 的替代格式。

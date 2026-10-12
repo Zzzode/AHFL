@@ -1,0 +1,14 @@
+module try_operator::option;
+
+import std::option as option;
+
+pub fn hex_to_rgb(
+    r: option::Option<Int>,
+    g: option::Option<Int>,
+    b: option::Option<Int>
+) -> option::Option<Int> effect Pure decreases 0 {
+    let rv: Int = r?;
+    let gv: Int = g?;
+    let bv: Int = b?;
+    return option::Option::Some(rv * 65536 + gv * 256 + bv);
+}

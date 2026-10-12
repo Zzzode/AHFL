@@ -68,6 +68,7 @@ bool SmvPrinter::workflow_safety_clause_outside_smv_subset(
 }
 
 void SmvPrinter::collect_specs() {
+    collect_agent_control_specs();
     for (const auto &contract : contracts_) {
         const auto contract_target =
             std::string(ir::symbol_canonical_name(contract.get().target_ref));
@@ -78,18 +79,24 @@ void SmvPrinter::collect_specs() {
 
         for (std::size_t index = 0; index < contract.get().clauses.size(); ++index) {
             const auto &clause = contract.get().clauses[index];
+            const auto ordinal = contract_clause_index_.clause_begin(contract.get()) + index;
             std::optional<std::string> formula;
+            auto coverage = SmvSpecificationCoverage::Complete;
             if (const auto expr = std::get_if<ir::ExprRef>(&clause.value); expr != nullptr && expr->has_value()) {
-                formula = render_contract_expr_clause(
-                    contract.get(), agent->get(), clause.kind, **expr, index);
+                // Data contracts are checked by the opt-in SMT path, never by
+                // an unrelated nondeterministic SMV observation.
+                continue;
             } else if (const auto temporal = std::get_if<ir::TemporalExprPtr>(&clause.value);
                        temporal != nullptr) {
                 std::size_t atom_index = 0;
                 std::vector<std::string> observation_assumptions;
-                formula = wrap_formula_with_observation_assumptions(
-                    render_agent_formula(
-                        **temporal, agent->get(), index, atom_index, observation_assumptions),
-                    observation_assumptions);
+                const auto rendered = render_agent_formula(
+                    **temporal, agent->get(), ordinal, atom_index, observation_assumptions);
+                formula = wrap_formula_with_observation_assumptions(rendered, observation_assumptions);
+                if (!observation_assumptions.empty()) {
+                    coverage = SmvSpecificationCoverage::Conditional;
+                    model_.environment_assumption_count += observation_assumptions.size();
+                }
             } else {
                 continue;
             }
@@ -100,8 +107,14 @@ void SmvPrinter::collect_specs() {
 
             specs_.push_back("-- contract " + contract_target + " " +
                              std::string(ir::contract_clause_kind_name(clause.kind)) + "[" +
-                             std::to_string(index) + "]");
-            specs_.push_back("LTLSPEC " + *formula);
+                             std::to_string(ordinal) + "]");
+            add_spec("LTLSPEC " + *formula, SmvSpecificationOrigin::UserTemporal, coverage,
+                     "contract " + contract_target + " " +
+                     std::string(ir::contract_clause_kind_name(clause.kind)) + "[" +
+                     std::to_string(ordinal) + "]",
+                     coverage == SmvSpecificationCoverage::Conditional
+                         ? SmvSpecificationAssumption::DataObservation
+                         : SmvSpecificationAssumption::None);
             // (P2 §3.5) Map the emitted LTL formula back to the contract clause
             // source range.  The counterexample parser joins the violated spec
             // (echoed verbatim by the checker) against this AHFL_MAP entry to
@@ -111,7 +124,7 @@ void SmvPrinter::collect_specs() {
                                with_source("contract " + contract_target + " " +
                                                std::string(ir::contract_clause_kind_name(
                                                    clause.kind)) +
-                                               "[" + std::to_string(index) + "]",
+                                               "[" + std::to_string(ordinal) + "]",
                                            contract.get().provenance.source_path,
                                            clause.source_range));
         }
@@ -131,6 +144,10 @@ void SmvPrinter::collect_specs() {
                                  "node; the SMV model selects final states "
                                  "nondeterministically and cannot prove cross-node "
                                  "final-state correlations");
+                model_.specifications.push_back({model_.specifications.size(),
+                    SmvSpecificationOrigin::UserTemporal, SmvSpecificationCoverage::Unsupported,
+                    false, "workflow " + workflow.get().name + " safety[" + std::to_string(index) +
+                    "] cross-node final-state correlation is outside the SMV subset"});
                 continue;
             }
             std::size_t atom_index = 0;
@@ -147,7 +164,16 @@ void SmvPrinter::collect_specs() {
                              std::to_string(index) + "]");
             const auto safety_spec =
                 wrap_formula_with_workflow_no_failure_assumption(workflow.get(), formula);
-            specs_.push_back("LTLSPEC " + safety_spec);
+            const bool environmental = !workflow.get().nodes.empty();
+            model_.environment_assumption_count += observation_assumptions.size() + (environmental ? 1 : 0);
+            add_spec("LTLSPEC " + safety_spec, SmvSpecificationOrigin::UserTemporal,
+                     environmental || !observation_assumptions.empty()
+                         ? SmvSpecificationCoverage::Conditional : SmvSpecificationCoverage::Complete,
+                     "workflow " + workflow.get().name + " safety[" + std::to_string(index) +
+                     "]",
+                     !observation_assumptions.empty() ? SmvSpecificationAssumption::DataObservation
+                         : environmental ? SmvSpecificationAssumption::ControlEnvironment
+                                         : SmvSpecificationAssumption::None);
             add_symbol_mapping(safety_spec,
                                with_source("workflow " + workflow.get().name + " safety[" +
                                                std::to_string(index) + "]",
@@ -170,7 +196,16 @@ void SmvPrinter::collect_specs() {
                              std::to_string(index) + "]");
             const auto liveness_spec =
                 wrap_formula_with_workflow_no_failure_assumption(workflow.get(), formula);
-            specs_.push_back("LTLSPEC " + liveness_spec);
+            const bool environmental = !workflow.get().nodes.empty();
+            model_.environment_assumption_count += observation_assumptions.size() + (environmental ? 1 : 0);
+            add_spec("LTLSPEC " + liveness_spec, SmvSpecificationOrigin::UserTemporal,
+                     environmental || !observation_assumptions.empty()
+                         ? SmvSpecificationCoverage::Conditional : SmvSpecificationCoverage::Complete,
+                     "workflow " + workflow.get().name + " liveness[" + std::to_string(index) +
+                     "]",
+                     !observation_assumptions.empty() ? SmvSpecificationAssumption::DataObservation
+                         : environmental ? SmvSpecificationAssumption::ControlEnvironment
+                                         : SmvSpecificationAssumption::None);
             add_symbol_mapping(liveness_spec,
                                with_source("workflow " + workflow.get().name + " liveness[" +
                                                std::to_string(index) + "]",
@@ -180,6 +215,34 @@ void SmvPrinter::collect_specs() {
     }
 
     collect_effect_obligation_specs();
+}
+
+void SmvPrinter::collect_agent_control_specs() {
+    for (const auto *agent : index_.agents()) {
+        const auto state_var = agent_state_var(*agent);
+        add_spec("LTLSPEC " + state_var + " = " + agent->initial_state,
+                 SmvSpecificationOrigin::GeneratedControl, SmvSpecificationCoverage::Complete,
+                 "agent " + agent->name + " initial state");
+        for (const auto &state : agent->states) {
+            std::vector<std::string> successors{state};
+            for (const auto &transition : agent->transitions) {
+                if (transition.from_state == state &&
+                    std::ranges::find(successors, transition.to_state) == successors.end()) {
+                    successors.push_back(transition.to_state);
+                }
+            }
+            add_spec("LTLSPEC G ((" + state_var + " = " + state + ") -> X (" +
+                     render_state_membership(state_var, successors) + "))",
+                     SmvSpecificationOrigin::GeneratedControl, SmvSpecificationCoverage::Complete,
+                     "agent " + agent->name + " legal successor of " + state);
+        }
+        for (const auto &state : agent->final_states) {
+            add_spec("LTLSPEC G ((" + state_var + " = " + state + ") -> X (" +
+                     state_var + " = " + state + "))",
+                     SmvSpecificationOrigin::GeneratedControl, SmvSpecificationCoverage::Complete,
+                     "agent " + agent->name + " final state " + state + " is absorbing");
+        }
+    }
 }
 
 void SmvPrinter::collect_workflow_control_specs(
@@ -198,28 +261,28 @@ void SmvPrinter::collect_workflow_control_specs(
 
         specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                          " lifecycle[completed_final]");
-        specs_.push_back("LTLSPEC G (" + completed_var + " -> " + final_guard + ")");
+        add_spec("LTLSPEC G (" + completed_var + " -> " + final_guard + ")");
 
         if (!node.after.empty()) {
             const auto dependency_guard = render_dependency_guard(workflow, node.after);
             specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                              " dependency[start_after]");
-            specs_.push_back("LTLSPEC G ((" + workflow_node_running_var(workflow, node.name) +
+            add_spec("LTLSPEC G ((" + workflow_node_running_var(workflow, node.name) +
                              " | " + completed_var + ") -> (" + dependency_guard + "))");
         }
 
         const auto phase_var = workflow_node_phase_var(workflow, node.name);
         specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                          " recovery[failed_enters_recovering]");
-        specs_.push_back("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeFailed) +
+        add_spec("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeFailed) +
                          ") -> F (" + phase_var + " = " + std::string(kNodeRecovering) + "))");
         specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                          " recovery[recovering_enters_recovered]");
-        specs_.push_back("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeRecovering) +
+        add_spec("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeRecovering) +
                          ") -> F (" + phase_var + " = " + std::string(kNodeRecovered) + "))");
         specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                          " recovery[recovered_resumes_running]");
-        specs_.push_back("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeRecovered) +
+        add_spec("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeRecovered) +
                          ") -> F (" + workflow_node_running_var(workflow, node.name) + " | " +
                          completed_var + "))");
     }
@@ -233,7 +296,7 @@ void SmvPrinter::add_effect_obligation_spec(const ir::WorkflowDecl &workflow,
                                             bool satisfied) {
     specs_.push_back("-- workflow " + workflow.name + " node " + node.name + " call " +
                      std::string(called_target) + " " + std::string(obligation_name));
-    specs_.push_back("LTLSPEC G (" + std::string(event_symbol) + " -> " +
+    add_spec("LTLSPEC G (" + std::string(event_symbol) + " -> " +
                      std::string(satisfied ? "TRUE" : "FALSE") + ")");
 }
 
@@ -245,15 +308,15 @@ void SmvPrinter::add_event_lifecycle_specs(const ir::WorkflowDecl &workflow,
                                            std::string_view failed_symbol) {
     specs_.push_back("-- workflow " + workflow.name + " node " + node.name + " " +
                      std::string(event_name) + " lifecycle[committed_implies_started]");
-    specs_.push_back("LTLSPEC G (" + std::string(committed_symbol) + " -> " +
+    add_spec("LTLSPEC G (" + std::string(committed_symbol) + " -> " +
                      std::string(event_symbol) + ")");
     specs_.push_back("-- workflow " + workflow.name + " node " + node.name + " " +
                      std::string(event_name) + " lifecycle[failed_implies_started]");
-    specs_.push_back("LTLSPEC G (" + std::string(failed_symbol) + " -> " +
+    add_spec("LTLSPEC G (" + std::string(failed_symbol) + " -> " +
                      std::string(event_symbol) + ")");
     specs_.push_back("-- workflow " + workflow.name + " node " + node.name + " " +
                      std::string(event_name) + " lifecycle[commit_fail_exclusive]");
-    specs_.push_back("LTLSPEC G (!(" + std::string(committed_symbol) + " & " +
+    add_spec("LTLSPEC G (!(" + std::string(committed_symbol) + " & " +
                      std::string(failed_symbol) + "))");
 }
 
@@ -262,7 +325,7 @@ void SmvPrinter::add_failed_effect_recovery_spec(const ir::WorkflowDecl &workflo
                                                  std::string_view failed_symbol) {
     specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                      " recovery[failed_effect_reaches_recovery]");
-    specs_.push_back("LTLSPEC G (" + std::string(failed_symbol) + " -> F (" +
+    add_spec("LTLSPEC G (" + std::string(failed_symbol) + " -> F (" +
                      workflow_node_recovering_var(workflow, node.name) + " | " +
                      workflow_node_recovered_var(workflow, node.name) + " | " +
                      workflow_node_running_var(workflow, node.name) + " | " +
@@ -299,7 +362,7 @@ void SmvPrinter::collect_effect_obligation_specs() {
                     }
 
                     if (is_effect_pure(summary->inferred_effect)) {
-                        specs_.push_back(
+                        add_spec(
                             "LTLSPEC FALSE -- typed effect missing for capability call " +
                             called_target);
                         continue;

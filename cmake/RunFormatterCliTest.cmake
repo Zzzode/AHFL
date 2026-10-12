@@ -53,9 +53,7 @@ endfunction()
 
 function(write_formatter_package_manifest_named PACKAGE_ROOT PACKAGE_NAME MODULE_PREFIX)
     file(WRITE "${PACKAGE_ROOT}/ahfl.toml"
-"manifest_version = 1
-
-[package]
+"[package]
 name = \"${PACKAGE_NAME}\"
 version = \"0.1.0\"
 edition = \"2026\"
@@ -83,14 +81,9 @@ endfunction()
 
 function(write_formatter_workspace_manifest ROOT_DIR MEMBERS)
     file(WRITE "${ROOT_DIR}/ahfl.workspace.toml"
-"manifest_version = 1
-
-[workspace]
+"[workspace]
 name = \"fmt-workspace\"
 members = [${MEMBERS}]
-
-[resolver]
-version = 1
 
 [dependencies]
 std = { source = \"sysroot\" }

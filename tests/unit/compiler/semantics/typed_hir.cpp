@@ -15,6 +15,7 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
 #include "ahfl/compiler/ir/verify.hpp"
@@ -24,6 +25,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "base/json/json_value.hpp"
 #include "common/project_input_support.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 #include "compiler/syntax/frontend/project.hpp"
@@ -38,8 +40,10 @@
 #include <fstream>
 #include <future>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <unordered_set>
 #include <variant>
@@ -206,11 +210,21 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
 }
 
 [[nodiscard]] std::filesystem::path make_temp_project(std::string_view name) {
-    const auto root =
-        std::filesystem::temp_directory_path() / ("ahfl_typed_hir_" + std::string(name));
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
-    return root;
+    // Evidence gates can run this native suite concurrently with the outer
+    // CTest run. Each fixture exclusively owns its atomically created directory.
+    std::random_device random;
+    for (;;) {
+        const auto root = std::filesystem::temp_directory_path() /
+                          ("ahfl_typed_hir_" + std::string(name) + "_" + std::to_string(random()) +
+                           "_" + std::to_string(random()));
+        std::error_code error;
+        if (std::filesystem::create_directory(root, error)) {
+            return root;
+        }
+        if (error) {
+            throw std::filesystem::filesystem_error("create typed HIR fixture", root, error);
+        }
+    }
 }
 
 [[nodiscard]] std::filesystem::path module_source_path(const std::filesystem::path &root,
@@ -961,8 +975,60 @@ struct Request {
     CHECK(option_enum->type_param_names == std::vector<std::string>{"T"});
 }
 
-TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "P5 Optional type sugar resolves through the std prelude") {
+TEST_CASE_FIXTURE(TypedHIRFixture, "Explicit prelude reexports carry public inherent methods") {
+    const auto root = make_temp_project("prelude_inherent_methods");
+    const auto main_path = root / "app" / "main.ahfl";
+    const std::string source = R"AHFL(
+module app::main;
+import std::prelude;
+fn explicit() -> Bool effect Pure decreases 0 {
+    let value: Option<Int> = some<Int>(1);
+    let alias: Optional<Int> = some<Int>(2);
+    return value.is_some() && alias.is_some();
+}
+)AHFL";
+    write_file(main_path, source);
+    auto input =
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__);
+    input.inject_prelude = false;
+    const auto parse = ahfl::parse_project(frontend, input);
+    REQUIRE_FALSE(parse.has_errors());
+    const ahfl::Resolver resolver;
+    const auto resolved = resolver.resolve(parse.graph);
+    REQUIRE_FALSE(resolved.has_errors());
+    const ahfl::TypeChecker checker;
+    const auto checked = checker.check(parse.graph, resolved);
+    for (const auto &diagnostic : checked.diagnostics.entries()) {
+        INFO(diagnostic.code << ": " << diagnostic.message);
+    }
+    REQUIRE_FALSE(checked.has_errors());
+    std::unordered_set<ahfl::ast::NodeKind> anonymous_kinds;
+    for (const auto &decl : checked.typed_program.declarations) {
+        if (decl.kind == ahfl::ast::NodeKind::ModuleDecl ||
+            decl.kind == ahfl::ast::NodeKind::ImportDecl ||
+            decl.kind == ahfl::ast::NodeKind::ImplDecl) {
+            CHECK_FALSE(decl.symbol.has_value());
+            anonymous_kinds.insert(decl.kind);
+        }
+    }
+    CHECK(anonymous_kinds.contains(ahfl::ast::NodeKind::ModuleDecl));
+    CHECK(anonymous_kinds.contains(ahfl::ast::NodeKind::ImportDecl));
+    CHECK(anonymous_kinds.contains(ahfl::ast::NodeKind::ImplDecl));
+    const auto source_id = source_id_for_module(checked.typed_program, "app::main");
+    REQUIRE(source_id.has_value());
+    for (const auto text : {"value.is_some()", "alias.is_some()"}) {
+        const auto *call =
+            checked.typed_program.find_expr_by_range(range_of(source, text), source_id);
+        REQUIRE(call != nullptr);
+        REQUIRE(call->dispatch_target.has_value());
+        CHECK(call->dispatch_target->is_inherent);
+        CHECK(call->dispatch_target->method_name == "is_some");
+        REQUIRE(call->type != nullptr);
+        CHECK(call->type->holds<ahfl::types::BoolT>());
+    }
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P5 Optional type sugar resolves through the std prelude") {
     const auto root = make_temp_project("optional_prelude_project");
     const auto main_path = root / "app" / "main.ahfl";
 
@@ -999,75 +1065,75 @@ import std::option as option;
 import std::result as results;
 
 fn has_value(value: Option<Int>) -> Bool {
-    return option::is_some<Int>(value);
+    return value.is_some();
 }
 
 fn is_empty(value: Option<Int>) -> Bool {
-    return option::is_none<Int>(value);
+    return value.is_none();
 }
 
 fn mapped(value: Option<Int>) -> Option<Int> {
-    return option::map<Int, Int>(value, \x: Int -> x + 1);
+    return value.map<Int>(\x: Int -> x + 1);
 }
 
 fn chained(value: Option<Int>) -> Option<Int> {
-    return option::and_then<Int, Int>(value, \x: Int -> std::option::Option::Some(x + 1));
+    return value.and_then<Int>(\x: Int -> std::option::Option::Some(x + 1));
 }
 
 fn default_value(value: Option<Int>) -> Int {
-    return option::unwrap_or<Int>(value, 0);
+    return value.unwrap_or(0);
 }
 
 fn lazy_default(value: Option<Int>) -> Int {
-    return option::unwrap_or_else<Int>(value, \ -> 9);
+    return value.unwrap_or_else(\ -> 9);
 }
 
 fn recover(value: Option<Int>) -> Option<Int> {
-    return option::or_else<Int>(value, \ -> std::option::Option::Some(7));
+    return value.or_else(\ -> std::option::Option::Some(7));
 }
 
 fn filtered(value: Option<Int>) -> Option<Int> {
-    return option::filter<Int>(value, \x: Int -> x > 0);
+    return value.filter(\x: Int -> x > 0);
 }
 
 fn inserted(value: Option<Int>) -> Int {
-    return option::get_or_insert<Int>(value, 6);
+    return value.get_or_insert(6);
 }
 
 fn bumped(value: Result<Int, String>) -> Result<Int, String> {
-    return results::map<Int, Int, String>(value, \x: Int -> x + 1);
+    return value.map<Int>(\x: Int -> x + 1);
 }
 
 fn error_bumped(value: Result<Int, String>) -> Result<Int, String> {
-    return results::map_err<Int, String, String>(value, \e: String -> e);
+    return value.map_err<String>(\e: String -> e);
 }
 
 fn result_chained(value: Result<Int, String>) -> Result<Int, String> {
-    return results::and_then<Int, Int, String>(value, \x: Int -> value);
+    return value.and_then<Int>(\x: Int -> value);
 }
 
 fn result_recovered(value: Result<Int, String>) -> Result<Int, String> {
-    return results::or_else<Int, String, String>(value, \e: String -> value);
+    return value.or_else<String>(\e: String -> value);
 }
 
 fn result_has_value(value: Result<Int, String>) -> Bool {
-    return results::is_ok<Int, String>(value);
+    return value.is_ok();
 }
 
 fn result_is_error(value: Result<Int, String>) -> Bool {
-    return results::is_err<Int, String>(value);
+    return value.is_err();
 }
 
 fn result_default(value: Result<Int, String>) -> Int {
-    return results::unwrap_or<Int, String>(value, 0);
+    return value.unwrap_or(0);
 }
 
 fn ok_value(value: Result<Int, String>) -> Option<Int> {
-    return results::ok<Int, String>(value);
+    return value.ok();
 }
 
 fn err_value(value: Result<Int, String>) -> Option<String> {
-    return results::err<Int, String>(value);
+    return value.err();
 }
 )AHFL";
 
@@ -1075,265 +1141,56 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
 
     const auto result = check_project(root, {main_path});
 
-    const auto expect_wrapper = [&](std::string_view canonical_name) {
-        const auto symbol =
-            std::find_if(result.typed_program.symbols.begin(),
-                         result.typed_program.symbols.end(),
-                         [&](const ahfl::Symbol &candidate) {
-                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
-                                    candidate.canonical_name == canonical_name;
-                         });
-        REQUIRE(symbol != result.typed_program.symbols.end());
-
-        const auto decl = std::find_if(
-            result.typed_program.declarations.begin(),
-            result.typed_program.declarations.end(),
-            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
-        REQUIRE(decl != result.typed_program.declarations.end());
-        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
-        REQUIRE(fn != nullptr);
-        CHECK_FALSE(fn->builtin_name.has_value());
-        CHECK(fn->has_body);
-        CHECK(fn->body_block_index != UINT32_MAX);
-    };
-
-    expect_wrapper("std::option::is_some");
-    expect_wrapper("std::option::is_none");
-    expect_wrapper("std::option::map");
-    expect_wrapper("std::option::and_then");
-    expect_wrapper("std::option::or_else");
-    expect_wrapper("std::option::filter");
-    expect_wrapper("std::option::unwrap_or");
-    expect_wrapper("std::option::unwrap_or_else");
-    expect_wrapper("std::option::get_or_insert");
-    expect_wrapper("std::result::is_ok");
-    expect_wrapper("std::result::is_err");
-    expect_wrapper("std::result::map");
-    expect_wrapper("std::result::map_err");
-    expect_wrapper("std::result::and_then");
-    expect_wrapper("std::result::or_else");
-    expect_wrapper("std::result::unwrap_or");
-    expect_wrapper("std::result::ok");
-    expect_wrapper("std::result::err");
-
-    bool saw_option_is_some = false;
-    bool saw_option_is_some_wrapper = false;
-    bool saw_option_is_none = false;
-    bool saw_option_is_none_wrapper = false;
-    bool saw_option_map = false;
-    bool saw_option_map_wrapper = false;
-    bool saw_option_and_then = false;
-    bool saw_option_and_then_wrapper = false;
-    bool saw_option_or_else = false;
-    bool saw_option_or_else_wrapper = false;
-    bool saw_option_filter = false;
-    bool saw_option_filter_wrapper = false;
-    bool saw_option_unwrap = false;
-    bool saw_option_unwrap_wrapper = false;
-    bool saw_option_unwrap_or_else = false;
-    bool saw_option_unwrap_or_else_wrapper = false;
-    bool saw_option_get_or_insert = false;
-    bool saw_option_get_or_insert_wrapper = false;
-    bool saw_result_is_ok = false;
-    bool saw_result_is_ok_wrapper = false;
-    bool saw_result_is_err = false;
-    bool saw_result_is_err_wrapper = false;
-    bool saw_result_map = false;
-    bool saw_result_map_wrapper = false;
-    bool saw_result_map_err = false;
-    bool saw_result_map_err_wrapper = false;
-    bool saw_result_and_then = false;
-    bool saw_result_and_then_wrapper = false;
-    bool saw_result_or_else = false;
-    bool saw_result_or_else_wrapper = false;
-    bool saw_result_unwrap_or = false;
-    bool saw_result_unwrap_or_wrapper = false;
-    bool saw_result_ok = false;
-    bool saw_result_ok_wrapper = false;
-    bool saw_result_err = false;
-    bool saw_result_err_wrapper = false;
-
-    // P6a-01 prelude wrappers re-emit std::option / std::result calls through a
-    // generic forwarding body. The wrapper call-site therefore records the
-    // wrapper's formal single-uppercase tparam descriptions (T / U / E / F)
-    // instead of the user-facing concrete Int/String. Accept both routes.
-    auto is_generic_tparam_1 = [](std::string_view name) noexcept -> bool {
-        return name.size() == 1 && name.front() >= 'A' && name.front() <= 'Z';
-    };
-    auto each_ok_1 = [&](const std::string &actual,
-                         const std::string &expected,
-                         bool &concrete_flag,
-                         bool &wrapper_flag) noexcept -> bool {
-        if (actual == expected) {
-            concrete_flag = true;
-            return true;
-        }
-        if (is_generic_tparam_1(actual)) {
-            wrapper_flag = true;
-            return true;
-        }
-        return false;
-    };
-    auto all_ok = [&](const std::vector<std::string> &actuals,
-                      const std::vector<std::string> &expecteds,
-                      bool &concrete_flag,
-                      bool &wrapper_flag) noexcept -> bool {
-        bool all_concrete = true;
-        bool any_wrapper = false;
-        for (std::size_t i = 0; i < actuals.size(); ++i) {
-            if (actuals[i] == expecteds[i])
-                continue;
-            all_concrete = false;
-            if (is_generic_tparam_1(actuals[i])) {
-                any_wrapper = true;
-                continue;
-            }
-            return false;
-        }
-        if (all_concrete) {
-            concrete_flag = true;
-            return true;
-        }
-        if (any_wrapper) {
-            wrapper_flag = true;
-            return true;
-        }
-        return false;
-    };
-
-    for (const auto &site : result.typed_program.fn_call_sites) {
-        const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
-        if (!symbol.has_value())
-            continue;
-        const auto &cn = symbol->get().canonical_name;
-        auto describe = [&](std::size_t i) -> std::string {
-            if (i >= site.type_args.size() || !site.type_args[i])
-                return {};
-            return site.type_args[i]->describe();
+    const auto app_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Functions, "has_value", "app::main");
+    REQUIRE(app_symbol.has_value());
+    REQUIRE(app_symbol->get().source_id.has_value());
+    const auto expect_method =
+        [&](std::string_view expression, std::string_view method, std::string_view type) {
+            const auto *expr = result.typed_program.find_expr_by_range(
+                range_of(main_source, std::string{expression}), app_symbol->get().source_id);
+            REQUIRE(expr != nullptr);
+            REQUIRE(expr->type != nullptr);
+            CHECK(expr->type->describe() == type);
+            REQUIRE(expr->dispatch_target.has_value());
+            CHECK(expr->dispatch_target->is_inherent);
+            CHECK(expr->dispatch_target->method_name == method);
         };
-        std::string a0 = describe(0), a1 = describe(1), a2 = describe(2);
-
-        if (cn == "std::option::is_some") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_is_some, saw_option_is_some_wrapper));
-        } else if (cn == "std::option::is_none") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_is_none, saw_option_is_none_wrapper));
-        } else if (cn == "std::option::map") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "Int"}, saw_option_map, saw_option_map_wrapper));
-        } else if (cn == "std::option::and_then") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(
-                all_ok({a0, a1}, {"Int", "Int"}, saw_option_and_then, saw_option_and_then_wrapper));
-        } else if (cn == "std::option::or_else") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_or_else, saw_option_or_else_wrapper));
-        } else if (cn == "std::option::filter") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_filter, saw_option_filter_wrapper));
-        } else if (cn == "std::option::unwrap_or") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_unwrap, saw_option_unwrap_wrapper));
-        } else if (cn == "std::option::unwrap_or_else") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(
-                each_ok_1(a0, "Int", saw_option_unwrap_or_else, saw_option_unwrap_or_else_wrapper));
-        } else if (cn == "std::option::get_or_insert") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_get_or_insert, saw_option_get_or_insert_wrapper));
-        } else if (cn == "std::result::is_ok") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_is_ok, saw_result_is_ok_wrapper));
-        } else if (cn == "std::result::is_err") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(
-                all_ok({a0, a1}, {"Int", "String"}, saw_result_is_err, saw_result_is_err_wrapper));
-        } else if (cn == "std::result::map") {
-            REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok(
-                {a0, a1, a2}, {"Int", "Int", "String"}, saw_result_map, saw_result_map_wrapper));
-        } else if (cn == "std::result::map_err") {
-            REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2},
-                         {"Int", "String", "String"},
-                         saw_result_map_err,
-                         saw_result_map_err_wrapper));
-        } else if (cn == "std::result::and_then") {
-            REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2},
-                         {"Int", "Int", "String"},
-                         saw_result_and_then,
-                         saw_result_and_then_wrapper));
-        } else if (cn == "std::result::or_else") {
-            REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2},
-                         {"Int", "String", "String"},
-                         saw_result_or_else,
-                         saw_result_or_else_wrapper));
-        } else if (cn == "std::result::unwrap_or") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok(
-                {a0, a1}, {"Int", "String"}, saw_result_unwrap_or, saw_result_unwrap_or_wrapper));
-        } else if (cn == "std::result::ok") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_ok, saw_result_ok_wrapper));
-        } else if (cn == "std::result::err") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_err, saw_result_err_wrapper));
-        }
+    expect_method(R"AHFL(value.is_some())AHFL", "is_some", "Bool");
+    expect_method(R"AHFL(value.is_none())AHFL", "is_none", "Bool");
+    expect_method(R"AHFL(value.map<Int>(\x: Int -> x + 1))AHFL", "map", "std::option::Option<Int>");
+    expect_method(R"AHFL(value.unwrap_or(0))AHFL", "unwrap_or", "Int");
+    expect_method(R"AHFL(value.map_err<String>(\e: String -> e))AHFL",
+                  "map_err",
+                  "std::result::Result<Int, String>");
+    for (const auto &symbol : result.typed_program.symbols) {
+        CAPTURE(symbol.canonical_name);
+        CHECK(symbol.canonical_name != "std::option::is_some");
+        CHECK(symbol.canonical_name != "std::option::is_none");
+        CHECK(symbol.canonical_name != "std::option::map");
+        CHECK(symbol.canonical_name != "std::option::and_then");
+        CHECK(symbol.canonical_name != "std::option::or_else");
+        CHECK(symbol.canonical_name != "std::option::filter");
+        CHECK(symbol.canonical_name != "std::option::unwrap_or");
+        CHECK(symbol.canonical_name != "std::option::unwrap_or_else");
+        CHECK(symbol.canonical_name != "std::option::get_or_insert");
+        CHECK(symbol.canonical_name != "std::option::zip");
+        CHECK(symbol.canonical_name != "std::result::unwrap");
+        CHECK(symbol.canonical_name != "std::result::unwrap_or_else");
+        CHECK(symbol.canonical_name != "std::result::is_ok");
+        CHECK(symbol.canonical_name != "std::result::is_err");
+        CHECK(symbol.canonical_name != "std::result::map");
+        CHECK(symbol.canonical_name != "std::result::map_err");
+        CHECK(symbol.canonical_name != "std::result::and_then");
+        CHECK(symbol.canonical_name != "std::result::or_else");
+        CHECK(symbol.canonical_name != "std::result::unwrap_or");
+        CHECK(symbol.canonical_name != "std::result::ok");
+        CHECK(symbol.canonical_name != "std::result::err");
     }
-    CHECK_FALSE((!saw_option_is_some && !saw_option_is_some_wrapper));
-    CHECK_FALSE((!saw_option_is_none && !saw_option_is_none_wrapper));
-    CHECK_FALSE((!saw_option_map && !saw_option_map_wrapper));
-    CHECK_FALSE((!saw_option_and_then && !saw_option_and_then_wrapper));
-    CHECK_FALSE((!saw_option_or_else && !saw_option_or_else_wrapper));
-    CHECK_FALSE((!saw_option_filter && !saw_option_filter_wrapper));
-    CHECK_FALSE((!saw_option_unwrap && !saw_option_unwrap_wrapper));
-    CHECK_FALSE((!saw_option_unwrap_or_else && !saw_option_unwrap_or_else_wrapper));
-    CHECK_FALSE((!saw_option_get_or_insert && !saw_option_get_or_insert_wrapper));
-    CHECK_FALSE((!saw_result_is_ok && !saw_result_is_ok_wrapper));
-    CHECK_FALSE((!saw_result_is_err && !saw_result_is_err_wrapper));
-    CHECK_FALSE((!saw_result_map && !saw_result_map_wrapper));
-    CHECK_FALSE((!saw_result_map_err && !saw_result_map_err_wrapper));
-    CHECK_FALSE((!saw_result_and_then && !saw_result_and_then_wrapper));
-    CHECK_FALSE((!saw_result_or_else && !saw_result_or_else_wrapper));
-    CHECK_FALSE((!saw_result_unwrap_or && !saw_result_unwrap_or_wrapper));
-    CHECK_FALSE((!saw_result_ok && !saw_result_ok_wrapper));
-    CHECK_FALSE((!saw_result_err && !saw_result_err_wrapper));
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std collections List API") {
@@ -1350,27 +1207,27 @@ struct QualifiedBag {
 }
 
 fn size(xs: List<Int>) -> Int {
-    return collections::length(xs);
+    return xs.length();
 }
 
 fn empty(xs: List<Int>) -> Bool {
-    return collections::is_empty(xs);
+    return xs.is_empty();
 }
 
 fn inc_all(xs: List<Int>) -> List<Int> {
-    return collections::map<Int, Int>(xs, \x: Int -> x + 1);
+    return xs.map<Int>(\x: Int -> x + 1);
 }
 
 fn total(xs: List<Int>) -> Int {
-    return collections::fold<Int, Int>(xs, 0, \(acc: Int, x: Int) -> acc + x);
+    return xs.fold<Int>(0, \(acc: Int, x: Int) -> acc + x);
 }
 
 fn joined(xs: List<Int>, ys: List<Int>) -> List<Int> {
-    return collections::append<Int>(xs, ys);
+    return xs.append(ys);
 }
 
 fn keep_positive(xs: List<Int>) -> List<Int> {
-    return collections::filter<Int>(xs, \x: Int -> x > 0);
+    return xs.filter(\x: Int -> x > 0);
 }
 
 fn empty_list_value() -> List<Int> {
@@ -1388,19 +1245,19 @@ fn literal_first() -> Int {
 
 fn literal_length() -> Int {
     let xs: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
-    return collections::length(xs);
+    return xs.length();
 }
 
 fn maybe_at(xs: List<Int>, i: Int) -> Option<Int> {
-    return collections::list_get<Int>(xs, i);
+    return xs.get(i);
 }
 
 fn maybe_first(xs: List<Int>) -> Option<Int> {
-    return collections::first<Int>(xs);
+    return xs.first();
 }
 
 fn maybe_last(xs: List<Int>) -> Option<Int> {
-    return collections::last<Int>(xs);
+    return xs.last();
 }
 
 fn maybe_one() -> Option<Int> {
@@ -1416,11 +1273,11 @@ fn none_check(value: Option<Int>) -> Bool {
 }
 
 fn has_member(values: Set<Int>, value: Int) -> Bool {
-    return collections::contains<Int>(values, value);
+    return values.contains(value);
 }
 
 fn set_empty_check(values: Set<Int>) -> Bool {
-    return collections::set_is_empty<Int>(values);
+    return values.is_empty();
 }
 
 fn empty_set_value() -> Set<Int> {
@@ -1432,11 +1289,11 @@ fn singleton_set_value(value: Int) -> Set<Int> {
 }
 
 fn has_key(values: Map<String, Int>, key: String) -> Bool {
-    return collections::contains_key<String, Int>(values, key);
+    return values.contains_key(key);
 }
 
 fn map_empty_check(values: Map<String, Int>) -> Bool {
-    return collections::map_is_empty<String, Int>(values);
+    return values.is_empty();
 }
 
 fn empty_map_value() -> Map<String, Int> {
@@ -1448,7 +1305,7 @@ fn singleton_map_value(key: String, value: Int) -> Map<String, Int> {
 }
 
 fn find_value(values: Map<String, Int>, key: String) -> Option<Int> {
-    return collections::map_get<String, Int>(values, key);
+    return values.get(key);
 }
 
 fn inferred_first() -> Int {
@@ -1463,12 +1320,12 @@ fn inferred_some_is_none() -> Bool {
 
 fn inferred_has_member() -> Bool {
     let values = std::collections::set_from_array<Int>(7, 8);
-    return collections::contains<Int>(values, 7);
+    return values.contains(7);
 }
 
 fn inferred_missing_value() -> Bool {
     let values = std::collections::map_from_entries<String, Int>("z", 9);
-    return collections::map_get<String, Int>(values, "missing") == std::option::Option::None;
+    return values.get("missing") == std::option::Option::None;
 }
 )AHFL";
 
@@ -1519,717 +1376,48 @@ fn inferred_missing_value() -> Bool {
     REQUIRE(none_check_fn->get().params.front().type != nullptr);
     CHECK(none_check_fn->get().params.front().type->describe() == "std::option::Option<Int>");
 
-    const auto expect_collection_builtin = [&](std::string_view canonical_name,
-                                               std::string_view builtin_name) {
-        const auto symbol =
-            std::find_if(result.typed_program.symbols.begin(),
-                         result.typed_program.symbols.end(),
-                         [&](const ahfl::Symbol &candidate) {
-                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
-                                    candidate.canonical_name == canonical_name;
-                         });
-        REQUIRE(symbol != result.typed_program.symbols.end());
-
-        const auto decl = std::find_if(
-            result.typed_program.declarations.begin(),
-            result.typed_program.declarations.end(),
-            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
-        REQUIRE(decl != result.typed_program.declarations.end());
-        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
-        REQUIRE(fn != nullptr);
-        REQUIRE(fn->builtin_name.has_value());
-        CHECK(*fn->builtin_name == builtin_name);
-    };
-
-    const auto expect_collection_wrapper = [&](std::string_view canonical_name) {
-        const auto symbol =
-            std::find_if(result.typed_program.symbols.begin(),
-                         result.typed_program.symbols.end(),
-                         [&](const ahfl::Symbol &candidate) {
-                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
-                                    candidate.canonical_name == canonical_name;
-                         });
-        REQUIRE(symbol != result.typed_program.symbols.end());
-
-        const auto decl = std::find_if(
-            result.typed_program.declarations.begin(),
-            result.typed_program.declarations.end(),
-            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
-        REQUIRE(decl != result.typed_program.declarations.end());
-        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
-        REQUIRE(fn != nullptr);
-        CHECK_FALSE(fn->builtin_name.has_value());
-        CHECK(fn->has_body);
-        CHECK(fn->body_block_index != UINT32_MAX);
-    };
-
-    expect_collection_wrapper("std::collections::length");
-    expect_collection_wrapper("std::collections::is_empty");
-    expect_collection_wrapper("std::collections::empty");
-    expect_collection_wrapper("std::collections::singleton");
-    expect_collection_wrapper("std::collections::list_get");
-    expect_collection_wrapper("std::collections::first");
-    expect_collection_wrapper("std::collections::last");
-    expect_collection_wrapper("std::collections::contains");
-    expect_collection_wrapper("std::collections::set_is_empty");
-    expect_collection_wrapper("std::collections::set_empty");
-    expect_collection_wrapper("std::collections::set_singleton");
-    expect_collection_wrapper("std::collections::contains_key");
-    expect_collection_wrapper("std::collections::map_is_empty");
-    expect_collection_wrapper("std::collections::map_empty");
-    expect_collection_wrapper("std::collections::map_singleton");
-    expect_collection_wrapper("std::collections::map_get");
-    expect_collection_wrapper("std::collections::append");
-    expect_collection_wrapper("std::collections::map");
-    expect_collection_wrapper("std::collections::filter");
-    expect_collection_wrapper("std::collections::fold");
-    expect_collection_builtin("std::collections::list_raw_get", "list_raw_get");
-    expect_collection_builtin("std::collections::list_raw_set", "list_raw_set");
-    expect_collection_builtin("std::collections::list_raw_length", "list_raw_length");
-    expect_collection_builtin("std::collections::list_raw_alloc", "list_raw_alloc");
-    expect_collection_builtin("std::collections::set_raw_contains", "set_raw_contains");
-    expect_collection_builtin("std::collections::set_raw_size", "set_raw_size");
-    expect_collection_builtin("std::collections::set_raw_empty", "set_raw_empty");
-    expect_collection_builtin("std::collections::set_raw_singleton", "set_raw_singleton");
-    expect_collection_builtin("std::collections::map_raw_get", "map_raw_get");
-    expect_collection_builtin("std::collections::map_raw_contains_key", "map_raw_contains_key");
-    expect_collection_builtin("std::collections::map_raw_size", "map_raw_size");
-    expect_collection_builtin("std::collections::map_raw_empty", "map_raw_empty");
-    expect_collection_builtin("std::collections::map_raw_singleton", "map_raw_singleton");
-
-    bool saw_length_call = false;
-    bool saw_length_wrapper_call = false;
-    bool saw_is_empty_call = false;
-    bool saw_is_empty_wrapper_call = false;
-    bool saw_empty_call = false;
-    bool saw_empty_wrapper_call = false;
-    bool saw_singleton_call = false;
-    bool saw_singleton_wrapper_call = false;
-    bool saw_append_call = false;
-    bool saw_append_wrapper_call = false;
-    bool saw_map_call = false;
-    bool saw_map_wrapper_call = false;
-    bool saw_filter_call = false;
-    bool saw_filter_wrapper_call = false;
-    bool saw_fold_call = false;
-    bool saw_fold_wrapper_call = false;
-    bool saw_list_get_call = false;
-    bool saw_list_get_wrapper_call = false;
-    bool saw_first_call = false;
-    bool saw_first_wrapper_call = false;
-    bool saw_last_call = false;
-    bool saw_last_wrapper_call = false;
-    bool saw_contains_call = false;
-    bool saw_contains_wrapper_call = false;
-    bool saw_set_is_empty_call = false;
-    bool saw_set_is_empty_wrapper_call = false;
-    bool saw_set_empty_call = false;
-    bool saw_set_empty_wrapper_call = false;
-    bool saw_set_singleton_call = false;
-    bool saw_set_singleton_wrapper_call = false;
-    bool saw_contains_key_call = false;
-    bool saw_contains_key_wrapper_call = false;
-    bool saw_map_is_empty_call = false;
-    bool saw_map_is_empty_wrapper_call = false;
-    bool saw_map_empty_call = false;
-    bool saw_map_empty_wrapper_call = false;
-    bool saw_map_get_call = false;
-    bool saw_map_get_wrapper_call = false;
-    bool saw_map_singleton_call = false;
-    bool saw_map_singleton_wrapper_call = false;
-    bool saw_list_raw_get_call = false;
-    bool saw_list_raw_get_wrapper_call = false;
-    bool saw_list_raw_set_call = false;
-    bool saw_list_raw_set_wrapper_call = false;
-    bool saw_list_raw_length_call = false;
-    bool saw_list_raw_length_wrapper_call = false;
-    bool saw_list_raw_alloc_call = false;
-    bool saw_list_raw_alloc_wrapper_call = false;
-    bool saw_set_raw_contains_call = false;
-    bool saw_set_raw_contains_wrapper_call = false;
-    bool saw_set_raw_size_call = false;
-    bool saw_set_raw_size_wrapper_call = false;
-    bool saw_set_raw_empty_wrapper_call = false;
-    bool saw_set_raw_singleton_wrapper_call = false;
-    bool saw_map_raw_get_call = false;
-    bool saw_map_raw_get_wrapper_call = false;
-    bool saw_map_raw_contains_key_call = false;
-    bool saw_map_raw_contains_key_wrapper_call = false;
-    bool saw_map_raw_size_call = false;
-    bool saw_map_raw_size_wrapper_call = false;
-    bool saw_map_raw_empty_wrapper_call = false;
-    bool saw_map_raw_singleton_wrapper_call = false;
-    for (const auto &site : result.typed_program.fn_call_sites) {
-        const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
-        if (!symbol.has_value()) {
-            continue;
-        }
-
-        // Predicate: is this type-name a plausible generic type-parameter name from
-        // a stdlib wrapper body? Stdlib helpers use short single-letter names
-        // (T, U, A, B, K, V) or fully-qualified generic shapes such as
-        // `std::collections::List<T>`. Concrete user-call site types (`Int`,
-        // `String`) are never single-letter identifiers so this predicate lets
-        // us distinguish "user call site" from "stdlib-internal wrapper"
-        // without maintaining a per-module case list.
-        auto is_generic_tparam = [](std::string_view name) noexcept -> bool {
-            if (name.size() == 1) {
-                char c = name.front();
-                return (c >= 'A' && c <= 'Z');
-            }
-            if (name == "String")
-                return true; // from string::join internals
-            if (name.find("std::collections::List<") == 0)
-                return true;
-            if (name.find("std::collections::Map<") == 0)
-                return true;
-            if (name.find("std::option::Option<") == 0)
-                return true;
-            if (name.find("std::result::Result<") == 0)
-                return true;
-            return false;
+    const auto app_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Functions, "size", "app::main");
+    REQUIRE(app_symbol.has_value());
+    REQUIRE(app_symbol->get().source_id.has_value());
+    const auto expect_method =
+        [&](std::string_view expression, std::string_view method, std::string_view type) {
+            const auto *expr = result.typed_program.find_expr_by_range(
+                range_of(main_source, std::string{expression}), app_symbol->get().source_id);
+            REQUIRE(expr != nullptr);
+            REQUIRE(expr->type != nullptr);
+            CHECK(expr->type->describe() == type);
+            REQUIRE(expr->dispatch_target.has_value());
+            CHECK(expr->dispatch_target->is_inherent);
+            CHECK(expr->dispatch_target->method_name == method);
         };
-
-        if (symbol->get().canonical_name == "std::collections::length") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_length_call = true;
-            else if (is_generic_tparam(n))
-                saw_length_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::is_empty") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_is_empty_call = true;
-            else if (is_generic_tparam(n))
-                saw_is_empty_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::empty") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_empty_call = true;
-            else if (is_generic_tparam(n))
-                saw_empty_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::singleton") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_singleton_call = true;
-            else if (is_generic_tparam(n))
-                saw_singleton_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::append") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto elem_type = site.type_args.front()->describe();
-            if (elem_type == "Int") {
-                saw_append_call = true;
-            } else if (is_generic_tparam(elem_type)) {
-                saw_append_wrapper_call = true;
-            } else {
-                CHECK(elem_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto a = site.type_args[0]->describe();
-            const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int")
-                saw_map_call = true;
-            else if (is_generic_tparam(a) && is_generic_tparam(b))
-                saw_map_wrapper_call = true;
-            else {
-                CHECK(a == "Int");
-                CHECK(b == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::filter") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_filter_call = true;
-            else if (is_generic_tparam(n))
-                saw_filter_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::fold") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto a = site.type_args[0]->describe();
-            const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int")
-                saw_fold_call = true;
-            else if (is_generic_tparam(a) && is_generic_tparam(b))
-                saw_fold_wrapper_call = true;
-            else {
-                CHECK(a == "Int");
-                CHECK(b == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::list_get") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_list_get_call = true;
-            else if (is_generic_tparam(n))
-                saw_list_get_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::first") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_first_call = true;
-            else if (is_generic_tparam(n))
-                saw_first_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::last") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_last_call = true;
-            else if (is_generic_tparam(n))
-                saw_last_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::contains") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_contains_call = true;
-            else if (is_generic_tparam(n))
-                saw_contains_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::set_is_empty") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_set_is_empty_call = true;
-            else if (is_generic_tparam(n))
-                saw_set_is_empty_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::set_empty") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_set_empty_call = true;
-            else if (is_generic_tparam(n))
-                saw_set_empty_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::set_singleton") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                saw_set_singleton_call = true;
-            else if (is_generic_tparam(n))
-                saw_set_singleton_wrapper_call = true;
-            else
-                CHECK(n == "Int");
-        } else if (symbol->get().canonical_name == "std::collections::contains_key") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto k = site.type_args[0]->describe();
-            const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int")
-                saw_contains_key_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v))
-                saw_contains_key_wrapper_call = true;
-            else {
-                CHECK(k == "String");
-                CHECK(v == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_is_empty") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto k = site.type_args[0]->describe();
-            const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int")
-                saw_map_is_empty_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v))
-                saw_map_is_empty_wrapper_call = true;
-            else {
-                CHECK(k == "String");
-                CHECK(v == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_empty") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto k = site.type_args[0]->describe();
-            const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int")
-                saw_map_empty_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v))
-                saw_map_empty_wrapper_call = true;
-            else {
-                CHECK(k == "String");
-                CHECK(v == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_singleton") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto k = site.type_args[0]->describe();
-            const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int")
-                saw_map_singleton_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v))
-                saw_map_singleton_wrapper_call = true;
-            else {
-                CHECK(k == "String");
-                CHECK(v == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_get") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto k = site.type_args[0]->describe();
-            const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int")
-                saw_map_get_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v))
-                saw_map_get_wrapper_call = true;
-            else {
-                CHECK(k == "String");
-                CHECK(v == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::list_raw_get") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_list_raw_get_call = true;
-            } else if (is_generic_tparam(arg_type)) {
-                saw_list_raw_get_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::list_raw_set") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_list_raw_set_call = true;
-            } else if (is_generic_tparam(arg_type)) {
-                saw_list_raw_set_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::list_raw_length") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_list_raw_length_call = true;
-            } else if (is_generic_tparam(arg_type)) {
-                saw_list_raw_length_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::list_raw_alloc") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_list_raw_alloc_call = true;
-            } else if (is_generic_tparam(arg_type)) {
-                saw_list_raw_alloc_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::set_raw_contains") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_set_raw_contains_call = true;
-            } else if (arg_type == "T") {
-                saw_set_raw_contains_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::set_raw_size") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_set_raw_size_call = true;
-            } else if (arg_type == "T") {
-                saw_set_raw_size_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::set_raw_empty") {
-            saw_set_raw_empty_wrapper_call = true;
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            CHECK(site.type_args.front()->describe() == "T");
-        } else if (symbol->get().canonical_name == "std::collections::set_raw_singleton") {
-            saw_set_raw_singleton_wrapper_call = true;
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            CHECK(site.type_args.front()->describe() == "T");
-        } else if (symbol->get().canonical_name == "std::collections::map_raw_get") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto key_type = site.type_args[0]->describe();
-            const auto value_type = site.type_args[1]->describe();
-            if (key_type == "String" && value_type == "Int") {
-                saw_map_raw_get_call = true;
-            } else if (key_type == "K" && value_type == "V") {
-                saw_map_raw_get_wrapper_call = true;
-            } else {
-                CHECK(key_type == "String");
-                CHECK(value_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_raw_contains_key") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto key_type = site.type_args[0]->describe();
-            const auto value_type = site.type_args[1]->describe();
-            if (key_type == "String" && value_type == "Int") {
-                saw_map_raw_contains_key_call = true;
-            } else if (key_type == "K" && value_type == "V") {
-                saw_map_raw_contains_key_wrapper_call = true;
-            } else {
-                CHECK(key_type == "String");
-                CHECK(value_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_raw_size") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto key_type = site.type_args[0]->describe();
-            const auto value_type = site.type_args[1]->describe();
-            if (key_type == "String" && value_type == "Int") {
-                saw_map_raw_size_call = true;
-            } else if (key_type == "K" && value_type == "V") {
-                saw_map_raw_size_wrapper_call = true;
-            } else {
-                CHECK(key_type == "String");
-                CHECK(value_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_raw_empty") {
-            saw_map_raw_empty_wrapper_call = true;
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(site.type_args[0]->describe() == "K");
-            // Value type param is "V" for the std wrapper, or "U" for the
-            // map_values <K, U> accumulator call site (M2-3).
-            const auto empty_value_param = site.type_args[1]->describe();
-            const bool empty_is_value_type_param =
-                (empty_value_param == "V") || (empty_value_param == "U");
-            CHECK(empty_is_value_type_param);
-        } else if (symbol->get().canonical_name == "std::collections::map_raw_singleton") {
-            saw_map_raw_singleton_wrapper_call = true;
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            CHECK(site.type_args[0]->describe() == "K");
-            CHECK(site.type_args[1]->describe() == "V");
-        }
+    expect_method(R"AHFL(xs.length())AHFL", "length", "Int");
+    expect_method(R"AHFL(xs.get(i))AHFL", "get", "std::option::Option<Int>");
+    expect_method(R"AHFL(xs.map<Int>(\x: Int -> x + 1))AHFL", "map", "std::collections::List<Int>");
+    expect_method(R"AHFL(xs.fold<Int>(0, \(acc: Int, x: Int) -> acc + x))AHFL", "fold", "Int");
+    expect_method(R"AHFL(values.contains_key(key))AHFL", "contains_key", "Bool");
+    expect_method(R"AHFL(values.get(key))AHFL", "get", "std::option::Option<Int>");
+    for (const auto &symbol : result.typed_program.symbols) {
+        CAPTURE(symbol.canonical_name);
+        CHECK(symbol.canonical_name != "std::collections::length");
+        CHECK(symbol.canonical_name != "std::collections::is_empty");
+        CHECK(symbol.canonical_name != "std::collections::list_get");
+        CHECK(symbol.canonical_name != "std::collections::first");
+        CHECK(symbol.canonical_name != "std::collections::last");
+        CHECK(symbol.canonical_name != "std::collections::contains");
+        CHECK(symbol.canonical_name != "std::collections::set_is_empty");
+        CHECK(symbol.canonical_name != "std::collections::contains_key");
+        CHECK(symbol.canonical_name != "std::collections::map_is_empty");
+        CHECK(symbol.canonical_name != "std::collections::map_get");
+        CHECK(symbol.canonical_name != "std::collections::append");
+        CHECK(symbol.canonical_name != "std::collections::map");
+        CHECK(symbol.canonical_name != "std::collections::filter");
+        CHECK(symbol.canonical_name != "std::collections::fold");
     }
-    CHECK_FALSE((!saw_length_call && !saw_length_wrapper_call));
-    CHECK_FALSE((!saw_is_empty_call && !saw_is_empty_wrapper_call));
-    CHECK_FALSE((!saw_empty_call && !saw_empty_wrapper_call));
-    CHECK_FALSE((!saw_singleton_call && !saw_singleton_wrapper_call));
-    CHECK(saw_append_call);
-    CHECK(saw_append_wrapper_call);
-    CHECK_FALSE((!saw_map_call && !saw_map_wrapper_call));
-    CHECK_FALSE((!saw_filter_call && !saw_filter_wrapper_call));
-    CHECK_FALSE((!saw_fold_call && !saw_fold_wrapper_call));
-    CHECK_FALSE((!saw_list_get_call && !saw_list_get_wrapper_call));
-    CHECK_FALSE((!saw_first_call && !saw_first_wrapper_call));
-    CHECK_FALSE((!saw_last_call && !saw_last_wrapper_call));
-    CHECK_FALSE((!saw_contains_call && !saw_contains_wrapper_call));
-    CHECK_FALSE((!saw_set_is_empty_call && !saw_set_is_empty_wrapper_call));
-    CHECK_FALSE((!saw_set_empty_call && !saw_set_empty_wrapper_call));
-    CHECK_FALSE((!saw_set_singleton_call && !saw_set_singleton_wrapper_call));
-    CHECK_FALSE((!saw_contains_key_call && !saw_contains_key_wrapper_call));
-    CHECK_FALSE((!saw_map_is_empty_call && !saw_map_is_empty_wrapper_call));
-    CHECK_FALSE((!saw_map_empty_call && !saw_map_empty_wrapper_call));
-    CHECK_FALSE((!saw_map_singleton_call && !saw_map_singleton_wrapper_call));
-    CHECK_FALSE((!saw_map_get_call && !saw_map_get_wrapper_call));
-    CHECK_FALSE(saw_list_raw_get_call);
-    CHECK(saw_list_raw_get_wrapper_call);
-    CHECK_FALSE(saw_list_raw_set_call);
-    CHECK(saw_list_raw_set_wrapper_call);
-    CHECK_FALSE(saw_list_raw_length_call);
-    CHECK(saw_list_raw_length_wrapper_call);
-    CHECK_FALSE(saw_list_raw_alloc_call);
-    CHECK(saw_list_raw_alloc_wrapper_call);
-    CHECK_FALSE(saw_set_raw_contains_call);
-    CHECK(saw_set_raw_contains_wrapper_call);
-    CHECK_FALSE(saw_set_raw_size_call);
-    CHECK(saw_set_raw_size_wrapper_call);
-    CHECK(saw_set_raw_empty_wrapper_call);
-    CHECK(saw_set_raw_singleton_wrapper_call);
-    CHECK_FALSE(saw_map_raw_get_call);
-    CHECK(saw_map_raw_get_wrapper_call);
-    CHECK_FALSE(saw_map_raw_contains_key_call);
-    CHECK(saw_map_raw_contains_key_wrapper_call);
-    CHECK_FALSE(saw_map_raw_size_call);
-    CHECK(saw_map_raw_size_wrapper_call);
-    CHECK(saw_map_raw_empty_wrapper_call);
-    CHECK(saw_map_raw_singleton_wrapper_call);
-
     const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
-    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
-
-    bool restored_length_call = false;
-    bool restored_length_wrapper_call = false;
-    bool restored_is_empty_call = false;
-    bool restored_is_empty_wrapper_call = false;
-    bool restored_map_call = false;
-    bool restored_map_wrapper_call = false;
-    bool restored_fold_call = false;
-    bool restored_fold_wrapper_call = false;
-    bool restored_list_raw_get_call = false;
-    bool restored_list_raw_get_wrapper_call = false;
-    bool restored_map_raw_get_call = false;
-    bool restored_map_raw_get_wrapper_call = false;
-    // Reuse the same wrapper predicate as the non-restored loop above —
-    // a round-trip through JSON preserves type-arg descriptions exactly.
-    auto is_generic_tparam_2 = [](std::string_view name) noexcept -> bool {
-        if (name.size() == 1) {
-            char c = name.front();
-            return (c >= 'A' && c <= 'Z');
-        }
-        if (name == "String")
-            return true; // from string::join internals
-        if (name.find("std::collections::List<") == 0)
-            return true;
-        if (name.find("std::collections::Map<") == 0)
-            return true;
-        if (name.find("std::option::Option<") == 0)
-            return true;
-        if (name.find("std::result::Result<") == 0)
-            return true;
-        return false;
-    };
-    for (const auto &site : restored->fn_call_sites) {
-        const auto symbol = restored->find_symbol(site.fn_symbol);
-        if (!symbol.has_value()) {
-            continue;
-        }
-        if (symbol->get().canonical_name == "std::collections::length") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                restored_length_call = true;
-            else if (is_generic_tparam_2(n))
-                restored_length_wrapper_call = true;
-            else {
-                bool ok = (n == "Int");
-                CHECK(ok);
-            }
-        } else if (symbol->get().canonical_name == "std::collections::is_empty") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto n = site.type_args.front()->describe();
-            if (n == "Int")
-                restored_is_empty_call = true;
-            else if (is_generic_tparam_2(n))
-                restored_is_empty_wrapper_call = true;
-            else {
-                bool ok = (n == "Int");
-                CHECK(ok);
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto a = site.type_args[0]->describe();
-            const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int")
-                restored_map_call = true;
-            else if (is_generic_tparam_2(a) && is_generic_tparam_2(b))
-                restored_map_wrapper_call = true;
-            else {
-                bool ok = (a == "Int" && b == "Int");
-                CHECK(ok);
-            }
-        } else if (symbol->get().canonical_name == "std::collections::fold") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto a = site.type_args[0]->describe();
-            const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int")
-                restored_fold_call = true;
-            else if (is_generic_tparam_2(a) && is_generic_tparam_2(b))
-                restored_fold_wrapper_call = true;
-            else {
-                bool ok = (a == "Int" && b == "Int");
-                CHECK(ok);
-            }
-        } else if (symbol->get().canonical_name == "std::collections::list_raw_get") {
-            REQUIRE(site.type_args.size() == 1);
-            REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                restored_list_raw_get_call = true;
-            } else if (is_generic_tparam_2(arg_type)) {
-                restored_list_raw_get_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
-        } else if (symbol->get().canonical_name == "std::collections::map_raw_get") {
-            REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr);
-            REQUIRE(site.type_args[1] != nullptr);
-            const auto key_type = site.type_args[0]->describe();
-            const auto value_type = site.type_args[1]->describe();
-            if (key_type == "String" && value_type == "Int") {
-                restored_map_raw_get_call = true;
-            } else if (is_generic_tparam_2(key_type) && is_generic_tparam_2(value_type)) {
-                restored_map_raw_get_wrapper_call = true;
-            } else {
-                CHECK(key_type == "String");
-                CHECK(value_type == "Int");
-            }
-        }
-    }
-    CHECK_FALSE((!restored_length_call && !restored_length_wrapper_call));
-    CHECK_FALSE((!restored_is_empty_call && !restored_is_empty_wrapper_call));
-    CHECK_FALSE((!restored_map_call && !restored_map_wrapper_call));
-    CHECK_FALSE((!restored_fold_call && !restored_fold_wrapper_call));
-    CHECK_FALSE(restored_list_raw_get_call);
-    CHECK(restored_list_raw_get_wrapper_call);
-    CHECK_FALSE(restored_map_raw_get_call);
-    CHECK(restored_map_raw_get_wrapper_call);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std string time uuid APIs") {
@@ -2243,15 +1431,15 @@ import std::time as time;
 import std::uuid as uuid;
 
 fn title_len(s: String) -> Int {
-    return strings::length(s);
+    return s.length();
 }
 
 fn title_empty(s: String) -> Bool {
-    return strings::is_empty(s);
+    return s.is_empty();
 }
 
 fn title_join(left: String, right: String) -> String {
-    return strings::concat(left, right);
+    return left.concat(right);
 }
 
 fn later(t: Timestamp, d: Duration) -> Timestamp {
@@ -2267,72 +1455,39 @@ fn parse_id(s: String) -> Option<UUID> {
 
     const auto result = check_project(root, {main_path});
 
-    const auto expect_wrapper = [&](std::string_view canonical_name) {
-        const auto symbol =
-            std::find_if(result.typed_program.symbols.begin(),
-                         result.typed_program.symbols.end(),
-                         [&](const ahfl::Symbol &candidate) {
-                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
-                                    candidate.canonical_name == canonical_name;
-                         });
-        REQUIRE(symbol != result.typed_program.symbols.end());
-
-        const auto decl = std::find_if(
-            result.typed_program.declarations.begin(),
-            result.typed_program.declarations.end(),
-            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
-        REQUIRE(decl != result.typed_program.declarations.end());
-        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
-        REQUIRE(fn != nullptr);
-        CHECK_FALSE(fn->builtin_name.has_value());
-        CHECK(fn->has_body);
-        CHECK(fn->body_block_index != UINT32_MAX);
-    };
-
-    expect_wrapper("std::string::length");
-    expect_wrapper("std::string::is_empty");
-    expect_wrapper("std::string::concat");
-    expect_wrapper("std::string::raw_length");
-    expect_wrapper("std::string::raw_concat");
-    expect_wrapper("std::string::contains");
-    expect_wrapper("std::string::starts_with");
-    expect_wrapper("std::string::ends_with");
-    expect_wrapper("std::time::add");
-    expect_wrapper("std::uuid::parse");
-
-    bool saw_string_length = false;
-    bool saw_string_is_empty = false;
-    bool saw_string_concat = false;
-    bool saw_string_raw_length = false;
-    bool saw_string_raw_concat = false;
-    bool saw_time = false;
-    bool saw_uuid = false;
-    for (const auto &site : result.typed_program.fn_call_sites) {
-        const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
-        if (!symbol.has_value()) {
-            continue;
-        }
-        saw_string_length =
-            saw_string_length || symbol->get().canonical_name == "std::string::length";
-        saw_string_is_empty =
-            saw_string_is_empty || symbol->get().canonical_name == "std::string::is_empty";
-        saw_string_concat =
-            saw_string_concat || symbol->get().canonical_name == "std::string::concat";
-        saw_string_raw_length =
-            saw_string_raw_length || symbol->get().canonical_name == "std::string::raw_length";
-        saw_string_raw_concat = saw_string_raw_concat ||
-                                symbol->get().canonical_name == "std::string::string_raw_concat";
-        saw_time = saw_time || symbol->get().canonical_name == "std::time::add";
-        saw_uuid = saw_uuid || symbol->get().canonical_name == "std::uuid::parse";
+    const auto app_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Functions, "title_len", "app::main");
+    REQUIRE(app_symbol.has_value());
+    REQUIRE(app_symbol->get().source_id.has_value());
+    const auto expect_method =
+        [&](std::string_view expression, std::string_view method, std::string_view type) {
+            const auto *expr = result.typed_program.find_expr_by_range(
+                range_of(main_source, std::string{expression}), app_symbol->get().source_id);
+            REQUIRE(expr != nullptr);
+            REQUIRE(expr->type != nullptr);
+            CHECK(expr->type->describe() == type);
+            REQUIRE(expr->dispatch_target.has_value());
+            CHECK(expr->dispatch_target->is_inherent);
+            CHECK(expr->dispatch_target->method_name == method);
+        };
+    expect_method(R"AHFL(s.length())AHFL", "length", "Int");
+    expect_method(R"AHFL(s.is_empty())AHFL", "is_empty", "Bool");
+    expect_method(R"AHFL(left.concat(right))AHFL", "concat", "String");
+    for (const auto &symbol : result.typed_program.symbols) {
+        CAPTURE(symbol.canonical_name);
+        CHECK(symbol.canonical_name != "std::string::length");
+        CHECK(symbol.canonical_name != "std::string::is_empty");
+        CHECK(symbol.canonical_name != "std::string::concat");
+        CHECK(symbol.canonical_name != "std::string::raw_length");
+        CHECK(symbol.canonical_name != "std::string::raw_concat");
+        CHECK(symbol.canonical_name != "std::string::contains");
+        CHECK(symbol.canonical_name != "std::string::starts_with");
+        CHECK(symbol.canonical_name != "std::string::ends_with");
     }
-
-    CHECK(saw_string_length);
-    CHECK(saw_string_is_empty);
-    CHECK(saw_string_concat);
-    CHECK(saw_string_raw_length);
-    CHECK(saw_string_raw_concat);
-    CHECK(saw_time);
-    CHECK(saw_uuid);
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "P6 stdlib builtin declarations match compiler hook allowlist") {
@@ -2368,7 +1523,8 @@ fn smoke() -> Int {
             continue;
         }
 
-        const auto symbol = result.typed_program.find_symbol(decl.symbol);
+        REQUIRE(decl.symbol.has_value());
+        const auto symbol = result.typed_program.find_symbol(*decl.symbol);
         REQUIRE(symbol.has_value());
         if (!symbol->get().canonical_name.starts_with("std::")) {
             continue;
@@ -2816,17 +1972,20 @@ workflow W {
     const auto agent_it = std::find_if(
         decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::AgentDecl; });
     REQUIRE(agent_it != decls.end());
-    const auto agent_symbol = agent_it->symbol;
+    REQUIRE(agent_it->symbol.has_value());
+    const auto agent_symbol = *agent_it->symbol;
 
     const auto contract_it = std::find_if(
         decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::ContractDecl; });
     REQUIRE(contract_it != decls.end());
+    CHECK_FALSE(contract_it->symbol.has_value());
     REQUIRE(contract_it->associated_agent_symbol.has_value());
     CHECK(*contract_it->associated_agent_symbol == agent_symbol);
 
     const auto flow_it = std::find_if(
         decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::FlowDecl; });
     REQUIRE(flow_it != decls.end());
+    CHECK_FALSE(flow_it->symbol.has_value());
     REQUIRE(flow_it->associated_agent_symbol.has_value());
     CHECK(*flow_it->associated_agent_symbol == agent_symbol);
 }
@@ -2864,7 +2023,8 @@ flow for Guard {
     const auto agent_it = std::find_if(
         decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::AgentDecl; });
     REQUIRE(agent_it != decls.end());
-    const auto agent_symbol = agent_it->symbol;
+    REQUIRE(agent_it->symbol.has_value());
+    const auto agent_symbol = *agent_it->symbol;
 
     // Find ContractDecl entries. There must be exactly one for `Guard`.
     std::size_t contract_count = 0;
@@ -2910,7 +2070,8 @@ flow for Runner {
     const auto agent_it = std::find_if(
         decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::AgentDecl; });
     REQUIRE(agent_it != decls.end());
-    const auto agent_symbol = agent_it->symbol;
+    REQUIRE(agent_it->symbol.has_value());
+    const auto agent_symbol = *agent_it->symbol;
 
     // Find FlowDecl entries.
     std::size_t flow_count = 0;
@@ -2918,6 +2079,7 @@ flow for Runner {
         if (d.kind != K::FlowDecl)
             continue;
         ++flow_count;
+        CHECK_FALSE(d.symbol.has_value());
         REQUIRE(d.associated_agent_symbol.has_value());
         CHECK(*d.associated_agent_symbol == agent_symbol);
         CHECK(d.range.end_offset > d.range.begin_offset);
@@ -3192,7 +2354,9 @@ TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
     });
 
     const auto result = ahfl::monomorphize_decl(
-        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
+        program,
+        0,
+        ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
         types);
 
     REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
@@ -3264,7 +2428,9 @@ TEST_CASE("RFC 0026 (3)-3b monomorphization remaps match expr arm pattern indexe
     program.expressions.push_back(std::move(match_expr));
 
     const auto result = ahfl::monomorphize_decl(
-        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
+        program,
+        0,
+        ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
         types);
 
     REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
@@ -3299,13 +2465,16 @@ TEST_CASE("RFC 0026 P4 monomorphize_decl substitutes let_adjustment plan TypePtr
     constexpr std::uint32_t kScope = 7;
     const auto int_type = types.make(ahfl::TypeKind::Int);
     const auto t_var = types.type_var(0, kScope, "T");
-    const auto list_t4 = types.struct_type("std::collections::List", std::nullopt,
+    const auto list_t4 = types.struct_type("std::collections::List",
+                                           std::nullopt,
                                            std::vector<ahfl::TypePtr>{t_var},
                                            std::optional<std::uint64_t>{4});
-    const auto list_t8 = types.struct_type("std::collections::List", std::nullopt,
+    const auto list_t8 = types.struct_type("std::collections::List",
+                                           std::nullopt,
                                            std::vector<ahfl::TypePtr>{t_var},
                                            std::optional<std::uint64_t>{8});
-    const auto list_int8 = types.struct_type("std::collections::List", std::nullopt,
+    const auto list_int8 = types.struct_type("std::collections::List",
+                                             std::nullopt,
                                              std::vector<ahfl::TypePtr>{int_type},
                                              std::optional<std::uint64_t>{8});
 
@@ -3344,7 +2513,9 @@ TEST_CASE("RFC 0026 P4 monomorphize_decl substitutes let_adjustment plan TypePtr
     program.statements.push_back(std::move(let));
 
     const auto result = ahfl::monomorphize_decl(
-        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
+        program,
+        0,
+        ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
         types);
     REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
     const auto &instance = program.monomorphized_instances[result.instance_index];
@@ -3361,7 +2532,8 @@ TEST_CASE("RFC 0026 P4 monomorphize_decl substitutes let_adjustment plan TypePtr
     REQUIRE(out_plan.nodes.size() == 1);
     CHECK(out_plan.nodes[0].target == list_int8);
     // And no residual TypeVar survives at the boundary source.
-    const auto list_int4 = types.struct_type("std::collections::List", std::nullopt,
+    const auto list_int4 = types.struct_type("std::collections::List",
+                                             std::nullopt,
                                              std::vector<ahfl::TypePtr>{int_type},
                                              std::optional<std::uint64_t>{4});
     CHECK(out_plan.source == list_int4);
@@ -3570,18 +2742,41 @@ workflow RunWorker {
     write_file(source_path, source);
     const auto tc = check_project(root, {source_path});
     const auto snapshot = ahfl::serialize_typed_program_json(tc.typed_program);
-    REQUIRE(snapshot.find("AHFL_TYPED_HIR_V1") != std::string::npos);
-    REQUIRE(snapshot.find(std::string(ahfl::kConstValueArtifactSchemaVersion)) !=
-            std::string::npos);
+    REQUIRE(snapshot.find("ahfl.typed-hir") != std::string::npos);
+    CHECK_FALSE(ahfl::deserialize_typed_program_json(
+                    replace_first(snapshot, "ahfl.typed-hir", "ahfl.typed-hir_OLD"))
+                    .has_value());
+    REQUIRE(snapshot.find(std::string(ahfl::kConstValueArtifactFormat)) != std::string::npos);
 
     auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
 
-    auto const_schema_mismatch = ahfl::deserialize_typed_program_json(
-        replace_first(snapshot,
-                      std::string(ahfl::kConstValueArtifactSchemaVersion),
-                      "AHFL_CONST_VALUE_ARTIFACT_V0"));
+    const auto reject_missing = [&](std::string_view key) {
+        auto document = ahfl::json::parse_json(snapshot);
+        REQUIRE(document.has_value());
+        auto &fields = (*document)->object_fields;
+        std::erase_if(fields, [&](const auto &field) { return field.first == key; });
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    };
+    reject_missing("patterns");
+    reject_missing("fn_call_sites");
+    {
+        auto document = ahfl::json::parse_json(snapshot);
+        REQUIRE(document.has_value());
+        auto *statements = (*document)->get_mut("statements");
+        REQUIRE_FALSE(statements->array_items.empty());
+        auto &statement = *statements->array_items.front();
+        std::erase_if(statement.object_fields,
+                      [](const auto &field) { return field.first == "assertion_kind"; });
+        statement.set("failure_kind", ahfl::json::JsonValue::make_string("assert"));
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(ahfl::json::serialize_json(**document))
+                        .has_value());
+    }
+
+    auto const_schema_mismatch = ahfl::deserialize_typed_program_json(replace_first(
+        snapshot, std::string(ahfl::kConstValueArtifactFormat), "ahfl.const-value-artifact_OLD"));
     CHECK_FALSE(const_schema_mismatch.has_value());
 
     CHECK(restored->declarations.size() == tc.typed_program.declarations.size());
@@ -3870,17 +3065,17 @@ flow for Worker {
 
     const auto tc = check(source);
     const ahfl::TypedProgramCacheMetadata metadata{
-        .schema_version = std::string(ahfl::kTypedProgramCacheSchemaVersion),
-        .source_graph_revision = "graph-rev-1",
-        .source_content_hash = "content-hash-1",
-        .resolver_snapshot_version = "resolver-v1",
+        .format = std::string(ahfl::kTypedProgramCacheFormat),
+        .source_graph_digest = "graph-rev-1",
+        .source_content_digest = "content-hash-1",
+        .resolver_snapshot_digest = "resolver-a",
     };
 
     const auto cache = ahfl::serialize_typed_program_cache_json(tc.typed_program, metadata);
-    REQUIRE(cache.find("AHFL_TYPED_HIR_CACHE_V1") != std::string::npos);
+    REQUIRE(cache.find("ahfl.typed-hir-cache") != std::string::npos);
     REQUIRE(cache.find("graph-rev-1") != std::string::npos);
     REQUIRE(cache.find("content-hash-1") != std::string::npos);
-    REQUIRE(cache.find("resolver-v1") != std::string::npos);
+    REQUIRE(cache.find("resolver-a") != std::string::npos);
 
     auto hit = ahfl::load_typed_program_cache_json(cache, metadata);
     REQUIRE(hit.status == ahfl::TypedProgramCacheLoadStatus::Hit);
@@ -3889,22 +3084,22 @@ flow for Worker {
           ahfl::serialize_typed_program_json(tc.typed_program));
 
     auto schema_mismatch = ahfl::load_typed_program_cache_json(
-        replace_first(cache, "AHFL_TYPED_HIR_CACHE_V1", "AHFL_TYPED_HIR_CACHE_V0"), metadata);
-    CHECK(schema_mismatch.status == ahfl::TypedProgramCacheLoadStatus::SchemaMismatch);
+        replace_first(cache, "ahfl.typed-hir-cache", "ahfl.typed-hir-cache.old"), metadata);
+    CHECK(schema_mismatch.status == ahfl::TypedProgramCacheLoadStatus::FormatMismatch);
     CHECK_FALSE(schema_mismatch.program.has_value());
 
     auto source_mismatch = metadata;
-    source_mismatch.source_graph_revision = "graph-rev-2";
+    source_mismatch.source_graph_digest = "graph-rev-2";
     CHECK(ahfl::load_typed_program_cache_json(cache, source_mismatch).status ==
-          ahfl::TypedProgramCacheLoadStatus::SourceRevisionMismatch);
+          ahfl::TypedProgramCacheLoadStatus::SourceGraphMismatch);
 
     auto content_mismatch = metadata;
-    content_mismatch.source_content_hash = "content-hash-2";
+    content_mismatch.source_content_digest = "content-hash-2";
     CHECK(ahfl::load_typed_program_cache_json(cache, content_mismatch).status ==
-          ahfl::TypedProgramCacheLoadStatus::SourceContentHashMismatch);
+          ahfl::TypedProgramCacheLoadStatus::SourceContentDigestMismatch);
 
     auto resolver_mismatch = metadata;
-    resolver_mismatch.resolver_snapshot_version = "resolver-v2";
+    resolver_mismatch.resolver_snapshot_digest = "resolver-b";
     CHECK(ahfl::load_typed_program_cache_json(cache, resolver_mismatch).status ==
           ahfl::TypedProgramCacheLoadStatus::ResolverSnapshotMismatch);
 
@@ -4661,30 +3856,30 @@ flow for Worker {
     CHECK(req.clause_kind == static_cast<int>(ahfl::ast::ContractClauseKind::Requires));
     CHECK(req.has_decreases);
     CHECK_FALSE(req.decreases_is_wildcard);
-    CHECK(req.decreases_exprs.size() == 2);
-    CHECK(req.decreases_exprs[0].expr_range.begin_offset == 3);
-    CHECK(req.decreases_exprs[1].expr_range.begin_offset == 5);
+    CHECK(req.decreases_expr_ranges.size() == 2);
+    CHECK(req.decreases_expr_ranges[0].begin_offset == 3);
+    CHECK(req.decreases_expr_ranges[1].begin_offset == 5);
     CHECK(req.decreases_range.begin_offset == 1);
 
     const auto &ens = contract_info->clauses[1];
     CHECK(ens.clause_kind == static_cast<int>(ahfl::ast::ContractClauseKind::Ensures));
     CHECK(ens.has_decreases);
     CHECK(ens.decreases_is_wildcard);
-    CHECK(ens.decreases_exprs.empty());
+    CHECK(ens.decreases_expr_ranges.empty());
     CHECK(ens.decreases_range.begin_offset == 11);
 
     const auto &inv = contract_info->clauses[2];
     CHECK(inv.clause_kind == static_cast<int>(ahfl::ast::ContractClauseKind::Invariant));
     CHECK(inv.has_decreases);
     CHECK_FALSE(inv.decreases_is_wildcard);
-    CHECK(inv.decreases_exprs.size() == 1);
-    CHECK(inv.decreases_exprs.front().expr_range.begin_offset == 23);
+    CHECK(inv.decreases_expr_ranges.size() == 1);
+    CHECK(inv.decreases_expr_ranges.front().begin_offset == 23);
 
     // Acceptance signal 3: JSON round-trip preserves decreases fields.
     const auto snapshot = ahfl::serialize_typed_program_json(tc.typed_program);
     REQUIRE(snapshot.find("has_decreases") != std::string::npos);
     REQUIRE(snapshot.find("decreases_is_wildcard") != std::string::npos);
-    REQUIRE(snapshot.find("decreases_exprs") != std::string::npos);
+    CHECK(snapshot.find("decreases_exprs") == std::string::npos);
 
     auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
@@ -4697,7 +3892,7 @@ flow for Worker {
     const auto *restored_info = std::get_if<ahfl::ContractTypeInfo>(&restored_contract->payload);
     REQUIRE(restored_info != nullptr);
     REQUIRE(restored_info->clauses.size() >= 3);
-    CHECK(restored_info->clauses[0].decreases_exprs.size() == 2);
+    CHECK(restored_info->clauses[0].decreases_expr_ranges.size() == 2);
     CHECK(restored_info->clauses[1].decreases_is_wildcard);
     CHECK(restored_info->clauses[2].has_decreases);
 
@@ -4723,6 +3918,47 @@ flow for Worker {
 // Option<T>, List<T>, and the String primitive (the last of which also
 // validates BLK-01's @builtin-on-impl-method plumbing).
 // ============================================================================
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "Enum method dispatch infers constructor and unit receivers") {
+    const auto root = make_temp_project("enum_method_receiver_inference");
+    const auto main_path = root / "app" / "main.ahfl";
+    const std::string source = R"AHFL(
+module app::main;
+import std::option as option;
+import std::json as json;
+fn infer() -> Int effect Pure decreases 0 {
+    assert((option::Option::Some(1)).is_some());
+    assert(((option::Option::Some(2)).map(\x -> x + 1)).unwrap_or(0) == 3);
+    assert((option::Option::None).unwrap_or(42) == 42);
+    assert((option::Option::None).unwrap_or_else(\ -> 42) == 42);
+    assert((option::Option::None).get_or_insert(8) == 8);
+    assert(((option::Option::None).or_else(\ -> option::Option::Some(11))).unwrap_or(0) == 11);
+    return 0;
+}
+fn qualified(value: option::Option<json::JsonValue>) -> option::Option<json::JsonValue> effect Pure decreases 0 {
+    return value.and_then<json::JsonValue>(\x -> option::Option::Some(x));
+}
+)AHFL";
+    write_file(main_path, source);
+    const auto result = check_project(root, {main_path});
+    const auto source_id = source_id_for_module(result.typed_program, "app::main");
+    REQUIRE(source_id.has_value());
+    for (const auto text : {"(option::Option::None).unwrap_or(42)",
+                            "(option::Option::None).unwrap_or_else(\\ -> 42)",
+                            "(option::Option::None).get_or_insert(8)"}) {
+        const auto *expr =
+            result.typed_program.find_expr_by_range(range_of(source, text), source_id);
+        REQUIRE(expr != nullptr);
+        REQUIRE(expr->dispatch_target.has_value());
+        REQUIRE(expr->type != nullptr);
+        CHECK(expr->type->holds<ahfl::types::IntT>());
+    }
+    const auto *some = result.typed_program.find_expr_by_range(
+        range_of(source, "(option::Option::Some(1)).is_some()"), source_id);
+    REQUIRE(some != nullptr);
+    REQUIRE(some->dispatch_target.has_value());
+    CHECK(some->type->holds<ahfl::types::BoolT>());
+}
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "BLK-04 std method dispatch T1 Option is_some") {
     const auto root = make_temp_project("blk04_method_dispatch_t1");
@@ -4892,4 +4128,155 @@ fn t4() -> Int effect Pure decreases 0 {
     ahfl::print_program_ir_json(lowered, ss);
     const std::string ir = ss.str();
     CHECK(ir.find("string_raw_length") != std::string::npos);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "Contract identity preserves independent same-Agent blocks") {
+    const auto result = check(R"AHFL(
+module contracts::same;
+struct Row { n: Int; }
+struct Context { n: Int = 0; }
+agent A {
+    input: Row; context: Context; output: Row;
+    states: [Init, Done]; initial: Init; final: [Done];
+    capabilities: []; transition Init -> Done;
+}
+agent B {
+    input: Row; context: Context; output: Row;
+    states: [Init, Done]; initial: Init; final: [Done];
+    capabilities: []; transition Init -> Done;
+}
+contract for A { requires: input.n > 0; decreases: *; }
+contract for B { requires: input.n > 9; }
+contract for A {}
+contract for A { ensures: output.n > 1; invariant: always (input.n > 2); }
+)AHFL");
+    REQUIRE(result.environment.contracts().size() == 4);
+    std::vector<const ahfl::TypedDecl *> declarations;
+    for (const auto &decl : result.typed_program.declarations) {
+        if (decl.kind == ahfl::ast::NodeKind::ContractDecl) {
+            declarations.push_back(&decl);
+            CHECK_FALSE(decl.symbol.has_value());
+            REQUIRE(decl.associated_agent_symbol.has_value());
+        }
+    }
+    REQUIRE(declarations.size() == 4);
+    const auto &first = std::get<ahfl::ContractTypeInfo>(declarations[0]->payload);
+    const auto &last = std::get<ahfl::ContractTypeInfo>(declarations[3]->payload);
+    REQUIRE(first.clauses.size() == 2);
+    REQUIRE(last.clauses.size() == 2);
+    CHECK(first.target_symbol == last.target_symbol);
+    CHECK(first.clauses[0].clause_kind != last.clauses[0].clause_kind);
+    CHECK(first.clauses[0].expr_range != last.clauses[0].expr_range);
+    CHECK(std::get<ahfl::ContractTypeInfo>(declarations[2]->payload).clauses.empty());
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+    const auto lowered = ahfl::lower_typed_program(*restored);
+    ahfl::ir::ContractClauseIndex index;
+    index.rebuild(lowered);
+    std::vector<const ahfl::ir::ContractDecl *> contracts;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *contract = std::get_if<ahfl::ir::ContractDecl>(&decl)) {
+            contracts.push_back(contract);
+        }
+    }
+    REQUIRE(contracts.size() == 4);
+    CHECK(index.clause_begin(*contracts[0]) == 0);
+    CHECK(index.clause_begin(*contracts[1]) == 0);
+    CHECK(index.clause_begin(*contracts[2]) == 2);
+    CHECK(index.clause_begin(*contracts[3]) == 2);
+    const auto location = index.find_clause("contracts::same::A", 3);
+    REQUIRE(location.has_value());
+    CHECK(location->contract == contracts[3]);
+    CHECK(location->local_index == 1);
+    CHECK_FALSE(index.find_clause("contracts::same::A", 4).has_value());
+    const auto observations = ahfl::collect_formal_observations(lowered);
+    std::vector<std::size_t> ordinals;
+    for (const auto &observation : observations) {
+        if (const auto *embedded =
+                std::get_if<ahfl::ir::EmbeddedBoolObservation>(&observation.node);
+            embedded != nullptr && embedded->scope.owner == "contracts::same::A") {
+            ordinals.push_back(embedded->scope.clause_index);
+        }
+    }
+    CHECK(std::find(ordinals.begin(), ordinals.end(), 2) != ordinals.end());
+    CHECK(std::find(ordinals.begin(), ordinals.end(), 3) != ordinals.end());
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Contract identity separates equal offsets across alias sources") {
+    const auto root = make_temp_project("contract_identity_alias_sources");
+    write_file(root / "lib" / "agents.ahfl", R"AHFL(
+module lib::agents;
+pub struct Row { n: Int; }
+pub struct Context { n: Int = 0; }
+pub agent A {
+    input: Row; context: Context; output: Row;
+    states: [Init, Done]; initial: Init; final: [Done];
+    capabilities: []; transition Init -> Done;
+}
+)AHFL");
+    write_file(root / "lib" / "a1.ahfl",
+               "module lib::a1;\nimport lib::agents as x;\ncontract for x::A { requires: input.n > "
+               "1; }\n");
+    write_file(root / "lib" / "b1.ahfl",
+               "module lib::b1;\nimport lib::agents as y;\ncontract for y::A { requires: input.n > "
+               "2; }\n");
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(
+            std::vector<std::filesystem::path>{root / "lib" / "a1.ahfl", root / "lib" / "b1.ahfl"},
+            root,
+            __FILE__));
+    REQUIRE_FALSE(parse.has_errors());
+    ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(parse.graph);
+    REQUIRE_FALSE(resolve.has_errors());
+    ahfl::TypeChecker checker;
+    const auto result = checker.check(parse.graph, resolve);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.environment.contracts().size() == 2);
+    const auto &first = result.environment.contracts()[0];
+    const auto &second = result.environment.contracts()[1];
+    CHECK(first.target_symbol == second.target_symbol);
+    CHECK(first.source_id != second.source_id);
+    CHECK(first.declaration_range == second.declaration_range);
+    REQUIRE(first.clauses.size() == 1);
+    REQUIRE(second.clauses.size() == 1);
+    CHECK(first.clauses[0].expr_range == second.clauses[0].expr_range);
+    const auto first_lookup =
+        result.environment.find_contract(first.source_id, first.declaration_range);
+    const auto second_lookup =
+        result.environment.find_contract(second.source_id, second.declaration_range);
+    REQUIRE(first_lookup.has_value());
+    REQUIRE(second_lookup.has_value());
+    CHECK(&first_lookup->get() != &second_lookup->get());
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+    const auto lowered = ahfl::lower_typed_program(*restored, parse.graph);
+    std::vector<const ahfl::ir::ContractDecl *> contracts;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *contract = std::get_if<ahfl::ir::ContractDecl>(&decl)) {
+            contracts.push_back(contract);
+        }
+    }
+    REQUIRE(contracts.size() == 2);
+    CHECK(contracts[0]->provenance.id != contracts[1]->provenance.id);
+    CHECK(contracts[0]->provenance.source_path != contracts[1]->provenance.source_path);
+    const auto &left = std::get<ahfl::ir::BinaryExpr>(
+        std::get<ahfl::ir::ExprRef>(contracts[0]->clauses[0].value)->node);
+    const auto &right = std::get<ahfl::ir::BinaryExpr>(
+        std::get<ahfl::ir::ExprRef>(contracts[1]->clauses[0].value)->node);
+    CHECK(std::get<ahfl::ir::IntegerLiteralExpr>(left.rhs->node).spelling == "1");
+    CHECK(std::get<ahfl::ir::IntegerLiteralExpr>(right.rhs->node).spelling == "2");
+    const auto observations = ahfl::collect_formal_observations(lowered);
+    REQUIRE(observations.size() == 2);
+    CHECK(std::get<ahfl::ir::EmbeddedBoolObservation>(observations[0].node).scope.clause_index ==
+          0);
+    CHECK(std::get<ahfl::ir::EmbeddedBoolObservation>(observations[1].node).scope.clause_index ==
+          1);
+    std::filesystem::remove_all(root);
 }

@@ -50,7 +50,7 @@ def main() -> int:
         )
         value = json.loads(evidence.read_text(encoding="utf-8"))
         require(
-            value["schema"] == "ahfl.beta-evidence.stdlib-container-migration.v1",
+            value["format"] == "ahfl.beta-evidence.stdlib-container-migration",
             "unexpected stdlib container evidence schema",
         )
         require(value["criterion"] == "BETA-06", "evidence must target BETA-06")

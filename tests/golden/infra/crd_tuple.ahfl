@@ -1,0 +1,15 @@
+module infra::crd_tuple;
+
+enum Message { Pair(Int, String), }
+struct Frame { message: Message; }
+
+agent Schema {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Idle, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [];
+    transition Idle -> Done;
+}

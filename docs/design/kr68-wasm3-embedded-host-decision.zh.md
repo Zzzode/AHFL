@@ -50,9 +50,9 @@ Rationale, in order of decisiveness:
    c-api cb kind=0 i32=42                      # callback fires with the CORRECT argument
    c-api results: 0 0 0                        # results truncated
    ```
-   And WAMR main is unchanged: `grep -rn 'argv_ret\[2\]' /tmp/wamr_probe/wamr-main/core/iwasm/interpreter/*.c` → `wasm_interp_fast.c:1204`, `wasm_interp_classic.c:1213`, with the identical 1/2-cell writeback at `wasm_interp_fast.c:1295-1301`. The standard C-API marshalling path (`wasm_runtime_invoke_c_api_native`, `core/iwasm/common/wasm_runtime_common.c:7227`) does handle up to 4 result cells internally, but the interpreter's fixed two-cell `argv_ret` truncates before the guest resumes — so this is not a config flag, it is the hard-coded import-call frame. Since `(i32,i32)->(i32,i32,i32)` is the foundational E2 opaque capability ABI (while the bridge `(i32)->(i32,i32)` and `runv()->(i32,i32)` are 2-result and DO work), WAMR **cannot run the capability lane without us maintaining a fork patch to its interpreter frame** — exactly the wheel-patching Principle 1 forbids, and a permanent merge burden on every upgrade.
+   And WAMR main is unchanged: `grep -rn 'argv_ret\[2\]' /tmp/wamr_probe/wamr-main/core/iwasm/interpreter/*.c` → `wasm_interp_fast.c:1204`, `wasm_interp_classic.c:1213`, with the identical 1/2-cell writeback at `wasm_interp_fast.c:1295-1301`. The standard C-API marshalling path (`wasm_runtime_invoke_c_api_native`, `core/iwasm/common/wasm_runtime_common.c:7227`) does handle up to 4 result cells internally, but the interpreter's fixed two-cell `argv_ret` truncates before the guest resumes — so this is not a config flag, it is the hard-coded import-call frame. Since `(i32,i32)->(i32,i32,i32)` is the foundational E2 opaque capability ABI (while the bridge `(i32)->(i32,i32)` and `run_frame()->(i32,i32)` are 2-result and DO work), WAMR **cannot run the capability lane without us maintaining a fork patch to its interpreter frame** — exactly the wheel-patching Principle 1 forbids, and a permanent merge burden on every upgrade.
 
-2. **Coverage of every other emitted feature is identical and verified on both engines**, but only wasm3 covers the one that matters. I ran real AHFL modules under both engines: identity `run2(1024,5)->(0,1024,5)`; closure `Table`+`Element`+`call_indirect` construction; active `Data(11)` rodata String modules (`runv->(0,12288)`); `i64.extend_i32_s` widening; bounded recursion; p6 collections. Both pass everything except the three-result host import.
+2. **Coverage of every other emitted feature is identical and verified on both engines**, but only wasm3 covers the one that matters. I ran real AHFL modules under both engines: identity `run_workflow(1024,5)->(0,1024,5)`; closure `Table`+`Element`+`call_indirect` construction; active `Data(11)` rodata String modules (`run_frame->(0,12288)`); `i64.extend_i32_s` widening; bounded recursion; p6 collections. Both pass everything except the three-result host import.
 
 3. **Offline/vendor shape is the smaller, cleaner fit.** wasm3 core is the interpreter set only — `m3_bind.c m3_code.c m3_compile.c m3_core.c m3_env.c m3_exec.c m3_function.c m3_info.c m3_module.c m3_parse.c m3_validate.c` (11 C files, enumerated alongside the WASI/libc/tracer extras in upstream `source/CMakeLists.txt:1-17`), zero FetchContent, builds with `-DBUILD_WASI=none -DBUILD_NATIVE=OFF` in seconds, links only pthread/m/dl. WAMR's default CMake attempts to `git clone simde` from the network during configure (I hit this; defeated with `-DWAMR_BUILD_SIMD=0`), and its vendored tree is ~27 MB with many optional libraries and per-arch assembly trees that would have to be excluded with care.
 
@@ -76,15 +76,15 @@ Rationale, in order of decisiveness:
 | **Memory** | Exactly ONE linear memory, min = 1 page (64 KiB), **no declared max**, flags byte 0 | Agent memory section `:14155-14159`; workflow `:16383-16387`; capacity SSOT `include/ahfl/compiler/ir/core_wasm_abi_constants.hpp:28` with `static_assert(kCoreWasmFixedLinearMemoryCapacityBytes == 65536, ...)` at `:31` |
 | **memory.grow / memory.size** | **Neither emitted.** Capacity is compile-time; `alloc` is a module-internal bump | No `0x3f`/`0x40` instruction in the opcode table; `kP6CollectionBackingBase < kCoreWasmFixedLinearMemoryCapacityBytes` asserted at `core_wasm_abi_constants.hpp:117` |
 | **Table + Element + call_indirect** | Exactly ONE funcref table (min-only) and ONE active Element(9) segment **iff** the module constructs a first-class closure. Zero-closure modules omit both and stay byte-identical | `kSectionTable = 4` (`:146`), emission `:14146`; `kSectionElement = 9` (`:152`), emission `:14223`; `kOpCallIndirect` used at `:6400` |
-| **Mutable globals** | Yes — mix of immutable and mutable i32 globals. Agent: 5 (`current_state` mutable, `transition_count` mutable, `ahfl_abi_version` immutable = 1, heap pointer, pending) | Agent globals `:14159-14174` (count literal `5`, then `append_global(globals, true, ...)` / `(globals, false, 1)`); workflow `:16393-16419`, count `(capability_workflow ? 6u : 5u) + (p6 ? runner_count : 0u)` |
+| **Mutable globals** | Agent: four i32 globals (state, transition count, heap cursor, pending latch); workflow uses its current counters and private runner state | Current `core_wasm_codegen.cpp` fixed tables; no ABI-version global |
 | **Active Data section** | Exactly ONE active segment (id 11, flags 0, memory 0, offset expr `i32.const 256; end`) **iff** at least one String literal is constructed | `kSectionData = 11` (`:155`), emission `:14287` (agent) and `:16504`-region (workflow); rodata region SSOT `core_wasm_abi_constants.hpp:136-141` |
 | **Imports** | ONLY module name **`ahfl_cap`**, field **`cap_<symbol-id>`** (numeric symbol identity — never the source name). **No `wasi_snapshot_preview1`, no `env`, no memory/global/table imports** | Agent import loop `:14086-14099` (`imports.name("ahfl_cap")` + `imports.name("cap_" + std::to_string(symbol))` at `:14093`); workflow `:16328-16348` (`:16339`) |
 | Import functypes | Opaque capability `(i32,i32) -> (i32,i32,i32)` — **THREE results** (`kTypeCapabilityTuple = 4`); bridge `(i32) -> (i32,i32)` (`kTypeCapabilityBridge`, referenced at `:6562`, type index 6 in workflow at `:16313-16318`) | `kTypeCapabilityTuple` decl `:298`; shape comment `:4017`; applied `:14098`, `:14115`, `:16344`, `:16362`, `:16365` |
-| **Exports (agent)** | 9, plus `runv` for the p6-frame lane: `memory, alloc, dealloc, run, run2, step, current_state, transition_count, ahfl_abi_version` [+ `runv`] | `:14185-14193`; `runv` conditional at `:14193` (`!p6_frame || append_export(... "runv" ...)`) |
-| **Exports (workflow)** | 11: adds `workflow_node_count` and `workflow_completed_count`, no `runv` | `:16416-16427` |
-| Export functypes | `alloc(i32)->i32`; `dealloc(i32,i32)->void`; `run`/`run2(i32,i32)->(i32,i32,i32)`; `step()->i32`; `current_state()->i32`; `runv()->(i32,i32)` (agent p6 only) | Fixed type table around `:14048-14052`; `runv` body builder `make_runv_body` declared at `:13951`, used at `:14258` |
-| **Custom sections** (ignored by the engine, parsed by the host) | 0..3 EOF sections: `ahfl.wire-schema.v1`, `ahfl.core-layout.v1`, `ahfl.wasm-exec-manifest.v1` | Names at `:162-190` (`kWireSchemaSectionName`, `kCoreLayoutSectionName`, `kExecManifestSectionName`) |
-| Status semantics | Host returns raw u32; `AHFL_CAP_OK = 0`, `ERROR = 1`, `PENDING = 2`; a non-OK bridge result is a trap; the host never pre-classifies | Bridge trap policy v2 D3; `CapabilityCallStatus` incl. `Pending` at `src/runtime/engine/capability_bridge.hpp:49-60` |
+| **Exports (agent)** | Seven: `memory, alloc, dealloc, step, current_state, transition_count, run_frame` | Current producer export table |
+| **Exports (workflow)** | Nine: `memory, alloc, dealloc, run_workflow, step, current_state, transition_count, workflow_node_count, workflow_completed_count` | Current producer export table |
+| Export functypes | `alloc(i32)->i32`; `dealloc(i32,i32)->void`; `run_workflow(i32,i32)->(i32,i32,i32)`; `step()->i32`; `current_state()->i32`; `run_frame()->(i32,i32)` (agent) | Fixed type table around `:14048-14052`; `run_frame` body builder `make_run_frame_body` declared at `:13951`, used at `:14258` |
+| **Custom sections** (ignored by the engine, parsed by the host) | 0..3 EOF sections: `ahfl.wire-schema`, `ahfl.core-layout`, `ahfl.execution-manifest` | Names at `:162-190` (`kWireSchemaSectionName`, `kCoreLayoutSectionName`, `kExecManifestSectionName`) |
+| Status semantics | Host returns raw u32; `AHFL_CAP_OK = 0`, `ERROR = 1`, `PENDING = 2`; a non-OK bridge result is a trap; the host never pre-classifies | Current bridge status contract; `CapabilityCallStatus` incl. `Pending` at `src/runtime/engine/capability_bridge.hpp:49-60` |
 | Node-event region | Header `[1024,1032)`, then 40-byte records at 1032 | `core_wasm_abi_constants.hpp:188-207` (`kNodeEventLogBase = 1024`, `kNodeEventHeaderBytes = 8`, `kNodeEventRecordBytes = 40`, `kNodeEventRecordsBase = 1032` with `static_assert`) |
 
 **Net engine requirement:** a deterministic interpreter implementing MVP numeric/memory/control + the multi-value proposal (multi-result exports AND, critically, **multi-result host imports up to three i32**) + sign-extension + mutable globals + one active Data segment + one funcref table with an active Element segment and `call_indirect`; the ability to register synchronous host functions by module/field name; and trap surfacing. No float ops, no `memory.grow`, no WASI, no JIT, no threads, no SIMD are required.
@@ -109,7 +109,7 @@ Rationale, in order of decisiveness:
 
 ### Explicit rejects
 
-- **A (WAMR) — rejected on demonstrated functional grounds, not preference.** Everything else about WAMR is first-rate, but the fast and classic interpreters hard-code `uint32 argv_ret[2]` with write-back arms only for `ret_cell_num` 1 or 2 (`wasm_interp_fast.c:1204,1295-1301`; `wasm_interp_classic.c:1213,1307-1314`), so a three-result host import — AHFL's opaque capability ABI on every capability module — loses its `result_ptr`/`result_len`. Confirmed on release **2.4.5** (`core/version.h:19-21` → 2.4.5) and on upstream **main** (`b70d708d`, 2026-09-21), with the same `argv_ret[2]` declaration and the same 1/2-cell arms: **not fixed**. The C-API path marshals up to 4 cells internally (`wasm_runtime_invoke_c_api_native`, `wasm_runtime_common.c:7227`) but the interpreter frame truncates before guest resume. Adopting WAMR therefore means either (a) a permanent local fork patch inside `third_party` (Principle-1-rejected wheel surgery, with re-application on every upgrade), or (b) changing the frozen `(status, ptr, len)` import ABI, which re-opens the sealed E2/B1/B2/D2a wire + resume contract and the `Run2ResultTuple` port (`core_wasm_resume_engine.hpp:59-73`) — far more invasive than choosing the engine that already runs it. WAMR's optional AOT/JIT tiers do not dodge the interpreter's import frame and add asm + build complexity. WAMR stays the obvious pick **if** upstream ever lands >2-cell host imports; a future decision agent should revisit then with a new dated record. The fast-JIT tier is an unverified possible workaround, not a fact, and would still ship assembly plus a non-default configuration — insufficient to override a proven blocker.
+- **A (WAMR) — rejected on demonstrated functional grounds, not preference.** Everything else about WAMR is first-rate, but the fast and classic interpreters hard-code `uint32 argv_ret[2]` with write-back arms only for `ret_cell_num` 1 or 2 (`wasm_interp_fast.c:1204,1295-1301`; `wasm_interp_classic.c:1213,1307-1314`), so a three-result host import — AHFL's opaque capability ABI on every capability module — loses its `result_ptr`/`result_len`. Confirmed on release **2.4.5** (`core/version.h:19-21` → 2.4.5) and on upstream **main** (`b70d708d`, 2026-09-21), with the same `argv_ret[2]` declaration and the same 1/2-cell arms: **not fixed**. The C-API path marshals up to 4 cells internally (`wasm_runtime_invoke_c_api_native`, `wasm_runtime_common.c:7227`) but the interpreter frame truncates before guest resume. Adopting WAMR therefore means either (a) a permanent local fork patch inside `third_party` (Principle-1-rejected wheel surgery, with re-application on every upgrade), or (b) changing the frozen `(status, ptr, len)` import ABI, which re-opens the sealed E2/B1/B2/D2a wire + resume contract and the `WorkflowRunResultTuple` port (`core_wasm_resume_engine.hpp:59-73`) — far more invasive than choosing the engine that already runs it. WAMR's optional AOT/JIT tiers do not dodge the interpreter's import frame and add asm + build complexity. WAMR stays the obvious pick **if** upstream ever lands >2-cell host imports; a future decision agent should revisit then with a new dated record. The fast-JIT tier is an unverified possible workaround, not a fact, and would still ship assembly plus a non-default configuration — insufficient to override a proven blocker.
 - **C (Wasmtime embedded) — rejected on the repo's hard constraints.** Technically excellent and it would run the ABI, but the repo builds CI offline, the project permits only **vendored** dependencies, and wasmtime is a large Rust/Cranelift system that cannot be source-built offline here and would otherwise demand checked-in or downloaded prebuilt platform binaries. That breaks the single-binary, reproducible, offline-compiler model.
 - **D (Node.js external subprocess) — rejected as the PRODUCTION engine; retained only as a test oracle during the ladder.** Keeping it permanently means `ahflc run` / `ahfl-repl` / `ahfl-dap` are not standalone — they fail on any machine without Node on PATH (the conformance runner already encodes skip-77 for exactly this), contradicting the embeddable single-binary host-DSL north star and the "capabilities via host" positioning. It is also a much heavier process/IPC surface for what is a fixed-64-KiB, synchronous, deterministic workload. Node stays as the cross-engine independent oracle in conformance until the native lane is proven, then the subprocess lane is demoted (big-bang, Principle 1).
 - **Self-written interpreter — rejected.** Building a wasm validator + interpreter (multi-value, tables, `call_indirect`, Data init, traps, bounds) is precisely the reinvention Principle 1 forbids; the RFC already rejected a self-written bytecode VM for this reason (RFC 0026 Alternative 4). Two mature engines exist and one is proven.
@@ -180,7 +180,7 @@ New CMake target e.g. `ahfl_runtime_wasm_host` (STATIC), PRIVATE-linked to `wasm
 | # | Responsibility | mjs evidence | C++ home | Status |
 |---|---|---|---|---|
 | 1 | Engine instantiation, fresh instance, one framing | `makeInstance` `:448` | `wasm3_engine.{hpp,cpp}` implementing/extending `CoreWasmResumeEngine` (`core_wasm_resume_engine.hpp:121`) | **MISSING — the genuinely new runtime dep** |
-| 2 | Export surface: `alloc`/`dealloc`/`run`/`run2`/`runv`/`step`/`current_state` + globals via `FindGlobal`/`GetGlobal` + memory via `GetMemory`/`GetMemorySize` | `:1706-1710` (alloc), `:1138,1271,1398` (run2), `:1006,1485,1577` (runv), `:1046-1119` (step/current_state) | same adapter | **MISSING** |
+| 2 | Export surface: `alloc`/`dealloc`/`run_workflow`/`run_frame`/`step`/`current_state` + globals via `FindGlobal`/`GetGlobal` + memory via `GetMemory`/`GetMemorySize` | `:1706-1710` (alloc), `:1138,1271,1398` (run_workflow), `:1006,1485,1577` (run_frame), `:1046-1119` (step/current_state) | same adapter | **MISSING** |
 | 3 | `ahfl_cap.cap_<id>` binding, opaque `(i32,i32)->(i32,i32,i32)` and bridge `(i32)->(i32,i32)` | `makeBridgeCallback` `:303-426` | `capability_import.{hpp,cpp}` via `m3_LinkRawFunction`/`Ex` | **MISSING in C++** |
 | 4 | Raw-ABI slot discipline: one arg at `stack[numResults]`, results at `stack[0..n-1]`; bounds-check every guest pointer | (verified by probe: `0 0 0 42 0 0` for a `(i32)->(i,i,i)` call) | same adapter; mirror `m3ApiCheckMem` discipline | **MISSING — highest safety sensitivity** |
 | 5 | Module admission + Memory-section / fixed-page cross-check + SHA-256 binding | — | **REUSE** `make_verified_core_wasm_schema_module` (`src/runtime/engine/core_wasm_schema_module.hpp`) | EXISTS |
@@ -188,17 +188,17 @@ New CMake target e.g. `ahfl_runtime_wasm_host` (STATIC), PRIVATE-linked to `wasm
 | 7 | Core-layout admission / fail-closed unknown functype at instantiation | — | **REUSE** `admit_core_wasm_frame_sections` (`src/runtime/engine/core_wasm_frame_module.hpp`) | EXISTS |
 | 8 | Capacity accounting | — | **REUSE** `core_wasm_resume_capacity.{hpp,cpp}` | EXISTS |
 | 9 | Input packer: JSON/Value → P4-D dense bytes, schema+layout guided | `packP6Input` `:985-1000`, `packValue` `:637-786`, `packSlots` `:788-799`, backing `:618-625`, String arena `:689-696` | **NEW** `frame_packer.{hpp,cpp}` | **MISSING** |
-| 10 | Output reader: P4-D bytes → `Value` → canonical `value_to_json`; runv root auth (identity 1024 / computed 12288); String region authorization; fail-closed family | `encodeP6Output` `:1003-1026`, `readValue` `:805-980`, base auth `:1008-1013` | **NEW** `frame_reader.{hpp,cpp}` | **MISSING** |
+| 10 | Output reader: P4-D bytes → `Value` → canonical `value_to_json`; run_frame root auth (identity 1024 / computed 12288); String region authorization; fail-closed family | `encodeP6Output` `:1003-1026`, `readValue` `:805-980`, base auth `:1008-1013` | **NEW** `frame_reader.{hpp,cpp}` | **MISSING** |
 | 11 | Capability arg walk + envelope + result validate + result pack | `makeBridgeCallback` block resolve `:319-392`, envelope `:435-446`, opaque cb `:458-507` | **NEW** `capability_import.{hpp,cpp}`, ending at the existing `serialize_args_for_wire_json` SSOT (`src/runtime/engine/wire_value.cpp:14-34`) + `core_wire_codec::validate_value`/`decode_json` | **MISSING** |
 | 12 | Production capability execution over the LIVE transport (no mocks) | — | **REUSE** `CapabilityInvoker` / `ContextualCapabilityInvoker` (`capability_bridge.hpp:91-96`) + `CapabilityTransportAdapter` (`capability_transport_adapter.hpp`) + the registries assembled in `src/tooling/cli/workflow_run.cpp` (HTTP `:1187-1190`, LLM tool-call loop, standard Clock/Uuid) | EXISTS |
 | 13 | Node-event log decode | `readEventRecords` `:1162-1228` | **REUSE** `decode_node_events` (`src/runtime/engine/core_wasm_node_events.hpp`) — 8-byte header + 40-byte records at 1032 | EXISTS |
 | 14 | Node-event join vs scheduled-node facts (ordinal / source symbol / order) | same | **NEW** (small conformance-shaped join) | MISSING |
 | 15 | State-entry trace-ring decode (u32 count + 8-byte `(runner,state)` records) | `:1314-1339` | **NEW** — no runtime decoder exists today | **MISSING** |
 | 16 | Step-walk with `current_state` consistency and exactly-once `transition_count` (separate fresh instance for bridge agents so effects fire once) | `collectStatesViaStep` `:1035-1065` | **NEW** `agent_session.{hpp,cpp}` | **MISSING** |
-| 17 | Workflow run2 schedule + node-completed counter + event log | `runWorkflowP6` `:1238`, `runWorkflow` `:1355` | **NEW** `workflow_session` | **MISSING** |
+| 17 | Workflow run_workflow schedule + node-completed counter + event log | `runWorkflowP6` `:1238`, `runWorkflow` `:1355` | **NEW** `workflow_session` | **MISSING** |
 | 18 | Canonical observation document emission (status / state_sequence / capability_sequence / capability_arguments / output_json) | `emitObservation` `:531`, `emitStateSequence` `:524`, `normalizeStatus` `:551` | **NEW** facade producing the SAME doc shape the comparator consumes (`tests/conformance/observation_compare.hpp:10-17`) | **MISSING** |
 | 19 | Hook-compatible runtime facade for tooling | — | **NEW** `WasmWorkflowRuntime` / `WasmAgentRunner` exposing `state_entered_hook`, `capability_invoked_hook`, `node_completed_hook`, `agent_input_hook` | **MISSING** |
-| 20 | ABI-matrix probes (pending latch, corrupt count, legacy-run trap, checked allocator, idempotent identity replay) | `runAbiProbes` `:1463-1711` | become **host unit tests**, not production code | reclassified |
+| 20 | ABI-matrix probes (pending latch, corrupt count, removed-export rejection, checked allocator, idempotent identity replay) | `runAbiProbes` `:1463-1711` | become **host unit tests**, not production code | reclassified |
 
 ### Survivor host wire types (do NOT delete)
 
@@ -272,7 +272,7 @@ Must all hold on the ATOMIC slice commit:
 
 1. **Native embedded-host conformance census: 66 scenarios, 66 agreed, 0 skipped**, including the 7 formerly node-only fn/closure stems, on vendored wasm3 — a new hard pin parallel to `kExpectedAgreed = 66`. Observation dimensions unchanged: `status`, `state_sequence`, `capability_sequence`, `capability_arguments` (canonical envelope bytes), `output_json` (canonical re-serialize).
 2. **Cross-engine parity:** native-vs-Node agrees on the full census where Node is present (optional skip-77 elsewhere) — the independent-oracle guard against an interpreter-specific miscompile; and native-vs-blessing verify / determinism (two runs byte-identical) / mutation (tampered status, state_sequence, or output rejected) modes all bite.
-3. **Feature coverage on real modules** (already proven today on both engines, must stay green): Table/Element/`call_indirect` closures, active Data rodata String modules, mutable globals, `i64.extend_i32_s`, bounded recursion, the bridge `(i32)->(i32,i32)`, the opaque 3-result import, `run`/`run2`/`runv`/`step`/`current_state` plus the exported globals, and p6 collections.
+3. **Feature coverage on real modules** (already proven today on both engines, must stay green): Table/Element/`call_indirect` closures, active Data rodata String modules, mutable globals, `i64.extend_i32_s`, bounded recursion, the bridge `(i32)->(i32,i32)`, the opaque 3-result import, `run_workflow`/`run_frame`/`step`/`current_state` plus the exported globals, and p6 collections.
 4. **Full offline ctest** from a network-disabled configure + build (no FetchContent / download; the failure mode demonstrated with WAMR/simde must be structurally impossible); both `AHFL_ENABLE_BACKEND_WASM` ON/OFF matrices configure + build; dev and release presets.
 5. **ASan preset** clean for the embedded host, especially the raw-callback pointer/bounds wrappers and the packer/reader; no leaks on repeated fresh-instance resume.
 6. **`-Wall -Wextra -Werror`** for all AHFL code; vendored wasm3 C isolated under the third-party warning profile (antlr4 precedent).
@@ -296,7 +296,7 @@ Must all hold on the ATOMIC slice commit:
 *(To be appended to `docs/rfcs/0026-ir-tower-and-execution-model.zh.md`; Chinese prose matching the surrounding entries. Nothing was committed by the decision agent.)*
 
 ```
-- 2026-09-29: **KR6.8 生产执行引擎决策门落定(docs only,设计,未实现;专用决策代理,无人类 owner 门)**。为替换 tree-walking evaluator 的编译后 WASM 生产宿主选定引擎并锁定原子退役阶梯。**决策:vendor wasm3 v0.9.0(MIT,2026-08-24)为 third_party/wasm3/ 下的 C 源码静态库,走 portable 解释器、不引 WASI/JIT、经 raw-function ABI 注册 ahfl_cap 宿主函数;新建 peer-tier 目录 src/runtime/wasm_host/(引擎适配 + 帧 pack/read + 能力导入 + 会话/观察),实现并扩展既有 CoreWasmResumeEngine 端口。** 决定性事实(决策代理在本机离线实测,非营销口径):① 每个带能力模块的 opaque 导入 functype 硬钉 (i32,i32)->(i32,i32,i32) **三结果**(`core_wasm_codegen.cpp:14093`/`:16339` 导入面;kTypeCapabilityTuple `:298`/`:4017`/`:14098`/`:14115`/`:16344`),这是密封的 E2/B1/B2/D2a 线级 ABI(`core_wasm_resume_engine.hpp:59-73`);手写 67 字节三结果导入模块实测 **wasm3 v0.5.0 与 v0.9.0 端到端回传全部三个结果**(raw 栈:参数在 stack[result 数]、结果在 stack[0..n-1],探针钉死 `0 0 0 42 0 0` -> `100 8 7`),而 **WAMR 2.4.5 与上游 main(b70d708d,2026-09-21)的 fast/classic 解释器均硬编码 argv_ret[2]、只回写 1/2 cell 臂**(`wasm_interp_fast.c:1204,1295-1301`;`wasm_interp_classic.c:1213,1307-1314`;main 同),第三结果 ptr/len 被静默截断(同一 fixture:回调收到正确参数 42,结果恒 0/0/0,raw 与 C-API 两条路径一致);C-API 内部虽支持 4 结果(`wasm_runtime_common.c:7227`)但解释器帧在回写前截断,非配置项。改 ABI 为 ≤2 结果会重开已密封的 resume/wire 契约、维护 WAMR fork 补丁违反 Principle 1,故 WAMR 拒绝;上游修复 >2-cell 宿主导入后可由新决策代理重审。② 其余发射特性两引擎实测等价并全部通过:Table/Element/call_indirect 闭包、主动 Data(11) rodata(v2b_*string*,runv->(0,12288))、mutable globals、i64.extend_i32_s、有界递归、p6 集合;模块仅导入 ahfl_cap.cap_<id>(全树无 wasi/env),无 memory.grow、无 f32/f64 数值指令(f64 `:4488` fail-closed)、单页 64KiB 无 max(`core_wasm_abi_constants.hpp:28-31`)。③ wasm3 离线 vendor 形状干净:核心 11 个 C 文件(上游 `source/CMakeLists.txt:1-17` 去掉 libc/wasi/uvwasi/meta_wasi/tracer),无 FetchContent(WAMR 默认 configure 实测会 git clone simde,须 -DWAMR_BUILD_SIMD=0 且裁剪 27MB 树),纯 C99 无平台汇编;MIT 与 Apache-2.0 兼容(NOTICE 归属)。④ "wasm3 停更"直觉已过期:v0.9.0 发布 2026-08-24(v0.5.0..v0.9.0 共 214 commits)、v0.9.1-beta.1 2026-09-10、clone HEAD 提交 2026-09-28(克隆核实)。**显式拒绝**:WAMR(三结果宿主导入截断,唯一硬伤);Wasmtime C API(离线构建不可能 + 预编译平台二进制违背 vendored-only 与单二进制模型);Node 子进程作为生产引擎(违背可嵌入单二进制北极星、依赖 PATH,降级为 skip-77 的可选跨引擎 oracle);自研解释器与 evaluator 双引擎共存(Principle 1 / RFC Alternative 4、5);内嵌 V8(重量/JIT)。**架构**:宿主 packer/reader/bridge 全部终止于存活的 host 线级类型 evaluator::Value/value_to_json/scalar_spelling(computed-output-frame v1 SSOT),复用 core_wasm_schema_module/frame_module/schema_transport/node_events/canonical_size 等既有 C++ 权威(其中 schema_transport 需补一条 bridge `(i32)->(i32,i32)` functype 对拍),能力执行复用 LIVE CapabilityInvoker + CapabilityTransportAdapter(workflow_run.cpp 的 HTTP/LLM/standard 注册),mock 仅存于测试适配器,D2b memo/injected/fresh-instance replay 由既有 controller 经真实引擎端口收口(`core_wasm_resume_host.hpp:42-44` 的 FOUNDATION 缺口关闭)。**存活/删除**:value/value_json/scalar_spelling 先移出 evaluator 目录为独立 host-value 目标并删 CallableValue 臂;evaluator/executor/eval_context/pattern_match/builtins/runtime_fn_table 为删除目标。**阶梯**:WH-0 vendor -> WH-1 引擎适配+admission -> WH-2 帧 pack/read -> WH-3 opaque/bridge 能力导入+resume 真实引擎 -> WH-4 会话/node-event/state-trace/hook facade -> WH-5 原生 conformance 车道(硬门:**原生 66 场景 66 agreed/0 skipped,含 FB-5 后 7 个 node-only fn/闭包 stem**,并退役该 skip 概念)-> WH-6 ahflc run -> WH-7 REPL -> WH-8 DAP -> **WH-9 单一原子切片**翻转全部调用点并同 commit 删除 evaluator 目标/专用测试/CMake 边、BREAKING CHANGE,用户不经历中间损坏态;Node 仅保留为 skip-77 可选外部 parity ctest,生产二进制零 Node 依赖。**FB-5 已完成并为前置**(HEAD acc8d197,kExpectedAgreed=66/kExpectedSkipped=0,conformance_wasm_node_runner.cpp:147-148)。**验收**:离线 ctest、ASan、-Werror、WASM ON/OFF 矩阵、MIT/NOTICE、install export 含 wasm3、单二进制无 PATH 依赖、确定性。**诚实边界**:不主张 JIT/AOT 性能与真实 Wasmtime 证据;f64 算术语/运行时字符串拼接/map 等仍非发射车道;DAP 保持状态迁移级步进。**本片仅决策门,无生产代码,RFC 0026 保持 implementing,KR6.8 原子退役门未到。**
+- 2026-09-29: **KR6.8 生产执行引擎决策门落定(docs only,设计,未实现;专用决策代理,无人类 owner 门)**。为替换 tree-walking evaluator 的编译后 WASM 生产宿主选定引擎并锁定原子退役阶梯。**决策:vendor wasm3 v0.9.0(MIT,2026-08-24)为 third_party/wasm3/ 下的 C 源码静态库,走 portable 解释器、不引 WASI/JIT、经 raw-function ABI 注册 ahfl_cap 宿主函数;新建 peer-tier 目录 src/runtime/wasm_host/(引擎适配 + 帧 pack/read + 能力导入 + 会话/观察),实现并扩展既有 CoreWasmResumeEngine 端口。** 决定性事实(决策代理在本机离线实测,非营销口径):① 每个带能力模块的 opaque 导入 functype 硬钉 (i32,i32)->(i32,i32,i32) **三结果**(`core_wasm_codegen.cpp:14093`/`:16339` 导入面;kTypeCapabilityTuple `:298`/`:4017`/`:14098`/`:14115`/`:16344`),这是密封的 E2/B1/B2/D2a 线级 ABI(`core_wasm_resume_engine.hpp:59-73`);手写 67 字节三结果导入模块实测 **wasm3 v0.5.0 与 v0.9.0 端到端回传全部三个结果**(raw 栈:参数在 stack[result 数]、结果在 stack[0..n-1],探针钉死 `0 0 0 42 0 0` -> `100 8 7`),而 **WAMR 2.4.5 与上游 main(b70d708d,2026-09-21)的 fast/classic 解释器均硬编码 argv_ret[2]、只回写 1/2 cell 臂**(`wasm_interp_fast.c:1204,1295-1301`;`wasm_interp_classic.c:1213,1307-1314`;main 同),第三结果 ptr/len 被静默截断(同一 fixture:回调收到正确参数 42,结果恒 0/0/0,raw 与 C-API 两条路径一致);C-API 内部虽支持 4 结果(`wasm_runtime_common.c:7227`)但解释器帧在回写前截断,非配置项。改 ABI 为 ≤2 结果会重开已密封的 resume/wire 契约、维护 WAMR fork 补丁违反 Principle 1,故 WAMR 拒绝;上游修复 >2-cell 宿主导入后可由新决策代理重审。② 其余发射特性两引擎实测等价并全部通过:Table/Element/call_indirect 闭包、主动 Data(11) rodata(*string*,run_frame->(0,12288))、mutable globals、i64.extend_i32_s、有界递归、p6 集合;模块仅导入 ahfl_cap.cap_<id>(全树无 wasi/env),无 memory.grow、无 f32/f64 数值指令(f64 `:4488` fail-closed)、单页 64KiB 无 max(`core_wasm_abi_constants.hpp:28-31`)。③ wasm3 离线 vendor 形状干净:核心 11 个 C 文件(上游 `source/CMakeLists.txt:1-17` 去掉 libc/wasi/uvwasi/meta_wasi/tracer),无 FetchContent(WAMR 默认 configure 实测会 git clone simde,须 -DWAMR_BUILD_SIMD=0 且裁剪 27MB 树),纯 C99 无平台汇编;MIT 与 Apache-2.0 兼容(NOTICE 归属)。④ "wasm3 停更"直觉已过期:v0.9.0 发布 2026-08-24(v0.5.0..v0.9.0 共 214 commits)、v0.9.1-beta.1 2026-09-10、clone HEAD 提交 2026-09-28(克隆核实)。**显式拒绝**:WAMR(三结果宿主导入截断,唯一硬伤);Wasmtime C API(离线构建不可能 + 预编译平台二进制违背 vendored-only 与单二进制模型);Node 子进程作为生产引擎(违背可嵌入单二进制北极星、依赖 PATH,降级为 skip-77 的可选跨引擎 oracle);自研解释器与 evaluator 双引擎共存(Principle 1 / RFC Alternative 4、5);内嵌 V8(重量/JIT)。**架构**:宿主 packer/reader/bridge 全部终止于存活的 host 线级类型 evaluator::Value/value_to_json/scalar_spelling(computed-output-frame SSOT),复用 core_wasm_schema_module/frame_module/schema_transport/node_events/canonical_size 等既有 C++ 权威(其中 schema_transport 需补一条 bridge `(i32)->(i32,i32)` functype 对拍),能力执行复用 LIVE CapabilityInvoker + CapabilityTransportAdapter(workflow_run.cpp 的 HTTP/LLM/standard 注册),mock 仅存于测试适配器,D2b memo/injected/fresh-instance replay 由既有 controller 经真实引擎端口收口(`core_wasm_resume_host.hpp:42-44` 的 FOUNDATION 缺口关闭)。**存活/删除**:value/value_json/scalar_spelling 先移出 evaluator 目录为独立 host-value 目标并删 CallableValue 臂;evaluator/executor/eval_context/pattern_match/builtins/runtime_fn_table 为删除目标。**阶梯**:WH-0 vendor -> WH-1 引擎适配+admission -> WH-2 帧 pack/read -> WH-3 opaque/bridge 能力导入+resume 真实引擎 -> WH-4 会话/node-event/state-trace/hook facade -> WH-5 原生 conformance 车道(硬门:**原生 66 场景 66 agreed/0 skipped,含 FB-5 后 7 个 node-only fn/闭包 stem**,并退役该 skip 概念)-> WH-6 ahflc run -> WH-7 REPL -> WH-8 DAP -> **WH-9 单一原子切片**翻转全部调用点并同 commit 删除 evaluator 目标/专用测试/CMake 边、BREAKING CHANGE,用户不经历中间损坏态;Node 仅保留为 skip-77 可选外部 parity ctest,生产二进制零 Node 依赖。**FB-5 已完成并为前置**(HEAD acc8d197,kExpectedAgreed=66/kExpectedSkipped=0,conformance_wasm_node_runner.cpp:147-148)。**验收**:离线 ctest、ASan、-Werror、WASM ON/OFF 矩阵、MIT/NOTICE、install export 含 wasm3、单二进制无 PATH 依赖、确定性。**诚实边界**:不主张 JIT/AOT 性能与真实 Wasmtime 证据;f64 算术语/运行时字符串拼接/map 等仍非发射车道;DAP 保持状态迁移级步进。**本片仅决策门,无生产代码,RFC 0026 保持 implementing,KR6.8 原子退役门未到。**
 ```
 
 ---
@@ -319,7 +319,7 @@ WH-1 落地首个真实 WASM 执行引擎(wasm3 后端的 `CoreWasmResumeEngine`
 
 ### 10.4 host-abort 信号:文件局部哨兵指针 + trap 指针恒等映射
 
-wasm3 把 raw 回调的返回指针作为 trap 向上传播(`forwardTrap`,指针恒等)。`M3Result` 是 `const void*`(指向静态字符串),14 个 `m3Err_trap*` 常量按指针比较。**决策**:用文件局部 `const char[]` + `const void* const kHostAbortSentinel`(与所有 wasm3 错误指针都不同)作为 host-abort 信号;trampoline 内 ImportAbort 或 C++ 异常(跨 C 边界 fail-closed)返回该哨兵。`invoke_run2` 按指针恒等映射:哨兵 → `Run2HostAborted`;14 个 trap 指针之一 → `Run2Trapped`;其余 wasm3 错误 → `InstanceUnavailable`。
+wasm3 把 raw 回调的返回指针作为 trap 向上传播(`forwardTrap`,指针恒等)。`M3Result` 是 `const void*`(指向静态字符串),14 个 `m3Err_trap*` 常量按指针比较。**决策**:用文件局部 `const char[]` + `const void* const kHostAbortSentinel`(与所有 wasm3 错误指针都不同)作为 host-abort 信号;trampoline 内 ImportAbort 或 C++ 异常(跨 C 边界 fail-closed)返回该哨兵。`invoke_run_workflow` 按指针恒等映射:哨兵 → `WorkflowRunHostAborted`;14 个 trap 指针之一 → `WorkflowRunTrapped`;其余 wasm3 错误 → `InstanceUnavailable`。
 
 ### 10.5 alloc 策略:调用模块导出的 alloc(Node-lane 忠实,ABI 正确)
 
@@ -343,11 +343,11 @@ WH-2 落地帧 packer/reader + 薄宿主驱动 + schema_transport bridge functyp
 
 ### 11.1 P6-frame 车道的引擎组合:具体引擎加法式扩展,端口头零改动
 
-P6-frame 模块的入口是 `runv() -> (status:i32, value_ptr:i32)`,不是 `run2`。`CoreWasmResumeEngine` 端口只暴露 `run2`/`alloc_then_write`/`read_whole_memory`,且 `read_whole_memory` 返回 const span——packer 必须把输入帧写入**固定地址**(input 1024、backing 16384+、arena),这两个能力端口都不提供。**决策**:在**具体** `Wasm3ResumeEngine` 上加法式新增两个方法——`mutable_whole_memory()`(read_whole_memory 的可变对应物,供 packer 直接写入存活实例内存,与 JS oracle 写 `e.memory.buffer` 同构)和 `invoke_runv()`(惰性 m3_FindFunction + 校验 `() -> (i32,i32)` + 调用 + trap 映射 + 固定单页不变量复查)。端口头 `core_wasm_resume_engine.hpp` **零改动**;WH-1 既有方法语义**零变更**(纯加法)。拒绝另起并行 wasm3 驱动(Principle 1:并行实现)。`invoke_runv` 与 `invoke_run2` 共享 `run_started` 一次性闸门:一个会话只走一条车道(run2 或 runv),第二次调用为 InvalidSequence。
+P6-frame 模块的入口是 `run_frame() -> (status:i32, value_ptr:i32)`,不是 `run_workflow`。`CoreWasmResumeEngine` 端口只暴露 `run_workflow`/`alloc_then_write`/`read_whole_memory`,且 `read_whole_memory` 返回 const span——packer 必须把输入帧写入**固定地址**(input 1024、backing 16384+、arena),这两个能力端口都不提供。**决策**:在**具体** `Wasm3ResumeEngine` 上加法式新增两个方法——`mutable_whole_memory()`(read_whole_memory 的可变对应物,供 packer 直接写入存活实例内存,与 JS oracle 写 `e.memory.buffer` 同构)和 `invoke_run_frame()`(惰性 m3_FindFunction + 校验 `() -> (i32,i32)` + 调用 + trap 映射 + 固定单页不变量复查)。端口头 `core_wasm_resume_engine.hpp` **零改动**;WH-1 既有方法语义**零变更**(纯加法)。拒绝另起并行 wasm3 驱动(Principle 1:并行实现)。`invoke_run_frame` 与 `invoke_run_workflow` 共享 `run_started` 一次性闸门:一个会话只走一条车道(run_workflow 或 run_frame),第二次调用为 InvalidSequence。
 
 ### 11.2 final_kind 来源:codegen C++ 描述符,非常量推断
 
-runv 根授权需要 final_kind(identity → value_ptr 必须 == input_base 1024;computed → == output_base 12288)。准入的 `CoreFrameLayoutSection` **不携带** final_kind;input_layout == output_layout 也不能推断——`v2b_string_passthrough` 输入输出同名(Frame)但 final 是 computed(物化到 12288)。**决策**:final_kind 取自 codegen 的 C++ `CoreWasmExecutionDescriptor.frame->final_kind`(与模块同一次 `emit_core_wasm` 产出,是受信的我方编译器输出,非攻击者可控),**不**从常量推断,**不**从 JSON 描述符读取(那是 oracle/测试产物)。reader 只把 final_kind 用于在两个 ABI SSOT 常量基之间二选一;基本身来自 `core_wasm_abi_constants.hpp`。1024 与 node-event 区共享基的歧义(p6 agent 帧 vs capability-workflow 事件区)由 frame_contract(P6Frame vs WireJson)在驱动层消解:WH-2 只对 P6Frame 模块调用 `execute_p6_frame`,此上下文 1024 无歧义地是输入帧基。
+run_frame 根授权需要 final_kind(identity → value_ptr 必须 == input_base 1024;computed → == output_base 12288)。准入的 `CoreFrameLayoutSection` **不携带** final_kind;input_layout == output_layout 也不能推断——`string_passthrough` 输入输出同名(Frame)但 final 是 computed(物化到 12288)。**决策**:final_kind 取自 codegen 的 C++ `CoreWasmExecutionDescriptor.frame->final_kind`(与模块同一次 `emit_core_wasm` 产出,是受信的我方编译器输出,非攻击者可控),**不**从常量推断,**不**从 JSON 描述符读取(那是 oracle/测试产物)。reader 只把 final_kind 用于在两个 ABI SSOT 常量基之间二选一;基本身来自 `core_wasm_abi_constants.hpp`。1024 与 node-event 区共享基的歧义(p6 agent 帧 vs capability-workflow 事件区)由 frame_contract(P6Frame vs WireJson)在驱动层消解:WH-2 只对 P6Frame 模块调用 `execute_p6_frame`,此上下文 1024 无歧义地是输入帧基。
 
 ### 11.3 schema_transport bridge functype 白名单:两种 ABI functype 皆合法,模式对拍在帧段准入
 
@@ -359,9 +359,9 @@ runv 根授权需要 final_kind(identity → value_ptr 必须 == input_base 1024
 
 **P2-1(WH-3 门禁):重复 placement layout-id 在准入时拒绝。** JS oracle `backingByLayout` 用 `Map.has` 拒绝重复 layout-id;C++ 侧此前只在 `verify_local()` 的 placement 循环中检查 edge_index/valid_id/container 非空,未检查同一 `container_layout` 是否被多次 placement。**决策**:在 `core_frame_layout.cpp` 的 placement 循环中新增 `placed_layouts` 位图(vector<bool>,按 `CoreLayoutId.value` 索引),每个 placement 的 `container_layout` 已置位即 fail-closed("frame-layout backing placement names a container layout that already has a placement")。这是 admission-time 不变量,不是 pack-time 检查——与 JS oracle 的 `Map.has` 语义对齐,且在帧段准入(transport)层就拒绝,不留给运行时。
 
-**P2-2(WH-3 门禁)+ P2-8:runv 结果模型修正——host-abort 与 trap 分离,runv 执行错误不再归类为 FrameReadError。** 评审前 `RunvOutcome` 是二臂 `variant<RunvResult, Run2Trapped>`,host-abort 被映射为 trap;`P6FrameError` 把 runv trap/non-ok-status 塞进 `FrameReadError` 枚举。**决策**:(1) `RunvOutcome` 改为三臂 `variant<RunvResult, Run2Trapped, Run2HostAborted>`,`kHostAbortSentinel` 映射到 `Run2HostAborted` 而非 `Run2Trapped`;(2) 新增 `RunvError{Kind, raw_status}` 结构(Kind = Trapped | HostAborted | NonOkStatus),`P6FrameError` 改为四臂 `variant<FramePackError, FrameReadError, RunvError, EngineError>`;(3) `FrameReadError` 枚举移除 `RunvTrapped`/`RunvNonOkStatus`——帧读取错误与 runv 执行错误是不同抽象层,混在一个枚举里违反 Principle 4(variant 分层)。所有 visitor/test 同步更新。
+**P2-2(WH-3 门禁)+ P2-8:run_frame 结果模型修正——host-abort 与 trap 分离,run_frame 执行错误不再归类为 FrameReadError。** 评审前 `FrameRunOutcome` 是二臂 `variant<FrameRunResult, WorkflowRunTrapped>`,host-abort 被映射为 trap;`P6FrameError` 把 run_frame trap/non-ok-status 塞进 `FrameReadError` 枚举。**决策**:(1) `FrameRunOutcome` 改为三臂 `variant<FrameRunResult, WorkflowRunTrapped, WorkflowRunHostAborted>`,`kHostAbortSentinel` 映射到 `WorkflowRunHostAborted` 而非 `WorkflowRunTrapped`;(2) 新增 `FrameRunError{Kind, raw_status}` 结构(Kind = Trapped | HostAborted | NonOkStatus),`P6FrameError` 改为四臂 `variant<FramePackError, FrameReadError, FrameRunError, EngineError>`;(3) `FrameReadError` 枚举移除 `FrameRunTrapped`/`FrameRunNonOkStatus`——帧读取错误与 run_frame 执行错误是不同抽象层,混在一个枚举里违反 Principle 4(variant 分层)。所有 visitor/test 同步更新。
 
-**P2-3/4/5/6 + hygiene**:runv root-auth 测试强化(identity strict success + 8 边界探针 + computed+12288 happy-path);嵌套 closure pack 拒绝测试(Option/Struct field/List element/Enum payload 四种形状,各验证零部分帧字节);region-zeroing 断言精确到 2 字节 + 派生偏移;`pack_p6_input` 前置条件从 `>= 16384` 收紧为恰好 `fixed_single_page_capacity().value`(65536);移除未使用 include/using-decl(frame_walk.hpp 的 `core_wasm_abi_constants.hpp` + `<cstddef>`;frame_reader.cpp 的 `CoreWireSchemaField` using-decl;frame_packer_reader.cpp 的 `value_to_json` using-decl + `<variant>`;native_wasm_differential.cpp 的 `ir.hpp` include)。
+**P2-3/4/5/6 + hygiene**:run_frame root-auth 测试强化(identity strict success + 8 边界探针 + computed+12288 happy-path);嵌套 closure pack 拒绝测试(Option/Struct field/List element/Enum payload 四种形状,各验证零部分帧字节);region-zeroing 断言精确到 2 字节 + 派生偏移;`pack_p6_input` 前置条件从 `>= 16384` 收紧为恰好 `fixed_single_page_capacity().value`(65536);移除未使用 include/using-decl(frame_walk.hpp 的 `core_wasm_abi_constants.hpp` + `<cstddef>`;frame_reader.cpp 的 `CoreWireSchemaField` using-decl;frame_packer_reader.cpp 的 `value_to_json` using-decl + `<variant>`;native_wasm_differential.cpp 的 `ir.hpp` include)。
 
 ---
 
@@ -394,29 +394,29 @@ WH-4 builds the session/event/trace/observation layer + the hook-compatible runt
 - `workflow_runtime.hpp` includes `runtime/evaluator/evaluator.hpp` + `runtime/evaluator/eval_context.hpp` (`:22-23`) — a PUBLIC header that drags the evaluator into every TU including it.
 - The engine target PUBLIC-links `ahfl_runtime_evaluator` (`src/runtime/engine/CMakeLists.txt:47`) because of that public-header include.
 - The DAP installs `state_entered_hook` / `capability_invoked_hook` / `agent_input_hook` / `node_completed_hook` / `capability_result_observer` on `WorkflowRuntimeConfig` (`debug_session.cpp:217-291`), calls `runtime_->run(...)` on a worker thread (`:371`), and BLOCKS inside `on_state_entered`/`on_capability_invoked` on `resume_cv_` (`pause()`, `:660-680`). `capability_invoked_hook` fires BEFORE dispatch (`workflow_runtime.cpp:1096-1098` vs `:1100-1105`) — capability breakpoints depend on the pre-call pause.
-- The wasm3 `ImportObservation.whole_memory` is the whole fixed page at the moment of EVERY import (`core_wasm_resume_engine.hpp`), so the host can decode the state-trace ring prefix while `invoke_run2` is still running.
+- The wasm3 `ImportObservation.whole_memory` is the whole fixed page at the moment of EVERY import (`core_wasm_resume_engine.hpp`), so the host can decode the state-trace ring prefix while `invoke_run_workflow` is still running.
 - The state-trace ring: dynamic base from `CoreFrameLayoutSection.state_trace_base/state_trace_capacity` (`core_frame_layout.hpp:168-169`), u32 count at base + 8-byte `(runner,state)` records, guest TRAPS on overflow (`core_wasm_codegen.cpp:14597-14656`). No runtime decoder exists today.
-- Workflow modules' `step`/`current_state` TRAP by contract (`make_trapping_i32_body`, `core_wasm_codegen.cpp:~16440`); the JS oracle asserts `expectTraps`. Workflow `run2` is ONE guest invocation with the schedule baked in-guest (`append_workflow_schedule`, `core_wasm_codegen.cpp:15826`: per-node frame materialization via `WorkflowFrameMaterializer`, runner invocation, output-block checks, node-event records, completed counter).
+- Workflow modules' `step`/`current_state` TRAP by contract (`make_trapping_i32_body`, `core_wasm_codegen.cpp:~16440`); the JS oracle asserts `expectTraps`. Workflow `run_workflow` is ONE guest invocation with the schedule baked in-guest (`append_workflow_schedule`, `core_wasm_codegen.cpp:15826`: per-node frame materialization via `WorkflowFrameMaterializer`, runner invocation, output-block checks, node-event records, completed counter).
 - The JS oracle `collectStatesViaStep` (`node_embedded_host.mjs:1035-1065`) drives a SEPARATE effects-free instance ("states" mode: bridge replays served, events discarded, only state names are evidence); the canonical instance runs effects exactly once.
-- `decode_node_events` exists (`core_wasm_node_events.hpp`); the observation emitter (`ahfl.node-observation.v1`) does NOT exist yet (only the oracle emits it, `node_embedded_host.mjs:531-549`).
+- `decode_node_events` exists (`core_wasm_node_events.hpp`); the observation emitter (`ahfl.node-observation`) does NOT exist yet (only the oracle emits it, `node_embedded_host.mjs:531-549`).
 
 ### 12.1 Decision 1 — hook timing / source of truth: **Option A (dual-mode facade)**
 
 **Chosen.** The facade guarantees two hook-timing classes, split by module kind.
 
-**AGENT modules** (export `step`/`current_state`/`transition_count`): the facade drives a SEPARATE effects-free wasm3 instance for the state step-walk, mirroring `collectStatesViaStep` exactly. The effects-free instance's imports are served by a states-mode invoker that replays the scenario results and discards its events; only state names are evidence. The CANONICAL instance runs `runv`/`run2` exactly once for effects + output.
+**AGENT modules** (export `step`/`current_state`/`transition_count`): the facade drives a SEPARATE effects-free wasm3 instance for the state step-walk, mirroring `collectStatesViaStep` exactly. The effects-free instance's imports are served by a states-mode invoker that replays the scenario results and discards its events; only state names are evidence. The CANONICAL instance runs `run_frame`/`run_workflow` exactly once for effects + output.
 
 - `state_entered_hook` fires LIVE per `step()` transition on the effects-free instance — host-driven, exact; the DAP's pause/step semantics map 1:1 (the walk is host-driven, so pausing between steps is natural).
 - `capability_invoked_hook` + `capability_result_observer` fire LIVE at the canonical instance's imports (pre-call / post-invoker, truly live — the `ImportCallback` blocks on the host's return before the guest resumes).
 - `agent_input_hook` fires LIVE before the walk; `node_completed_hook` fires LIVE after the canonical run with the output read from the output frame.
 - For an agent WITHOUT capability call sites, the facade drives the CANONICAL instance via `step()` directly (no effects to double-fire), matching the oracle's non-bridge path.
 
-**WORKFLOW modules** (`step`/`current_state` trap by contract): `run2` is one guest invocation; the host gets control ONLY at capability imports and after `run2` returns. The facade wraps the WH-3 `capability_import` executor:
+**WORKFLOW modules** (`step`/`current_state` trap by contract): `run_workflow` is one guest invocation; the host gets control ONLY at capability imports and after `run_workflow` returns. The facade wraps the WH-3 `capability_import` executor:
 
 - at EACH import, BEFORE invoking the capability, decode the state-trace ring PREFIX from `whole_memory` and fire `state_entered_hook` per NEW record since the last boundary (import-boundary-live; the guest is genuinely stopped inside the `ImportCallback`, so a blocking hook pauses the run);
 - fire `capability_invoked_hook` LIVE at the import, PRE-call — genuinely live for BOTH lanes (the DAP's capability breakpoints work exactly);
 - fire `capability_result_observer` LIVE post-invoker;
-- after `run2` returns: decode the FULL trace + node-event buffer, fire `state_entered_hook` for the remaining records (after the last import), and fire `node_completed_hook` per node in schedule order with the output read from the node's fixed `O_k` block.
+- after `run_workflow` returns: decode the FULL trace + node-event buffer, fire `state_entered_hook` for the remaining records (after the last import), and fire `node_completed_hook` per node in schedule order with the output read from the node's fixed `O_k` block.
 
 `agent_input_hook` is NOT fired for workflow nodes: the in-guest materialized node input (`WorkflowFrameMaterializer`) is not host-observable without re-implementing the frame materializer — the rejected Option C. The host packs the workflow input into the entry `I_k` block, but the evaluated/projected node input is a guest-internal value. WH-8's DAP adapts (Node frame pushed at `node_completed_hook`). Documented, honest degradation.
 
@@ -426,7 +426,7 @@ WH-4 builds the session/event/trace/observation layer + the hook-compatible runt
 |---|---|---|---|
 | `agent_input_hook` | LIVE before step-walk | LIVE before step-walk | not fired (in-guest input not host-observable) |
 | `state_entered_hook` | LIVE per `step()` on canonical instance | LIVE per `step()` on effects-free instance | IMPORT-BOUNDARY-LIVE (trace prefix at each cap import) + POST-run (remainder) |
-| `capability_invoked_hook` | (none) | LIVE at canonical `runv`/`run2` import, PRE-call | LIVE at `run2` import, PRE-call |
+| `capability_invoked_hook` | (none) | LIVE at canonical `run_frame`/`run_workflow` import, PRE-call | LIVE at `run_workflow` import, PRE-call |
 | `capability_result_observer` | (none) | LIVE at import, post-invoker | LIVE at import, post-invoker |
 | `node_completed_hook` | LIVE after canonical run | LIVE after canonical run | POST-run (schedule order, `O_k` output) |
 
@@ -435,7 +435,7 @@ WH-4 builds the session/event/trace/observation layer + the hook-compatible runt
 **Rejected:**
 
 - **Option B (post-run replay only for ALL hooks):** rejected — it makes DAP over workflows post-mortem, contradicting WH-8's promise (decision doc §6: "DAP drives through the SAME hooks with state-level stepping mapped to WH-4 step-walk") and discarding the genuinely-live capability pre-call hook the `ImportCallback` makes possible. The capability hook CAN be truly live at the import for both lanes; throwing that away is dishonest.
-- **Option C (host-side workflow scheduling):** rejected — the schedule is baked into `run2` (`append_workflow_schedule:15826`: per-node frame materialization, runner invocation, output-block checks, node-event records, completed counter). Host-side scheduling requires (a) codegen changes to export per-node runners or a dispatch export, (b) host re-implementation of the frame materializer (project/construct/normalize node input frames — hundreds of lines of codegen logic), (c) re-defining node-event/counter/trace semantics around host-driven scheduling, (d) diverging from the JS oracle which drives `run2` as one invocation. Massive blast radius across node events/counters/trace; it trades a documented import-boundary-liveness limitation for a full scheduler re-implementation. Not clearly superior.
+- **Option C (host-side workflow scheduling):** rejected — the schedule is baked into `run_workflow` (`append_workflow_schedule:15826`: per-node frame materialization, runner invocation, output-block checks, node-event records, completed counter). Host-side scheduling requires (a) codegen changes to export per-node runners or a dispatch export, (b) host re-implementation of the frame materializer (project/construct/normalize node input frames — hundreds of lines of codegen logic), (c) re-defining node-event/counter/trace semantics around host-driven scheduling, (d) diverging from the JS oracle which drives `run_workflow` as one invocation. Massive blast radius across node events/counters/trace; it trades a documented import-boundary-liveness limitation for a full scheduler re-implementation. Not clearly superior.
 
 **Reconciliation with JS oracle `collectStatesViaStep`:** the native facade mirrors the oracle exactly — a separate effects-free wasm3 instance for the state step-walk when the agent has capability call sites (the oracle's "states" mode), the canonical instance running effects exactly once. The bounded-walk guard (`states.size() + 2`), `current_state` consistency, and exactly-once `transition_count` bump are replicated. The `(runner,state) → (agent_name,state_name)` join for the workflow trace ring uses the `ir::Program` (runner → workflow node → target agent; state id → `FlowDecl` state-handlers dense order, the same ordering the codegen uses to assign dense state ids), pinned by a byte-parity test against the oracle's `all_states`.
 
@@ -476,9 +476,9 @@ Files (all under `src/runtime/wasm_host/` unless noted):
 
 2. **`agent_session.{hpp,cpp}`** (NEW) — the step-walk driver for AGENT modules. Owns the effects-free wasm3 instance + the states-mode invoker. Drives `step()` in a bounded loop (guard = `states.size() + 2`), asserts `current_state` consistency + exactly-once `transition_count`, fires `state_entered_hook` per transition.
 
-3. **`workflow_session.{hpp,cpp}`** (NEW) — the workflow `run2` driver + trace/node-event decode + hook firing. Wraps the WH-3 `capability_import` executor with trace-prefix decode + hook firing (import-boundary-live). Drives `run2`, fires hooks per the guarantee table, builds the neutral `WorkflowResult` (events from decoded trace/node-events, metadata from the `ir::Program`, values from frame reads, diagnostics from trap/abort classification).
+3. **`workflow_session.{hpp,cpp}`** (NEW) — the workflow `run_workflow` driver + trace/node-event decode + hook firing. Wraps the WH-3 `capability_import` executor with trace-prefix decode + hook firing (import-boundary-live). Drives `run_workflow`, fires hooks per the guarantee table, builds the neutral `WorkflowResult` (events from decoded trace/node-events, metadata from the `ir::Program`, values from frame reads, diagnostics from trap/abort classification).
 
-4. **`observation_emitter.{hpp,cpp}`** (NEW) — emit the canonical `ahfl.node-observation.v1` document (the SAME shape `node_embedded_host.mjs:531-549` emits and `observation_compare.hpp` consumes). Pure canonical JSON, sorted fields, byte-identical to the oracle's `emitObservation`.
+4. **`observation_emitter.{hpp,cpp}`** (NEW) — emit the canonical `ahfl.node-observation` document (the SAME shape `node_embedded_host.mjs:531-549` emits and `observation_compare.hpp` consumes). Pure canonical JSON, sorted fields, byte-identical to the oracle's `emitObservation`.
 
 5. **`wasm_workflow_runtime.{hpp,cpp}`** (NEW) — the hook-compatible runtime facade:
    ```cpp
@@ -500,7 +500,7 @@ Files (all under `src/runtime/wasm_host/` unless noted):
        WasmWorkflowRuntime(const ir::Program &program, WasmWorkflowRuntimeConfig config);
        // Compiles the workflow to wasm (wasm backend), admits the module,
        // dispatches on module kind (agent -> agent_session + canonical
-       // runv/run2; workflow -> workflow_session), returns the neutral result.
+       // run_frame/run_workflow; workflow -> workflow_session), returns the neutral result.
        [[nodiscard]] WorkflowResult run(const std::string &workflow_name, Value input);
    };
    ```
@@ -512,9 +512,9 @@ Files (all under `src/runtime/wasm_host/` unless noted):
 
 1. **State-trace decoder KAT**: hand-built memory spans with known trace rings decode byte-exactly; corrupt count (exceeds capacity) / truncation fail closed. Mirrors the node-event decoder KAT style.
 2. **Agent step-walk liveness + effects-once**: an agent with a bridge capability; the states-mode invoker counts calls (served, discarded); the production invoker counts calls; assert production count == 1 and states-mode count == walk count. A blocking `state_entered_hook` mutates a counter BEFORE the canonical run; prove the hook fires from the effects-free instance.
-3. **Capability pre-call hook liveness**: a blocking `capability_invoked_hook` sets a flag; the invoker asserts the flag is set (the hook fired BEFORE the effect). A capability breakpoint pauses the run inside the `ImportCallback` (the guest is genuinely stopped — `run2` has not returned when the hook blocks).
+3. **Capability pre-call hook liveness**: a blocking `capability_invoked_hook` sets a flag; the invoker asserts the flag is set (the hook fired BEFORE the effect). A capability breakpoint pauses the run inside the `ImportCallback` (the guest is genuinely stopped — `run_workflow` has not returned when the hook blocks).
 4. **Workflow import-boundary state hook**: a workflow with a capability call after N state transitions; `state_entered_hook` fires at the import boundary with the trace prefix (records 0..N-1) BEFORE `capability_invoked_hook`; assert the hook ordering log.
-5. **Post-run replay ordering byte-parity with observation blessings**: the full decoded sequence (import-boundary prefix + post-run remainder) equals the JS oracle's `state_sequence`; the emitted `ahfl.node-observation.v1` document is byte-identical to the checked-in blessing for the WH-4 conformance subset (common-KAT fixture + a few p6 cases). The WH-5 gate's WH-4 precursor.
+5. **Post-run replay ordering byte-parity with observation blessings**: the full decoded sequence (import-boundary prefix + post-run remainder) equals the JS oracle's `state_sequence`; the emitted `ahfl.node-observation` document is byte-identical to the checked-in blessing for the WH-4 conformance subset (common-KAT fixture + a few p6 cases). The WH-5 gate's WH-4 precursor.
 6. **Breakpoint-pause semantics on agent step**: emulate the DAP's `pause()` — a `state_entered_hook` blocking on a condition variable; a separate thread resumes; prove the step-walk pauses between steps and resumes exactly (the next `step()` fires after resume).
 7. **Hook ordering guarantee**: for a workflow, the hook firing order matches the guarantee table (capability hooks live at imports interleaved with state-prefix hooks; post-run: remaining state hooks + `node_completed_hook` in schedule order). A hook log asserts the exact order.
 8. **Neutral result extraction**: no wasm-host TU includes `evaluator.hpp` (compile-time check — the wasm host's header dependency on the evaluator is structurally impossible); `render_execution_result` renders a wasm-produced `WorkflowResult` identically to an evaluator-produced one for the same case (byte-parity of human/json output for a no-capability case).
@@ -546,7 +546,7 @@ The new target hosts:
   `compute_core_layouts` → `resolve_core_wasm_entry` with a `PackageMetadata`
   built from the workflow name, mirroring `tests/conformance/wasm_engine.cpp:587-592`
   → `emit_core_wasm`), admits the module, and on `run(name, input) -> WorkflowResult`
-  dispatches on module kind (agent → agent session + canonical runv/run2;
+  dispatches on module kind (agent → agent session + canonical run_frame/run_workflow;
   workflow → workflow session) and returns the neutral result.
 - **`class WasmAgentRunner`** — one-shot agent runs for REPL / DAP: compile a
   single-agent program → drive the agent session → return the output Value.
@@ -640,7 +640,7 @@ workflows carry the node-event buffer instead.
   descriptor. The session mirrors: for a workflow with no event region, emit
   each node's runner walk in schedule order.
 - **Import-boundary live hooks on WireJson: NONE.** WireJson node events are
-  decoded POST-RUN only (the guest writes the event buffer during `run2`; the
+  decoded POST-RUN only (the guest writes the event buffer during `run_workflow`; the
   host has no mid-run access without the P6 trace ring). `state_entered_hook`
   for WireJson workflows fires POST-RUN, in schedule order. **Honest liveness
   consequence for WH-8:** WireJson state hooks are post-run (post-mortem), NOT
@@ -673,7 +673,7 @@ workflows carry the node-event buffer instead.
 1. **Codegen emits the AHFLXM exec-manifest for capability AGENT modules.**
    New `kEntryKindAgent = 1` in both codegen (`core_wasm_codegen.cpp:181`) and
    A2 (`core_wasm_schema_module.cpp:60`). Agent manifest grammar:
-   `magic(6) + version(1) + entry_kind=1 + agent_id(4) + capability_count(4) +
+   `magic(6) + entry_kind=1 + agent_id(4) + capability_count(4) +
    capabilities[] { capability_id(4) + source_symbol(8) }`. This mirrors the
    workflow manifest but with a flat capability list (an agent has no workflow
    schedule / nodes).
@@ -716,7 +716,7 @@ workflows carry the node-event buffer instead.
 
 **Acceptance:**
 
-1. All 4 v2c bridge fixtures run through the WH-3 executor on wasm3 (no
+1. All 4 capability-bridge bridge fixtures run through the WH-3 executor on wasm3 (no
    simplified handler; grep-zero for `local_capability_name`).
 2. `e2_capability_agent.echo` produces `capability_sequence
    ["wasm::e2_capability::Echo"]` (canonical, not stripped).
@@ -923,7 +923,7 @@ never called for a branching WireJson agent.
    `WasmAgentRunner`; compile pipeline once; gated CMake.
 8. **P2-3 / P2-4 / P2-6**: ABI constants, include cleanup, strong oracles.
 9. **Tests**: all acceptance criteria above; the 9 blocked WireJson census
-   scenarios unblocked; 4 v2c fixtures through the WH-3 executor;
+   scenarios unblocked; 4 capability-bridge fixtures through the WH-3 executor;
    `e2_capability_agent.echo` canonical name; OOR fail-closed; store
    population byte-parity with the evaluator renderer.
 
@@ -936,7 +936,7 @@ never called for a branching WireJson agent.
   (e3_capability_workflow, e3_capability_workflow_resume,
   e3_identity_workflow, float_output_e2e). e2e_multi_agent is P6Frame, not
   WireJson, so it uses the P6 trace ring, not node-event reconstruction.
-  The 4 v2c bridge fixtures need the D-C collapse.
+  The 4 capability-bridge bridge fixtures need the D-C collapse.
 - **WH-6:** the CLI flips to `WasmWorkflowRuntime`. The four config fields map
   to `WasmWorkflowRuntimeConfig`. Suspend / resume waits for WH-4b. The suspend
   fixture MUST switch to an opaque-lane capability (bridge Pending traps).
@@ -955,14 +955,14 @@ WH-4b 在 wasm 车道起源挂起(suspension)并打通 suspend/resume 往返,门
 
 ### 12.6.0 决策摘要
 
-**两个引擎共用一个挂起工件:`WorkflowRecoverySnapshot` v2 JSON(`src/runtime/engine/workflow_recovery.hpp:109-118`),wasm 车道由 `run_workflow_session` 内一个新的会话级 memo-replay 层消费——不走 WH-3 `run_resume` / D1b controller driver。** wasm 车道起源与 evaluator 相同的快照,对 v2 做一处 append-only 扩展:`CapabilityMemoEntry` 增加可选 `node` 坐标(§12.6.3),把 memo 从"单挂起节点"泛化到"整工作流"——因为 wasm resume 是 FRESH instance 重跑整个模块,需要 pending 之前跨所有节点全部能力调用的 memo。HMAC 二进制机制(`CoreWasmResumeRecord` / `IntegrityPayloadStore` / D1b controller / `run_resume`)保持 test-only FOUNDATION,并绑定日落条款(§12.6.9):D2b 切片必须给它第一个生产调用者,否则一次性 big-bang 删除。
+**两个引擎共用一个挂起工件:`WorkflowRecoverySnapshot` current JSON(`src/runtime/engine/workflow_recovery.hpp:109-118`),wasm 车道由 `run_workflow_session` 内一个新的会话级 memo-replay 层消费——不走 WH-3 `run_resume` / D1b controller driver。** wasm 车道起源与 evaluator 相同的快照,当前 `CapabilityMemoEntry` 要求必填 `node` 坐标(§12.6.3),把 memo 从"单挂起节点"泛化到"整工作流"——因为 wasm resume 是 FRESH instance 重跑整个模块,需要 pending 之前跨所有节点全部能力调用的 memo。HMAC 二进制机制(`CoreWasmResumeRecord` / `IntegrityPayloadStore` / D1b controller / `run_resume`)保持 test-only FOUNDATION,并绑定日落条款(§12.6.9):D2b 切片必须给它第一个生产调用者,否则一次性 big-bang 删除。
 
 **ReadyForLive 在 WH-4b 范围内且可用**——通过会话设计而非 D1b driver,见 §12.6.8 的诚实裁决。
 
-### 12.6.1 Fork 1+2 — 快照格式与 resume 消费者:复用 JSON v2;新建会话级消费者;HMAC 机制保留为 test-only FOUNDATION
+### 12.6.1 Fork 1+2 — 快照格式与 resume 消费者:复用 当前 JSON 结构;新建会话级消费者;HMAC 机制保留为 test-only FOUNDATION
 
 **选择。**
-- **格式**:`WorkflowRecoverySnapshot` v2 JSON + `WorkflowRecoveryStore`(单原子文件,`workflow_recovery.cpp:244-271`)是两个引擎唯一的挂起工件。wasm 车道既起源(§12.6.4)也消费(§12.6.5)它。
+- **格式**:`WorkflowRecoverySnapshot` current JSON + `WorkflowRecoveryStore`(单原子文件,`workflow_recovery.cpp:244-271`)是两个引擎唯一的挂起工件。wasm 车道既起源(§12.6.4)也消费(§12.6.5)它。
 - **消费者**:`run_workflow_session`(`src/runtime/wasm_host/workflow_session.cpp`)内新的 memo-replay 层。run 开始时若带 `recovery_snapshot`,会话把它翻译为内存 memo map,键为 `(WorkflowNodeId, 节点内 ordinal)`。每个同步 import 边界用 import 的 `source_symbol` O(1) 导出 `(node, ordinal)`(复用 P2-2 的 `symbol_to_runner` 并扩展到 schedule position,§12.6.5),提供 memo 字节 / 注入 / 放行 live。无 HMAC store、无密钥管理、无 `run_resume`。
 - **HMAC 机制**:维持 test-only FOUNDATION 现状,日落条款见 §12.6.9。
 
@@ -971,7 +971,7 @@ WH-4b 在 wasm 车道起源挂起(suspension)并打通 suspend/resume 往返,门
 - **JSON + HMAC 双写(fork 1c)。** 拒绝——双工件一致性负担 + Principle 1 并行实现。
 - **按 Principle 1 立即删除 HMAC 机制。** 在 WH-4b 中考虑并拒绝:它是已落地的 D2b 基底(record codec + 机密 payload store + decision-only controller + `run_resume` driver + WH-3 真实 wasm3 引擎端口),注释明确命名未来消费者("the first is the future B2-D host",`core_wasm_resume_record.hpp:12`)。D2b(durable-effect authority / KMS store)是 WH-6 切换后的紧邻前沿;WH-4b 删除、D2b 重建纯属 churn;永久不链接则被日落条款禁止。这是带死线的判断,不是"以防万一"的无限保留。
 
-**AHFL-specific 理由。** recovery store 今天是本地单用户文件;JSON v2 已在损坏时 fail-closed(id/闭包/memo 交叉校验 `workflow_runtime.cpp:82-144`;binding 门控解码 `:871-888`)。HMAC/SHA-256 防的是对抗性 store 写入者——那是 D2b durable-effect-authority 前沿的威胁模型。CLI 既有标志契约与 smoke 都讲 JSON v2;单一格式让 WH-6 切换成为 CLI 契约不变下的纯引擎替换。参照层级一致:event-sourced checkpoint(Temporal/Cadence/Restate 主流持久工作流模式)在宿主原生 store 持久化 replay log,盘上编码是宿主关切。
+**AHFL-specific 理由。** recovery store 今天是本地单用户文件;当前 JSON 结构已在损坏时 fail-closed(id/闭包/memo 交叉校验 `workflow_runtime.cpp:82-144`;binding 门控解码 `:871-888`)。HMAC/SHA-256 防的是对抗性 store 写入者——那是 D2b durable-effect-authority 前沿的威胁模型。CLI 既有标志契约与 smoke 都使用当前 JSON 结构;单一格式让 WH-6 切换成为 CLI 契约不变下的纯引擎替换。参照层级一致:event-sourced checkpoint(Temporal/Cadence/Restate 主流持久工作流模式)在宿主原生 store 持久化 replay log,盘上编码是宿主关切。
 
 ### 12.6.2 身份元组与等价性证明
 
@@ -988,24 +988,21 @@ memo 键与 pending 坐标与 evaluator 使用同一元组,每个分量在 HEAD 
 
 **跨引擎 resume 出范围且 fail-closed。** 引擎 X 起源的快照只能由引擎 X 消费。wasm 消费者要求每条 memo 带 `node` 坐标;evaluator 起源的快照没有 → wasm 消费者在加载时以定向诊断拒绝(WH-6 后 evaluator 被删除,反向不可能发生;WH-6 前 CLI 无法产生 wasm 起源的快照)。无兼容 shim。
 
-### 12.6.3 Fork 5 — 粒度:用一个 append-only v2 字段把 memo 泛化到整工作流
+### 12.6.3 整工作流 memo 的当前身份
 
-**已验证的问题。** evaluator 恢复已完成节点、只重跑挂起节点(`workflow_runtime.cpp:724-740` NodeRestored),其 memo 只覆盖挂起节点。wasm resume 是 FRESH instance 重跑整个模块(wasm3 无法停泊调用栈)。已完成节点的 guest 内计算是确定性且无副作用的,但其能力调用是带效果的宿主 import——resume 时必须 memo 供给,绝不重新 live 调用(重放 `durable_write` 违反 exactly-once)。JSON v2 的 `SuspendedNodeState.memo` 没有节点坐标,无法放置已完成节点的 memo 条目。
+fresh instance 会重新执行整个模块，因此 memo 必须覆盖挂起点之前所有节点的
+能力调用，不能仅记录挂起节点。每条 `CapabilityMemoEntry` 必填数值
+`WorkflowNodeId node`，与节点内 ordinal、cap_id 和 arg_hash 共同建立调用身份。
+缺失 node 直接拒绝，不能推断为挂起节点。
 
-**选择。** 给 `CapabilityMemoEntry` 增加一个 append-only 字段:
+当前结果只使用 `InMemoryMemoResult` / `StoredMemoResult` 两种来源。进程内值由
+binding 验证；磁盘精确字节由 binding 解码。结果和 presence 明确，不保留
+重复 Value 投影或历史三态。JSON store 写唯一当前 `ahfl.workflow-recovery`
+结构，同一次变更更新所有调用方；不存在旧读取者忽略字段的承诺。
 
-```cpp
-// WH-4b: 该 memo 条目所属节点。缺省(nullopt)表示挂起节点——evaluator 的
-// 每节点 memo 语义,不变。wasm 车道总是设置它:wasm resume 在 fresh
-// instance 上重跑整个模块,memo 覆盖 pending 之前每个节点的调用。
-std::optional<WorkflowNodeId> node{};
-```
-
-append-only v2 演进(`workflow_recovery.hpp:27-31` 的稳定规则:新字段可选,旧读取者忽略)。wasm 消费者要求每条都带(缺失则加载 fail-closed);evaluator 消费者不变(从不设置,全 nullopt = 挂起节点,即今天的行为)。HMAC record 已正确建模这一点——`CoreWasmResumeRecord.nodes` 是所有节点的逐节点 memo 向量(`core_wasm_resume_record.hpp:80-87`)——证实 whole-workflow memo 是正确的 wasm 语义。
-
-**拒绝:** 仅挂起节点 memo(已完成节点调用 resume 时 live 重跑——重放效果,违反 exactly-once);快照上并行 `wasm_memo` 结构(双 memo 向量,Principle 1);新 schema v3 字符串(一个可选字段应走 v2 append-only)。
-
-**wasm 车道上的 `completed_nodes`:** 为记录与闭包校验而写,但不用于跳过节点:wasm 消费者重跑全部节点并 memo 供给其调用;记录的 `output` 仅信息性(evaluator 恢复它,wasm 车道从 memo 供给的输入确定性重算)。
+`completed_nodes` 用于记录与依赖闭包校验，不能跳过 fresh-module 中的纯计算。
+这些节点的外部能力调用由 memo 提供结果，不发生新的 live side effect。
+已删除的树步评估器没有恢复消费者，也不需要兼容转换。
 
 ### 12.6.4 起源 — 会话在何处捕获挂起坐标(fork 4)
 
@@ -1013,9 +1010,9 @@ append-only v2 演进(`workflow_recovery.hpp:27-31` 的稳定规则:新字段可
 
 新文件 `src/runtime/wasm_host/wasm_resume_recorder.{hpp,cpp}` 中的会话局部 `WasmResumeRecorder` 持有:逐节点 import 计数器(按 schedule position 索引的 `vector<uint64_t>`);在途 memo 向量 + pending 坐标;"当前 import 坐标"(wrapper 在 `inner(obs)` 前设置,供 `wrapped_invoker` 消费 args→arg_hash/result/cap_id,wrapper 在 `inner` 返回后从 `obs.whole_memory` 的 `(result_ptr, result_len)` 读取回复的精确 wire 字节)。
 
-每个 OK opaque 调用,recorder 追加 `CapabilityMemoEntry{ node=<当前 WorkflowNodeId>, ordinal=<计数器值>, cap_id=source_symbol, arg_hash=hash_values(args), result=<native 投影,clone>, source=ExactSidecar, authoritative_json=<精确回复字节>, result_present=<来自调用结果> }`。精确字节即 opaque 车道 `serialize_value_for_wire_json` 的输出(`capability_import.cpp:327-342`)——逐字捕获,绝不重新序列化(无拼写漂移);这正是 v2 sidecar 字段为之设计的 `ExactSidecar` 状态(`workflow_recovery.hpp:54-56`)。
+每个 OK opaque 调用,recorder 追加 `CapabilityMemoEntry{ node=<当前 WorkflowNodeId>, ordinal=<计数器值>, cap_id=source_symbol, arg_hash=hash_values(args), result=StoredMemoResult{result_wire_json=<精确回复字节>, present=<来自调用结果>} }`。精确字节即 opaque 车道 `serialize_value_for_wire_json` 的输出(`capability_import.cpp:327-342`)——逐字捕获,绝不重新序列化(无拼写漂移);这正是 精确结果字段表达的 `StoredMemoResult` 状态。
 
-invoker 返回 Pending 时,`handle_opaque` 回复 `(AHFL_CAP_PENDING=2, 0, 0)`(`capability_import.cpp:309-313`),guest latch 且 run2 返回 `(2,0,0)`。recorder 在该 import 盖戳 pending 坐标 `(node, ordinal, cap_id, arg_hash)`;会话 run2 臂(`workflow_session.cpp:597-608`)增加 `raw_status == 2` 分支:从 recorder 构造 `SuspendedNodeState`,`node_input = nullopt`(宿主不可观察——workflow 车道不发 `agent_input_hook`,`workflow_session.hpp:13`;evaluator 中该字段也仅信息性,`workflow_recovery.hpp:96-102`),以 Suspended 终止。
+invoker 返回 Pending 时,`handle_opaque` 回复 `(AHFL_CAP_PENDING=2, 0, 0)`(`capability_import.cpp:309-313`),guest latch 且 run_workflow 返回 `(2,0,0)`。recorder 在该 import 盖戳 pending 坐标 `(node, ordinal, cap_id, arg_hash)`;会话 run_workflow 臂(`workflow_session.cpp:597-608`)增加 `raw_status == 2` 分支:从 recorder 构造 `SuspendedNodeState`,`node_input = nullopt`(宿主不可观察——workflow 车道不发 `agent_input_hook`,`workflow_session.hpp:13`;evaluator 中该字段也仅信息性,`workflow_recovery.hpp:96-102`),以 Suspended 终止。
 
 **facade 产出:** `WorkflowResult` 的 `report.status = Suspended`、`result.suspended` 填充,生命周期事件 `NodeSuspended` / `WorkflowSuspended` / `RunCompleted{Suspended}`(`execution_event.hpp:218-269`)经扩展了 Suspended 终止臂的既有 `finalize_wasm_workflow_run` 路径发出。渲染器已中立(`execution_renderer.cpp:31-32,49-50,121,127,231-236,254-259`)。挂起时保存:会话经 `WorkflowSessionConfig::recovery_store` 保存(镜像 evaluator `workflow_runtime.cpp:1582-1603`:保存失败把 Suspended 降级为 `NodeFailed`)。
 
@@ -1031,11 +1028,11 @@ resume run(带 `recovery_snapshot`)时会话:
 2. **构造 memo map** `(WorkflowNodeId, ordinal) -> CapabilityMemoEntry`,标记前沿 `(suspended.node, pending_ordinal)`。
 3. **Fresh instance**(会话每 run 已新建;pending latch 是 per-instance 的,`core_wasm_codegen.cpp:13905-13909`,fresh 即清零)。
 4. **逐 import**(`wrapped_callback` 中,`inner` 之前):O(1) 导出 `(node, ordinal)`——call site 的 `source_symbol` → runner → schedule position(把既有 `symbol_to_runner` `workflow_session.cpp:260-293` 扩展为 `symbol_to_schedule`);`ordinal = per_node_counter[schedule]++`。然后:
-   - **Memo 命中**(`(node, ordinal)` 在 map 且位于该节点前沿之前):对 live 调用交叉校验 `cap_id` + `arg_hash`;不匹配 → fail-closed `"durable resume replay diverged from the recorded memo (ordinal N)"`(引擎中立消息,`workflow_runtime.cpp:832`);匹配 → 逐字 `alloc_then_write` `authoritative_json` 字节,回复 `(AHFL_CAP_OK, ptr, len)`。绝不调用 invoker → 零 live 副作用、零 intent 重发(§12.6.7)。
+   - **Memo 命中**(`(node, ordinal)` 在 map 且位于该节点前沿之前):对 live 调用交叉校验 `cap_id` + `arg_hash`;不匹配 → fail-closed `"durable resume replay diverged from the recorded memo (ordinal N)"`(引擎中立消息,`workflow_runtime.cpp:832`);匹配 → 逐字 `alloc_then_write` `result_wire_json` 字节,回复 `(AHFL_CAP_OK, ptr, len)`。绝不调用 invoker → 零 live 副作用、零 intent 重发(§12.6.7)。
    - **前沿**(`(node, ordinal) == (suspended.node, pending_ordinal)`):先身份门(`cap_id == pending_cap_id`,镜像 `:930-940` P0-15)→ 解析 pending 能力的结果 binding → 在该 binding 下 parse + `decode_json` `resume_pending_result_wire_json`(镜像 `:981-989`)→ 逐字供给;清除该节点前沿(后续调用 live)。缺注入结果 → `"durable resume is missing the pending capability result"`(`:967`)。
    - **前沿之后 live**(schedule 中挂起节点之后的节点,或同节点 ordinal > pending):放行 `inner` → 正常 live invoker 路径,即 ReadyForLive(§12.6.8)。
    - **前沿之前未命中**:分歧 → fail-closed。
-5. **run2 返回**:OK 且前沿被注入 → 正常 Completed;OK 但前沿从未被命中(fresh instance 走了不同分支、未发生 pending 调用)→ 分歧 fail-closed(镜像 `workflow_runtime.cpp:1422-1434`);trap/error → 既有失败臂。
+5. **run_workflow 返回**:OK 且前沿被注入 → 正常 Completed;OK 但前沿从未被命中(fresh instance 走了不同分支、未发生 pending 调用)→ 分歧 fail-closed(镜像 `workflow_runtime.cpp:1422-1434`);trap/error → 既有失败臂。
 
 **不做逐 import node-event 前缀 join。** 会话从 import 自身的 `source_symbol` O(1) 导出 `(node, ordinal)`,而非每个 import 重解 node-event buffer。D1b controller 需要 O(N²) 前缀 join(`core_wasm_resume_controller.cpp:619-658`,复杂度注释 `:394-396`)是因为它是没有 invoker 上下文的纯决策权威;会话有上下文。node-event buffer 仍是 run 后完成性权威(P2-3 交叉检查不变)。共享原语是 `core_wasm_node_events::decode_node_events`——两层使用的 SSOT,无重复解码器。
 
@@ -1079,7 +1076,7 @@ resume run(带 `recovery_snapshot`)时会话:
 
 ### 12.6.10 Fork 6 — agent 车道:不在 WH-4b 范围
 
-**仅 workflow 车道。** `WasmAgentRunner` 的 run2 Pending 臂(`src/runtime/wasm_host/wasm_agent_runner.cpp:544,560-564` 非零 → `NodeFailed`)保持不变并加诚实注释:agent 车道挂起不是 CLI 契约(CLI 跑 workflow;`--recovery-store` 驱动 `WorkflowRuntime`),agent runner 没有 recovery-snapshot 消费者,conformance 普查有零个 pending mock(无对齐压力)。evaluator 的 agent suspend(`agent_runtime.cpp:172-176`)服务 REPL/DAP agent-runner 契约,那是 WH-7/WH-8 的领地,由它们决定 agent 车道挂起。
+**仅 workflow 车道。** `WasmAgentRunner` 的 run_workflow Pending 臂(`src/runtime/wasm_host/wasm_agent_runner.cpp:544,560-564` 非零 → `NodeFailed`)保持不变并加诚实注释:agent 车道挂起不是 CLI 契约(CLI 跑 workflow;`--recovery-store` 驱动 `WorkflowRuntime`),agent runner 没有 recovery-snapshot 消费者,conformance 普查有零个 pending mock(无对齐压力)。evaluator 的 agent suspend(`agent_runtime.cpp:172-176`)服务 REPL/DAP agent-runner 契约,那是 WH-7/WH-8 的领地,由它们决定 agent 车道挂起。
 
 ### 12.6.11 WASM=OFF
 
@@ -1087,9 +1084,9 @@ WH-4b 全部新增位于 gated 目标内:会话 memo 层在 `ahfl_runtime_wasm_h
 
 ### 12.6.12 有序工作清单
 
-1. `workflow_recovery.{hpp,cpp}`:`CapabilityMemoEntry` 加 `std::optional<WorkflowNodeId> node`;序列化/解析(evaluator 条目写出时缺省;读入缺省 → nullopt);更新 three-state 注释。v2 append-only,不改 schema 字符串。
+1. `workflow_recovery.{hpp,cpp}`：memo node 必填，结果是进程内值或精确存储字节的 variant；读写严格匹配当前结构。
 2. 新 `src/runtime/wasm_host/wasm_resume_recorder.{hpp,cpp}`:逐节点计数器、memo 向量、pending 坐标、当前 import 关联。
-3. `workflow_session.{hpp,cpp}`:`WorkflowSessionConfig` 加 recovery/intent 透传;`wrapped_callback` 经 `symbol_to_schedule` 导出 `(node, ordinal)`、驱动 recorder、resume 时按 §12.6.5 供给 memo/inject/live;run2 臂加 `raw_status == 2` → Suspended(构造快照、`recovery_store` 保存、失败降级);finalize 加 Suspended 终止臂;盖 idempotency_key。
+3. `workflow_session.{hpp,cpp}`:`WorkflowSessionConfig` 加 recovery/intent 透传;`wrapped_callback` 经 `symbol_to_schedule` 导出 `(node, ordinal)`、驱动 recorder、resume 时按 §12.6.5 供给 memo/inject/live;run_workflow 臂加 `raw_status == 2` → Suspended(构造快照、`recovery_store` 保存、失败降级);finalize 加 Suspended 终止臂;盖 idempotency_key。
 4. `wasm_lifecycle.{hpp,cpp}`:`WasmWorkflowRunFacts` 加 Suspended 路径;发 NodeSuspended/WorkflowSuspended/RunCompleted{Suspended}。
 5. `wasm_workflow_runtime.{hpp,cpp}`:config 加五个 recovery/intent 字段;`run()` 透传;用 intent-emitting 包装器包用户 invoker(镜像 `workflow_runtime.cpp:1050-1058`,effect kind 在 `ir::Program` 查)。
 6. 新 `tests/golden/wasm/e4_capability_workflow_resume_memo.ahfl`:2 节点 opaque 流水线——`first` 调 `A`(OK,被 memo),`second` 调 `B`(经计数包装器 Pending);有界 `String(0,64)`;`context: Unit`;两个调用都在 final state。
@@ -1148,7 +1145,7 @@ error: ahflc run requires the embedded wasm engine; this build was configured wi
 
 **门控位置(组合边缘,零业务逻辑 #ifdef):** CMake 把 `AHFL_ENABLE_BACKEND_WASM=1` 作为 compile-definition 传播给 `ahflc`(WASM=ON 时)。`workflow_run.cpp` 的 `run_workflow_with_llm` 函数体整体在 `#ifdef AHFL_ENABLE_BACKEND_WASM` ... `#else` stub(打印诊断 + return 1)... `#endif` 内。函数签名、`cli_driver.cpp:3986` 的 dispatch、usage 校验(在 gate 内)不变。业务逻辑(LLM 配置、能力绑定、输入解码、恢复存储、intent sink、suspend 包装器)全部在 gate 内,零 #ifdef 散落。`ahflc` 目标始终链接(无 target 缺席导致的链接断裂);WASM=OFF 下函数是 stub,满足 §8 acceptance 4(两矩阵 CONFIGURE+BUILD)。
 
-**过渡期(WH-6..WH-8):** evaluator 仍链接(DAP 直到 WH-8;`ahfl_runtime_engine` PUBLIC 边 `src/runtime/engine/CMakeLists.txt:47` 保留)。WH-6 后 `ahflc run` 是 wasm-only;evaluator 不再是 `run` 的 fallback。WASM=OFF 下 `run` 立即拒绝(stub),不触碰 LLM/能力路径。
+**执行入口：** WH-9 已一次性删除 evaluator 及其链接边。`ahflc run` 仅使用 Wasm runtime；WASM=OFF 下立即拒绝，不触碰 LLM/能力路径。
 
 **REPL 因子:** `ahfl-repl` 今天不作为 RUNTIME 安装(`cmake/modules/AhflInstall.cmake:57-61` 仅安装 `ahflc` + `ahfl-lsp`;`ahfl_tooling_repl` 在 INTERNAL 安装集 `:118`,仅 `AHFL_INSTALL_INTERNAL_TARGETS=ON`)。故 WASM=OFF 下 `ahfl-repl` 的 eval 拒绝是开发工具便利,不是部署契约——但策略一致(构建 + eval 拒绝),因为 §8 #4 要求两矩阵 CONFIGURE+BUILD,且 REPL 的 `:type`/`:verify`/`:simulate`/`:help` 在 WASM=OFF 下必须可用(它们不依赖执行引擎)。
 
@@ -1233,7 +1230,7 @@ error: ahflc run requires the embedded wasm engine; this build was configured wi
 
 **compile-all 语义:** facade ctor 编译程序中**所有** workflow(`wasm_workflow_runtime.cpp:47-70` 循环)。若 sibling workflow 用了 wasm 不支持的构造,整个 run 失败(诊断命名失败的 workflow)。接受:① 程序是一个编译单元,typechecker 已拒绝坏掉的 sibling,wasm codegen 子集更窄,诚实报告 codegen 失败而非静默跳过;② per-entry 过滤(只编译目标)是隐藏 sibling 失败的并行路径,不诚实。参照 Rustc(编译整个 crate)。
 
-**`ahfl.run-report` v1 JSON 字节对齐:** 事件/元数据/审计存储由会话填充(D-D P1-5);WH-5 普查钉死观察对齐。WH-6 用 `ahfl.run-report` JSON 测试验证字节对齐(risk #2)。
+**`ahfl.run-report` JSON 字节对齐:** 事件/元数据/审计存储由会话填充(D-D P1-5);WH-5 普查钉死观察对齐。WH-6 用 `ahfl.run-report` JSON 测试验证字节对齐(risk #2)。
 
 ### 12.7.5 LLM 重入 — 接受,smoke 门控
 
@@ -1256,7 +1253,7 @@ error: ahflc run requires the embedded wasm engine; this build was configured wi
 7. `profile_and_output_contract`——输出契约。
 8. `llm_failure_matrix`——失败映射。
 9. `fail_*` 预运行时测试(`SingleFileCliTests.cmake:353-471`:LLM secret/budget/vault/mock/input-schema)——不受引擎切换影响,保持绿。
-10. `ahfl.run-report` v1 JSON——字节对齐(§12.7.4)。
+10. `ahfl.run-report` JSON——字节对齐(§12.7.4)。
 11. 全量 ctest + ASan + `-Werror` WASM=ON;WASM=OFF configure+build(§12.7.1)。
 
 **切换 commit 形状:** 一个 big-bang flip + 测试更新。evaluator TU 保留到 WH-9。无并行 run 路径,无 flag。commit 内含:workflow_run.cpp(include/using/ctor/gate)+ cli/CMakeLists.txt(gated link + compile-def)+ §12.7.8 facade DiagnosticBag 升级 + 本决策节 + RFC 0026 Decision History 条目。
@@ -1297,7 +1294,7 @@ error: ahflc run requires the embedded wasm engine; this build was configured wi
 1. WASM=ON:`ahflc run` 经 wasm facade 运行;`entry_workflow_default` human "  completed" regex 绿;`durable_resume_flags.smoke` 场景 1/2/2b/2c/2d/3/3b/4 绿(opaque fixture)。
 2. WASM=OFF:`ahflc run` 打印 §12.7.1 诊断 + exit 1;`ahflc check`/`compile`/`verify`/`emit` 等照常;configure+build 干净。
 3. `llm_provider_runtime.smoke` 绿(LLM 重入)。
-4. `ahfl.run-report` v1 JSON 字节对齐(event/metadata/audit 存储)。
+4. `ahfl.run-report` JSON 字节对齐(event/metadata/audit 存储)。
 5. facade ctor 编译失败:lowering/codegen 错误以 SourceRange 诊断渲染,exit 1(非拼接字符串)。
 6. 零业务逻辑 #ifdef(gate 仅在 `run_workflow_with_llm` 函数体边界)。
 7. ASan + `-Werror` 绿。
@@ -1387,11 +1384,11 @@ flow for __repl__ {
 
 ### 12.8.3 车道选择 — codegen `frame_contract` 决定,REPL 不选
 
-P6 vs WireJson 由 codegen 的 `CoreWasmFrameContract`(`core_wasm_codegen.hpp:195`)决定,descriptor 携带。`wasm_host::run_wasm_agent` 按车道驱动(runv for P6,run2 for WireJson)。REPL 不选择、不感知车道。
+P6 vs WireJson 由 codegen 的 `CoreWasmFrameContract`(`core_wasm_codegen.hpp:195`)决定,descriptor 携带。`wasm_host::run_wasm_agent` 按车道驱动(run_frame for P6,run_workflow for WireJson)。REPL 不选择、不感知车道。
 
 **零能力 agent 的 invoker:** REPL 传 fail-closed noop invoker(若被调用则返回错误——但零能力 agent 无 import,永不调用)。`wasm_agent_runner.cpp` 的无导入路径不调用 invoker(import 回调仅在模块有 import 时触发)。合成 agent 无 `capabilities:` 声明 → 无 import → invoker 是防御性的,永不触达。
 
-**字符串/struct 往返:** WireJson 车道(零能力 agent 的默认)经 `value_from_json` 解码输出(`wasm_agent_runner.cpp:447` 区域);String rodata 经 Data 段(已证,e2e/`v2b_string`)。REPL 的 `print_value` 渲染解码后的 Value。
+**字符串/struct 往返:** WireJson 车道(零能力 agent 的默认)经 `value_from_json` 解码输出(`wasm_agent_runner.cpp:447` 区域);String rodata 经 Data 段(已证,e2e/`string`)。REPL 的 `print_value` 渲染解码后的 Value。
 
 ### 12.8.4 Fork D — 输出:`print_value` 存活
 
@@ -1473,7 +1470,7 @@ Error: evaluation requires the embedded wasm engine; this build was configured w
 
 ## 12.8.10 WH-7 §12.8 修订记录(2026-10-03,dedicated decision agent,no human gate)
 
-WH-7 builder 在编码前 STOP(coordinator 已独立复现全部事实):§12.8.1 的逐字合成形状在 HEAD `b9c75736` 无效。专用决策代理对 HEAD 逐条复核,并用 5 个 scratch harness(v1-v5,已全部删除,工作树零残留)在真实 wasm3 车道端到端实证后给出本修订。本节是 §12.8 的权威修订;builder 按 12.8.10.2 / 12.8.10.3 / 12.8.10.9 / 12.8.10.10 实现。
+WH-7 builder 在编码前 STOP(coordinator 已独立复现全部事实):§12.8.1 的逐字合成形状在 HEAD `b9c75736` 无效。专用决策代理对 HEAD 逐条复核,并用 5 个 scratch harness(若干设计候选,已全部删除,工作树零残留)在真实 wasm3 车道端到端实证后给出本修订。本节是 §12.8 的权威修订;builder 按 12.8.10.2 / 12.8.10.3 / 12.8.10.9 / 12.8.10.10 实现。
 
 ### 12.8.10.1 Coordinator 验证的无效事实(file:line)
 
@@ -1553,8 +1550,8 @@ flow for ReplAgent {
 
 1. **Input = 零字段 struct** `struct ReplIn {}`:实证探针确认零字段 struct 存活 Core lowering → `compute_core_layouts` → `emit_core_wasm` → frame_packer → wasm3 run → frame_reader 全管线(packer 遍历零字段无操作)。host 构造空 StructValue(type_name 为空,fields 空;packer 不校验零字段 struct 的 type_name)。
 2. **Output = 包装 struct** `ReplOut { value: T; }`:host 侧 `output()` → StructValue → `fields.get("value')` 取内层 Value → `print_value`。任意 T(Int/Bool/String/Struct/Enum/泛型 Enum/Option)实证通过。
-3. **无 module 声明**:module 会给全部 nominal 类型加 `repl::` 前缀污染输出(实证 v5:`Color::Green` vs `repl::Color::Green`)。
-4. **非 pub**:prologue 类型是 package-internal,pub ReplOut 会报 "public struct exposes package-internal type"(实证 v1)。
+3. **无 module 声明**:module 会给全部 nominal 类型加 `repl::` 前缀污染输出(实证探针:`Color::Green` vs `repl::Color::Green`)。
+4. **非 pub**:prologue 类型是 package-internal,pub ReplOut 会报 "public struct exposes package-internal type"(实证探针)。
 5. **名称全部 IDENT 合法**(字母开头):ReplIn/ReplOut/ReplAgent/repl_val/repl_probe。
 6. **Unit 表达式短路,不走 wasm**:`value: Unit` struct 字段被 codegen 拒绝("computed final value is not a single-word P6 value on the frame lane");推断类型为 UnitT 时直接 `print_value` Unit → `{}`(`value.cpp:547-549`)。
 7. **碰撞语义**:stage-1 无合成声明,用户表达式无法引用合成名;stage-2 若用户 prologue 同名 → 重定义 parse 错误,REPL 诚实返回。危害极低(单次求值,prologue 用户自控)。
@@ -1870,7 +1867,7 @@ std::function<bool()> interruption_requested;
 ```
 
 **检查点**(wasm lane):
-1. **`wrapped_callback` 顶部**(`workflow_session.cpp:643-670`,import boundary):在 trace decode / inner 之前检查。若 `cancellation_requested()` → 置 `cancelled=true`,返回 `eng::ImportAbort{}` 终止 run2;run2 返回后 session 构建 `RunTerminalStatus::Cancelled` + `WorkflowFailureKind::Cancelled` + diagnostic `"workflow execution cancelled"`(与 evaluator `workflow_runtime.cpp:1196-1200` 对齐)。`interruption_requested` 同理 → `Interrupted` + `"workflow execution interrupted"`。此检查覆盖 WH-4b memo/replay boundary(memo 命中也走 `wrapped_callback`,顶部检查在 memo 分类之前)。
+1. **`wrapped_callback` 顶部**(`workflow_session.cpp:643-670`,import boundary):在 trace decode / inner 之前检查。若 `cancellation_requested()` → 置 `cancelled=true`,返回 `eng::ImportAbort{}` 终止 run_workflow;run_workflow 返回后 session 构建 `RunTerminalStatus::Cancelled` + `WorkflowFailureKind::Cancelled` + diagnostic `"workflow execution cancelled"`(与 evaluator `workflow_runtime.cpp:1196-1200` 对齐)。`interruption_requested` 同理 → `Interrupted` + `"workflow execution interrupted"`。此检查覆盖 WH-4b memo/replay boundary(memo 命中也走 `wrapped_callback`,顶部检查在 memo 分类之前)。
 2. **`run_workflow_session` 入口**(pre-run):在 admission/instantiation 之前检查,若已请求取消则直接返回 Cancelled 结果(不启动 wasm 实例)。
 
 **无 import 的 workflow**:没有任何 mid-run 取消点。这类 workflow 的 guest 计算是**有界的**——grammar 无用户循环(`AHFL.g4` statement 仅 exprStmt/ifStmt/gotoStmt/returnStmt 等),递归由 `core_recursion.hpp` R1/R2/R3 格编译期封闭(静态深度来自有界容器容量),wasm `kOpLoop` 仅用于有界内部扫描。因此无 import workflow 必然运行到有界完成,cancellation 请求在 run 完成后才被观察(pre-run 检查除外)。这是诚实的:没有可挂起的边界,就没有 mid-run 取消。DAP 文档说明此契约。
@@ -2069,7 +2066,7 @@ std::function<bool()> interruption_requested;
 4. 双 hook 保留 §12.1 的 P6 live 承诺,同时保留 WH-5c.4 的 census schedule 序奇偶性;WH-5c.4 恰好证明单 hook 无法同时服务两者。
 5. (c) 塌缩为 (a)。
 
-**AHFL-specific 分歧理由**:主流调试器调试原生代码,每条指令可观察,断点绑地址同步 trap。wasm lane 的 host 是 **wasm3 host**,不是 ptrace 控制器:guest 是密封 wasm3 实例,host 只在 capability import 与 run2 返回后获得控制。live state 观察天然 import-boundary 粒度、trace-prefix-only,这是嵌入契约而非调试器限制。双 hook 是该契约的诚实表达:要 live 观察(调试器/progress monitor/tracer)用 `state_entered_live_hook`;要 schedule 序观察(conformance/reporting)用 `state_entered_hook`。把两者混进一个 hook 正是 WH-5c.4 乱序/双发问题的根因。参考层级:LLDB 有 live process event 与 structured-data plugin;DAP 有 stopped(live)与 terminated/output(post-run)——两个时刻两个通道是业界标准。**这不是 debug-only flag 或并行路径(Principle 1)**:是 facade 的新事件通道,语义契约独立,任何 host 可消费,无环境开关、无新旧共存。
+**AHFL-specific 分歧理由**:主流调试器调试原生代码,每条指令可观察,断点绑地址同步 trap。wasm lane 的 host 是 **wasm3 host**,不是 ptrace 控制器:guest 是密封 wasm3 实例,host 只在 capability import 与 run_workflow 返回后获得控制。live state 观察天然 import-boundary 粒度、trace-prefix-only,这是嵌入契约而非调试器限制。双 hook 是该契约的诚实表达:要 live 观察(调试器/progress monitor/tracer)用 `state_entered_live_hook`;要 schedule 序观察(conformance/reporting)用 `state_entered_hook`。把两者混进一个 hook 正是 WH-5c.4 乱序/双发问题的根因。参考层级:LLDB 有 live process event 与 structured-data plugin;DAP 有 stopped(live)与 terminated/output(post-run)——两个时刻两个通道是业界标准。**这不是 debug-only flag 或并行路径(Principle 1)**:是 facade 的新事件通道,语义契约独立,任何 host 可消费,无环境开关、无新旧共存。
 
 ### 12.9.14.3 机制(具体)
 
@@ -2320,7 +2317,7 @@ grep -rn "make_interpreter_closure" src/ tests/      # must be zero
 | 对象 | 数量 | 命运 |
 |------|-------|------|
 | `tests/scripts/wasm_*_node_host.py` | 25 | **删除**(被 66-census + gutted node-parity ctest 取代) |
-| `tests/conformance/node_embedded_host_v2*_probe.mjs` | 5 | **删除**(`v2a_probe`、`v2b_probe`、`v2b_passthrough_probe`、`v2b_arena_probe`、`v2b_enum_probe`——仅被将死 py 脚本消费) |
+| `tests/conformance/node_embedded_host_*_probe.mjs` | 5 | **删除**(`probe`、`probe`、`passthrough_probe`、`arena_probe`、`enum_probe`——仅被将死 py 脚本消费) |
 | `tests/conformance/node_embedded_host.mjs` | 1 | **存活**(gutted node-parity ctest 使用,`conformance_wasm_node_runner.cpp:601,687`) |
 | `tests/CMakeLists.txt` skip-77 ctests | 30 | **删除**(`:61,91,129,...,989` 依赖 node 的 SKIP_RETURN_CODE 77 ctests) |
 | `tests/integration/core_wasm_e1_probe.cpp` | 161 | **删除**(evaluator-forking differential) |
@@ -2381,7 +2378,7 @@ grep -rn "make_interpreter_closure" src/ tests/      # must be zero
 | `node_observation_matches_expectation` | **存活。** 7 个前 node-only stem 无 blessing;它们与 manifest 声明的 `output_json` 期望经此引擎中立函数比较。这是独立契约(对 Node bless,不对 evaluator)。 | `observation_compare.hpp:215` |
 | 7-stem WH-9 后比较 | 数据驱动:blessing 文件存在 → native-vs-blessing(59 stem);不存在 → 经 `node_observation_matches_expectation` 比 manifest 期望(7 stem)。无需 manifest 标记,按 blessing 文件存在性分支。 | — |
 
-**`observation_document.cpp` schema 字符串:保留。** `"ahfl.evaluator-observation.v1"`(`:47`)是 wire-format 标识符,不是对执行引擎的声明。重命名会破坏每个 blessing 的 schema 字段。schema 描述的是引擎中立的 observation JSON 格式。加 dated 注释:"The schema name is historical; the observation format is engine-agnostic and survives the evaluator retirement."
+**`observation_document.cpp` schema 字符串:保留。** `"ahfl.evaluator-observation"`(`:47`)是 wire-format 标识符,不是对执行引擎的声明。重命名会破坏每个 blessing 的 schema 字段。schema 描述的是引擎中立的 observation JSON 格式。加 dated 注释:"The schema name is historical; the observation format is engine-agnostic and survives the evaluator retirement."
 
 ### 12.10.7 Product scope freeze、文档、commit 形状
 
@@ -2409,7 +2406,7 @@ is deleted. ahflc run, the REPL, and the DAP now execute exclusively through
 the vendored wasm3 embedded host. The Value closure arm (InterpreterClosureHandle,
 ValueKind::Callable), NodeFailureKind::EvaluationFailed, the evaluator-driven
 WorkflowRuntime/AgentRuntime/capability_eval/native_host_binding, the Node/V8
-resume port, 25 node-host scripts, 5 v2 probe mjs files, 30 node-dependent
+resume port, 25 node-host scripts, 5 frame probe mjs files, 30 node-dependent
 ctests, and 4 evaluator-forking probes are deleted in the same change.
 WorkflowStatus::EvalError and WorkflowFailureKind::EvaluationFailed survive:
 the wasm lane produces them through fail-closed paths (event-stream-invalid,
@@ -2456,7 +2453,7 @@ builder 按序执行,全部须通过:
 5. **分裂 Class B 测试**:set_map_uuid_timestamp.cpp、wire_value.cpp、native_wasm_differential.cpp、wasm_runner.cpp、core_wire_codec.cpp、capability_bridge.cpp。
 6. **清理 Class A stale refs**:execution_projection.cpp、execution_renderer.cpp。
 7. **退役 conformance schema**:`EvaluatorSurfaceAwaitsKr68` + `engines.evaluator` 从 conformance_case.hpp 移除;更新全部 58 manifest;退役 wasm_eligibility.cpp:232-236 检查。
-8. **删除 node 基础设施**:core_wasm_node_resume_engine.{hpp,cpp}、core_wasm_resume_node_e2e.cpp、25 个 py 脚本、5 个 v2 mjs 探针、tests/CMakeLists.txt 中 30 个 skip-77 ctests、4 个 evaluator-forking probes。
+8. **删除 node 基础设施**:core_wasm_node_resume_engine.{hpp,cpp}、core_wasm_resume_node_e2e.cpp、25 个 py 脚本、5 个 frame mjs 探针、tests/CMakeLists.txt 中 30 个 skip-77 ctests、4 个 evaluator-forking probes。
 9. **Gut node runner**:conformance_wasm_node_runner.cpp → parity-only;更新 conformance_wasm_native_runner.cpp census pin。
 10. **更新文档**(§12.10.7 表)。
 11. **执行验证阶梯**(§12.10.8)。
@@ -2534,7 +2531,7 @@ WH-5b 解决 hybrid workflow module(P6 打包节点 + opaque capability-final �
 
 ### 12.11.0 决策摘要
 
-**选择 Option C:big-bang 在 lowerer 层把 opaque capability-final 归一化为 frame-bridge 调用。** opaque 终端形状(`return Cap(args)` 在 final state)从 wasm 车道的 IR 中完全消失;所有能力调用经 bridge 车道(非 final handler 内调用,结果暂存 context,final state 返回构造值)。hybrid module 不再是一个需要"支持"的形状——它在 lowerer 层被归一化为 canonical P6Frame。v2d rejection test 更新为锁定归一化成功。evaluator 的 opaque-final 快路径在同一变更中删除(Principle 1)。
+**选择 Option C:big-bang 在 lowerer 层把 opaque capability-final 归一化为 frame-bridge 调用。** opaque 终端形状(`return Cap(args)` 在 final state)从 wasm 车道的 IR 中完全消失;所有能力调用经 bridge 车道(非 final handler 内调用,结果暂存 context,final state 返回构造值)。hybrid module 不再是一个需要"支持"的形状——它在 lowerer 层被归一化为 canonical P6Frame。workflow-frame rejection test 更新为锁定归一化成功。evaluator 的 opaque-final 快路径在同一变更中删除(Principle 1)。
 
 ### 12.11.1 事实复现(三个事实)
 
@@ -2554,7 +2551,7 @@ WH-5b 解决 hybrid workflow module(P6 打包节点 + opaque capability-final �
 
 **共存设计已存在但不完整:** `:12862-12905` 的 `!p6 && region.constructed` 检查拒绝 opaque 节点接收 constructed input,但未覆盖 hybrid module 中 opaque 节点接收 simple input 的情形。这是 Fact 1 暴露的缺口。
 
-**已有相关测试:** `v2d_computed_goto_preamble_reject.ahfl` 锁定单 agent hybrid(computed-goto + opaque final 在同一 agent)的 rejection(`UNSUPPORTED_WORKFLOW_FRAME`)。这是同一根因的不同表现:单 agent hybrid 在 codegen 早期被拒,多 agent hybrid 在 frame-layout 验证期被拒。
+**已有相关测试:** `computed_goto_preamble_reject.ahfl` 锁定单 agent hybrid(computed-goto + opaque final 在同一 agent)的 rejection(`UNSUPPORTED_WORKFLOW_FRAME`)。这是同一根因的不同表现:单 agent hybrid 在 codegen 早期被拒,多 agent hybrid 在 frame-layout 验证期被拒。
 
 ### 12.11.3 第二 bug:event_count 不变量破坏
 
@@ -2594,7 +2591,7 @@ WH-5b 解决 hybrid workflow module(P6 打包节点 + opaque capability-final �
 
 **成本:**
 - Lowerer 变换:检测 opaque final、合成 context、移动调用、添加 state——机械但非平凡
-- `v2d_computed_goto_preamble_reject.ahfl` 更新:从锁定 rejection 改为锁定归一化成功
+- `computed_goto_preamble_reject.ahfl` 更新:从锁定 rejection 改为锁定归一化成功
 - Evaluator 的 opaque-final 快路径在同一变更中删除(Principle 1:grep-zero non-test production callers)
 - 现有 all-opaque golden tests(e2/e3/e4/e5/e6/p2_12 等)的 IR 形状变化:lowerer 归一化后,这些 fixture 的 agent 从 opaque 变为 bridge。golden 文件需重新生成
 
@@ -2617,13 +2614,13 @@ WH-5b 解决 hybrid workflow module(P6 打包节点 + opaque capability-final �
 6. **Run-report byte parity:** evaluator 与 wasm 车道对归一化后模块的 run-report 字节一致
 7. **ASan:** ctest 全绿、无 leak
 8. **WASM=OFF:** §12.7 策略不变——`ahflc run` 以可行动诊断拒绝,无 evaluator fallback
-9. **v2d test 更新:** `v2d_computed_goto_preamble_reject.ahfl` 不再 rejection;锁定归一化后 emit + run 成功
+9. **workflow-frame test 更新:** `computed_goto_preamble_reject.ahfl` 不再 rejection;锁定归一化后 emit + run 成功
 10. **Fresh `-Werror` dev build:** 零警告
 11. **精确 gate 列表:**
     - `ahflc run` on hybrid module → wasm lane 成功
     - `ahflc build --target wasm` on hybrid module → emit P6Frame
     - `grep -rn "opaque.*final\|capability.*final.*return" src/compiler/ir/` 为零(opaque 终端形状从 IR 消失)
-    - `grep -rn "UNSUPPORTED_WORKFLOW_FRAME.*opaque\|opaque.*UNSUPPORTED" src/` 为零(v2d rejection 路径删除)
+    - `grep -rn "UNSUPPORTED_WORKFLOW_FRAME.*opaque\|opaque.*UNSUPPORTED" src/` 为零(workflow-frame rejection 路径删除)
 
 ### 12.11.8 先前决策保留声明
 
@@ -2701,7 +2698,7 @@ Bridge-pending trap 影响**所有 bridge workflow**,不仅是 hybrid:
 - **Host node_blocks 索引:** `workflow_session.cpp:1298` 当前用 `runner` 索引 `node_blocks`。改为 P6-only 后需要 per-node `is_p6` + P6-runner ordinal。影响面:post-run event decoding 的 node output 读取。
 - **Event record layout:** tag-0 record 的 `capability`/`source_symbol`/`invocation_ordinal` 字段为零(已由 `append_event_record_write` 处理)。`decode_node_events` 的 `IdentityFieldsNonZero` 检查确保 tag-0 record 无 capability 字段。
 - **e3/e4/e5/e6 resume 测试:** 不受影响——它们是 all-opaque workflow(无 P6 节点,无 tag-0 record)。event_count 行为不变。
-- **v2d 测试:** 不受影响——single-agent hybrid 是不同问题(见 §12.12.9)。
+- **workflow-frame 测试:** 不受影响——single-agent hybrid 是不同问题(见 §12.12.9)。
 
 ### 12.12.7 验收标准(修订)
 
@@ -2713,7 +2710,7 @@ Bridge-pending trap 影响**所有 bridge workflow**,不仅是 hybrid:
 6. **Frame section 诚实性:** `node_blocks` 只含 P6 条目;opaque runner 无条目;host 用 `is_p6` 守卫;`verify_workflow_spans` 无 special-case
 7. **Conformance census:** `ahfl.conformance.wasm_native` 报告 `66 agreed, 0 skipped`(不回归)
 8. **e3/e4/e5/e6 resume 测试:** 不变(all-opaque,无 P6 节点)
-9. **v2d 测试:** 不变(single-agent hybrid 保持 rejection)
+9. **workflow-frame 测试:** 不变(single-agent hybrid 保持 rejection)
 10. **ASan:** ctest 全绿、无 leak
 11. **WASM=OFF:** §12.7 策略不变
 12. **Fresh `-Werror` dev build:** 零警告
@@ -2728,19 +2725,19 @@ Bridge-pending trap 影响**所有 bridge workflow**,不仅是 hybrid:
 | 类别 | 文件 | 影响 |
 |------|------|------|
 | Golden wasm tests(14 个 opaque-terminal) | e2/e3/e4/e5/e6/p2_12/p2_15/fb4_* | **不变**——all-opaque,不是 hybrid |
-| v2d rejection test | `v2d_computed_goto_preamble_reject.ahfl` | **不变**——single-agent hybrid 保持 rejection |
+| workflow-frame rejection test | `computed_goto_preamble_reject.ahfl` | **不变**——single-agent hybrid 保持 rejection |
 | Conformance manifests(58 个) | `tests/conformance/cases/*.json` | **不变**——census 中无 hybrid case |
 | Observation blessings(59 个) | `tests/conformance/observations/*.json` | **不变**——census 中无 hybrid case |
 | 新 hybrid fixtures | P6-before-cap, cap-before-P6, Kahn-reordered | **新增**——3 个测试 fixture(不加入 census,作为独立 ctest) |
 
 **净影响:零现有 fixture/blessing/census 变更。** 3 个新 fixture 作为独立 ctest 加入,不改变 66-census 基线。
 
-### 12.12.9 v2d fixture 命运
+### 12.12.9 workflow-frame fixture 命运
 
-**保持 rejection test,不变。** v2d fixture 是 single-agent hybrid(computed-goto + opaque capability final 在同一 agent)。这与 multi-agent hybrid(P6 agent + 独立 opaque agent)是不同问题:
+**保持 rejection test,不变。** workflow-frame fixture 是 single-agent hybrid(computed-goto + opaque capability final 在同一 agent)。这与 multi-agent hybrid(P6 agent + 独立 opaque agent)是不同问题:
 
 - **Multi-agent hybrid(本切片修复):** P6 agent 和 opaque agent 是独立 runner,各自有正确的 ABI。缺陷在 frame section 发射和 event record 发布。
-- **Single-agent hybrid(v2d,保持 rejection):** 同一 agent 同时有 computed-goto(P6 打包)和 opaque capability final。P6 runner 的 ABI 是 `(i32)->(i32,i32)`,opaque terminal 的 ABI 是 `(i32,i32)->(i32,i32,i32)`——P6 runner 无法调用 opaque terminal import(函数签名不匹配)。修复需要:(a) P6 runner 支持 opaque terminal 调用(新 ABI),或 (b) lowerer 在同一 agent 内把 opaque final 归一化为 bridge 调用。这是 follow-up KR,不在本切片范围。
+- **Single-agent hybrid(workflow-frame,保持 rejection):** 同一 agent 同时有 computed-goto(P6 打包)和 opaque capability final。P6 runner 的 ABI 是 `(i32)->(i32,i32)`,opaque terminal 的 ABI 是 `(i32,i32)->(i32,i32,i32)`——P6 runner 无法调用 opaque terminal import(函数签名不匹配)。修复需要:(a) P6 runner 支持 opaque terminal 调用(新 ABI),或 (b) lowerer 在同一 agent 内把 opaque final 归一化为 bridge 调用。这是 follow-up KR,不在本切片范围。
 
 ### 12.12.10 Bridge-pending parity gap(独立 mandatory slice)
 
@@ -2750,7 +2747,7 @@ Bridge-pending trap 影响**所有 bridge workflow**,不仅是 hybrid:
 2. Scheduler-level suspension at in-handler boundaries:bridge 调用在 runner 内部,scheduler 需要感知 bridge-level pending
 3. WH-4b recorder 泛化:bridge 调用不写 node-event record,recorder 的 `(schedule_pos, ordinal)` identity 模型需要扩展到 bridge ordinals
 4. Fresh-instance replay across bridge sites
-5. Snapshot v2 schema 影响(若 bridge suspension 需要新字段)
+5. Snapshot current structure schema 影响(若 bridge suspension 需要新字段)
 
 **此切片独立于 WH-5b.1(hybrid 修复)。** WH-5b.1 不依赖 WH-5b.2;WH-5b.2 不依赖 WH-5b.1。但 WH-6 gated on 两者:WH-5b.1 关闭 hybrid parity gap,WH-5b.2 关闭 bridge-pending parity gap。
 
@@ -2876,7 +2873,7 @@ transcode 是纯 Value->Value round-trip,经过 host 已有的 codec:
 - struct(扁平 wire 字段集)/tag-only enum/Int/Bool/String:P4-D binary layout(CoreLayoutTable)<-> wire JSON object,两个方向均有 real-wasm3 e2e + evaluator parity 覆盖(`wh5b_hybrid_rich_fidelity` / `wh5b_hybrid_rich_p6_to_opaque`)。enum discriminant 在 P4-D 里是 integer tag,在 wire JSON 里是 enum object field。
 - String:PtrLen <-> wire JSON string。JSON_TO_P4D 方向 String bytes 落地 transcode payload arena;P4D_TO_JSON 方向 PtrLen 可指向 rodata / entry-payload arena / bridge result arena / transcode payload arena,host 的 String region 表必须全部承认。
 - **payload-bearing enum / nested struct / std Option / std Result:codec 支持,workflow 帧边界 e2e 不覆盖。** packer/reader 的 payload-enum/Option arm 由 `frame_packer_reader.cpp` 合成 pin 与 `core_json_round_trip`(经 `@repo-std` project parse 的真实 std Option corpus)覆盖;但 P6 workflow lane 的 scheduler materializer 当前拒绝 node input / workflow return 中的 payload-bearing enum 与嵌套 struct(kUnsupportedWorkflowFrame),computed final 也不能从 host-packed INPUT 转发 aggregate/enum 字段。这是 P6 workflow lane 的既有边界,不是 transcode codec 限制;扩展 materializer 是独立后续 rung。
-- **Decimal/Duration/Timestamp/Float/Uuid/Map:当前 fail closed。** WH-2 的 P4-D 帧子集在 host 侧 pack/read 穷尽分支对这些 wire schema 节点返回 `ValueNotWireEncodable`(`frame_packer.cpp` / `frame_reader.cpp` 的 frame-subset fallthrough)。wire schema 本身接受这些节点,P6 codegen 也能为字面量发射 i64,但 host 侧 P4-D pack/read 不支持。这是 WH-2 帧子集的既有边界,transcode 复用同一 codec 故继承之;`wh5b_hybrid_decimal_fail_closed.ahfl` pin 该安全行为(entry pack 在 run2 之前失败,零 capability invocation)。帧子集扩展是独立后续 KR,不属于 WH-5b.3。
+- **Decimal/Duration/Timestamp/Float/Uuid/Map:当前 fail closed。** WH-2 的 P4-D 帧子集在 host 侧 pack/read 穷尽分支对这些 wire schema 节点返回 `ValueNotWireEncodable`(`frame_packer.cpp` / `frame_reader.cpp` 的 frame-subset fallthrough)。wire schema 本身接受这些节点,P6 codegen 也能为字面量发射 i64,但 host 侧 P4-D pack/read 不支持。这是 WH-2 帧子集的既有边界,transcode 复用同一 codec 故继承之;`wh5b_hybrid_decimal_fail_closed.ahfl` pin 该安全行为(entry pack 在 run_workflow 之前失败,零 capability invocation)。帧子集扩展是独立后续 KR,不属于 WH-5b.3。
 - **Closure:fail closed。** closure 在 wire-schema 构造期即被拒绝(`core_wire_schema.cpp` ws_Closure:"closure values are not supported by value_json"),任何 source-level 程序都无法产生带 Closure 的 wire schema,故 transcode 边界对 Closure 不可达;codec 级拒绝由 `core_json_round_trip` 与 `frame_packer_reader.cpp` pin。transcode 不引入新的 closure 支持。
 
 ### 12.13.7 Determinism + WH-4b replay
@@ -2890,7 +2887,7 @@ transcode 是纯 Value->Value round-trip,经过 host 已有的 codec:
 - Pending 不会在 transcode 中产生(无 invoker)。transcode 的 status 只有 OK / error(fail closed)。
 - `wrapped_callback` 在 memo/replay/event_count 之前路由 transcode(与 bridge skip 同构)。
 
-**ExactSidecar:** transcode 不影响 opaque node 的 ExactSidecar(verbatim wire bytes)。transcode 的输出是 opaque node 的输入(wire JSON),opaque node 的 memo 仍记录其 verbatim wire bytes。
+**StoredMemoResult:** transcode 不影响 opaque node 的 StoredMemoResult(verbatim wire bytes)。transcode 的输出是 opaque node 的输入(wire JSON),opaque node 的 memo 仍记录其 verbatim wire bytes。
 
 ### 12.13.8 Kahn reordering 与 crossed-edge 分类
 
@@ -2934,7 +2931,7 @@ evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。was
 
 2. **NodeOutput cross-lane fixture(P6->opaque 方向):** 一个 workflow,opaque node 消费 P6 node 的 O_k(NodeOutput source)。覆盖 P4D_TO_JSON 从 O_k words 读取(§12.13.5 的 NODE_OUTPUT path)。**此 shape 在当前 language/IR 中可表达:** `check_path`(`core_wasm_codegen.cpp:11815-11856`)对 packaged P6 source 通过(dispatch_types.size()==3、payload 非 null);`append_workflow_source`(`:1859-1866`)push P6 node 的 (ptr,len) locals。当前 runtime blocker(opaque runner 把 P4-D 当 wire-JSON 解析失败)正是 WH-5b.3 transcode 修复的目标。
 
-3. **NodeOutput cross-lane fixture(opaque->P6 方向):** 一个 workflow,P6 node 消费 opaque node 的 output(NodeOutput source),input region 为 constructed(V2D-CTX 支持 capability-result -> constructed node input)。覆盖 JSON_TO_P4D into shadow + normalize + materialize(constructed region)。**此 shape 在当前 codegen 中不可表达:** `emit_root_base`(`core_wasm_codegen.cpp:15410-15412`)对 opaque upstream 返回 false(comment `:15399-15402`:"An upstream OPAQUE node owns no fixed output block... a frame region that roots an opaque output is not materializable on this rung")。WH-5b.3 的 transcode 设计(shadow 作为 materializer root,`emit_root_base` 对 crossed source 返回 shadow_base)使其可表达。**此 fixture 是 WH-5b.3 的 scope,不是 pre-existing capability。**
+3. **NodeOutput cross-lane fixture(opaque->P6 方向):** 一个 workflow,P6 node 消费 opaque node 的 output(NodeOutput source),input region 为 constructed(workflow-context 支持 capability-result -> constructed node input)。覆盖 JSON_TO_P4D into shadow + normalize + materialize(constructed region)。**此 shape 在当前 codegen 中不可表达:** `emit_root_base`(`core_wasm_codegen.cpp:15410-15412`)对 opaque upstream 返回 false(comment `:15399-15402`:"An upstream OPAQUE node owns no fixed output block... a frame region that roots an opaque output is not materializable on this rung")。WH-5b.3 的 transcode 设计(shadow 作为 materializer root,`emit_root_base` 对 crossed source 返回 shadow_base)使其可表达。**此 fixture 是 WH-5b.3 的 scope,不是 pre-existing capability。**
 
 4. **Opaque-return fixture:** 一个 workflow,return 是 opaque node。覆盖 JSON_TO_P4D into workflow_output region + host post-run read path。**此 shape 在 hybrid workflow 中当前不可表达:** hybrid workflow(p6=true)的 output 走 materializer path(`:16282-16297`),materializer 的 `emit_root_base` 对 opaque-rooted return region 返回 false(同 :15410-15412)。WH-5b.3 的 transcode(JSON_TO_P4D into workflow_output shadow)使其可表达。**此 fixture 是 WH-5b.3 的 scope。**
 
@@ -2988,7 +2985,7 @@ evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。was
 
 **Option B(unify encoding)- REJECTED。**
 - all-JSON:module 内需要 JSON codec(P4-D 是唯一 in-module 编码)。在 module 内实现 JSON parser 是重新发明 host 已有的轮子,违反 Principle 1。且 P4-D 的 CoreLayoutTable 是 zero-copy 的,JSON 解析引入运行时开销。
-- all-P4-D:opaque node 的 WH-4b ExactSidecar 是 verbatim wire bytes(`§12.6`),wire-schema 是 capability transport 的契约。改成 P4-D 会破坏 ExactSidecar、wire-schema、evaluator parity(evaluator 用 Value,不是 P4-D)。
+- all-P4-D:opaque node 的 WH-4b StoredMemoResult 是 verbatim wire bytes(`§12.6`),wire-schema 是 capability transport 的契约。改成 P4-D 会破坏 StoredMemoResult、wire-schema、evaluator parity(evaluator 用 Value,不是 P4-D)。
 - AHFL-specific reason:host 已经拥有全部 codec;在 module 内重新实现是 duplicate ownership,违反 Rust/Clang 的"host owns ABI serialization"模型。
 
 **Option C(§12.11 normalization)- REJECTED(已在 §12.12 否决,此处简述)。**
@@ -3014,7 +3011,7 @@ evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。was
 
 ### 12.13.14 Prior-decision preservation statement
 
-- **§12.6(WH-4b suspend/resume):** 保留,不重写。transcode 不改变 opaque terminal 的 PENDING latch、memo/replay、ExactSidecar。transcode 是确定性的,在 fresh-instance replay 中重新执行。
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。transcode 不改变 opaque terminal 的 PENDING latch、memo/replay、StoredMemoResult。transcode 是确定性的,在 fresh-instance replay 中重新执行。
 - **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 修订(§12.13.13)。
 - **§12.11(Option C):** 原样保留作历史档案。
 - **§12.12(Option A'):** 保留作历史档案。其修复 (a)/(b) 是 WH-5b.3 的必要前置,作为 WH-5b.1 落地。§12.12 的遗漏(编码边界)在 §12.13.1 中记录,由本节关闭。
@@ -3040,54 +3037,33 @@ evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。was
 
 ### 12.14.2 决策摘要
 
-**ONE coherent big-bang change:** bridge lane 的 Pending 从 trap 改为 graceful suspend,复用 WH-4b 的 `(node, per-node ordinal)` memo identity、`WasmResumeRecorder` classify/memo/replay、`WorkflowRecoverySnapshot` v2 持久化。具体:
+**ONE coherent big-bang change:** bridge lane 的 Pending 从 trap 改为 graceful suspend,复用 WH-4b 的 `(node, per-node ordinal)` memo identity、`WasmResumeRecorder` classify/memo/replay、当前 `WorkflowRecoverySnapshot` 持久化。具体:
 
-1. **Snapshot schema: stays v2。** `CapabilityMemoEntry` 的 `(optional<WorkflowNodeId> node, ordinal per-NODE, cap_id, arg_hash)` identity 已覆盖 in-handler call。per-node ordinal 计数 node 内所有 capability call(evaluator:`workflow_runtime.cpp:754`;wasm:recorder `per_node_counters_`),不区分 opaque terminal 还是 in-handler bridge。无需新字段。
-2. **Manifest extension: exec manifest v2。** scheduler-boundary per-node byte(`cap_call_count`)保持 binary(0 = identity,1 = opaque cap site)。P6 bridge node 发 `cap_call_count=0`(identity)加空 `capabilities`。新增 per-node in-runner bridge-site table:`(ordinal: u8, call_site_id: u32, capability_id: u32, source_symbol: u64)`。A2 admission-set equality 变为:union of (opaque sites from `cap_call_count=1` nodes) + (bridge sites) == wire schema capabilities == module imports。manifest version 从 1 升到 2,decoder 只接受 v2(big-bang,无 coexistence)。
-3. **Guest ABI: graceful PENDING return。** bridge status arm 从 `if (status != 0) unreachable` 改为 `if (status == PENDING) return (PENDING,0,0) from runner; if (status != OK) unreachable`。scheduler 的 P6 node dispatch 在 tag-0 write 之前加 PENDING arm:latch + return `(PENDING,0,0)` from run2。ERROR 保持 trap(parity:evaluator `CapabilityFailed -> NodeFailed`;wasm trap -> `NodeFailed`——observation 相同)。
-4. **Host suspension coordinate:** run2 tuple `(PENDING,0,0)` 信号 suspend。scheduler 在 runner suspend 时不写 tag-0 event record,`event_count` 保持 node 的 `schedule_pos`。snapshot 的 `suspended.node` / `suspended.agent` / `suspended.pending_ordinal` 从 recorder 的 stamped coordinate 推导。
+1. **Snapshot: current exact structure。** `CapabilityMemoEntry` 的 `(WorkflowNodeId node, ordinal per-NODE, cap_id, arg_hash)` identity 已覆盖 in-handler call。per-node ordinal 计数 node 内所有 capability call(evaluator:`workflow_runtime.cpp:754`;wasm:recorder `per_node_counters_`),不区分 opaque terminal 还是 in-handler bridge。无需新字段。
+2. **Manifest extension: exec current manifest。** scheduler-boundary per-node byte(`cap_call_count`)保持 binary(0 = identity,1 = opaque cap site)。P6 bridge node 发 `cap_call_count=0`(identity)加空 `capabilities`。新增 per-node in-runner bridge-site table:`(ordinal: u8, call_site_id: u32, capability_id: u32, source_symbol: u64)`。A2 admission-set equality 变为:union of (opaque sites from `cap_call_count=1` nodes) + (bridge sites) == wire schema capabilities == module imports。manifest 无版本字段，decoder 只接受包含完整 bridge-site table 的当前结构。
+3. **Guest ABI: graceful PENDING return。** bridge status arm 从 `if (status != 0) unreachable` 改为 `if (status == PENDING) return (PENDING,0,0) from runner; if (status != OK) unreachable`。scheduler 的 P6 node dispatch 在 tag-0 write 之前加 PENDING arm:latch + return `(PENDING,0,0)` from run_workflow。ERROR 保持 trap(parity:evaluator `CapabilityFailed -> NodeFailed`;wasm trap -> `NodeFailed`——observation 相同)。
+4. **Host suspension coordinate:** run_workflow tuple `(PENDING,0,0)` 信号 suspend。scheduler 在 runner suspend 时不写 tag-0 event record,`event_count` 保持 node 的 `schedule_pos`。snapshot 的 `suspended.node` / `suspended.agent` / `suspended.pending_ordinal` 从 recorder 的 stamped coordinate 推导。
 5. **Fresh-instance replay:** suspended node 之前的 node replay;suspended runner 内更早的 bridge call 从 per-node memo 供给:host 把 recorded P4-D frame + String payload arena bytes 写回 `site.result_base` + `site.result_payload_base`(与 live `handle_bridge` placement 完全一致)。
 6. **Composition with WH-5b.3 xcode:** xcode 在 wrapped_callback 中 route FIRST(pure codec,no memo),bridge/opaque 走 memo/replay。无 contamination。
 7. **Census + tests:** 新增 `suspended` terminal scenario;evaluator parity of suspended terminal + resumed completion;enumerated fail-closed cases。
 8. **Agent-lane scope:** WH-5b.2 是 workflow-lane only。agent lane(`WasmAgentRunner`)无 recovery-snapshot consumer,保持 `NodeFailed`。
 
-### 12.14.3 Q1: Snapshot schema — v2 stays
+### 12.14.3 Q1: Current snapshot
 
-**决策:不升 v3。`ahfl.workflow-recovery.v2` 保持不变。**
+`CapabilityMemoEntry` 使用必填 node、节点内 ordinal、cap_id 与 arg_hash。
+Bridge 和 opaque capability 均进入同一 recorder/memo/replay 流程。当前 snapshot
+唯一标识为 `format: "ahfl.workflow-recovery"`，`suspended` 必填为 null 或对象。
+结果使用明确的 `InMemoryMemoResult` / `StoredMemoResult` variant；存储结果只有
+精确 bytes 与 presence。Bridge 的 frame bytes 与 String payload 都由对应 lane
+的 binding/placement 验证，不能用 schema-free 投影代替。
 
-理由:
+### 12.14.4 Q2: Current execution manifest
 
-- `CapabilityMemoEntry`(`workflow_recovery.hpp:81-94`)的 identity 是 `(optional<WorkflowNodeId> node, ordinal per-NODE, cap_id, arg_hash)`。bridge call 发生在 node 的 agent 内部;per-node ordinal 已计数 node 内每个 call,不论 statement position。
-- evaluator 的 per-node ordinal:`workflow_runtime.cpp:754` `const std::uint64_t memo_ordinal = node_memo.next_ordinal++`——在 node 的 capability-call loop 内递增,覆盖 in-handler call。
-- wasm 的 per-node ordinal:`wasm_resume_recorder.hpp:155` `std::vector<std::uint64_t> per_node_counters_`,按 `schedule_pos` index,在 `begin_import` 中递增。bridge import 走同一 `begin_import`(删除 skip 后),ordinal 空间自然扩展。
-- 一个 node 要么是 P6(bridge calls),要么是 opaque(一个 opaque terminal call),不会同时是两者。因此 `(node, ordinal)` 无歧义。
-- `authoritative_json` 是 `optional<string>`,可存任意 bytes(P4-D frame + String payload arena)。ExactSidecar trust state 不变。
-- `SuspendedNodeState`(`workflow_recovery.hpp:113-127`)的 `pending_cap_id` / `pending_ordinal` 直接复用。`node_input` 在 wasm lane 保持 `nullopt`(in-guest materialized input 不是 host-observable)。
+Manifest 只编码一份当前结构，没有 version 字节。完整 bridge-site table 是
+必填当前字段；计数为零显式编码。模块发射器、宿主解析器和测试一起更新。
 
-**无需新 snapshot 字段。** 缺失的 piece 纯粹是 host-side:wrapped_callback 跳过 bridge import 的 memo/replay(§12.14.1 证据 3)。删除 skip、把 bridge import 路由进 memo/replay machinery 后,identity 空间自然覆盖。
-
-### 12.14.4 Q2: Manifest extension — exec manifest v2 with in-runner bridge-site table
-
-**决策:exec manifest 从 v1 升到 v2,新增 per-node in-runner bridge-site table。scheduler-boundary byte 保持 binary。**
-
-**当前 v1 格式(`core_wasm_schema_module.cpp:909-958` encode,`:703-852` decode):**
-
-```
-magic "AHFLXM" + version(u8) + entry_kind(u8) + workflow_id(u32) + node_count(u32)
-per node:
-  workflow_node_id(u32) + schedule_pos(u32) + cap_call_count(u8) + capabilities[] {
-    capability(u32) + source_symbol(u64)
-  }
-```
-
-**v1 的 latent gap(`core_wasm_codegen.cpp:14770-14776` 注释原文):**
-
-> "KNOWN latent gap (owned by WH-5b.2): a bridge P6 node's scheduler-level completion is an identity event (design 12.12.5: tag-0 record, zero capability fields), yet its per-node manifest cap byte below counts its in-handler bridge imports. The tag-0 record vs cap-byte distinction is a resume-coordinate inconsistency. WH-5b.2 must introduce a separate in-runner site table (the scheduler-boundary byte stays binary) jointly with admission-set semantics and the resume classifier (design 12.12.10)."
-
-**v2 格式(big-bang,decoder 只接受 v2):**
-
-```
-magic "AHFLXM" + version=2(u8) + entry_kind(u8) + workflow_id(u32) + node_count(u32)
+```text
+magic "AHFLXM" + entry_kind(u8) + workflow_id(u32) + node_count(u32)
 per node:
   workflow_node_id(u32) + schedule_pos(u32) + cap_call_count(u8) + capabilities[] {
     capability(u32) + source_symbol(u64)
@@ -3096,6 +3072,11 @@ per node:
     ordinal(u8) + call_site_id(u32) + capability(u32) + source_symbol(u64)
   }
 ```
+
+解析器校验完整字段、canonical 编码、ID 和 EOF。不能依靠尾部缺失选择历史
+manifest；缺少 bridge-site count 等必填尾部一律拒绝。
+
+
 
 **字段语义:**
 
@@ -3120,7 +3101,7 @@ session 交叉检查 manifest bridge-site table 与 frame section:
 
 **D5 instance-reuse 不受影响:** `core_wasm_codegen.cpp:12997-13001` 确保每个 P6 node 有自己的 runner。in-runner bridge-site table 是 per-node 的,每个 node 的 runner unique,因此 `(node, ordinal) -> call_site_id` 映射无歧义。
 
-**Agent arm:** agent manifest 保持 flat capability list(无 bridge sites),但 version 升到 2。decoder 对 agent arm 不读 `bridge_site_count`。
+**Agent arm:** agent manifest 使用 flat capability list；按当前 arm 结构解码，字段不得由历史 version 选择。
 
 ### 12.14.5 Q3: Guest ABI — graceful PENDING return
 
@@ -3158,19 +3139,19 @@ if (runner_status != AHFL_CAP_OK) unreachable
 if (runner_status == AHFL_CAP_PENDING) {
     // Same shape as the opaque lane's PENDING arm (line 16577-16595).
     set kWorkflowGlobalPendingLatched;
-    return (AHFL_CAP_PENDING, 0, 0) from run2;
+    return (AHFL_CAP_PENDING, 0, 0) from run_workflow;
 }
 if (runner_status != AHFL_CAP_OK) unreachable
 ```
 
 这与 opaque lane 的 PENDING arm(`core_wasm_codegen.cpp:16577-16595`)形状完全一致:check `status == PENDING`、check `ptr == 0`、set latch、return `(PENDING,0,0)`。
 
-**Run2 first-instruction gate 不变(`core_wasm_codegen.cpp:16689-16693`):** 如果 `kWorkflowGlobalPendingLatched` 已 set,run2 第一条指令 trap。fresh instance 清除 latch。这复用现有机制,无需新 global。
+**WorkflowRun first-instruction gate 不变(`core_wasm_codegen.cpp:16689-16693`):** 如果 `kWorkflowGlobalPendingLatched` 已 set,run_workflow 第一条指令 trap。fresh instance 清除 latch。这复用现有机制,无需新 global。
 
 **ERROR 保持 trap 的 parity 论证:**
 
 - evaluator:capability failure -> `CapabilityFailed` -> `NodeFailed`(`workflow_runtime.cpp` failure-classification loop)。
-- wasm bridge lane:ERROR -> trap -> `Run2Trapped` -> `NodeFailed`(`workflow_session.cpp:1320-1326`)。
+- wasm bridge lane:ERROR -> trap -> `WorkflowRunTrapped` -> `NodeFailed`(`workflow_session.cpp:1320-1326`)。
 - terminal status 相同(`NodeFailed`)。trap 是 wasm 对 evaluator error-propagation 的等价表达。无需 graceful ERROR arm。
 
 **PENDING with non-null result_ptr:** 与 opaque lane 一致(`core_wasm_codegen.cpp:16588-16593`):PENDING + non-null ptr 是 malformed -> ERROR,不 latch。bridge status arm 的 PENDING 分支只在 `status == PENDING` 时触发,`ptr` 和 `len` 被忽略(runner 直接返回 `(PENDING,0,0)`)。host 的 `handle_bridge` 在 Pending 时返回 `ImportReply{AHFL_CAP_PENDING, GuestPointer{0}, 0}`(`capability_import.cpp:520-525`),所以 `ptr` 总是 0。
@@ -3179,14 +3160,14 @@ if (runner_status != AHFL_CAP_OK) unreachable
 
 ### 12.14.6 Q4: Host suspension coordinate
 
-**决策:host 通过 run2 tuple `(PENDING,0,0)` 区分 mid-runner pending 与 completed。suspend 时不写 tag-0 event record,`event_count` 保持 node 的 `schedule_pos`。**
+**决策:host 通过 run_workflow tuple `(PENDING,0,0)` 区分 mid-runner pending 与 completed。suspend 时不写 tag-0 event record,`event_count` 保持 node 的 `schedule_pos`。**
 
 **Mid-runner pending:**
 1. bridge call 返回 PENDING -> runner 返回 `(PENDING,0,0)`。
-2. scheduler P6 node dispatch 检测 PENDING -> latch + return `(PENDING,0,0)` from run2。
+2. scheduler P6 node dispatch 检测 PENDING -> latch + return `(PENDING,0,0)` from run_workflow。
 3. scheduler 在 tag-0 write(`core_wasm_codegen.cpp:16519-16527`)之前 return,所以 **不写 tag-0 event record**。
 4. `event_count` 保持 node 的 `schedule_pos`(P6 node 未完成)。
-5. host 的 run2 pending arm(`workflow_session.cpp:1327-1333`)检测 `(PENDING,0,0)` -> `run_status = Suspended`。
+5. host 的 run_workflow pending arm(`workflow_session.cpp:1327-1333`)检测 `(PENDING,0,0)` -> `run_status = Suspended`。
 6. recorder 在 bridge import callback 中 stamp pending coordinate(`workflow_session.cpp:1014-1018` `recorder.stamp_pending()`)。
 7. snapshot construction(`workflow_session.cpp:1521-1591`):`suspended.node = pending->node`,`suspended.agent = descriptor node's runner`,`suspended.pending_cap_id = pending->cap_id`,`suspended.pending_ordinal = pending->ordinal`。
 
@@ -3199,7 +3180,7 @@ if (runner_status != AHFL_CAP_OK) unreachable
 
 **D1b resume controller(test-only FOUNDATION)修订(`core_wasm_resume_controller.cpp:315-392`):**
 
-`coordinate_gate` 当前要求 frontier 是 `NodeKind::Capability`(`cap_call_count=1`)。v2 manifest 中 P6 bridge node 的 `cap_call_count=0`(identity)。controller 必须接受 P6 bridge node 作为 frontier:
+`coordinate_gate` 当前要求 frontier 是 `NodeKind::Capability`(`cap_call_count=1`)。current manifest 中 P6 bridge node 的 `cap_call_count=0`(identity)。controller 必须接受 P6 bridge node 作为 frontier:
 - frontier node 的 `cap_call_count == 0` 且 `bridge_sites` 非空 -> 合法 frontier。
 - `event_join` 检查:`cap_call_count=1` != tag-1 record -> mismatch;P6 bridge node `cap_call_count=0` 且 tag-0 record(identity)-> match。
 - frontier 的 pending coordinate 与 `bridge_sites[ordinal]` 交叉检查(`capability` + `source_symbol`)。
@@ -3226,7 +3207,7 @@ wrapped_callback 在 `inner(obs)` 返回后(`workflow_session.cpp:1014-1072`):
 - host 从 `result_base` 读 `result_extent` bytes(P4-D frame)。
 - host 还需读 String payload arena bytes:`result_payload_base` 起 `result_payload_capacity` bytes。
 - wrapped_callback 通过 control-block 解析 bridge site(与 `handle_bridge` 的 `capability_import.cpp:332-366` 相同逻辑:`obs.scalar_arg -> block_ptr -> block_index -> bridge_call_sites[block_index]`),获取 `result_payload_base` + `result_payload_capacity`。
-- memo entry 的 `authoritative_json = [P4-D frame (result_extent bytes)][String payload arena (result_payload_capacity bytes)]`。
+- memo entry 的 `result_wire_json = [P4-D frame (result_extent bytes)][String payload arena (result_payload_capacity bytes)]`。
 
 **Bridge memo injection(replay, MemoHit):**
 
@@ -3306,13 +3287,13 @@ scheduler 在 runner 之前 call xcode(transcode input),然后 call runner。run
 5. **ERROR status word:** bridge call 返回 ERROR -> trap -> `NodeFailed`(parity with evaluator)。
 6. **PENDING carrying non-empty result:** bridge call 返回 PENDING with non-null `result_ptr` -> host `handle_bridge` 总是返回 `GuestPointer{0}` for Pending,所以这种情况不可达;defense-in-depth check 保持。
 7. **Tag-0 published while suspended:** scheduler 在 runner pend 时不写 tag-0 record。test 验证 `event_count` 保持 `schedule_pos`。
-8. **Manifest v1 rejection:** decoder 拒绝 v1 manifest(`*version != kExecManifestVersion` -> error)。
+8. **Manifest strict rejection:** decoder 拒绝缺少必填 bridge-site table 或含额外尾部的结构。
 9. **Bridge site ordinal gap:** per-node ordinals 不 dense(0, 2, ...) -> fail closed。
 10. **Bridge site call_site_id duplicate:** 同一 workflow 内两个 bridge site 有相同 `call_site_id` -> fail closed。
 
 **Agent-lane vs workflow-lane scope:**
 
-WH-5b.2 是 **workflow-lane only**。agent lane(`WasmAgentRunner`)无 recovery-snapshot consumer、无 conformance census pressure for pending。agent lane 的 run2 Pending arm 保持 `NodeFailed`。这与 §12.6.10 的 scope 一致。
+WH-5b.2 是 **workflow-lane only**。agent lane(`WasmAgentRunner`)无 recovery-snapshot consumer、无 conformance census pressure for pending。agent lane 的 run_workflow Pending arm 保持 `NodeFailed`。这与 §12.6.10 的 scope 一致。
 
 **D5 instance-reuse 影响:**
 
@@ -3331,10 +3312,10 @@ WH-5b.2 是 **workflow-lane only**。agent lane(`WasmAgentRunner`)无 recovery-s
 9. - [ ] Evaluator parity:suspended terminal + resumed completion match(`run_status`、`pending_cap_id`、`pending_ordinal`、output bytes)。
 10. - [ ] Determinism:data-dependent later calls(ordinal 0 live->memo,ordinal 1 pending)在 replay 时确定性到达。
 11. - [ ] No tag-0 on suspend:`event_count` 保持 `schedule_pos`;snapshot 的 `completed_nodes` 不含 suspended node。
-12. - [ ] Manifest v2:codegen emits v2;decoder rejects v1;A2 admission-set equality(opaque + bridge == wire schema == imports)holds;transcode imports excluded。
+12. - [ ] Current manifest：emitter/decoder 严格对拍；A2 admission-set equality(opaque + bridge == wire schema == imports)holds;transcode imports excluded。
 13. - [ ] Host-side trust checks:manifest bridge-site table 与 frame section 交叉检查(call_site_id、source_symbol、bounds、ordinal density、call_site_id uniqueness)。
 14. - [ ] D1b resume controller(test-only):P6 bridge node 作为 frontier 被接受;coordinate_gate 通过。
-15. - [ ] No old/new coexistence:v1 manifest decoder 删除;bridge trap arm 删除;wrapped_callback bridge skip 删除;`cap_call_count > 0` for P6 bridge nodes 删除。
+15. - [ ] No old/new coexistence：历史 manifest decoder 删除;bridge trap arm 删除;wrapped_callback bridge skip 删除;`cap_call_count > 0` for P6 bridge nodes 删除。
 
 ### 12.14.11 Q9: Rejected alternatives
 
@@ -3356,18 +3337,18 @@ evaluator 的 ordinal 是 per-node(`workflow_runtime.cpp:754`)。global ordinal 
 
 **Option E: Compat flag / dual implementation — REJECTED by CLAUDE.md Principle 1。**
 
-无 transitional state,无 old/new coexistence。big-bang change flip every call site:codegen emits v2 manifest,decoder accepts only v2,bridge status arm changes,old trap path deleted,wrapped_callback bridge skip deleted,`cap_call_count > 0` for P6 bridge nodes deleted。`BREAKING CHANGE:` footer 标记这些删除。
+无 transitional state,无 old/new coexistence。big-bang change flip every call site:codegen emits complete current manifest,decoder accepts only its exact structure,bridge status arm changes,old trap path deleted,wrapped_callback bridge skip deleted,`cap_call_count > 0` for P6 bridge nodes deleted。`BREAKING CHANGE:` footer 标记这些删除。
 
 **Option F: Put in-runner bridge-site table in frame section instead of exec manifest — REJECTED。**
 
-frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capability identity。A2 admission 读 exec manifest 做 set equality;把 bridge-site table 放 frame section 会迫使 admission 同时读两个 payload,增加 attack surface。exec manifest 是 import authority 的 natural home(A2 已读它)。`call_site_id` join 到 frame section 的 `bridge_call_sites` 用于 result placement,这是 table join,不是 duplication。
+frame section(`ahfl.core-layout`)是 P4-D layout authority,不携带 capability identity。A2 admission 读 exec manifest 做 set equality;把 bridge-site table 放 frame section 会迫使 admission 同时读两个 payload,增加 attack surface。exec manifest 是 import authority 的 natural home(A2 已读它)。`call_site_id` join 到 frame section 的 `bridge_call_sites` 用于 result placement,这是 table join,不是 duplication。
 
 ### 12.14.12 Costs / LOC
 
 | Component | LOC delta | Notes |
 |-----------|-----------|-------|
-| `core_wasm_codegen.cpp` | ~150 | bridge status arm PENDING(~20)、scheduler P6 PENDING arm(~20)、manifest v2 emission(~50)、bridge-site table emission(~60) |
-| `core_wasm_schema_module.cpp` | ~160 | manifest v2 decode(~80)、A2 admission-set equality(~40)、bridge-site table in payload(~40) |
+| `core_wasm_codegen.cpp` | ~150 | bridge status arm PENDING(~20)、scheduler P6 PENDING arm(~20)、current manifest emission(~50)、bridge-site table emission(~60) |
+| `core_wasm_schema_module.cpp` | ~160 | current manifest decode(~80)、A2 admission-set equality(~40)、bridge-site table in payload(~40) |
 | `workflow_session.cpp` | ~350 | bridge memo/replay routing(~100)、bridge memo capture + String arena(~60)、bridge memo injection(~80)、bridge frontier injection(~60)、host-side trust checks(~50) |
 | `capability_import.cpp` | ~80 | refactor argument decoding + packing into shared helpers |
 | `wasm_resume_recorder.hpp/cpp` | ~30 | generalize to bridge calls(per_node_counters_ already covers) |
@@ -3388,7 +3369,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 ### 12.14.14 Prior-decision preservation statement
 
-- **§12.6(WH-4b suspend/resume):** 保留,不重写。WH-5b.2 复用 WH-4b 的 memo/replay 基础设施(`WasmResumeRecorder`、`WorkflowRecoverySnapshot` v2、ExactSidecar),不改变 opaque terminal 的 PENDING latch、memo/replay、snapshot schema。bridge lane 是 WH-4b machinery 的新 consumer,不是新机制。
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。WH-5b.2 复用 WH-4b 的 memo/replay 基础设施(`WasmResumeRecorder`、当前 `WorkflowRecoverySnapshot`、StoredMemoResult),不改变 opaque terminal 的 PENDING latch、memo/replay、snapshot schema。bridge lane 是 WH-4b machinery 的新 consumer,不是新机制。
 - **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 不变(§12.14.13)。
 - **§12.12(Option A'):** 保留作历史档案。§12.12.10 记录的 bridge-pending parity gap 由本节关闭。
 - **§12.13(WH-5b.3 transcode):** 保留,不重写。WH-5b.2 不改变 transcode 的 routing order、shadow/payload arena、fail-closed guards。xcode 与 bridge memo/replay 无 contamination(§12.14.8)。
@@ -3405,17 +3386,17 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 | Test | 机制 | 精确 error |
 |------|------|-----------|
-| #213 #214 #421 #422 | GAP 1 | `error [wasm.RESOURCE_EXHAUSTED]: two workflow nodes reuse one packaged agent instance; V2-D assigns one node-frame block per instance in a P6-frame workflow and rejects reuse (re-use analysis pending)` |
+| #213 #214 #421 #422 | GAP 1 | `error [wasm.RESOURCE_EXHAUSTED]: two workflow nodes reuse one packaged agent instance; workflow-frame assigns one node-frame block per instance in a P6-frame workflow and rejects reuse (re-use analysis pending)` |
 | #423 | GAP 2 | `error [wasm.UNSUPPORTED_CAPABILITY_FRAME]: KR6.5 E2 capability final must contain canonical input, one call, and return` |
-| #424 | GAP 5 | `error [wasm.UNSUPPORTED_CAPABILITY_FRAME]: RFC 0026 P6 scalar codegen cannot lower body 'Evaluate': a String literal is constructible only inside a P6-7 frame-bridge v2 computed final: this builder owns no in-module rodata region (the E1-E3/FB lanes never build one, and V2-B does not construct String literals in a non-final frame handler)` |
-| #425 #426 #427 | GAP 3 | `error [wasm.host-abort]: run_workflow_session: run2 host-aborted (capability import failure) (CapabilityImportError=ArgDecodeFailed)` |
-| (parity) | GAP 4 | `ahfl.run-report` v1 的 `output_value_id` 在 wasm lane 为 null,evaluator 为 0/1 |
+| #424 | GAP 5 | `error [wasm.UNSUPPORTED_CAPABILITY_FRAME]: RFC 0026 P6 scalar codegen cannot lower body 'Evaluate': a String literal is constructible only inside a P6-7 frame bridge computed final: this builder owns no in-module rodata region (the E1-E3/FB lanes never build one, and string-frame does not construct String literals in a non-final frame handler)` |
+| #425 #426 #427 | GAP 3 | `error [wasm.host-abort]: run_workflow_session: run_workflow host-aborted (capability import failure) (CapabilityImportError=ArgDecodeFailed)` |
+| (parity) | GAP 4 | `ahfl.run-report` 的 `output_value_id` 在 wasm lane 为 null,evaluator 为 0/1 |
 
 **Source 证据链(HEAD c960bff0 + uncommitted cutover):**
 
 1. **GAP 1(instance reuse):** `core_wasm_codegen.cpp:13078-13088` D5 lifecycle rule——`if (plan.has_p6_nodes) for (instance_users) if (users > 1) -> kResourceExhausted`。`node_blocks` 按 packaged-instance dense runner index keyed(`p6_block_by_runner` 12348-12357;`node_blocks` P6-dense 13878-13894)。runner code **not frame-base-reentrant**:`P6FrameRelocation` 把 `I_k/C_k/scratch_k/O_k` bake 成 `i32.const` immediate(13455-13463);runner 忽略其 `(ptr,len)` args 做 addressing(15351-15353);每个 runner 有 private `current_state` global(globals (5/6)+runner);scheduler 验证 returned `O_k` 命名 runner 自己的 block(16706-16721)。
 2. **GAP 2(opaque capability-final canonical-only):** `validate_capability_final`(1428-1517)要求 canonical 3-statement shape `let in=input; let r=Cap(in); return r;`。fixture `state Done { return Echo(Request{value: input.value}); }` 构造 aggregate arg,被拒。第二道 gate:scheduler materializer 拒绝 constructed P4-D input 到 opaque node(13041-13046 "add the frame-bridge packaging")。§12.12 forbids normalizing opaque-final to bridge。
-3. **GAP 5(#424 String literal in non-final handler):** `examples/execution-demo/src/decision.ahfl` 的 `state Evaluate`(non-final)赋值 String literal(`ctx.reason = "high severity incident";`)。P6 scalar/FB builder 不 own rodata Data region——V2-B 的 `shared_rodata_pool` + active Data(11) segment 只在 P6-7 frame-bridge v2 computed-final 路径 build。
+3. **GAP 5(#424 String literal in non-final handler):** `examples/execution-demo/src/decision.ahfl` 的 `state Evaluate`(non-final)赋值 String literal(`ctx.reason = "high severity incident";`)。P6 scalar/FB builder 不 own rodata Data region——string-frame 的 `shared_rodata_pool` + active Data(11) segment 只在 P6-7 frame bridge computed-final 路径 build。
 4. **GAP 3(null-root descriptor):** host 侧 `build_bridge_root_regions`(180-238)**已**包含每个 node block 的 `scratch_k`(workflow lane);`build_bridge_string_regions`(129-172)已包含 entry payload arena `[1136,3184)`。host authorization **正确且 fail-closed**。`capability_import.cpp:674` 的 `len==layout->size` check **PASS**(8-byte inline Request root);`:678` 的 root-region check **FAIL**,因为 guest 写的 descriptor 是 `(ptr=0, len=8)`——constructed aggregate 的 root address 是 NULL。**关键经验注记:** code-section byte dump 显示 relocated Init handler 发射了正确的 construct address(`i32.const 1104; local.set 2; local.get 2; i32.store @1080`),但 runtime descriptor 读到 0。builder 必须 pin 精确机制(见 §12.15.6)。
 5. **GAP 4(output_value_id parity + fail-open):** canonical identity agent 分类为 `IdentityAction` 在 OPAQUE WireJson lane(`validate_identity_final` 1354-1394;p6 requires computed final/goto/bridge at 12964-12966;module contract WireJson 17756-17758)。该 lane 的 node output **deliberately never decoded**(`workflow_session.cpp:1789-1815` guard `is_p6` false);completion 从 `workflow_completed_count` global 推导(2012-2027);identity runner 原样返回 host-packed input tuple(15121-15128,scheduler `append_workflow_source` 16352-16366),只有 workflow final output 被 decode + id 0。evaluator 存 node ids 0,1 然后 workflow id 2(`workflow_runtime.cpp:1427-1433` `add_runtime_value` + `emit(NodeCompleted{.output=output_id})` at 1480)。byte-parity harness **deliberately strips** `output_value_id`(`wasm_runner.cpp:1356-1366`);CLI run-report **不 strip**。**真实 asymmetry:** node-output decode failure **fail OPEN**(silent `NoneValue` 1808-1810),workflow-output decode failure **fail CLOSED**(`kOutputDecodeFailed` 1965-1974)。
 
@@ -3424,8 +3405,8 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 **ONE coherent big-bang change(WH-5c):** wasm lane 的 guest codegen + host session 对齐 evaluator 的五个 shipped 行为。具体:
 
 1. **GAP 1 → per-node frame blocks。** `node_blocks` 从 per-packaged-instance 改为 per-node。runner 变为 frame-base-reentrant:不再 bake `I_k/C_k/scratch_k/O_k` 为 `i32.const`,而是接收 frame-base `i32` arg 并 relative addressing(`i32.add`)。per-node `current_state` slot(按 node ordinal index)。scheduler 在 dispatch 时传 node 的 block base。删除 D5 reuse rejection(big-bang)。
-2. **GAP 2 → opaque capability-final 接受 constructed aggregate arg。** 在 opaque lane 上 in-module 构造 aggregate(复用 V2-B bump scratch arena + rodata Data),host 把构造的 P4-D span transcode 成 wire JSON 喂给 capability。relax `validate_capability_final` 的 canonical shape 与 scheduler materializer 的 constructed-input gate。**不**转 bridge(§12.12 保留)。
-3. **GAP 5 → P6 lane 全 handler rodata。** 把 V2-B 的 `shared_rodata_pool` + active Data(11) emission 从 computed-final-only 扩展到所有 P6 handler(含 non-final state)。String literal 的 PtrLen 命名 rodata region(已在 `string_regions` via `rodata_base/extent`)。**不 duplicate** machinery——扩展现有 scope。
+2. **GAP 2 → opaque capability-final 接受 constructed aggregate arg。** 在 opaque lane 上 in-module 构造 aggregate(复用 string-frame bump scratch arena + rodata Data),host 把构造的 P4-D span transcode 成 wire JSON 喂给 capability。relax `validate_capability_final` 的 canonical shape 与 scheduler materializer 的 constructed-input gate。**不**转 bridge(§12.12 保留)。
+3. **GAP 5 → P6 lane 全 handler rodata。** 把 string-frame 的 `shared_rodata_pool` + active Data(11) emission 从 computed-final-only 扩展到所有 P6 handler(含 non-final state)。String literal 的 PtrLen 命名 rodata region(已在 `string_regions` via `rodata_base/extent`)。**不 duplicate** machinery——扩展现有 scope。
 4. **GAP 3 → guest descriptor 命名 construct root。** 修复 guest codegen 使 bridge descriptor 的 ptr 字段命名 construct 的 scratch address(不是 0)。host 保持 fail-closed 不变。diagnostic 携带精确 sub-reason(root-outside-region / length-mismatch / spill-oob / string-leaf-region)。
 5. **GAP 4 → node output decode + fail-closed alignment。** wasm lane 在 node completion 时 decode node output(WireJson lane 也 decode)并分配 sequential `RuntimeValueId`(node completion order,然后 workflow output),与 evaluator 对齐。node-output decode failure 从 fail-OPEN 改为 fail-CLOSED(对齐 workflow-output path)。byte-parity harness 的 `output_value_id` stripping **删除**(big-bang)。
 
@@ -3433,7 +3414,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 **决策:`node_blocks` 改为 per-node;runner 变为 frame-base-reentrant;删除 D5。**
 
-**Root cause:** V2-D 把 node-frame block 按 packaged-instance 分配(`p6_block_by_runner`),一个 instance 一个 block。fan-out(多个 node 复用一个 agent type)是 core DAG pattern,evaluator 天然支持(每个 node invocation 有独立的 frame)。wasm lane 的 D5 rule 直接 reject。
+**Root cause:** workflow-frame 把 node-frame block 按 packaged-instance 分配(`p6_block_by_runner`),一个 instance 一个 block。fan-out(多个 node 复用一个 agent type)是 core DAG pattern,evaluator 天然支持(每个 node invocation 有独立的 frame)。wasm lane 的 D5 rule 直接 reject。
 
 **Design:**
 
@@ -3458,7 +3439,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 **Design:**
 
-- **In-module 构造(opaque lane):** opaque capability-final 的 arg 如果是 construct expression,在 module 内用 V2-B 的 bump scratch arena(`scratch_addr_cursor_` + `scratch_capacity()`)构造 aggregate。construct 的 field 从 input frame / context / literal 读取。这复用 `plan_construct`(4704-4808)+ `emit_construct`(7014-7121)的现有 machinery——agent/P6 lane 已在用。
+- **In-module 构造(opaque lane):** opaque capability-final 的 arg 如果是 construct expression,在 module 内用 string-frame 的 bump scratch arena(`scratch_addr_cursor_` + `scratch_capacity()`)构造 aggregate。construct 的 field 从 input frame / context / literal 读取。这复用 `plan_construct`(4704-4808)+ `emit_construct`(7014-7121)的现有 machinery——agent/P6 lane 已在用。
 - **Host wire-JSON encoding:** opaque lane 的 capability arg 是 wire JSON。host 在 call opaque capability 前,把构造的 P4-D span 用 `ahfl_xcode` 的 P4D_TO_JSON transcode(WH-5b.3 已有)encode 成 wire JSON。transcode site 的 source 是 construct 的 scratch span,target 是 capability 的 wire param。
 - **Relax `validate_capability_final`:** canonical shape 从 "bare input reference" 扩展为 "input reference OR in-module construct whose leaves are input/context/literal references"。仍拒绝跨 lane 的 heap edge(由 WH-5b.3 xcode 处理)。
 - **Relax scheduler materializer gate(13041-13046):** opaque node 的 constructed input 在 in-module 构造 + xcode 后变为 wire JSON,gate 从 "reject constructed P4-D input" 改为 "accept in-module construct + xcode"。
@@ -3468,9 +3449,9 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 ### 12.15.5 Q3: GAP 5 — rodata for non-final handler String literals
 
-**决策:把 V2-B rodata machinery 从 computed-final-only 扩展到所有 P6 handler;不 duplicate。**
+**决策:把 string-frame rodata machinery 从 computed-final-only 扩展到所有 P6 handler;不 duplicate。**
 
-**Root cause:** `#424` 的 `state Evaluate`(non-final)赋值 String literal(`ctx.reason = "high severity incident";`)。P6 scalar/FB builder 不 own rodata Data region——`shared_rodata_pool` + active Data(11) segment 只在 P6-7 frame-bridge v2 computed-final 路径 build。error message 明确:"this builder owns no in-module rodata region"。
+**Root cause:** `#424` 的 `state Evaluate`(non-final)赋值 String literal(`ctx.reason = "high severity incident";`)。P6 scalar/FB builder 不 own rodata Data region——`shared_rodata_pool` + active Data(11) segment 只在 P6-7 frame bridge computed-final 路径 build。error message 明确:"this builder owns no in-module rodata region"。
 
 **Design:**
 
@@ -3532,16 +3513,17 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 > **机制修订(2026-10-02,§12.15.19):** 本节的 per-node output host 可读性机制——"identity node 的 output = 其 input tuple(host 已 packed)"与"capability node 的 output = capability result"——经独立复核证伪(仅单节点 pure-identity workflow 成立;多节点 chain / canonical compute / cap-then-compute 均不成立,per-node tuple 活在 wasm scheduler local 里、host 不可读)。机制改由 guest stash table 承担,见 §12.15.19。本节的 id 分配规则、fail-closed alignment、stripping 删除决策**不变**。
 
-### 12.15.8 Q6: Wire/manifest verdict — no version bump
+### 12.15.8 Q6: Wire/manifest structure
 
-**决策:不升任何 wire-format version。AHFLXM v2 不变;core-layout section 保持 format_version=3;recovery snapshot 保持 v2。**
+布局与 manifest 使用单一当前结构，不包含格式版本字段。改变 node_blocks
+cardinality 或 region 语义时，同步改 emitter、descriptor、host admission 与
+tests。`ahfl.workflow-recovery` 不复制布局信息：suspended.node 与 memo 身份
+仍按实际节点表达。
 
-理由:
-
-- **AHFLXM v2 manifest bytes 不变:** GAP 1 的 per-node block 不增加 manifest 字段(`ManifestNode` at `schema_module 672-684` 无 ordinal/block field)。node_blocks cardinality 变化是 core-layout section 的语义变化,不是 manifest 的 wire-format 变化。
-- **Core-layout section format_version=3 不变:** `node_blocks` field 已存在(`core_frame_layout.hpp:183`);GAP 1 只改其 cardinality(per-instance → per-node)和 host descriptor join(node ordinal → block mapping)。GAP 2/3/5 不增加新 field——construct scratch、rodata、spill window 都在现有 field 内。
-- **Recovery snapshot `ahfl.workflow-recovery.v2` 不变:** per-node frame base 是 runtime scheduling concern,不是 snapshot concern。snapshot 的 `suspended.node` / `per_node_counters_` 已按 node ordinal index,不依赖 block 是 per-instance 还是 per-node。
-- **Big-bang,无 compat flag:** 不引入 dual encoding、不保留 per-instance block path、不增加 env var / flag。`node_blocks` 的 cardinality 变化是 big-bang:host decoder 只接受 per-node cardinality(与 module emitter 同步)。
+当前 core-layout 必须完整包含 frame/node presence、rodata/bridge placement、
+spill/final 与 construct-heap 字段。缺失或多余尾部拒绝；空字段显式编码。删除
+per-instance 的替代路径时翻转全部消费点，不引入双 encoding 或 compatibility
+flag。旧生成产物必须重建。
 
 ### 12.15.9 Q7: Page capacity accounting + user-facing diagnostic
 
@@ -3549,7 +3531,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 - **Per-node blocks(GAP 1):** page 必须 hold N 个 node block(每个 `I_k + C_k + scratch_k + O_k`)。`core_wasm_codegen.cpp` 的 page layout planner 计算 `sum(node_blocks) + bridge_control + spill + rodata + payload arena + state_trace + event_log <= 65536`。超限 `kResourceExhausted` + diagnostic 命名 page capacity(65536)与 required bytes + SourceRange(Principle 5)。
 - **Rodata(GAP 5):** rodata region `[256, 1024)` 是 768 bytes。String literal 总 byte length 超限 fail-closed。
-- **Construct scratch(GAP 2/3):** V2-B bump scratch arena(`scratch_base=7168, capacity=5120`)的 high-water 检查已存在(`scratch_high_water`);GAP 2 的 opaque-lane construct 用同一 arena,capacity check 自然覆盖。
+- **Construct scratch(GAP 2/3):** string-frame bump scratch arena(`scratch_base=7168, capacity=5120`)的 high-water 检查已存在(`scratch_high_water`);GAP 2 的 opaque-lane construct 用同一 arena,capacity check 自然覆盖。
 - **Diagnostic 语言:** human-readable,actionable,命名 frame/page 与两个 size(与 `fits_frame_region` 1971-1988 同 style)。不 echo address bytes。
 
 ### 12.15.10 Q8: Census, tests, conformance
@@ -3597,7 +3579,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 - Conformance census:`kExpectedAgreed=72`,`kExpectedSkipped=0`。
 - ASan build & test clean(`cmake --preset asan && ctest --preset test-asan`)。
 - WASM=OFF build clean(KR6.8 WASM=OFF 策略不变)。
-- `ahfl.run-report` v1 byte parity:wasm lane 与 evaluator 的 `output_value_id` sequence 一致。
+- `ahfl.run-report` byte parity:wasm lane 与 evaluator 的 `output_value_id` sequence 一致。
 - Fresh build `-Werror` clean(CLAUDE.md memory:develop 可积累 -Werror breakage,commit 前 fresh build)。
 
 ### 12.15.12 Q10: Rejected alternatives
@@ -3609,7 +3591,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 5. **Over-broad region authorization(授权整个 scratch/heap arena)— REJECTED。** Security boundary。host 已正确授权 `scratch_k`(root)与 payload arena(string leaf);widening 到 whole arena 会授权 unrelated data,破坏 fail-closed precision。GAP 3 的 defect 是 guest 写 null,不是 host 授权不足。
 6. **Normalize opaque-final to bridge(§12.12)— REJECTED。** Opaque lane 是 wire-JSON boundary;转 bridge 会 blur lane discipline。GAP 2 的 fix 在 opaque lane 内 in-module construct,不经过 bridge ABI。
 7. **在 CLI run-report 中 strip `output_value_id` — REJECTED。** 弱化 parity。wasm lane 必须产生与 evaluator 一致的 id sequence;stripping 是 hide 差异,不是 fix。
-8. **升 wire-format version(v3/v4)— REJECTED。** 无新 wire field;变化是 cardinality/semantic,不是 format。big-bang ethos:extend existing field,不 bump version。
+8. **多代 wire-format 分支— REJECTED。** 同步修改现有字段语义与消费点，不另设历史实现。
 
 ### 12.15.13 Costs / LOC
 
@@ -3640,7 +3622,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 ### 12.15.15 Prior-decision preservation statement
 
 - **§12.5(embedded host facade):** 保留,不重写。WH-5c 不改变 wasm3 engine facade / import callback ABI / region authorization 模型。
-- **§12.6(WH-4b suspend/resume):** 保留,不重写。GAP 2 的 opaque construct 不改变 memo/replay;snapshot schema v2 不变。
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。GAP 2 的 opaque construct 不改变 memo/replay;snapshot 使用当前结构。
 - **§12.7(WH-6 cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 扩展(§12.15.14)。
 - **§12.11 / §12.12(WH-5b / Option A'):** 保留。§12.12 的 opaque-final-no-bridge prohibition 保留;GAP 2 在 opaque lane 内 fix,不转 bridge。
 - **§12.13(WH-5b.3 transcode):** 保留,不重写。GAP 2 复用 xcode 的 P4D_TO_JSON direction,不改变 transcode routing order / shadow / payload arena / fail-closed guards。
@@ -3681,7 +3663,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 - host 的 `runner_to_schedule` 假设 runner -> node 是 1:1(`workflow_session.cpp:412-415`:`runner_to_schedule[descriptor.nodes[i].runner] = i`;消费在 121-134)。APPROACH A 让两个 node 共享一个 runner,第二个 node 覆盖第一个的映射。
 - state-trace ring 记录 `rec.runner`(`workflow_session.cpp:106-134`),host 用 `runner_to_schedule` 把 runner 归因到 node。共享 runner 使两个 node 的 trace 记录无法区分。
-- manifest v2 的 per-node `bridge_sites` table(`core_wasm_schema_module.cpp:672-684,864-903`)要求 `call_site_id` 在 workflow 内 unique(§12.14.4 host trust check)。APPROACH A 让两个 node 共享同一 runner 的 bridge sites,manifest 会出现 duplicate `call_site_id`。
+- current manifest 的 per-node `bridge_sites` table(`core_wasm_schema_module.cpp:672-684,864-903`)要求 `call_site_id` 在 workflow 内 unique(§12.14.4 host trust check)。APPROACH A 让两个 node 共享同一 runner 的 bridge sites,manifest 会出现 duplicate `call_site_id`。
 
 **wasm3 code-section 限制(§12.15.3 前提证伪):**
 
@@ -3695,19 +3677,19 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 - fan-out 度数:SmokeWorkflow(`tests/scripts/llm_provider_runtime_smoke.py:159-160`)是 2 个 node(`first`、`second`)复用 `EchoAgent`。APPROACH B 额外 code = 1 个 node 的 runner + handler ≈ **523 bytes**。
 - 结论:fan-out 2-5 node 的 code duplication 成本是 0.5-2.6 KB,对 wasm3 code section 可忽略。
 
-**Manifest v2 无 block 字段(再次确认):**
+**Current manifest 无 block 字段(再次确认):**
 
-- `ManifestNode`(`core_wasm_schema_module.cpp:672-684`)字段:`workflow_node_id`、`schedule_pos`、`cap_call_count`、`capabilities[]`、`bridge_sites[]`。**无 block/base/ordinal 字段。** 两种方案都不改变 AHFLXM bytes。§12.15.8 的 no-version-bump verdict 不变。
+- `ManifestNode`(`core_wasm_schema_module.cpp:672-684`)字段:`workflow_node_id`、`schedule_pos`、`cap_call_count`、`capabilities[]`、`bridge_sites[]`。**无 block/base/ordinal 字段。** 两种方案都不改变 AHFLXM bytes。§12.15.8 的 current-structure verdict 不变。
 
 #### 12.15.16.3 逐轴对比
 
 | 轴 | APPROACH A(§12.15.3,frame-base reentrant) | APPROACH B(per-node relocated copies) |
 |----|---------------------------------------------|----------------------------------------|
 | **Change surface** | 深:handler functype `()->i32` => `(i32)->i32`(type/function section + param shift 影响 handler builder local 分配)、~15 个 accessor site + 每个 emit consumer 改 relative addressing、runner 2 个 handler call site 传 frame_base、runner return 改算 O_k。**外加 host 身份修复**(下条)。 | 广但机械:relocation loop 改 per-node 迭代、`relocated_handlers`/`runner_count`/state-globals/`p6_block_by_runner` cardinality 改 per-node、D6 planner per-node、bridge registry `wf_runner` tag 改 node ordinal、scheduler per-node runner lookup。**`P6ComputationHandlerBuilder` 和 `make_workflow_p6_runner_body` 完全不变。** |
-| **Correctness hazards** | (1) 破坏 host `runner_to_schedule` 1:1(`workflow_session.cpp:412-415,121-134`);(2) state-trace ring `rec.runner` 归因歧义(106-134);(3) manifest v2 per-node `bridge_sites` duplicate `call_site_id`(§12.14.4 uniqueness);(4) handler builder hot-path relative-addressing 重写的 silent memory-corruption 风险。 | (1) code 增长 ~523 B/node(实测,可忽略);(2) bridge registry 必须用 unique per-node tag(否则 `compact_workflow_runner` 的 contiguous-tail 隔离破坏);(3) rodata 必须保持 ONE shared Data segment(`shared_rodata_pool` 不变,天然满足);(4) dense control-base/stride identity 保持(`capability_import.cpp:504-541` 验证 `block_ptr == control_base + site.block_offset`,per-node site 仍 dense)。 |
+| **Correctness hazards** | (1) 破坏 host `runner_to_schedule` 1:1(`workflow_session.cpp:412-415,121-134`);(2) state-trace ring `rec.runner` 归因歧义(106-134);(3) current manifest per-node `bridge_sites` duplicate `call_site_id`(§12.14.4 uniqueness);(4) handler builder hot-path relative-addressing 重写的 silent memory-corruption 风险。 | (1) code 增长 ~523 B/node(实测,可忽略);(2) bridge registry 必须用 unique per-node tag(否则 `compact_workflow_runner` 的 contiguous-tail 隔离破坏);(3) rodata 必须保持 ONE shared Data segment(`shared_rodata_pool` 不变,天然满足);(4) dense control-base/stride identity 保持(`capability_import.cpp:504-541` 验证 `block_ptr == control_base + site.block_offset`,per-node site 仍 dense)。 |
 | **Page capacity(DATA)** | N 个 block(与 B 相同)。 | N 个 block(与 A 相同);D6 planner 已按 per-instance gathered scratch high-water 分配,推广到 per-node 是 cardinality 变更。 |
-| **Reference Hierarchy** | Swift generics(runtime parameterization)——codebase 中**不存在**的新模型。 | Clang monomorphization(per-context code emission)——**现有 V2-D 模型**(`P6FrameRelocation` 本就是为此设计)。 |
-| **WH-5b.2/§12.14/§12.6 交互** | 共享 bridge site => manifest duplicate `call_site_id`、trace-ring runner 歧义;PENDING replay 本身 OK(scheduler 每次 dispatch 传 block base,fresh instance replay)。 | per-node bridge site => manifest v2 per-node table 干净、trace ring 归因干净;PENDING replay 不变(fresh instance + per-node memo,`(node, ordinal)` identity 天然 per-node)。 |
+| **Reference Hierarchy** | Swift generics(runtime parameterization)——codebase 中**不存在**的新模型。 | Clang monomorphization(per-context code emission)——**现有 workflow-frame 模型**(`P6FrameRelocation` 本就是为此设计)。 |
+| **WH-5b.2/§12.14/§12.6 交互** | 共享 bridge site => manifest duplicate `call_site_id`、trace-ring runner 歧义;PENDING replay 本身 OK(scheduler 每次 dispatch 传 block base,fresh instance replay)。 | per-node bridge site => current manifest per-node table 干净、trace ring 归因干净;PENDING replay 不变(fresh instance + per-node memo,`(node, ordinal)` identity 天然 per-node)。 |
 | **Hybrid(dedup)** | 无安全 dedup:同 agent type 的不同 node 有不同 frame(不同 I/O block base),baked address 不同,无法共享 block。 | 不适用。 |
 
 #### 12.15.16.4 决策:REVERSE 到 APPROACH B(per-node relocated copies)
@@ -3718,13 +3700,13 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 1. **§12.15.3 的核心前提事实错误。** "wasm3 单 page 约束使 code duplication 不可行" 混淆了 code section 与 linear-memory data page。wasm3 code section 无 size 上限(`m3_config.h` 只 bound `d_m3MaxLinearMemoryPages`);data page 在两种方案下都需要 N 个 block。实测 per-node code 成本 ~523 bytes,fan-out 2-5 node 可忽略。
 
-2. **APPROACH B 复用现有 V2-D relocation machinery,不引入新寻址模型。** `P6FrameRelocation` 本就是为 per-context baked address 设计的(Clang monomorphization 模型)。把 cardinality 从 per-instance 推广到 per-node 是机械变更:`P6ComputationHandlerBuilder` 和 `make_workflow_p6_runner_body` 完全不变。APPROACH A 则需要在 handler builder 的 hot path 引入 relative-addressing 新模型,并改 handler functype + local 分配。
+2. **APPROACH B 复用现有 workflow-frame relocation machinery,不引入新寻址模型。** `P6FrameRelocation` 本就是为 per-context baked address 设计的(Clang monomorphization 模型)。把 cardinality 从 per-instance 推广到 per-node 是机械变更:`P6ComputationHandlerBuilder` 和 `make_workflow_p6_runner_body` 完全不变。APPROACH A 则需要在 handler builder 的 hot path 引入 relative-addressing 新模型,并改 handler functype + local 分配。
 
-3. **APPROACH A 破坏三个 host-side 身份不变量,APPROACH B 全部保持。** (a) `runner_to_schedule` 1:1(`workflow_session.cpp:412-415`);(b) state-trace ring `rec.runner` 归因(106-134);(c) manifest v2 per-node `bridge_sites` 的 `call_site_id` uniqueness(§12.14.4)。APPROACH A 让两个 node 共享一个 runner,三者全部破坏;APPROACH B 保持 one-runner-per-node,三者全部不变。
+3. **APPROACH A 破坏三个 host-side 身份不变量,APPROACH B 全部保持。** (a) `runner_to_schedule` 1:1(`workflow_session.cpp:412-415`);(b) state-trace ring `rec.runner` 归因(106-134);(c) current manifest per-node `bridge_sites` 的 `call_site_id` uniqueness(§12.14.4)。APPROACH A 让两个 node 共享一个 runner,三者全部破坏;APPROACH B 保持 one-runner-per-node,三者全部不变。
 
-4. **APPROACH B 与 WH-5b.2/§12.14/§12.6 的交互更干净。** per-node bridge site 使 manifest v2 per-node table、resume frontier `(node, ordinal)`、trace-ring 归因全部天然 per-node,无需 relax 任何 uniqueness check。
+4. **APPROACH B 与 WH-5b.2/§12.14/§12.6 的交互更干净。** per-node bridge site 使 current manifest per-node table、resume frontier `(node, ordinal)`、trace-ring 归因全部天然 per-node,无需 relax 任何 uniqueness check。
 
-**AHFL-specific divergence reason(替代 §12.15.3 的错误理由):** 选择 monomorphization(B)而非 runtime parameterization(A)的 AHFL-specific 理由不是 "code duplication 不可行"(该前提已证伪),而是:V2-D relocation machinery 已实现 per-context address baking,推广其 cardinality 是机械变更且保持全部现有身份不变量(runner->node 1:1、bridge-site dense identity、trace-ring 归因);runtime frame-base parameterization 会 (a) 在 handler builder hot path 引入新 relative-addressing 模型,(b) 破坏 host 的 runner->node 1:1 身份,(c) 在 manifest v2 per-node table 产生 duplicate bridge-site identity,(d) 模糊 state-trace ring 的 runner 归因。monomorphization 保持 one-runner-per-node,与 Reference Hierarchy 的 Clang 模型一致。
+**AHFL-specific divergence reason(替代 §12.15.3 的错误理由):** 选择 monomorphization(B)而非 runtime parameterization(A)的 AHFL-specific 理由不是 "code duplication 不可行"(该前提已证伪),而是:workflow-frame relocation machinery 已实现 per-context address baking,推广其 cardinality 是机械变更且保持全部现有身份不变量(runner->node 1:1、bridge-site dense identity、trace-ring 归因);runtime frame-base parameterization 会 (a) 在 handler builder hot path 引入新 relative-addressing 模型,(b) 破坏 host 的 runner->node 1:1 身份,(c) 在 current manifest per-node table 产生 duplicate bridge-site identity,(d) 模糊 state-trace ring 的 runner 归因。monomorphization 保持 one-runner-per-node,与 Reference Hierarchy 的 Clang 模型一致。
 
 #### 12.15.16.5 修订后的 builder 指令(amended)
 
@@ -3732,8 +3714,8 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 1. **`node_blocks` per-node。** `CoreFrameLayoutSection::node_blocks` 从 P6-dense(per packaged instance)改为 per-node(per workflow node)。cardinality = P6 node 数。
 2. **删除 D5。** `core_wasm_codegen.cpp:13025-13044` 的 `instance_users` reuse rejection 删除(big-bang)。`instance_users` map 本身删除。
-3. **Stale comment 修正。** `core_frame_layout.hpp:165-166`、`core_wasm_codegen.cpp:15246-15250`(注释 "one packaged instance runs exactly once per run2 today" 改为 per-node 语义)。
-4. **Manifest verdict 不变。** AHFLXM v2 不 bump(`ManifestNode` 无 block 字段,`core_wasm_schema_module.cpp:672-684`)。
+3. **Stale comment 修正。** `core_frame_layout.hpp:165-166`、`core_wasm_codegen.cpp:15246-15250`(注释 "one packaged instance runs exactly once per run_workflow today" 改为 per-node 语义)。
+4. **Manifest verdict 不变。** AHFLXM 使用当前结构(`ManifestNode` 无 block 字段,`core_wasm_schema_module.cpp:672-684`)。
 
 **替换(§12.15.3 的 frame-base 设计被以下 per-node relocation 设计替换):**
 
@@ -3753,7 +3735,7 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 - **§12.15.6(GAP 3 descriptor fix):** 不受影响。descriptor fix 在 bridge arg path,与 runner cardinality 独立。
 - **§12.15.7(GAP 4 output parity):** 不受影响。node output decode 用 `p6_block_ordinal` per-node 索引 `node_blocks`,APPROACH B 提供 per-node ordinal。
-- **§12.15.8(manifest verdict):** 不变。两种方案都不 bump AHFLXM version。
+- **§12.15.8(manifest verdict):** 不变。两种方案都不额外增加 AHFLXM 字段。
 - **§12.15.9(page capacity):** 不变。N 个 block 在两种方案下相同;D6 planner per-node 是 cardinality 变更,不改变 capacity 模型。
 - **§12.15.10(tests):** GAP 1 conformance case(fan-out instance reuse)的验收不变——验证 per-node block 不 overlap、fan-out 正常运行。APPROACH B 满足。
 - **§12.15.11(AC):** 不变。#213/#214/#421/#422 的验收是 exit 0 + fan-out 正常,不依赖内部机制(frame-base vs per-node copy)。
@@ -3794,11 +3776,11 @@ facade ctor 从 Program 预算两张表(与 `capability_effects_` 同生命周�
 
 | 站点 | 文件:行 | range 来源 |
 |------|---------|-----------|
-| Run2HostAborted(capability import failure) | `workflow_session.cpp:1619-1641` | `CapabilityImportState` 新增 `last_source_symbol`(callback 在 `capability_import.cpp:286,402` 设 `source_capability_symbol_id` 时同步记录),经 `capability_range_resolver` 查 capability 声明 range;fallback 到 failed node 的 `node_range_resolver` |
-| Run2Trapped(capability executed + failed) | `workflow_session.cpp:1642-1655` | 同上(`last_capability_error` 已有,`304,428`;补 `last_source_symbol`) |
-| Run2Trapped(generic,无 capability 上下文) | `workflow_session.cpp:1642-1655` | failed node 的 `node_range_resolver`(failed node 在 `2078-2086` 已识别) |
-| invoke_run2 engine error | `workflow_session.cpp:1613-1618` | failed node range |
-| run2 non-zero status / replay diverged / origination failure | `workflow_session.cpp:1666-1690,1598-1612` | failed node range(或 pending coordinate 的 node range) |
+| WorkflowRunHostAborted(capability import failure) | `workflow_session.cpp:1619-1641` | `CapabilityImportState` 新增 `last_source_symbol`(callback 在 `capability_import.cpp:286,402` 设 `source_capability_symbol_id` 时同步记录),经 `capability_range_resolver` 查 capability 声明 range;fallback 到 failed node 的 `node_range_resolver` |
+| WorkflowRunTrapped(capability executed + failed) | `workflow_session.cpp:1642-1655` | 同上(`last_capability_error` 已有,`304,428`;补 `last_source_symbol`) |
+| WorkflowRunTrapped(generic,无 capability 上下文) | `workflow_session.cpp:1642-1655` | failed node 的 `node_range_resolver`(failed node 在 `2078-2086` 已识别) |
+| invoke_run_workflow engine error | `workflow_session.cpp:1613-1618` | failed node range |
+| run_workflow non-zero status / replay diverged / origination failure | `workflow_session.cpp:1666-1690,1598-1612` | failed node range(或 pending coordinate 的 node range) |
 | output decode failed(kOutputDecodeFailed) | `workflow_session.cpp:1950-1991` | 被 decode 的 node 的 range |
 | suspend 路径 | `workflow_session.cpp:1856-1864` | **不发诊断**(suspend 不是 failure;`1856-1864` 的 "suspended but no pending coordinate" 是 invariant violation,发 failed node range) |
 
@@ -3808,7 +3790,7 @@ facade ctor 从 Program 预算两张表(与 `capability_effects_` 同生命周�
 
 **诚实的 parity 注记:**
 
-evaluator 附的是 capability **call-site** range(CallExpr `source_range`,实测 `{455,491}`);wasm lane 附的是 capability **声明** range(`provenance.source_range`)。这是诚实的最小 parity:manifest v2 只携带 capability 的 `source_symbol`(声明 SymbolId),不携带 call-site range;call-site parity 需要 codegen 在 descriptor 的 `CoreWasmBridgeCallSite` 上携带 per-call-site `SourceRange`(descriptor 是 host-side sidecar,不是 wire format,但这是更大的 codegen 改动),推迟到后续 slice。#425 的断言只要求 `range` 是 dict(非 null),声明级 range 满足。
+evaluator 附的是 capability **call-site** range(CallExpr `source_range`,实测 `{455,491}`);wasm lane 附的是 capability **声明** range(`provenance.source_range`)。这是诚实的最小 parity:current manifest 只携带 capability 的 `source_symbol`(声明 SymbolId),不携带 call-site range;call-site parity 需要 codegen 在 descriptor 的 `CoreWasmBridgeCallSite` 上携带 per-call-site `SourceRange`(descriptor 是 host-side sidecar,不是 wire format,但这是更大的 codegen 改动),推迟到后续 slice。#425 的断言只要求 `range` 是 dict(非 null),声明级 range 满足。
 
 **WASM=OFF 影响:** 无。wasm host(`workflow_session.cpp`/`wasm_lifecycle.cpp`)与 facade 在 WASM=OFF 下编译 out;`ahflc run` 以可行动诊断拒绝(§12.7.1),不跑 workflow。
 
@@ -3979,7 +3961,7 @@ rich fixture 单 node,per-node blocks 不改变 capacity 模型。construct scra
 - **§12.15.16(APPROACH B per-node blocks):** 保留。WH-5c.2 按 APPROACH B 落地;WH-5c.7 的 rich type matrix 与 per-node cardinality 独立(§12.15.17.2 交互节)。
 - **§12.7(WH-6 cutover,无 fallback):** 保留。WASM=OFF 策略不变。gate set 扩展(§12.15.17.5)。
 - **§12.15.10(string-leaf bridge case):** 保留。String 跨 bridge(PtrLen spill)与 f64/Decimal/Duration/Set/Map 的 bridge reject 正交(§12.15.17.2 bridge-crossability 节)。
-- **§12.15.8(no version bump):** 不变。GAP 6/7 不增加 wire field(range 是 host-side sidecar;rich types 已有 P4-D 布局)。AHFLXM v2 不 bump。
+- **§12.15.8(current structure):** 不变。GAP 6/7 不增加 wire field(range 是 host-side sidecar;rich types 已有 P4-D 布局)。AHFLXM 使用当前结构。
 
 #### 12.15.17.8 落地记录(2026-10-02):WH-5c.6 GAP 6 实现 + 对抗 review fix-forward
 
@@ -3989,7 +3971,7 @@ Option A 按本节决策落地(builder → 独立对抗 review → coordinator f
 2. **`CapabilityImportState.last_source_symbol`:** 仅在两个 call-site 解析成功后的站点(`capability_import.cpp` opaque/bridge,即原 `context.source_capability_symbol_id = call_site.source_symbol()` 两处)记录。
 3. **session 失败 range:** per-node output-decode 站点立即解析"被 decode 的 node"的 range(唯一有 node 在 scope 的 kOutputDecodeFailed 站点);其余失败在 section 13 兜底——capability 声明 range 仅当 `(last_error || last_capability_error) && last_source_symbol` 成立,否则/fallback 用 failed node 的 `WorkflowNode::source_range`。workflow-output / stash-region decode 站点无 node 在 scope(此时所有 node 已 completed、failed_node_index 为空),range 为 nullopt——这是诚实的失败形态,不是漏挂。
 4. **单一 DiagnosticId:** `add_error` 增加 `SourceRangeOpt` 参数(engaged 才调 `.range()`);NodeFailed 发射一条带 range 的诊断并把 id 存入 facts,WorkflowFailed **复用该 id**(删除重复 bag entry,与 evaluator `workflow_runtime.cpp:1594-1597` 同构);只有"全 node completed 但 workflow 级失败"的 fallback 才由 workflow 级发一条带 range 诊断。agent lane 继续传 nullopt(agent lane 不持有 ir::Program,超出本 slice)。
-5. **诚实 parity 注记(代码注释中声明):** evaluator 附 capability **call-site** range;wasm lane 附 capability **声明** range(manifest v2 只携带声明 symbol)。call-site parity 仍需 descriptor 携带 per-call-site range,保持推迟。
+5. **诚实 parity 注记(代码注释中声明):** evaluator 附 capability **call-site** range;wasm lane 附 capability **声明** range(current manifest 只携带声明 symbol)。call-site parity 仍需 descriptor 携带 per-call-site range,保持推迟。
 
 **Review fix-forward(P1 ×2 + P2 ×1,coordinator 应用):**
 
@@ -4056,7 +4038,7 @@ helper 的职责(给定 metadata store + emit sink + node/cap/provider id + `Cap
 4. success → 发射 `CapabilityCompleted`(last-attempt invocation id、output_value_id、attempts、cache_hit);failure → 不发射 `CapabilityCompleted`。
 5. `usage.notices` → 每个 notice 转成 WARNING diagnostic 进 `result.diagnostics`(与 `capability_eval.cpp:74-81` 同 code/message)。
 
-wasm lane 的 invocation 时机是 **post-run**(events 在 `invoke_run2` 期间 buffer,在 finalize 前 projection)——这是 AHFL-specific divergence(见下)。
+wasm lane 的 invocation 时机是 **post-run**(events 在 `invoke_run_workflow` 期间 buffer,在 finalize 前 projection)——这是 AHFL-specific divergence(见下)。
 
 **被否决的替代方案:**
 
@@ -4065,7 +4047,7 @@ wasm lane 的 invocation 时机是 **post-run**(events 在 `invoke_run2` 期间 
 - **把 retry iteration 移到 host loop(host 调用 invoker N 次)— REJECTED。** evaluator 也只调用 invoker 一次(`:1040`);retry 是 provider-internal 行为,host loop 重试会改变 provider 的 retry/budget/cache 语义(第二次 host 调用会命中 cache 而不是 provider 内部 retry)。
 - **在 wasm_lifecycle 里 inline 复制 synthesis loop(不抽 helper)— REJECTED。** Principle 1(no old-and-new coexistence):evaluator 的 synthesis loop 与 wasm lane 的复制是同一逻辑的两份实现,WH-9 删 evaluator 后留下 wasm lane 的副本——但在此之前是两份必须手动保持同步的实现。抽 helper 让两个 lane 调用同一函数,WH-9 只删 evaluator 的 call site。
 
-**AHFL-specific divergence note:** evaluator 在 call time projection(invoker 返回后立即合成事件);wasm lane 在 post-run projection(`invoke_run2` 是 synchronous/non-reentrant,事件在 invoke 期间 buffer,在 finalize 前统一 projection)。这不是语义差异——projection 的输入(`CapabilityCallResult`)和输出(event stream)在两个 lane 完全相同——而是 wasm3 同步执行模型的后果:host 无法在 wasm invoke 期间安全地 re-enter metadata/event 系统。post-run projection 保持 event stream 的诚实性(事件在 run 完成后、report 生成前发射,audit trail 完整)。
+**AHFL-specific divergence note:** evaluator 在 call time projection(invoker 返回后立即合成事件);wasm lane 在 post-run projection(`invoke_run_workflow` 是 synchronous/non-reentrant,事件在 invoke 期间 buffer,在 finalize 前统一 projection)。这不是语义差异——projection 的输入(`CapabilityCallResult`)和输出(event stream)在两个 lane 完全相同——而是 wasm3 同步执行模型的后果:host 无法在 wasm invoke 期间安全地 re-enter metadata/event 系统。post-run projection 保持 event stream 的诚实性(事件在 run 完成后、report 生成前发射,audit trail 完整)。
 
 **Builder 指令:**
 
@@ -4168,7 +4150,7 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 4. **无 new region、无 payload copy。** payload bytes borrow immutable from 授权 region(rodata/entry arena/upstream O_k/bridge placement)。8-byte PtrLen header 拷贝(两个 i32 store via 现有 `ptrlen_ctx_store` machinery)。
 5. **C_k lifetime 确认。** C_k zero-fill 是 once-per-node(`:16628-16634`),Normalize 写入的 String PtrLen 持久到 Done。无代码变更,但 builder 应加 test 验证(non-final 写 → final 读)。
 6. **Cross-node edges 无变更。** scheduler materializer 的 `store_operand`(`:16090-16142`)+ `copy_inline_leaf`(`:16147-16159`)已处理 PtrLen;child-dereference gate(`:12100-12143`)不 reject PtrLen。无代码变更。
-7. **不做:** 不分配新 page region、不拷贝 payload bytes、不引入 opaque JSON、不 fold 进 WH-5c.7、不 bump wire/manifest/snapshot version(§12.15.8 不变)。
+7. **不做:** 不分配新 page region、不拷贝 payload bytes、不引入 opaque JSON、不 fold 进 WH-5c.7、不 bump wire/manifest/snapshot 字段(§12.15.8 不变)。
 
 **Affected files + LOC:**
 
@@ -4235,7 +4217,7 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 - **§12.15.17(GAP 6/7):** 保留。GAP 9 的 borrow model 是 §12.15.17.2(c) collection header-copy 先例的应用;GAP 8 与 GAP 6/7 独立。
 - **§12.7(WH-6 cutover,无 fallback):** 保留。gate set 扩展(§12.15.18.3)。
 - **§12.7.3(WH-9 evaluator deletion):** 保留,但增加 prerequisite:`capability_bridge.hpp` + `capability_event_projection.{hpp,cpp}` 必须 relocate(不删)。
-- **§12.15.8(no version bump):** 不变。GAP 8/9 不增加 wire field(event projection 是 host-side;String carry 是 codegen 层 frame 操作)。AHFLXM v2 不 bump。
+- **§12.15.8(current structure):** 不变。GAP 8/9 不增加 wire field(event projection 是 host-side;String carry 是 codegen 层 frame 操作)。AHFLXM 使用当前结构。
 - **§12.6/§12.14(memo/replay):** 保留。GAP 8/9 与 memo replay 正交(§12.15.18.1/18.2 交互节)。
 
 #### 12.15.18.7 落地记录(2026-10-03):WH-5c.8 GAP 8 共享 event projection + 对抗 review
@@ -4256,11 +4238,11 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 
 - **READ GATE lift**(`core_wasm_codegen.cpp` plan_path):删除 `!final_return_mode_ && bridge_registry_ == nullptr` 对 PtrLen read 的 fail-closed;non-final goto handler 现可从 I_k/C_k slot 读 String 两字 pair,`ptrlen_read_needed_` 照旧分配 read temp。无新 gate:读取只是两个 inline i32 load,payload 不被触碰。
 - **STORE GATE lift + 第三 provenance:** 新增 `value_derives_from_input_frame`(与 `value_derives_from_bridge_result` 同构的 let-alias DAG walk),仅沿 `CoreValueRefExpr`(纯 alias)与 `CorePathExpr{Local}`(投影)边走到 `CorePathRoot::Input`;任何 transform 节点(Binary/Construct/Coerce/Collection/Call/CallClosure/Unsupported)或 Context/其他 root 都断链 → 保持 reject。reject diagnostic 更新为命名全部三个授权 provenance(rodata literal / capability bridge result / input-frame projection),SourceRange 保留。
-- **borrow model 落地无新机制:** ctx String store 只经现有 `ptrlen_ctx_store` 路径拷贝 8-byte header(两个 i32.store);payload 留在 rodata [256,1024) / entry payload arena / upstream O_k [12288,16384) / bridge placement,全部 fixed-page、immutable-after-init、whole-run-persistent。C_k once-per-node zero-fill(`append_word_zero_fill` 在 runner dispatch 前,非 per-handler)保证 non-final 写入持久到 final;O_k 从不被 zero-fill,跨 node edge 的 borrow 在 downstream node 整个执行期有效。无新 region、无 payload copy、无 wire/manifest version bump、无 evaluator fallback。
+- **borrow model 落地无新机制:** ctx String store 只经现有 `ptrlen_ctx_store` 路径拷贝 8-byte header(两个 i32.store);payload 留在 rodata [256,1024) / entry payload arena / upstream O_k [12288,16384) / bridge placement,全部 fixed-page、immutable-after-init、whole-run-persistent。C_k once-per-node zero-fill(`append_word_zero_fill` 在 runner dispatch 前,非 per-handler)保证 non-final 写入持久到 final;O_k 从不被 zero-fill,跨 node edge 的 borrow 在 downstream node 整个执行期有效。无新 region、无 payload copy、无 wire/manifest 新字段、无 evaluator fallback。
 
 **计划外修复(独立复核为真实既有 bug):** emit_store 的 PtrLen 路径把目的地址用 `local.tee` 存入 `ctx_store_addr_local_`——tee 留下一个无人消费的 i32 在栈上。直线 goto handler 靠末尾 `br` 展开 block 时丢弃该残余而"偶然合法";但 String ctx store 若出现在 statement-level void `if/else` arm 内(arm 以 `kEmptyBlock` 结尾,wasm3 `v_pop_ctrl` 要求操作数栈精确回到 frame height),wasm3 即报 `typeCountMismatch "incorrect value count on stack"`。execution-demo 的 decision.ahfl Evaluate 在嵌套 if/else arm 里有 rodata String store(`ctx.reason = "..."`),此前因 intake.ahfl GAP 9 先失败、整个 demo 编译到不了 decision 而被掩盖;gate lift 暴露该潜伏 bug。修复为 `local.set`(弹出地址),两个 `store_word` 各自 `local.get` 重取;READ 路径(值上下文,tee 后第一个 i32.load 消费栈顶、第二字 local.get 重取)的 tee 保持不变。emit_store 唯一调用方是 void 语句 visitor,无值上下文调用方,故 set 对全部既有 caller 语义中立。
 
-**字节影响枚举:** 每个含 String(PtrLen)ctx store 的模块有 1 个 opcode 字节变化(0x22 tee → 0x21 set):wh5c_construct_bridge / v2c_* 等 behavioral case 与 examples/execution-demo(非 byte-pin,行为不变,census 双 runner 仍 agreed);纯 P6 freeze fixture wh5c_instance_reuse_fanout 为 Int-only(Frame.value: Int / Ctx.echoed: Int),不走 PtrLen 路径,**1513 bytes / SHA ca80b9d1… 不变**;e1/e2/e3 fixture 有 String 字段但无 String ctx store,不变;3 个新 golden 无历史字节。
+**字节影响枚举:** 每个含 String(PtrLen)ctx store 的模块有 1 个 opcode 字节变化(0x22 tee → 0x21 set):wh5c_construct_bridge / * 等 behavioral case 与 examples/execution-demo(非 byte-pin,行为不变,census 双 runner 仍 agreed);纯 P6 freeze fixture wh5c_instance_reuse_fanout 为 Int-only(Frame.value: Int / Ctx.echoed: Int),不走 PtrLen 路径,**1513 bytes / SHA ca80b9d1… 不变**;e1/e2/e3 fixture 有 String 字段但无 String ctx store,不变;3 个新 golden 无历史字节。
 
 **Review 结论 LAND(0 P0/P1,3 P2;coordinator 处置):** (1) tree 中 parked 的 WH-6 CLI cutover(workflow_run.cpp + CMakeLists.txt)不属于本 slice,不 stage、不评审,但其存在使 #425 经 `ahflc run` 跑在 wasm lane——5c.9 codegen 是必要解锁、parked cutover 是运行跑道,二者共同产生 #425 绿;cutover 本体留给 WH-6 review(#89)。(2) **#81 失败原因的 append-only 更正:** §12.15.18.7 与 5c.9 brief 预期 #81 是 stale evidence revision hash;coordinator 与 reviewer 实测 #81 现推进过 reference-workflow 阶段,最终失败于 `generate-beta-install-evidence.py` 的 platform VSIX packaging 步骤 `pnpm: command not found`(exit 127),与 #84/#85 同属 pnpm 环境缺失级联;revision-hash gate(check-beta-gate --require-ready)在本环境被更早的 pnpm 失败遮蔽。#81/#84/#85 均非 5c.9 回归,bundle generator 需要的代码输入(#425 等)已绿。(3) provenance walk 对 CoerceExpr 链与 Context-root String copy 保守拒绝(fail-closed,符合决策 AC 的 `ctx.s = input.s` 直接投影),记为未来 rung 的已知收窄。
 
@@ -4268,7 +4250,7 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 
 ### 12.15.19 WH-5c GAP 4 机制修订:per-node output stash table(2026-10-02,dedicated decision-revision agent)
 
-本节修订 §12.15.7 的 **per-node output host 可读性机制**(GAP 4)。§12.15.7 原文保留作历史档案(append-only),其 id 分配规则、fail-closed alignment、parity harness stripping 删除决策**不变**;仅"host 如何获得 per-node output"这一机制被替换。修订动因为协调者转交的经验证据(wh5c-builder-supplements.md §12.15.7):opaque WireJson lane 的 run2 只返回 final tuple,per-node result tuple 活在 scheduler local 里、host 不可读。所有代码断言已对工作树(HEAD `453d3888` + uncommitted WH-6 cutover)逐条复核。
+本节修订 §12.15.7 的 **per-node output host 可读性机制**(GAP 4)。§12.15.7 原文保留作历史档案(append-only),其 id 分配规则、fail-closed alignment、parity harness stripping 删除决策**不变**;仅"host 如何获得 per-node output"这一机制被替换。修订动因为协调者转交的经验证据(wh5c-builder-supplements.md §12.15.7):opaque WireJson lane 的 run_workflow 只返回 final tuple,per-node result tuple 活在 scheduler local 里、host 不可读。所有代码断言已对工作树(HEAD `453d3888` + uncommitted WH-6 cutover)逐条复核。
 
 #### 12.15.19.1 §12.15.7 的事实证伪
 
@@ -4276,7 +4258,7 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 
 1. **host 只 packed ENTRY tuple。** opaque lane 的 entry JSON 由 host 经 `alloc_then_write` 写入 bump heap(`wasm_agent_runner.cpp:451`);workflow lane 的 entry frame 由 host packed 进 schedule 首个 node 的 I_k(P6)或经 `alloc_then_write`(opaque)。host **从不** packed 非 entry node 的 input——非 entry node 的 input 是 upstream node 的 output,由 scheduler 在 guest 内 materialize / 透传。
 2. **per-node result tuple 活在 wasm scheduler local 里。** scheduler 为每个 node 分配一对 local(`core_wasm_codegen.cpp:16499-16512`:`workflow_node_ptr_local` = `2 + node.value*2`、`workflow_node_len_local` = `+1`),runner 返回的 `(status, ptr, len)` 存入这对 local(`:16920-16924`)。wasm local **host 不可读**——host 只能读 linear memory 与 exported global。
-3. **run2 只返回 final tuple。** `make_workflow_run2_body` 的 opaque 路径以 `append_workflow_source(body, plan.output)` 收尾(`:17124-17127`),只把 workflow output source(最终 node 的 ptr/len local)压栈返回。中间 node 的 tuple 不离开 guest。
+3. **run_workflow 只返回 final tuple。** `make_workflow_run_body` 的 opaque 路径以 `append_workflow_source(body, plan.output)` 收尾(`:17124-17127`),只把 workflow output source(最终 node 的 ptr/len local)压栈返回。中间 node 的 tuple 不离开 guest。
 4. **canonical / compute node 的 output ≠ input。** 无 capability 的 canonical agent(whole run in-guest,不做 host call)的 output 是在 guest 内计算的新 JSON bytes,host 无法从 input 重建。
 5. **capability node 的 output ≠ cap result(一般情况)。** host 侧 `WasmCapabilityCall.output`(`wasm_lifecycle.hpp:64-79`)是 **capability result**,不是 node output。一个 node 可以 call cap 后再 compute(`let r = Cap(...); return Struct{x: r.x};`),其 node output 是计算产物,不是 cap result。§12.15.7 的等式只对 capability-FINAL node(`return Cap(...)`)成立,且需要 host 做 shape 分析才能识别 finality——host 不做这种分析。
 
@@ -4341,14 +4323,14 @@ stash 表是 node-event region **同族**的固定低页区域,位于 event regi
 - **overflow:** 既有 capacity check 自然覆盖——P6 cursor 的 `cursor >= kP6CollectionBackingBase`(`:12795`)与 `cursor > kPage`(`:12801`);`compute_event_layout` 的 `heap_base > 65536`(`:14969`)。超限 fail-closed `kResourceExhausted` + SourceRange diagnostic(Principle 5,与 §12.15.9 同 style),命名 stash region 与 65536 page capacity。
 - **host 侧校验:** `stash_base + 8*N <= descriptor.heap_base`(corrupt module → fail-closed);每个 opaque slot 的 `(ptr, len)` 校验 `ptr >= heap_base && ptr + len <= 65536 && ptr != 0 && len != 0`(与 workflow output range check `:1971-1982` 同 style)。
 
-**不增加任何 wire / manifest / core-layout section / snapshot 字段**(§12.15.8 no-version-bump verdict 不变):stash_base 是 ABI 常量 + N + imports flag 的纯算术,host 从 descriptor 既有字段推导。AHFLXM v2 manifest bytes 不变;core-layout section `format_version=3` 不变;recovery snapshot v2 不变。
+**不增加任何 wire / manifest / core-layout section / snapshot 字段**(§12.15.8 current-structure verdict 不变):stash_base 是 ABI 常量 + N + imports flag 的纯算术,host 从 descriptor 既有字段推导。这些机制不增加字段；所有读写使用完整当前结构，旧格式版本字段已删除。
 
 #### 12.15.19.5 id 排序规则(interleaved completion / suspend / retry)
 
 - **成功 run:** `workflow_completed_count == N`(`:2021` 校验)。host 按 `schedule_pos = 0..N-1` 顺序逐 node decode(P6 → O_k,opaque → stash),`node_facts.output` 赋值;lifecycle helper 的 `add_value`(`wasm_lifecycle.cpp:268-272`)按此顺序分配 node output id 0..N-1;workflow output id = N(`:300-304`)。与 evaluator 的 `0,1,...,N-1(node),N(workflow)` 一致。
 - **cap-result id 交错:** evaluator 在每个 node 的 cap success 时分配 cap-result id(`workflow_runtime.cpp:1138`)、node output id(`:1432`)在后;wasm lifecycle helper 同序(cap_call output `:255-261` → node output `:268-272`)。stash 不改变这一交错——cap-result id 由 GAP 8(§12.15.18.1)的 event projection 保证,wasm lane 单次 invoke、evaluator 的 per-attempt event 由 attempts=N 合成。stash 只填 node output 这一格。
 - **失败 run:** 仅 `i < workflow_completed_count` 的 node completed(`:2029` 校验 `<= N`)。host 只 decode completed node;trapping node 无 stash entry(scheduler 在 OK 校验之后才 stash,trapping node 未到 stash 点)、无 id——与 evaluator 一致(failed node 无 output id)。
-- **suspend(PENDING):** scheduler 在 bump `workflow_completed_count` 之前 return(`:16856` / `:16962`),suspended node 无 stash entry。host 只 decode `i < workflow_completed_count` 的 node。resume 是 **fresh-instance whole-module replay**(§12.6):module 重新实例化、整个 schedule 重跑、memo replay 逐字喂回 `authoritative_json`(`workflow_session.cpp:1044-1053`),scheduler 确定性重跑 → stash 表逐字节重建(bump heap 分配顺序确定、cap bytes 逐字相同 → JSON bytes 落在相同地址)。host 在 replay run 的 run 后读重建后的 stash,与 origination run 得到相同的 per-node output 与 id 序列。**replay 不需要特殊 stash 处理——stash 每次 run 重建。**
+- **suspend(PENDING):** scheduler 在 bump `workflow_completed_count` 之前 return(`:16856` / `:16962`),suspended node 无 stash entry。host 只 decode `i < workflow_completed_count` 的 node。resume 是 **fresh-instance whole-module replay**(§12.6):module 重新实例化、整个 schedule 重跑、memo replay 逐字喂回 `result_wire_json`(`workflow_session.cpp:1044-1053`),scheduler 确定性重跑 → stash 表逐字节重建(bump heap 分配顺序确定、cap bytes 逐字相同 → JSON bytes 落在相同地址)。host 在 replay run 的 run 后读重建后的 stash,与 origination run 得到相同的 per-node output 与 id 序列。**replay 不需要特殊 stash 处理——stash 每次 run 重建。**
 - **retry:** wasm lane 不 retry(单次 invoke);cap 失败 → node 失败 → 无 stash entry、无 id。evaluator 的 retry 是 GAP 8 event-parity 范畴,与 stash 正交。
 
 #### 12.15.19.6 guest codegen 发射(per opaque node)
@@ -4402,9 +4384,9 @@ i32.store align=2 offset=4
 2. **(C) hybrid(identity/canonical/P6 用 guest stash,capability node 用 host cap result)— REJECTED。** 同 (B) 的 cap-node unsoundness(cap-then-compute node 的 output 不是 cap result);且把 decode path 劈成 stash / cap-result 两条,违反 uniform decode path。stash 统一覆盖全部 opaque node。
 3. **(A-variant) stash 全部 node(含 P6),host 从 stash decode 一切 — REJECTED。** P6 output 是 P4-D bytes(不是 JSON),host 仍需 `read_value_at`(P6)与 `value_from_json`(opaque)两个 decode 函数——stash P6 不消除分支。却给每个 P6 node 加 8 字节 slot + ~16 bytes code,并把每个 P6 workflow(含 pure-P6)的固定区域上移 8*N、破坏 byte-parity,零收益。收窄为 opaque-only。
 4. **(D) per-node 固定 output region(把 JSON bytes 拷进 O_k 式固定块)— REJECTED。** JSON output 变长(unbounded String/collection 无静态上界),固定 region 无法 sizing。`(ptr,len)` 表 + bump-heap bytes 是变长 output 的正确模型(与 workflow output path 一致)。
-5. **(E) 扩展 run2 multi-value 返回全部 node tuple — REJECTED。** 2*N 值的 multi-value return 不切实际(wasm3 multi-value 支持、ABI churn、scheduler local 生命周期)。固定表是 flat-store 正解(Principle 3)。
+5. **(E) 扩展 run_workflow multi-value 返回全部 node tuple — REJECTED。** 2*N 值的 multi-value return 不切实际(wasm3 multi-value 支持、ABI churn、scheduler local 生命周期)。固定表是 flat-store 正解(Principle 3)。
 6. **(F) 把 per-node output 编进 node-event record(40→48 字节)— REJECTED。** identity workflow 不写 event record(这正是问题本身),扩展 record 救不了 identity workflow;且改 event record ABI 是 wire-format 变更。stash 与 event system 解耦。
-7. **(G) 新增 core-layout section field 携带 stash_base — REJECTED。** stash_base 是 ABI 常量 + N + imports flag 的纯算术,host 从 descriptor 既有字段可推导;section field 冗余且改 section bytes。§12.15.8 no-version-bump 保持。
+7. **(G) 新增 core-layout section field 携带 stash_base — REJECTED。** stash_base 是 ABI 常量 + N + imports flag 的纯算术,host 从 descriptor 既有字段可推导;section field 冗余且改 section bytes。§12.15.8 current-structure 保持。
 
 #### 12.15.19.10 成本 / LOC
 
@@ -4450,7 +4432,7 @@ i32.store align=2 offset=4
 - **§12.15.16(APPROACH B per-node blocks):** 保留。stash 与 per-node relocation 正交;P6 node 的 O_k 路径不变。
 - **§12.15.17(GAP 6/7):** 保留。GAP 6 的 SourceRange resolver 被 stash 的 fail-closed diagnostic 复用;GAP 7 的 rich type matrix 与 stash 正交。
 - **§12.15.18(GAP 8/9):** 保留。GAP 8 的 capability event projection 保证 cap-result id 交错(§12.15.19.5);GAP 9 的 String PtrLen carry 与 stash 正交。
-- **§12.15.8(no version bump):** 不变。stash 不增加 wire / manifest / core-layout section / snapshot 字段。
+- **§12.15.8(current structure):** 不变。stash 不增加 wire / manifest / core-layout section / snapshot 字段。
 - **§12.15.9(page capacity):** 保留,扩展。stash region 纳入同一 capacity check 家族(§12.15.19.4)。
 - **§12.6/§12.14(memo/replay):** 保留。stash 在 fresh-instance replay 中确定性重建(§12.15.19.5),与 memo arg-hash identity 正交。
 - **§12.7(WH-6 cutover,无 fallback):** 保留。WH-5c.5 仍按 §12.15.18.3 sequencing 排在 5c.4 后;gate set 不变(5c.1-5c.9)。
@@ -4637,7 +4619,7 @@ struct WorkflowRunSourceContext {
    - `CoreFlowDecl`(新增;handler-body reject 的真实宿主)——`std::string source_module`;
    - `CoreAgentDecl`(agent 骨架级 reject)、`CoreWorkflowDecl`(scheduler/workflow region reject)、`CoreCapabilityDecl`(capability ABI/import 级 reject);
    - 诊断载体 `CoreLowerDiagnostic`(§12.16.5(b),verifier 复用它,见 core_verify.hpp:251)与 `CoreWasmDiagnostic`。
-2. `core_lower.cpp` 在各生产点 stamp `decl.provenance.module_name`:`CoreFlowDecl` 构造点 :5888/:5912/:5939(`ir::FlowDecl::provenance` 在作用域);agent `lower_agent` :1896 旁;workflow :5038/:5100-5104 旁;capability `:1974` 同构。**`CoreLowerDiagnostic` 的全部生产站点(core_lower/core_layout/core_frame_layout/core_wire_migration/core_wire_schema/core_verify 共 6 文件)必须逐站点 stamp enclosing decl 的 module_name。** 警告:`source_module` 给默认空值后,`CoreLowerDiagnostic{sev, code, msg, range}` 旧聚合初始化仍可编译(末位缺省 = 空),会**静默丢归属**——builder 必须 grep 每个构造点逐一填值,无 enclosing decl 的 whole-program 级诊断才允许留空。
+2. `core_lower.cpp` 在各生产点 stamp `decl.provenance.module_name`:`CoreFlowDecl` 构造点 :5888/:5912/:5939(`ir::FlowDecl::provenance` 在作用域);agent `lower_agent` :1896 旁;workflow :5038/:5100-5104 旁;capability `:1974` 同构。**`CoreLowerDiagnostic` 的全部生产站点(core_lower/core_layout/core_frame_layout/core_wire_projection/core_wire_schema/core_verify 共 6 文件)必须逐站点 stamp enclosing decl 的 module_name。** 警告:`source_module` 给默认空值后,`CoreLowerDiagnostic{sev, code, msg, range}` 旧聚合初始化仍可编译(末位缺省 = 空),会**静默丢归属**——builder 必须 grep 每个构造点逐一填值,无 enclosing decl 的 whole-program 级诊断才允许留空。
 3. codegen 侧采用 **scoped owning-module** 机制(不逐站点加参数):`CoreWasmCodegenResult` 增 `std::string active_source_module`;`add_diag`(`:1209`)push 时把它拷入 `CoreWasmDiagnostic::source_module`。RAII scope 在 `build_workflow_plan` 取 workflow.module、在 `build_agent_plan` 于 :1140 解析 flow 后取 **flow.source_module**(workflow 内嵌套规划打包 agent 时 RAII 自然恢复外层 workflow module);emit 入口 verifier/layout 拒绝在任何 scope 外,module 取 `first.source_module`(此时 `CoreLowerDiagnostic` 已带 module);确无归属才空。capability 内在 reject(如 :10467-10483)允许经 `add_diag` 的可选末位 override 参数传 `capability.source_module`,但不强制——它们多无 range,留空 fail-closed 可接受。
 4. facade 对 lower/layout/codegen **统一**逐条读 `d.source_module` 调 host locator——**删除** §12.16.4/§12.16.9 中 `workflow_module_by_name_` 的 workflow-name 启发式(无该成员、无该 ~LOC)。
 5. **host locator 必须 fail-closed 校验 offset:** CLI locator 按 module_name 解析到 SourceUnit 后,仅当 `range.begin_offset <= unit.source.content.size()`(建议同时校验 end)才返回 position;越界返回 `nullopt`(退化为只显示 source_name/module 标签,不编造行号)。locator 缺省或返回 nullopt 但 module_name 非空时,facade 仍 stamp `source_name = module_name`(无 position)。这同时兜底任何残余归属缺口。
@@ -4713,7 +4695,7 @@ WH-6 提交(91ddd558)后的完整无标签 ctest(594 项)暴露一个定向评�
 2. **声明 fallback 存活**:stage-1 失败且原始输入本身是声明(const/struct/fn/...)时,直接 run_pipeline + print_program_ir。
 3. **失败相位优先级(fix-forward P2-2)**:`PipelineFailurePhase`/`InferFailurePhase` 区分 Parse/Resolve/Typecheck/Internal;stage-1 与 fallback 同时失败时,Typecheck/Internal 浮出真实类型错误(如 `1 + true` -> `operator '+' is not defined for Int and Bool`,不再被 fallback token dump 遮蔽),Parse/Resolve 保持 fallback 的顶层 parse 错误(§12.8.10.12 1.4 nominal 失败面:`Option::Some(3)` -> `mismatched input 'Option'`)。
 4. **Unit 短路**:`{}` -> `{}`,不经 wasm(codegen 拒绝 Unit 输出字段);WASM=ON/OFF 均可用。
-5. **stage-2 合成 agent**(无 module、非 pub、零能力、Init->Done 两态):`struct ReplIn {}` + `struct ReplOut { value: <describe(T)> }`,Done 行在表达式后换行分隔;lower 后 `run_wasm_agent`,要求 Completed + 非空 StructValue 输出,取 `value` 字段 print_value。非 Completed 渲染 `WorkflowStatus` 枚举名 + 诊断袋首条(如 `4 / 0` -> `Error: agent did not complete (status: NodeFailed): [wasm.trap]: run_wasm_agent: runv trapped`,不再泄露裸整数 `(status: 1)`)。
+5. **stage-2 合成 agent**(无 module、非 pub、零能力、Init->Done 两态):`struct ReplIn {}` + `struct ReplOut { value: <describe(T)> }`,Done 行在表达式后换行分隔;lower 后 `run_wasm_agent`,要求 Completed + 非空 StructValue 输出,取 `value` 字段 print_value。非 Completed 渲染 `WorkflowStatus` 枚举名 + 诊断袋首条(如 `4 / 0` -> `Error: agent did not complete (status: NodeFailed): [wasm.trap]: run_wasm_agent: run_frame trapped`,不再泄露裸整数 `(status: 1)`)。
 6. **单一 #ifdef 组合边缘**:eval wasm 体一个 `#ifdef AHFL_ENABLE_BACKEND_WASM` triplet;WASM=OFF 字节固定拒绝 `Error: evaluation requires the embedded wasm engine; this build was configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default (ON) to evaluate expressions.`(stage-1 推断 / `:type` / Unit 短路 / 声明 fallback 仍工作)。
 7. **EnumVariantT->parent 转换分支按 §12.8.10.12 §2 在本 slice 删除**(detached REPL 管线不可达;post-WH-9 "REPL session accumulation + prelude mode" 后援切片在声明可见通道建成时重新引入)。
 
@@ -4723,7 +4705,7 @@ CMake:`ahfl_tooling_repl` 删除直接 `ahfl_runtime_evaluator` 边,显式 `ahfl
 
 ### 12.18.2 验证证据(coordinator 独立复跑)
 
-- 对抗评审 verdict FIX-FORWARD(2 P1 + 2 P2,coordinator 全部独立复现),fix-forward 后四项逐字复核:P1-1 `1 + 2 // c` eval -> `3`、`:type` -> `Int`(`"http://x"`/`"a // b"` 字符串不被变换,doc 注释同样修复);P1-2 EnumVariantT field/branch/doc grep-zero;P2-1 `4 / 0` -> `(status: NodeFailed): [wasm.trap]: run_wasm_agent: runv trapped`;P2-2 `1 + true` eval -> 真实类型错误、不含 `expecting {<EOF>`,nominal 三面(`mismatched input 'Option'`/`unknown callable 'Option::Some'`/`unknown type 'Color'`)钉住。
+- 对抗评审 verdict FIX-FORWARD(2 P1 + 2 P2,coordinator 全部独立复现),fix-forward 后四项逐字复核:P1-1 `1 + 2 // c` eval -> `3`、`:type` -> `Int`(`"http://x"`/`"a // b"` 字符串不被变换,doc 注释同样修复);P1-2 EnumVariantT field/branch/doc grep-zero;P2-1 `4 / 0` -> `(status: NodeFailed): [wasm.trap]: run_wasm_agent: run_frame trapped`;P2-2 `1 + true` eval -> 真实类型错误、不含 `expecting {<EOF>`,nominal 三面(`mismatched input 'Option'`/`unknown callable 'Option::Some'`/`unknown type 'Color'`)钉住。
 - dev 强制重编译 REPL TU 零 warning(`-Wall -Wextra -Wpedantic -Werror`);ASan preset 全量重建零 warning。
 - `ctest --preset test-dev -R repl` 3/3;unit binary 64/64 ON。
 - WASM=OFF scratch(<job tmp>/build-wasm-off-wh7 冷重建,exit 0、零 warning):repl ctests 3/3 + unit 47/47,拒绝字节逐字一致,`:type`/Unit/声明 fallback 正常。
@@ -4752,7 +4734,7 @@ CMake:`ahfl_tooling_repl` 删除直接 `ahfl_runtime_evaluator` 边,显式 `ahfl
 5. **late binding(F5)**:`handle_set_breakpoints` 在 session 存在时收集新增 (id,line),响应体合成后、handle_request 返回前经 `report_breakpoint_liveness` 发 unsolicited breakpoint 事件(classifier 在 mutex_ 下短暂取锁;worker pause 在 cv 等待期间不持锁,无死锁)。
 6. **cancellation/interruption 四点检查**:session 入口(pre-run,构造全 Skipped facts)、wrapped_callback TOP、live hook 阻塞返回后二次检查(F1(a),lane 分派前)、wrapped_invoker 在 capability_invoked_hook 阻塞返回后、invoker 副作用前二次检查(F1(b):返回 Error+Cancelled/Interrupted,不调 invoker/observer/args/calls;collected_capabilities 的 name-only 项加注释,消费者死代码/只投影 cap_calls)。两个 import executor 站点 map Error->AHFL_CAP_ERROR,bridge lane kOpUnreachable trap、opaque lane (ERROR,0,0),workflow 不可能成功完成;post-run 覆盖链最前段把结果分类为 Cancelled/Interrupted,无 Failed node。lifecycle 在终态前补 RunCancellationRequested/RunInterrupted,与 evaluator 字节对齐。
 7. **wasm lane 无 agent_input hook**:Node frame 在该 node 首个 state entry 合成;Input/Output 作用域与 evaluate 从 workflow IR node 参数 `PathExpr.path`(root input->workflow_input_,identifier->node_results_,members 经 resolve_member 链,miss->nullptr)推断。
-8. **facade run() 可重复**:5 个 hooks + post_run2_memory_mutator + predicates + invoker 全部 copy(非 move)。
+8. **facade run() 可重复**:5 个 hooks + post_run_workflow_memory_mutator + predicates + invoker 全部 copy(非 move)。
 9. **WASM=OFF**:单 `#ifdef`;launch 字节固定拒绝 `debug adapter requires WASM backend support`(stderr + terminated + `{}`),非执行请求存活;CMake genex 传 `AHFL_ENABLE_BACKEND_WASM=1`。
 10. **CMake big-bang**:engine evaluator 边 PUBLIC->PRIVATE;DAP 去 engine 改显式 value + gated wasm_runner;6 个测试目标显式补 evaluator 链接。
 
@@ -4812,7 +4794,7 @@ WH-9 的测试 / 门爆炸半径由独立只读决策代理裁决;coordinator �
    且 soak/run 模式不碰 checkpoint 机制。修订:SOK/run 半移植到 wasm facade 并更名
    `reference_workflow_soak_worker.cpp`,crash/checkpoint/resume 半删除;
    production-confidence 门、long-soak harness、evidence schema
-   ahfl.production-confidence-soak.v2 全部保留(门不改名)。
+   ahfl.production-confidence-soak 全部保留(门不改名)。
 4. **修订裁决 #2——p6/e3 probe 是 SPLIT 不是 Class C 删**:`core_wasm_p6_probe`
    双用途,emit 半支撑 52 个存活 block ctest(含 P0 安全拒绝门:FB-4 闭包白名单、
    Int64 ABI、跨 agent 泄漏、computed-goto 伪造)。修订:`core_wasm_p6_probe` 拆分
@@ -4870,9 +4852,9 @@ WH-9 的测试 / 门爆炸半径由独立只读决策代理裁决;coordinator �
   crash/approval 宣传。
 - **文档对账(coordinator 独立完成,同 commit)**:README ×2、architecture-overview、
   native-runtime-architecture、ir-backend-architecture、cli-pipeline-architecture、
-  host-abi、native-runtime-artifacts、user-guide-execution、user-guide-assurance、
+  host-abi、native-runtime-artifacts、execution、assurance、
   contributor-guide、cli-commands、project-status、q4-roadmap、issue-backlog、
-  conformance-suite 设计门(加 WH-9 postscript),全部改为单执行路径 + v2
+  conformance-suite 设计门(加 WH-9 postscript),全部改为单执行路径 + 当前恢复结构
   suspend/resume 口径;RFC/kr68/core-ir 历史决策记录保持原样作档案。
 
 #### 12.20.3 验证证据(coordinator 独立复跑)
@@ -4909,8 +4891,8 @@ WH-9 的测试 / 门爆炸半径由独立只读决策代理裁决;coordinator �
 #### 12.20.4 已知边界(不在本 slice)
 
 - 评估器时代的节点边界 checkpoint 恢复(checkpoint_after_node / NodeRestored /
-  SIGKILL 重启 / operator approval)与 wasm 的 suspend-at-Pending + ExactSidecar
-  memo + 冷启动 whole-module replay 结构不兼容;crash 证据诚实退役,不重新指向。
+  SIGKILL 重启 / operator approval)与 wasm 的 suspend-at-Pending + StoredMemoResult
+  memo + 冷启动 whole-module replay 结构不同;crash 证据诚实退役,不重新指向。
   capstone 证明的是同进程两个 fresh WasmWorkflowRuntime scope 的挂起-重放;跨进程
   生产级持久 exactly-once host(POSIX 落盘、KMS、真实重放)仍是 RFC 0026 E4-B2
   后续,且不替代业务系统自己的 disaster-recovery 演练。
@@ -4949,10 +4931,9 @@ ASan 套件的 UAF 检测。
   单行 `&&` 形式会展开成 `0 (0)` 编译错误,嵌套形式为覆盖 GCC/Clang 的标准写法),
   在 soak 报告 JSON 中新增可选布尔字段 `address_sanitizer`;
   harness 以 `is True` 严格读取该字段,为真时 KR3.4 循环只遍历 `("allocator_in_use",)`。
-- 无 schema 版本升级:`address_sanitizer` 是 additive optional 字段;唯一校验器
-  `scripts/check-production-confidence-gate.py:98-135` 为 open-world(固定字段表 `.get()`,
-  从不拒绝多余字段),契约 `config/production-confidence-gate.json` 只命名 schema 不钉字段集;
-  小时级证据(生产 CI 用 dev 构建)恒为 `false`,语义不变。
+- `address_sanitizer` 表达当前构建插桩状态，producer/harness/gate 按同一当前
+  结构维护。生产 CI 的 dev 构建该值为 `false`；字段存在性和取值由当前证据
+  校验负责，不以忽略未知字段作为历史消费者兼容承诺。
 - 零 CMake / preset / CI / 依赖变更;手动 `quarantine_size_mb=0` 做法正式退役,
   ASan 全量恢复全强度 quarantine(完整 UAF 检测窗口)。
 
@@ -4972,7 +4953,7 @@ ASan 套件的 UAF 检测。
 - 更正 1:仓库**没有**为 ASan ctest 设置 `ASAN_OPTIONS`——`asan`/`test-asan` preset 与
   ci.yml 的 ASan job 均无 environment;仓库内唯一 `ASAN_OPTIONS` 在 fuzz-cron,且是
   `detect_leaks=1`(开启检测)。被退役的是文档化的手动做法,不是仓库配置。
-- 更正 2:beta 证据流水线**不消费** `ahfl.production-confidence-soak.v2`;该 schema 的
+- 更正 2:beta 证据流水线**不消费** `ahfl.production-confidence-soak`;该 schema 的
   消费者只有写入方、命名契约、校验器与两个 smoke 脚本。
 
 ### 12.21.4 接受的边界与代价
@@ -5366,4 +5347,3 @@ coordinator 自审(竞态修复范围小,fork 继承上下文风险大于收益)
 4. ASan 全量单独运行零 ASan/LSan/UBSan 报告。
 5. WASM=OFF 冷构建 + 全套仅 3 个 pre-existing pnpm(#72/#75/#76)。
 6. release + install/export consumer 全绿。
-

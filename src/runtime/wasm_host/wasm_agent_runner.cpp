@@ -5,7 +5,7 @@
 //
 //   1. A SEPARATE effects-free instance drives the step-walk
 //      (run_agent_step_walk). state_entered_hook fires LIVE per step.
-//   2. The CANONICAL instance runs runv (P6-frame) exactly once.
+//   2. The CANONICAL instance runs run_frame (P6-frame) exactly once.
 //      capability_invoked_hook / capability_result_observer fire LIVE at
 //      its imports.
 //
@@ -31,7 +31,7 @@
 #include "runtime/wasm_host/wasm_error_codes.hpp"
 
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
+#include "ahfl/compiler/ir/core_wire_projection.hpp"
 #include "runtime/value/value_json.hpp"
 
 #include <algorithm>
@@ -62,7 +62,7 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     }
     // The agent frame-payload arena (packed input String bytes). A computed
     // final that passes an input String through to the output (e.g.
-    // v2b_string_passthrough) points the output PtrLen at THIS region, not at
+    // string_passthrough) points the output PtrLen at THIS region, not at
     // rodata or a bridge result payload.
     if (section.payload_arena_capacity > 0) {
         regions.push_back({section.payload_arena_base,
@@ -385,7 +385,7 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             "run_wasm_agent: fresh_instance failed for canonical run");
     }
 
-    // Pack the P6-frame input at the fixed aggregate input base. runv takes
+    // Pack the P6-frame input at the fixed aggregate input base. run_frame takes
     // no arguments; the input is packed at the fixed P6 base.
     if (auto err = pack_p6_agent_input(engine, descriptor, input);
         err.has_value()) {
@@ -404,19 +404,19 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     std::string run_failure_message;
     bool run_ok = false;
 
-    auto outcome = engine.invoke_runv();
+    auto outcome = engine.invoke_run_frame();
     if (!outcome.has_value()) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kTrap;
         run_failure_message =
-            "run_wasm_agent: invoke_runv failed (engine error)";
-    } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
+            "run_wasm_agent: invoke_run_frame failed (engine error)";
+    } else if (std::holds_alternative<eng::WorkflowRunHostAborted>(*outcome)) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kHostAbort;
         run_failure_message =
-            "run_wasm_agent: runv host-aborted (capability import "
+            "run_wasm_agent: run_frame host-aborted (capability import "
             "failure)";
         // P2-1: use the CapabilityImportError ENUM NAME, not the raw int.
         if (canonical_import_state.last_error.has_value()) {
@@ -435,25 +435,25 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             }
             run_failure_message += ")";
         }
-    } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
+    } else if (std::holds_alternative<eng::WorkflowRunTrapped>(*outcome)) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kTrap;
-        run_failure_message = "run_wasm_agent: runv trapped";
+        run_failure_message = "run_wasm_agent: run_frame trapped";
     } else {
-        const auto &runv = std::get<RunvResult>(*outcome);
-        run_ok = (runv.raw_status == 0);
+        const auto &run_frame = std::get<FrameRunResult>(*outcome);
+        run_ok = (run_frame.raw_status == 0);
         if (run_ok) {
             output_value =
                 read_p6_agent_output(engine, descriptor,
-                                     runv.value_ptr.value);
+                                     run_frame.value_ptr.value);
         } else {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
             run_failure_code = wasm_diag::kRunFailed;
             run_failure_message =
-                "run_wasm_agent: runv returned non-zero status " +
-                std::to_string(runv.raw_status);
+                "run_wasm_agent: run_frame returned non-zero status " +
+                std::to_string(run_frame.raw_status);
         }
     }
 

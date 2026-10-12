@@ -15,7 +15,7 @@
 ## 目标
 
 1. 定义稳定的 project/source graph 数据模型
-2. 扩展 frontend 公共边界，使其既能兼容单文件，也能承载 project-aware 装载
+2. 扩展 frontend 公共边界，使其既能分析单文件，也能承载 project-aware 装载
 3. 让 resolver/typecheck/validate 消费“已装载的源码集合”，而不是自行接触文件系统
 
 ## 设计原则
@@ -23,7 +23,7 @@
 1. loader 细节留在 frontend
 2. parse tree 生命周期仍只停留在 `frontend.cpp`
 3. resolver/typecheck/validate 不直接遍历文件系统
-4. 单文件兼容模式继续可用
+4. 单文件分析模式继续可用
 5. project-aware 模式是单文件模式之上的显式扩展，不是隐式副作用
 
 ## 分层后的对象模型
@@ -142,16 +142,16 @@ struct ProjectParseResult {
 
 推荐扩展为：
 
-1. 保留现有单文件入口，作为兼容 wrapper
+1. 保留现有单文件入口，通过同一 frontend 装载单文件
 2. 新增 project-aware 入口，例如 `parse_project(ProjectInput)`
-3. 由 `parse_file(path)` 在兼容模式下返回单文件结果
+3. 由 `parse_file(path)` 在单文件分析模式下返回单文件结果
 4. 由 PackageGraph builder 降成内部 `ProjectInput` 后使用 `parse_project(...)`
 
 重要约束：
 
 1. `parse_file` 不自动偷偷递归读 imports。
 2. `parse_project` 才是唯一允许构建 source graph 的公共入口。
-3. project-aware 模式与单文件兼容模式必须在 API 形态上可区分。
+3. project-aware 模式与单文件分析模式必须在 API 形态上可区分。
 
 ## 与现有六阶段流水线的关系
 
@@ -213,5 +213,5 @@ Issue 04 之后，project/source graph 相关实现必须遵守以下规则：
 
 1. 不要把文件系统遍历逻辑扩散进 resolver/typecheck/validate。
 2. 不要让 `ParseResult` 继续膨胀成”单文件模式和项目模式的万能容器”。
-3. 单文件兼容模式应通过 wrapper 复用新边界，而不是平行维护两套完全不同的前端。
+3. 单文件分析模式复用同一装载边界，而不是平行维护两套完全不同的前端。
 4. 若后续要增加 manifest、workspace 或 build graph，优先在 source graph 之上增量扩展，而不是推翻本层对象模型。

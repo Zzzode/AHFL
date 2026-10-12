@@ -85,7 +85,10 @@ void test_identity_workflow(const std::filesystem::path &repo_root) {
             hook_node_names.emplace_back(node_name);
         };
 
-    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+    wr::WasmWorkflowRuntime runtime(*program, {});
+    check(runtime.attach_execution_config(std::move(config)).has_value(),
+          "identity_wf.attach_before_run");
+    check(!runtime.attach_execution_config({}).has_value(), "identity_wf.reject_second_attachment");
 
     auto input = value_from_json(
         R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
@@ -93,6 +96,14 @@ void test_identity_workflow(const std::filesystem::path &repo_root) {
     if (!input.has_value()) {
         return;
     }
+
+    wr::WasmWorkflowRuntime already_started(*program, {});
+    auto first_run = already_started.run("wasm::e3_workflow::IdentityPipeline",
+                                         ahfl::runtime::clone_value(*input));
+    check(first_run.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "identity_wf.initial_config_runs");
+    check(!already_started.attach_execution_config({}).has_value(),
+          "identity_wf.reject_attachment_after_run");
 
     auto result = runtime.run("wasm::e3_workflow::IdentityPipeline",
                               std::move(*input));
@@ -235,7 +246,7 @@ void test_workflow_session_failure_facade(
     }
 
     // The invoker returns Error; the guest propagates AHFL_CAP_ERROR as a
-    // non-zero run2 status (wasm.run-failed). The FACADE must map the session
+    // non-zero run_workflow status (wasm.run-failed). The FACADE must map the session
     // failure to a failed WorkflowResult, NOT crash.
     wr::WasmWorkflowRuntimeConfig config;
     config.invoker = [](const CapabilityInvocationContext &,
@@ -640,7 +651,7 @@ void test_agent_runner(const std::filesystem::path &repo_root) {
 
 void test_agent_trap(const std::filesystem::path &repo_root) {
     const auto source =
-        repo_root / "tests/golden/wasm/v2c_single_arg_bridge.ahfl";
+        repo_root / "tests/golden/wasm/single_arg_bridge.ahfl";
     std::string error;
     auto program = conf::compile_conformance_source(source, error);
     check(program.has_value(), "agent_trap.compile");
@@ -660,7 +671,7 @@ void test_agent_trap(const std::filesystem::path &repo_root) {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         r.value = value_from_json(
-            R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"agent-1"})");
+            R"({"_type":"wasm::single_arg_bridge::RoutingDecision","owner":"agent-1"})");
         return r;
     };
     config.invoker = [](const CapabilityInvocationContext &,
@@ -672,14 +683,14 @@ void test_agent_trap(const std::filesystem::path &repo_root) {
     };
 
     auto input = value_from_json(
-        R"({"_type":"wasm::v2c_single_arg_bridge::TicketRequest","ticket_id":"T-123"})");
+        R"({"_type":"wasm::single_arg_bridge::TicketRequest","ticket_id":"T-123"})");
     check(input.has_value(), "agent_trap.input");
     if (!input.has_value()) {
         return;
     }
 
     auto result = wr::run_wasm_agent(
-        *program, "wasm::v2c_single_arg_bridge::RoutingAgent", *input,
+        *program, "wasm::single_arg_bridge::RoutingAgent", *input,
         std::move(config));
     // P1-4: trap maps to a FAILED WorkflowResult with wasm.trap, NOT
     // std::unexpected (which is reserved for pre-run setup failures).
@@ -772,12 +783,12 @@ void test_agent_host_abort(const std::filesystem::path &repo_root) {
 // ==== 6. P1-6: states_invoker scripted-replay separation ====
 
 void test_states_invoker_separation(const std::filesystem::path &repo_root) {
-    // Use the v2c_single_arg_bridge P6-frame agent: on the bridge lane, the
+    // Use the single_arg_bridge P6-frame agent: on the bridge lane, the
     // step function executes the capability call in the Routing state, so
     // the states_invoker IS called during the effects-free step-walk (unlike
     // the WireJson opaque lane, where step() only transitions).
     const auto source =
-        repo_root / "tests/golden/wasm/v2c_single_arg_bridge.ahfl";
+        repo_root / "tests/golden/wasm/single_arg_bridge.ahfl";
     std::string error;
     auto program = conf::compile_conformance_source(source, error);
     check(program.has_value(), "sep.compile");
@@ -801,7 +812,7 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         r.value = value_from_json(
-            R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"scripted"})");
+            R"({"_type":"wasm::single_arg_bridge::RoutingDecision","owner":"scripted"})");
         return r;
     };
     // The canonical invoker returns a DIFFERENT result.
@@ -813,19 +824,19 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         r.value = value_from_json(
-            R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"canonical"})");
+            R"({"_type":"wasm::single_arg_bridge::RoutingDecision","owner":"canonical"})");
         return r;
     };
 
     auto input = value_from_json(
-        R"({"_type":"wasm::v2c_single_arg_bridge::TicketRequest","ticket_id":"T-123"})");
+        R"({"_type":"wasm::single_arg_bridge::TicketRequest","ticket_id":"T-123"})");
     check(input.has_value(), "sep.input");
     if (!input.has_value()) {
         return;
     }
 
     auto result = wr::run_wasm_agent(
-        *program, "wasm::v2c_single_arg_bridge::RoutingAgent", *input,
+        *program, "wasm::single_arg_bridge::RoutingAgent", *input,
         std::move(config));
     check(result.has_value(), "sep.run");
     if (!result.has_value()) {
@@ -846,7 +857,7 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
     if (output != nullptr) {
         const auto json = value_to_json(*output);
         check(json ==
-                  R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"canonical"})",
+                  R"({"_type":"wasm::single_arg_bridge::RoutingDecision","owner":"canonical"})",
               "sep.output_is_canonical");
     }
 
@@ -857,12 +868,12 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
 // ==== 6b. P2-11: states_invoker multi-call (two calls in two states) ====
 
 void test_states_invoker_multi_call(const std::filesystem::path &repo_root) {
-    // v2c_bridge_chain calls RouteTicket in BOTH Routing and Routing2 states.
+    // bridge_chain calls RouteTicket in BOTH Routing and Routing2 states.
     // The states_invoker must fire once per call site (twice total) during
     // the effects-free step-walk, and the canonical invoker twice during
     // the canonical run.
     const auto source =
-        repo_root / "tests/golden/wasm/v2c_bridge_chain.ahfl";
+        repo_root / "tests/golden/wasm/bridge_chain.ahfl";
     std::string error;
     auto program = conf::compile_conformance_source(source, error);
     check(program.has_value(), "multi.compile");
@@ -883,7 +894,7 @@ void test_states_invoker_multi_call(const std::filesystem::path &repo_root) {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         r.value = value_from_json(
-            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"scripted","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Web"}})");
+            R"({"_type":"wasm::bridge_chain::RoutingDecision","owner":"scripted","route":{"_enum":"wasm::bridge_chain::Channel","_variant":"Web"}})");
         return r;
     };
     config.invoker =
@@ -894,19 +905,19 @@ void test_states_invoker_multi_call(const std::filesystem::path &repo_root) {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         r.value = value_from_json(
-            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"canonical","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})");
+            R"({"_type":"wasm::bridge_chain::RoutingDecision","owner":"canonical","route":{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"}})");
         return r;
     };
 
     auto input = value_from_json(
-        R"({"_type":"wasm::v2c_bridge_chain::TicketRequest","channel":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},"ticket_id":"T-999","urgent":true})");
+        R"({"_type":"wasm::bridge_chain::TicketRequest","channel":{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"},"ticket_id":"T-999","urgent":true})");
     check(input.has_value(), "multi.input");
     if (!input.has_value()) {
         return;
     }
 
     auto result = wr::run_wasm_agent(
-        *program, "wasm::v2c_bridge_chain::RoutingAgent", *input,
+        *program, "wasm::bridge_chain::RoutingAgent", *input,
         std::move(config));
     check(result.has_value(), "multi.run");
     if (!result.has_value()) {
@@ -1071,7 +1082,7 @@ void test_branching_wirejson_rejection(
 // state_sequence, capability_sequence, capability_arguments, output.
 // Every fixture must compile and run; a compile or run failure is a test
 // failure, not a silent skip.
-void run_v2c_bridge_fixture(
+void run_bridge_bridge_fixture(
     const std::filesystem::path &repo_root, std::string_view fixture_name,
     std::string_view agent_name, std::string_view input_json,
     std::string_view capability_result_json,
@@ -1159,67 +1170,67 @@ void run_v2c_bridge_fixture(
     }
 }
 
-void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
-    // v2c_single_enum_bridge: Init -> Classify -> Done, one ClassifyChannel
+void test_bridge_bridge_fixtures(const std::filesystem::path &repo_root) {
+    // single_enum_bridge: Init -> Classify -> Done, one ClassifyChannel
     // call with a tag-only-enum argument. The envelope wraps the non-Struct
     // single argument as {"value":..}.
     {
         static constexpr std::string_view states[] = {"Init", "Classify",
                                                       "Done"};
         static constexpr std::string_view caps[] = {
-            "wasm::v2c_single_enum_bridge::ClassifyChannel"};
+            "wasm::single_enum_bridge::ClassifyChannel"};
         static constexpr std::string_view cap_args[] = {
-            R"({"value":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})"};
-        run_v2c_bridge_fixture(
-            repo_root, "v2c_single_enum_bridge",
-            "wasm::v2c_single_enum_bridge::RoutingAgent",
-            R"({"_type":"wasm::v2c_single_enum_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})",
-            R"({"_type":"wasm::v2c_single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})",
+            R"({"value":{"_enum":"wasm::single_enum_bridge::Channel","_variant":"Phone"}})"};
+        run_bridge_bridge_fixture(
+            repo_root, "single_enum_bridge",
+            "wasm::single_enum_bridge::RoutingAgent",
+            R"({"_type":"wasm::single_enum_bridge::TicketRequest","channel":{"_enum":"wasm::single_enum_bridge::Channel","_variant":"Phone"}})",
+            R"({"_type":"wasm::single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::single_enum_bridge::Channel","_variant":"Phone"}})",
             states, caps, cap_args,
-            R"({"_type":"wasm::v2c_single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})");
+            R"({"_type":"wasm::single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::single_enum_bridge::Channel","_variant":"Phone"}})");
     }
 
-    // v2c_route_then_bridge: Init -> Routing -> Done, one RouteTicket call
+    // route_then_bridge: Init -> Routing -> Done, one RouteTicket call
     // with (String, Int, Bool) args. The envelope is the multi-arg
     // {"args":[...]} form.
     {
         static constexpr std::string_view states[] = {"Init", "Routing",
                                                       "Done"};
         static constexpr std::string_view caps[] = {
-            "wasm::v2c_route_then_bridge::RouteTicket"};
+            "wasm::route_then_bridge::RouteTicket"};
         static constexpr std::string_view cap_args[] = {
             R"({"args":["TKT-42",1,true]})"};
-        run_v2c_bridge_fixture(
-            repo_root, "v2c_route_then_bridge",
-            "wasm::v2c_route_then_bridge::RoutingAgent",
-            R"({"_type":"wasm::v2c_route_then_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
-            R"({"_type":"wasm::v2c_route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"}})",
+        run_bridge_bridge_fixture(
+            repo_root, "route_then_bridge",
+            "wasm::route_then_bridge::RoutingAgent",
+            R"({"_type":"wasm::route_then_bridge::TicketRequest","channel":{"_enum":"wasm::route_then_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
+            R"({"_type":"wasm::route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::route_then_bridge::Channel","_variant":"Phone"}})",
             states, caps, cap_args,
-            R"({"_type":"wasm::v2c_route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"}})");
+            R"({"_type":"wasm::route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::route_then_bridge::Channel","_variant":"Phone"}})");
     }
 
-    // v2c_bridge_chain: Init -> Routing -> Routing2 -> Done, TWO RouteTicket
+    // bridge_chain: Init -> Routing -> Routing2 -> Done, TWO RouteTicket
     // calls (same capability, chained handlers). Both calls carry identical
     // argument envelopes.
     {
         static constexpr std::string_view states[] = {
             "Init", "Routing", "Routing2", "Done"};
         static constexpr std::string_view caps[] = {
-            "wasm::v2c_bridge_chain::RouteTicket",
-            "wasm::v2c_bridge_chain::RouteTicket"};
+            "wasm::bridge_chain::RouteTicket",
+            "wasm::bridge_chain::RouteTicket"};
         static constexpr std::string_view cap_args[] = {
-            R"({"args":["TKT-42",{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},true]})",
-            R"({"args":["TKT-42",{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},true]})"};
-        run_v2c_bridge_fixture(
-            repo_root, "v2c_bridge_chain",
-            "wasm::v2c_bridge_chain::RoutingAgent",
-            R"({"_type":"wasm::v2c_bridge_chain::TicketRequest","channel":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
-            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})",
+            R"({"args":["TKT-42",{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"},true]})",
+            R"({"args":["TKT-42",{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"},true]})"};
+        run_bridge_bridge_fixture(
+            repo_root, "bridge_chain",
+            "wasm::bridge_chain::RoutingAgent",
+            R"({"_type":"wasm::bridge_chain::TicketRequest","channel":{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
+            R"({"_type":"wasm::bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"}})",
             states, caps, cap_args,
-            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})");
+            R"({"_type":"wasm::bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::bridge_chain::Channel","_variant":"Phone"}})");
     }
 
-    // v2c_multi_arg_bridge: Init -> Routing -> Done, one RouteTicket call
+    // multi_arg_bridge: Init -> Routing -> Done, one RouteTicket call
     // with (String, Enum, Bool) args. The envelope is the multi-arg
     // {"args":[...]} form. This fixture was previously rejected by A2
     // (params != 1); the P2-8 bridge-source-symbol relaxation admits it.
@@ -1227,16 +1238,16 @@ void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
         static constexpr std::string_view states[] = {"Init", "Routing",
                                                       "Done"};
         static constexpr std::string_view caps[] = {
-            "wasm::v2c_multi_arg_bridge::RouteTicket"};
+            "wasm::multi_arg_bridge::RouteTicket"};
         static constexpr std::string_view cap_args[] = {
-            R"({"args":["TKT-42",{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"},true]})"};
-        run_v2c_bridge_fixture(
-            repo_root, "v2c_multi_arg_bridge",
-            "wasm::v2c_multi_arg_bridge::RoutingAgent",
-            R"({"_type":"wasm::v2c_multi_arg_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
-            R"({"_type":"wasm::v2c_multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"}})",
+            R"({"args":["TKT-42",{"_enum":"wasm::multi_arg_bridge::Channel","_variant":"Phone"},true]})"};
+        run_bridge_bridge_fixture(
+            repo_root, "multi_arg_bridge",
+            "wasm::multi_arg_bridge::RoutingAgent",
+            R"({"_type":"wasm::multi_arg_bridge::TicketRequest","channel":{"_enum":"wasm::multi_arg_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
+            R"({"_type":"wasm::multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::multi_arg_bridge::Channel","_variant":"Phone"}})",
             states, caps, cap_args,
-            R"({"_type":"wasm::v2c_multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"}})");
+            R"({"_type":"wasm::multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::multi_arg_bridge::Channel","_variant":"Phone"}})");
     }
 }
 
@@ -1367,7 +1378,7 @@ int main() {
     test_states_invoker_multi_call(repo_root);
     test_shared_import_attribution(repo_root);
     test_branching_wirejson_rejection(repo_root);
-    test_v2c_bridge_fixtures(repo_root);
+    test_bridge_bridge_fixtures(repo_root);
     test_compile_diag_no_locator(repo_root);
     test_compile_diag_locator_bounds_guard(repo_root);
 

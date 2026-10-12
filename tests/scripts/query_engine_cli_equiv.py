@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """RFC 0027 P5 (KR6.12): the CLI query-engine route gate.
 
-Since KR6.11-S4C `ahflc` evaluates the frontend through the self-built query
-engine by default. KR6.12 removed the AHFL_QUERY_LEGACY_PIPELINE escape hatch
-and the direct resolve/typecheck tail, so there is no second route to
-differentiate against: this gate is now the pure non-vacuity gate the P3
-migration design (docs/design/query-frontend-p3-migration.zh.md §3.3) says it
-degrades to once the legacy half is deleted.
+CLI frontend analysis always evaluates through the query engine. This gate
+verifies rerun stability and that analysis actually takes the engine route.
 
 For every corpus entry it runs the command in the DEFAULT environment (with
 AHFL_QUERY_ENGINE_TRACE=1) and asserts:
@@ -149,13 +145,8 @@ def main() -> int:
         fail("project corpus found no package fixtures (vacuous gate)")
         return 1
 
-    # The ONLY route since KR6.12. The trace flag makes the engine route
-    # observable. The deleted legacy variable is popped defensively so a stale
-    # environment in a developer's shell can never affect this gate (it is now
-    # an unknown variable the driver ignores).
+    # Observe the sole frontend route without changing analysis behavior.
     env = dict(os.environ)
-    env.pop("AHFL_QUERY_ENGINE", None)
-    env.pop("AHFL_QUERY_LEGACY_PIPELINE", None)
     env["AHFL_QUERY_ENGINE_TRACE"] = "1"
 
     def route_of(stderr: str) -> str | None:

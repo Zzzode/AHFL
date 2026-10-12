@@ -36,7 +36,7 @@ flowchart TD
     OptIR -. "-O" .-> OptPasses[Opt IR passes]
     OptPasses -. "text / JSON" .-> OptArtifact[Opt IR artifact]
     SemanticIR -. "emit core-ir-json" .-> CoreIR[Core-IR: CoreProgram]
-    CoreIR -. "ahfl.core.v1" .-> CoreArtifact[Core-IR layered JSON artifact]
+    CoreIR -. "ahfl.core" .-> CoreArtifact[Core-IR layered JSON artifact]
 ```
 
 设计意图是：
@@ -45,7 +45,7 @@ flowchart TD
 2. Typed HIR 负责承载自包含的 typed semantic model。
 3. AHFL-IR (`ir::Program`) 负责冻结稳定的后端消费边界。
 4. Opt IR 负责承载可诊断的 CFG/SSA 风格优化层；当前只作为显式 artifact 输出，不改变普通 backend contract。
-5. Core-IR (`CoreProgram`) 是 AHFL-IR 下方的执行层；它当前也只作为显式 artifact 输出（`emit core-ir-json`，`ahfl.core.v1`），由 `lower_ahfl_to_core` + `print_core_ir_json` 驱动。
+5. Core-IR (`CoreProgram`) 是 AHFL-IR 下方的执行层；它当前也只作为显式 artifact 输出（`emit core-ir-json`，`ahfl.core`），由 `lower_ahfl_to_core` + `print_core_ir_json` 驱动。
 6. backend 负责把稳定 IR 渲染成文本或机器可消费输出。
 
 因此：
@@ -94,7 +94,7 @@ flowchart TD
 1. 稳定中间表示
 2. backend 共享的序列化/导出边界
 
-Core-IR 是 AHFL-IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core.v1`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。`ir::Program` JSON projection（`ahfl.ir.v2`）是 AHFL-IR 层的永久一等投影，与 Core-IR 投影并列、互不取代（三层 IR 塔定型后的分层事实，见 `docs/reference/ir-format.zh.md`「分层投影边界」）。
+Core-IR 是 AHFL-IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。`ir::Program` JSON projection（`ahfl.ir`）是 AHFL-IR 层的永久一等投影，与 Core-IR 投影并列、互不取代（三层 IR 塔定型后的分层事实，见 `docs/reference/ir-format.zh.md`「分层投影边界」）。
 
 Opt IR 则是 AHFL-IR 下方的诊断/优化层。它通过 CLI `emit opt-ir` / `emit opt-ir-json` 可见，但不在当前 core backend registry 中作为普通 backend 消费合同。当前生产路径决策是 artifact-only：普通 backend 不消费 Opt IR，`--optimize` 不把 Opt IR 回降 AHFL-IR，也不让 backend 隐式直连 Opt IR。
 
@@ -118,13 +118,13 @@ IR 的职责包括：
 
 ## IrLowerer 的设计
 
-`src/compiler/ir/typed_hir_lower.cpp` 中的 Typed HIR lowerer 是当前主实现，负责把自包含 `TypedProgram` lower 成 `ir::Program`。`src/compiler/ir/ir_lower.cpp` 中的 `lower_program_ir(...)` 保留为 AST / `SourceGraph` 兼容入口，并委托到 `lower_typed_program(...)`。
+`src/compiler/ir/typed_hir_lower.cpp` 中的 Typed HIR lowerer 是当前主实现，负责把自包含 `TypedProgram` lower 成 `ir::Program`。`src/compiler/ir/ir_lower.cpp` 中的 `lower_program_ir(...)` 作为 AST / `SourceGraph` 分析入口，调用 `lower_typed_program(...)`。
 
 当前接口形态刻意保持简单：
 
 1. 主输入是：
    - `TypedProgram`
-   - 可选 AST / `SourceGraph`，仅用于兼容旧入口和 source graph 语境
+   - 可选 AST / `SourceGraph`，用于对应 source graph 的分析语境
 2. 兼容入口仍接受：
    - AST / `SourceGraph`
    - `ResolveResult`
@@ -140,15 +140,19 @@ IR 的职责包括：
 
 ### Typed HIR cache envelope
 
-Typed HIR 已经可以脱离 AST / `ResolveResult` 生命周期序列化；当前缓存生产化入口是 `serialize_typed_program_cache_json(...)` / `load_typed_program_cache_json(...)`。cache envelope 包含：
+Typed HIR 可以脱离 AST / ResolveResult 生命周期序列化。当前入口是
+`serialize_typed_program_cache_json(...)` / `load_typed_program_cache_json(...)`。
+根对象使用 `format: "ahfl.typed-hir-cache"`，包含 metadata 与 typed_program。
+Metadata 使用 `source_graph_digest`、`source_content_digest` 和
+`resolver_snapshot_digest`；typed_program 使用 `ahfl.typed-hir` 当前结构。
 
-1. `schema_version`：当前为 `AHFL_TYPED_HIR_CACHE_V1`。
-2. `source_graph_revision`：调用方提供的 source graph revision。
-3. `source_content_hash`：调用方提供的 source content hash。
-4. `resolver_snapshot_version`：调用方提供的 resolver snapshot/version。
-5. `typed_program`：内嵌现有 `AHFL_TYPED_HIR_V1` snapshot。
+加载先严格校验完整 envelope 与摘要，再读取 TypedProgram；错误格式、摘要不同
+或损坏 payload 直接 miss。不能通过缺字段缺省升级历史缓存。
 
-加载缓存时必须先校验 envelope metadata，再反序列化 `TypedProgram`。失效原因有明确状态：schema mismatch、source revision mismatch、content hash mismatch、resolver snapshot mismatch、invalid payload。LSP 或 project-aware incremental driver 可以据此决定 cache hit、重新 typecheck 或降级到完整编译。
+持久工具缓存使用实际 producer 可执行文件的 SHA-256，以及 configuration、
+dependency、source content 摘要形成 CacheKey。LSP 的缓存命名空间由实际 producer
+与 project 身份隔离；包源码、manifest 与 overlay 内容参与依赖身份。编译器或
+配置/依赖内容改变时缓存失效，不维护旧 cache 目录读取或迁移路径。
 
 ### 单文件与 project-aware 统一
 
@@ -493,7 +497,7 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 
 ### 5. Opt IR artifact (非 core backend)
 
-`emit opt-ir` 输出 `ir::opt::OptProgram` 的文本 dump，`emit opt-ir-json` 输出同一模型的 `AHFL_OPT_IR_V1` JSON artifact。它们的用途是：
+`emit opt-ir` 输出 `ir::opt::OptProgram` 的文本 dump，`emit opt-ir-json` 输出同一模型的 `AHFL_OPT_IR` JSON artifact。它们的用途是：
 
 1. 观察 AHFL-IR 到 CFG/SSA 风格 Opt IR 的 lowering 结果。
 2. 对比 `-O` 前后的 constant propagation、copy propagation、dead store elimination 效果。
@@ -587,4 +591,4 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 5. 若某项语义不能稳定进入 IR，就说明它还没有准备好成为 backend 约束。
 6. CLI 必须显式区分 core backend、package pipeline 与 runtime execution，不能靠“dispatcher 试试看”来决定语义路径。
 7. Runtime event/report/projection 不得作为 `ahfl_backend_*` target 进入 backend aggregate。
-8. Opt IR 当前保持 artifact-only；已有 verifier、`AHFL_OPT_IR_V1` JSON artifact 和 workflow / contract / temporal lowering 覆盖。进入普通 backend 输出路径之前，必须明确回降 AHFL-IR 或 backend 直连策略。
+8. Opt IR 当前保持 artifact-only；已有 verifier、`AHFL_OPT_IR` JSON artifact 和 workflow / contract / temporal lowering 覆盖。进入普通 backend 输出路径之前，必须明确回降 AHFL-IR 或 backend 直连策略。

@@ -96,7 +96,7 @@ void print_workflow_expr_summary(const handoff::WorkflowValueSummary &summary,
 
 void print_package_reader_summary(const handoff::PackageReaderSummary &summary, std::ostream &out) {
     line(out, 0, "package_reader {");
-    line(out, 1, "format " + summary.format_version);
+    line(out, 1, "format " + summary.format);
 
     if (summary.identity.has_value()) {
         line(out, 1, "identity " + summary.identity->name + "@" + summary.identity->version);
@@ -245,7 +245,7 @@ void print_execution_planner_summary(const handoff::Package &package, std::ostre
 } // namespace
 
 void print_package_review(const handoff::Package &package, std::ostream &out) {
-    out << "ahfl.package_review.v1\n";
+    out << "ahfl.package_review\n";
     print_package_reader_summary(handoff::build_package_reader_summary(package).summary, out);
     print_execution_planner_summary(package, out);
 }

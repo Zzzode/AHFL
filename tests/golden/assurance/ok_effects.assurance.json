@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.assurance-bundle.v0.1",
+  "format": "ahfl.assurance-bundle",
   "status": "ready",
   "capabilities": [
     {

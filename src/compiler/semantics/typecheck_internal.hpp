@@ -443,7 +443,7 @@ class TypeCheckPass final {
         return *environment_;
     }
 
-    // P4a (RFC §2.6.4 / §4.5 V2): check that a function's inferred body effect
+    // P4a (RFC §2.6.4 / §4.5): check that a function's inferred body effect
     // is covered by its declared effect (i.e. body ⊑ declared). Emits
     // EffectUnderdeclared if the body effect is stronger than declared.
     //
@@ -686,17 +686,17 @@ class TypeCheckPass final {
     [[nodiscard]] TypedValue error_typed(bool is_pure = true) const;
     [[nodiscard]] TypedValue error_typed_effect(ExprEffect effect) const;
     // Helpers moved from the global internal namespace (Del-L2 cleanup).
-    [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const {
+    [[nodiscard]] TypePtr type_or_any(MaybeCRef<Type> type) const {
         if (!type.has_value()) {
             return make_any_type();
         }
-        return type->get().clone();
+        return &type->get();
     }
     [[nodiscard]] BindingMap clone_bindings(const BindingMap &bindings) const {
         BindingMap result;
         result.reserve(bindings.size());
         for (const auto &[name, type] : bindings) {
-            result.emplace(name, type ? type->clone() : make_any_type());
+            result.emplace(name, type ? type : make_any_type());
         }
         return result;
     }

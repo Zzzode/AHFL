@@ -21,7 +21,7 @@ def write_evidence(path: Path, schema: str, criterion: str) -> None:
     path.write_text(
         json.dumps(
             {
-                "schema": schema,
+                "format": schema,
                 "status": "passed",
                 "criterion": criterion,
                 "source_revision": "bundle-smoke-revision",
@@ -48,13 +48,13 @@ from ahfl_source_revision import compute_source_revision
 out = root / "build/release-evidence/beta"
 revision = os.environ.get("AHFL_SOURCE_REVISION") or compute_source_revision(root)
 values = (
-    ("run-profiles.json", "ahfl.beta-evidence.run-profiles.v1", "BETA-01"),
+    ("run-profiles.json", "ahfl.beta-evidence.run-profiles", "BETA-01"),
 )
 for name, schema, criterion in values:
     path = out / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
-        "schema": schema,
+        "format": schema,
         "status": "passed",
         "criterion": criterion,
         "source_revision": revision,
@@ -94,7 +94,7 @@ for name, schema, criterion in outputs:
     path = out / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({{
-        "schema": schema,
+        "format": schema,
         "status": "passed",
         "criterion": criterion,
         "source_revision": revision,
@@ -118,17 +118,17 @@ def prepare_root(source: Path, root: Path) -> None:
         [
             (
                 "runtime-identity.json",
-                "ahfl.beta-evidence.runtime-identity.v1",
+                "ahfl.beta-evidence.runtime-identity",
                 "BETA-02",
             ),
             (
                 "event-projections.json",
-                "ahfl.beta-evidence.event-projections.v1",
+                "ahfl.beta-evidence.event-projections",
                 "BETA-03",
             ),
             (
                 "product-scope-freeze.json",
-                "ahfl.beta-evidence.product-scope-freeze.v1",
+                "ahfl.beta-evidence.product-scope-freeze",
                 "BETA-10",
             ),
         ],
@@ -137,31 +137,31 @@ def prepare_root(source: Path, root: Path) -> None:
         (
             "generate-beta-lifecycle-evidence.py",
             "lifecycle-matrix.json",
-            "ahfl.beta-evidence.lifecycle-matrix.v1",
+            "ahfl.beta-evidence.lifecycle-matrix",
             "BETA-04",
         ),
         (
             "generate-beta-formatter-evidence.py",
             "formatter-idempotence.json",
-            "ahfl.beta-evidence.formatter-idempotence.v1",
+            "ahfl.beta-evidence.formatter-idempotence",
             "BETA-05",
         ),
         (
             "generate-beta-stdlib-container-evidence.py",
             "stdlib-container-migration.json",
-            "ahfl.beta-evidence.stdlib-container-migration.v1",
+            "ahfl.beta-evidence.stdlib-container-migration",
             "BETA-06",
         ),
         (
             "generate-beta-install-evidence.py",
             "install-smoke.json",
-            "ahfl.beta-evidence.install-smoke.v1",
+            "ahfl.beta-evidence.install-smoke",
             "BETA-08",
         ),
         (
             "check-readme-capabilities.py",
             "readme-capabilities.json",
-            "ahfl.beta-evidence.readme-capabilities.v1",
+            "ahfl.beta-evidence.readme-capabilities",
             "BETA-09",
         ),
     )
@@ -244,7 +244,7 @@ def main() -> int:
         )
         require(not stale.exists(), "bundle generator retained stale evidence")
         report = json.loads(result.stdout)
-        require(report["schema"] == "ahfl.beta-gate-report.v1", "wrong final report")
+        require(report["format"] == "ahfl.beta-gate-report", "wrong final report")
         require(report["status"] == "ready", "complete bundle was not ready")
         require(len(list(out.glob("*.json"))) == 9, "bundle did not produce nine evidence files")
 

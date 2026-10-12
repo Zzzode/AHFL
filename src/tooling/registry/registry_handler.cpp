@@ -20,9 +20,9 @@ namespace {
 using ahfl::package::RegistryIndexEntry;
 using ahfl::package::SourceArchive;
 
-constexpr std::string_view kPublishFormat = "ahfl.registry.publish_request.v1";
-constexpr std::string_view kYankFormat = "ahfl.registry.yank_request.v1";
-constexpr std::string_view kPublicApiSchema = "ahfl.public_api.v1";
+constexpr std::string_view kPublishFormat = "ahfl.registry.publish_request";
+constexpr std::string_view kYankFormat = "ahfl.registry.yank_request";
+constexpr std::string_view kPublicApiSchema = "ahfl.public_api";
 
 struct RouteMatch {
     enum class Status {
@@ -74,13 +74,6 @@ struct RouteMatch {
 
 [[nodiscard]] RouteMatch match_route(std::string_view method, std::string_view path) {
     auto segments = split_path(path);
-
-    // Accept the protocol's /v1 prefix (and the /api/v1 spelling) optionally.
-    if (!segments.empty() && segments[0] == "v1") {
-        segments.erase(segments.begin());
-    } else if (segments.size() >= 2 && segments[0] == "api" && segments[1] == "v1") {
-        segments.erase(segments.begin(), segments.begin() + 2);
-    }
 
     RouteMatch match;
     if (segments.size() == 3 && segments[0] == "packages" && segments[2] == "registry-index") {
@@ -161,9 +154,9 @@ parse_publish_envelope(std::string_view body, const RouteMatch &route, std::stri
     }
     const auto &root = **parsed;
 
-    const auto format = require_string_field(root, "format_version");
+    const auto format = require_string_field(root, "format");
     if (!format.has_value() || *format != kPublishFormat) {
-        error = "publish request format_version must be '";
+        error = "publish request format must be '";
         error += kPublishFormat;
         error += "'";
         return std::nullopt;
@@ -249,7 +242,7 @@ parse_publish_envelope(std::string_view body, const RouteMatch &route, std::stri
         error = "public API snapshot must be a JSON object";
         return std::nullopt;
     }
-    const auto schema = require_string_field(**parsed_snapshot, "schema");
+    const auto schema = require_string_field(**parsed_snapshot, "format");
     if (!schema.has_value() || *schema != kPublicApiSchema) {
         error = "public API snapshot schema must be '";
         error += kPublicApiSchema;
@@ -269,8 +262,8 @@ parse_publish_envelope(std::string_view body, const RouteMatch &route, std::stri
 serialize_package_index(std::string_view package,
                         const std::vector<RegistryIndexEntry> &versions) {
     auto root = ahfl::json::JsonValue::make_object();
-    root->set("format_version",
-              ahfl::json::JsonValue::make_string("ahfl.registry.package_index.v1"));
+    root->set("format",
+              ahfl::json::JsonValue::make_string("ahfl.registry.package_index"));
     root->set("package", ahfl::json::JsonValue::make_string(std::string(package)));
     auto array = ahfl::json::JsonValue::make_array();
     for (const auto &entry : versions) {
@@ -371,9 +364,9 @@ HttpResponse RegistryRequestHandler::handle(const HttpRequest &request) {
             return error_response(400, "yank request body must be a JSON object");
         }
         const auto &root = **parsed;
-        const auto format = require_string_field(root, "format_version");
+        const auto format = require_string_field(root, "format");
         if (!format.has_value() || *format != kYankFormat) {
-            return error_response(400, "yank request format_version must be 'ahfl.registry.yank_request.v1'");
+            return error_response(400, "yank request format must be 'ahfl.registry.yank_request'");
         }
         const auto package = require_string_field(root, "package");
         const auto version = require_string_field(root, "version");

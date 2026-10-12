@@ -283,7 +283,7 @@ def assert_success_artifact(
     events = [json.loads(line) for line in text.splitlines() if line]
     if not events:
         raise AssertionError("canonical execution event stream is empty")
-    if any(event.get("schema") != "ahfl.run-event" for event in events):
+    if any(event.get("format") != "ahfl.run-event" for event in events):
         raise AssertionError(f"unexpected execution event schema: {events!r}")
     if [event.get("event_id") for event in events] != list(range(len(events))):
         raise AssertionError(f"execution event ids are not contiguous: {events!r}")
@@ -456,9 +456,7 @@ def run_oauth2_token_secret_case(ahflc, run_dir, source_path):
 # transport) are pinned separately by the capability_bridge unit test. These
 # layers are intentionally complementary: this file proves 0 secret/LLM network,
 # that file proves 0 capability transport network.
-_A1_PACKAGE_MANIFEST = """manifest_version = 1
-
-[package]
+_A1_PACKAGE_MANIFEST = """[package]
 name = "g4b-two-phase-admission"
 version = "0.1.0"
 edition = "2026"
@@ -642,7 +640,7 @@ def run_a1_non_projectable_binding_case(ahflc, run_dir):
     # is not projectable to a wire schema. Phase A migration rejects it before any
     # secret/network work — Vault and LLM counters stay 0.
     bindings = {
-        "schema": "ahfl.runtime_capability_bindings.v0",
+        "format": "ahfl.runtime_capability_bindings",
         "bindings": [
             {
                 "capability": "smoke::main::BadFn",
@@ -790,6 +788,9 @@ def main():
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir()
+    home = run_dir / "home"
+    home.mkdir(mode=0o700)
+    os.environ["HOME"] = str(home.resolve())
 
     source_path = run_dir / "smoke.ahfl"
     write_smoke_source(source_path)

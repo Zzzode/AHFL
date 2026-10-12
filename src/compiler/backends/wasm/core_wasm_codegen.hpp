@@ -74,7 +74,7 @@ struct CoreWasmDiagnostic {
 // canonical run observation without parsing bespoke `key=value` lines.
 //
 // Two execution lanes share one Core-Wasm ABI:
-//   * agent:    one state machine driven through step()/run2; `states` is the
+//   * agent:    one state machine driven through step()/run_workflow; `states` is the
 //               id -> state-name table and `initial_state` the entry id.
 //   * workflow: a Kahn-ordered node schedule; each node invokes one PACKAGED
 //               agent runner. `agents` is the runner table (the walk is the
@@ -87,7 +87,7 @@ struct CoreWasmDiagnostic {
 struct CoreWasmStateWalk {
     std::string agent;             // canonical agent name
     std::vector<std::string> walk; // state names entered on one runner call
-    // V2-D emission half 2: every declared state name by dense agent state id
+    // workflow-frame emission half 2: every declared state name by dense agent state id
     // (the runtime state-trace ring records an id, not a walk position; a
     // computed-goto runner may omit an untaken branch state from walk).
     std::vector<std::string> all_states;
@@ -114,8 +114,6 @@ struct CoreWasmNodeDescriptor {
     // First capability ordinal + source symbol (for event-record cross-check).
     // A P6 bridge node can call multiple capabilities; all_capabilities carries
     // every (ordinal, source_symbol) pair so the runtime can resolve any call.
-    std::uint32_t capability_ordinal{0};
-    std::uint64_t source_symbol{0};
     std::vector<std::pair<std::uint32_t, std::uint64_t>> all_capabilities;
     // WH-4 fix-forward P1-3: the node's DAG predecessor node ids (the workflow
     // `after` edges), as dense source-order node ids. Populated so an embedded
@@ -140,7 +138,7 @@ struct CoreWasmFramePlacement {
 };
 
 /// One per-call-site capability bridge the host callback serves (frame-bridge
-/// v2 D3/D4, rung V2-C). The module writes the control block at
+/// frame D3/D4, rung capability-bridge). The module writes the control block at
 /// `block_ptr` = control_base + block_offset; the host walks its arity P4-D
 /// argument spans, invokes `capability` (ordinal resolves the import), and
 /// packs the validated result root at `result_base` with String payload bytes
@@ -166,7 +164,7 @@ struct CoreWasmBridgeCallSite {
     std::uint32_t result_payload_capacity{0};
     /// The call site's private scalar/PtrLen spill window inside the module
     /// spill region; the host membership-tests every spilled descriptor only
-    /// against [spill_base, +spill_extent) (frame section v3, design 4.3/5).
+    /// against [spill_base, +spill_extent) (frame section, design 4.3/5).
     std::uint32_t spill_base{0};
     std::uint32_t spill_extent{0};
 };
@@ -179,7 +177,7 @@ struct CoreWasmBridgeCallSite {
 struct CoreWasmFrameLane {
     /// "identity" finals return the borrowed input base; "computed" finals
     /// materialize into the output base; "capability" finals place the bridge
-    /// result at the output base. The sole authority for which base runv's
+    /// result at the output base. The sole authority for which base run_frame's
     /// value_ptr may name.
     std::string final_kind; // "identity" / "computed" / "capability"
     std::uint32_t input_base{0};
@@ -189,13 +187,13 @@ struct CoreWasmFrameLane {
     std::vector<CoreWasmFramePlacement> placements;
     std::uint32_t payload_arena_base{0};
     std::uint32_t payload_arena_capacity{0};
-    /// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the read-only String
+    /// RFC 0026 P6-7 frame bridge D1 (rung string-frame): the read-only String
     /// literal pool the module's Data(11) section initializes. `rodata_base` is
     /// the fixed kP6RodataBase (256); `rodata_extent` is zero when the module
     /// emits no Data section and the active segment byte length otherwise.
     std::uint32_t rodata_base{0};
     std::uint32_t rodata_extent{0};
-    /// RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the capability bridge
+    /// RFC 0026 P6-7 frame bridge D3/D4 (rung capability-bridge): the capability bridge
     /// control page frame. Empty for a non-bridge module.
     std::uint32_t bridge_control_base{0};
     std::uint32_t bridge_block_stride{0};
@@ -237,7 +235,7 @@ struct CoreWasmExecutionDescriptor {
     CoreWasmFrameLane frame;
     // RFC 0026 P6-7: the verified boundary tables a generic embedded host packs
     // input from and encodes output against. They mirror the module's
-    // `ahfl.core-layout.v1` / `ahfl.wire-schema.v1` custom sections (same bytes
+    // `ahfl.core-layout` / `ahfl.wire-schema` custom sections (same bytes
     // the sections encode), so the descriptor needs no separate trust channel;
     // the host may re-admit the sections independently. These are
     // descriptor-rendering inputs, not part of the wire ABI proper.
@@ -295,7 +293,7 @@ resolve_core_wasm_entry(const ir::core::CoreProgram &program,
                                                    const ir::core::CoreLayoutTable &layouts,
                                                    CoreWasmTarget target);
 
-// RFC 0026 P6-7 frame-bridge v2 rung V2-D D6: the pure node-frame block cursor
+// RFC 0026 P6-7 frame bridge rung workflow-frame D6: the pure node-frame block cursor
 // arithmetic shared by the workflow capacity family. One block per P6 workflow
 // node, each block I/C/scratch/O with already-8-aligned extents; the cursor
 // advances by each block's OWN extent exactly once, so the dense high-water is

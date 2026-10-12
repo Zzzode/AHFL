@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.conformance-case.v1",
+  "format": "ahfl.conformance-case",
   "source": "tests/golden/wasm/wh5c4_p03_opaque_upstream.ahfl",
   "kind": "workflow",
   "entry": "wasm::wh5c4_p03_opaque_upstream::OpaqueUpstreamWorkflow",

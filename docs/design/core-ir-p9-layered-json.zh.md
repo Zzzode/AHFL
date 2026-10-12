@@ -25,12 +25,12 @@ The AHFL-IR layer (`ir::Program`) has exactly **one** JSON projection: the
 single-layer `ir::Program` writer/reader pair (`src/compiler/ir/ir_json.cpp`,
 `print_program_ir_json` / `parse_program_ir_json` declared in
 `include/ahfl/compiler/ir/lowering.hpp:36`/`:45`), whose format identity is
-`kFormatVersion == "ahfl.ir.v2"` (`include/ahfl/compiler/ir/types.hpp:48`).
+`kFormat == "ahfl.ir"` (`include/ahfl/compiler/ir/types.hpp:48`).
 RFC 0013 KR5.9 already proved byte-exact round-trip for that format
 (`tests/unit/compiler/ir/ir_json_round_trip.cpp`).
 
 That "exactly one" is a claim about `ir::Program`, not about the product: Opt IR
-has its own **separate** machine-readable artifact, the `AHFL_OPT_IR_V1` JSON
+has its own **separate** machine-readable artifact, the `AHFL_OPT_IR` JSON
 emitted by `ahflc emit opt-ir-json` (its own serializer, not `IrJsonPrinter`;
 `docs/reference/ir-format.zh.md:26`, `docs/reference/cli-commands.zh.md:32`). It is
 neither a second projection of `ir::Program` nor a substitute for one, so it does
@@ -39,10 +39,10 @@ none.
 
 The execution layer, Core-IR, has **no** JSON projection at all. It carries a
 dedicated format constant for precisely this purpose —
-`kCoreFormatVersion == "ahfl.core.v1"` (`include/ahfl/compiler/ir/core_ir.hpp:60`),
+`kCoreFormat == "ahfl.core"` (`include/ahfl/compiler/ir/core_ir.hpp:60`),
 whose comment states it exists "so a layered IR-JSON projection (RFC 0026 P9)
 can tell the layers apart" — but no writer, no reader, no schema, and no CLI
-surface consume it (`CoreProgram::format_version` is the only reader,
+surface consume it (`CoreProgram::format` is the only reader,
 `core_ir.hpp:1602`). This forces every cross-layer differential test and every
 external tool to go through the single-layer projection, which is the **AHFL-IR
 (verification / orchestration)** layer's node set and cannot express the
@@ -82,7 +82,7 @@ per table, and not one document per arena.**
 
 ```json
 {
-  "format_version": "ahfl.core.v1",
+  "format": "ahfl.core",
   "layer": "core",
   "types": [ ... ],
   "value_types": [ ... ],
@@ -110,18 +110,18 @@ Rationale:
    flat `declarations` array; the layered projection keeps that shape and adds the
    layer tag.
 
-`format_version` **reuses `CoreProgram::format_version`** — i.e. the envelope emits
-the `CoreProgram` field's own string value, which defaults to `kCoreFormatVersion`
-(`"ahfl.core.v1"`). There is deliberately **no separate JSON-envelope version
-constant**: the Core layer has exactly one interchange version, and a second
+`format` **reuses `CoreProgram::format`** — i.e. the envelope emits
+the `CoreProgram` field's own string value, which defaults to `kCoreFormat`
+(`"ahfl.core"`). There is deliberately **no separate JSON-envelope version
+constant**: the Core layer has exactly one current interchange contract, and a second
 constant would be a parallel SSOT that could silently drift from the field it
-supposedly versions. A future incompatible envelope change bumps
-`kCoreFormatVersion` once, and both the field and the envelope move together.
+supposedly versions. A structural change updates the producer, strict reader, and tests together;
+`kCoreFormat` identifies the artifact class and is never a generation selector.
 
 `layer` is a fixed discriminator literal (`"core"`) that lets a consumer reject a
 document handed to the wrong reader **before** parsing any table. It is not a
-version: the single-layer projection's `"ahfl.ir.v2"` and this envelope's
-`"ahfl.core.v1"` are already distinguishable by `format_version` alone, so `layer`
+version: the single-layer projection's `"ahfl.ir"` and this envelope's
+`"ahfl.core"` are already distinguishable by `format` alone, so `layer`
 is a redundant, deliberately cheap first check (fail-closed admission, §9).
 
 Determinism boundary (artifact-chain, RFC 0026 L262-263): the envelope contains
@@ -163,7 +163,7 @@ Number precision is inherited, not re-decided: `int_range`-style bounds and inde
 fields are emitted as bare integers, so a consumer that needs arbitrary precision
 must use a bignum-aware JSON parser. This is the same documented limitation the
 single-layer projection already has; the layered projection does not make it
-worse and does not fix it here; any lexical change waits for a format bump).
+worse and does not fix it here; lexical changes require synchronous producer/reader regression).
 
 ## 3. Node discriminators (`kind`), derived — never hand-maintained
 
@@ -526,7 +526,7 @@ an asserted pinned set), so a new fixture cannot silently escape round-trip.
 
 **Negative cases (fail-closed admission, §9).** R1/R2 are the positive contract; the
 reader must additionally **reject**, with a source-ranged diagnostic where a range
-exists: a wrong `format_version`; a wrong `layer`; a forward/self value-type
+exists: a wrong `format`; a wrong `layer`; a forward/self value-type
 reference; a non-canonical arena order (identity remap failure, §6.2); a
 `kInvalid`-valued id in a required position (which the writer never emits, §2); a
 `null` / out-of-range entry in `field_nominal_types` where §4 forbids it;
@@ -579,8 +579,8 @@ JSON document supplies no range for an envelope-level failure.
 > amendment states the settled design, it does not delete the projection.
 
 **Decision: the AHFL-IR layer (`ir::Program`) keeps its own JSON/text projection
-(`emit ir-json` / `emit ir`, `ahfl.ir.v2`) permanently, alongside the Core-IR
-layer's projection (`emit core-ir-json`, `ahfl.core.v1`). The two project
+(`emit ir-json` / `emit ir`, `ahfl.ir`) permanently, alongside the Core-IR
+layer's projection (`emit core-ir-json`, `ahfl.core`). The two project
 different layers; neither replaces or deprecates the other.**
 
 Consequences:
@@ -644,7 +644,7 @@ flag: the layered projection is purely additive.
 |---|---|
 | One document per layer, one file per table | Breaks program-global cross-references (`dispatch_types` → `value_types`, flow `target` → `agents`) into a second cross-document id scheme; violates Principle 2 |
 | Hoist per-body arenas to a top-level pool | The body-relative ids would need fabricated per-owner namespacing, and an id could resolve against the wrong body's arena |
-| A separate JSON-envelope version constant | Parallel SSOT with `CoreProgram::format_version`; the Core layer has exactly one interchange version |
+| A separate JSON-envelope version constant | Parallel SSOT with `CoreProgram::format`; the Core layer has exactly one current interchange contract |
 | Trust serialized ids on read | Would accept a reordered / hand-edited arena and would create a second notion of structural equality; §6.2's rebuild + identity assert is the single decision point |
 | Re-sort or dedup `value_types` at write time | The arena is already canonical (verifier-enforced); re-sorting is a second canonicalizer that can disagree with the hash-cons |
 | Re-run the full Core verifier inside the reader | The reader is an admission boundary for a document's shape, not a substitute for verification; conflating them makes round-trip failures ambiguous |
@@ -670,7 +670,7 @@ mapping as a second source of truth (Principle 3).
 `src/compiler/ir/core_json.cpp` (5066 lines) implements the full
 writer/reader pair specified in §4–§7:
 
-- Envelope `ahfl.core.v1`; fixed table order (§4–§5 normative copy).
+- Envelope `ahfl.core`; fixed table order (§4–§5 normative copy).
 - Hash-consed `value_types` arena rebuild on read (§6.1).
 - Identity-remap assert: every `CoreValueTypeId` indexing
   `CoreProgram::value_types` is rewritten on read (§6.2, with the owning-site

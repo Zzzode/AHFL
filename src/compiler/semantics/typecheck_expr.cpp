@@ -1031,6 +1031,9 @@ struct MethodCandidate {
     if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
         return enumeration->symbol;
     }
+    if (const auto *variant = type.get_if<types::EnumVariantT>(); variant != nullptr) {
+        return variant->symbol;
+    }
     return std::nullopt;
 }
 
@@ -1822,6 +1825,12 @@ class ExpressionCheckerServices final {
     }
 
     [[nodiscard]] bool impl_visible_for_method_lookup(const ImplTypeInfo &impl) const {
+        // A nominal type carries its inherent methods through imports and
+        // re-exports. Candidate collection already matches its canonical symbol;
+        // method visibility is checked separately below.
+        if (impl.is_inherent && impl.target_symbol.has_value()) {
+            return true;
+        }
         if (same_package_as_current_source(impl)) {
             return true;
         }
@@ -2067,7 +2076,7 @@ class ExpressionChecker final {
                 param_type = services_.resolve_type_syntax(*param->type);
             } else if (expected_fn != nullptr && index < expected_fn->params.size() &&
                        expected_fn->params[index] != nullptr) {
-                param_type = expected_fn->params[index]->clone();
+                param_type = expected_fn->params[index];
             } else {
                 // P3-gaps-A (RFC 0013 Gap 3): no annotation and no expected Fn
                 // type to infer from. Emit a SourceRange'd diagnostic at the
@@ -2121,7 +2130,7 @@ class ExpressionChecker final {
             TypePtr return_type = nullptr;
             if (expected_fn != nullptr && expected_fn->return_type != nullptr &&
                 !contains_type_var(*expected_fn->return_type)) {
-                return_type = expected_fn->return_type->clone();
+                return_type = expected_fn->return_type;
                 if (body_result.type != nullptr && !is_error_type(*body_result.type)) {
                     const auto return_expectation = TypeExpectation{
                         .expected = expected_fn->return_type,
@@ -2136,7 +2145,7 @@ class ExpressionChecker final {
                                                      return_expectation);
                 }
             } else {
-                return_type = body_result.type != nullptr ? body_result.type->clone()
+                return_type = body_result.type != nullptr ? body_result.type
                                                           : values_.make_error_type();
             }
             auto fn_type = services_.types().fn(
@@ -2274,7 +2283,7 @@ class ExpressionChecker final {
         std::optional<TypePtr> unified_body_type;
         bool unified_is_error = false;
         if (expected_type_.has_value()) {
-            unified_body_type = expected_type_->get().clone();
+            unified_body_type = &expected_type_->get();
             unified_is_error = is_error_type(**unified_body_type);
         }
         const auto scrutinee_place =
@@ -2471,11 +2480,11 @@ class ExpressionChecker final {
             // — that is the unwrap result type.
             if (const auto *enm = operand.type->get_if<types::EnumT>();
                 enm != nullptr && !enm->type_args.empty()) {
-                result_type = enm->type_args.front() != nullptr ? enm->type_args.front()->clone()
+                result_type = enm->type_args.front() != nullptr ? enm->type_args.front()
                                                                 : values_.make_error_type();
             } else if (const auto *var = operand.type->get_if<types::EnumVariantT>();
                        var != nullptr && !var->type_args.empty()) {
-                result_type = var->type_args.front() != nullptr ? var->type_args.front()->clone()
+                result_type = var->type_args.front() != nullptr ? var->type_args.front()
                                                                 : values_.make_error_type();
             }
             return true;
@@ -2573,7 +2582,7 @@ class ExpressionChecker final {
         // Typecheck the operand (always, to get its type and avoid cascading
         // diagnostics). The check_nested funnel resets try_allowed so a
         // nested `?` inside the operand is correctly rejected.
-        const auto operand = services_.check_expr(*try_node.operand, context_, std::nullopt);
+        auto operand = services_.check_expr(*try_node.operand, context_, std::nullopt);
 
         // Tolerate error-typed operands (a previous diagnostic was already
         // emitted for the underlying failure).
@@ -2627,46 +2636,55 @@ class ExpressionChecker final {
             return values_.error_typed_effect(operand.effect);
         }
 
+        const TypePtr enclosing = context_.enclosing_return_type.value_or(nullptr);
+        const auto *return_enum =
+            enclosing != nullptr ? enclosing->get_if<types::EnumT>() : nullptr;
+        const auto *source_enum = operand.type->get_if<types::EnumT>();
+        const auto *source_variant = operand.type->get_if<types::EnumVariantT>();
+        const auto owner = source_enum != nullptr ? source_enum->symbol : source_variant->symbol;
+        const auto &canonical_name = source_enum != nullptr ? source_enum->canonical_name
+                                                            : source_variant->canonical_name;
+
+        // Constructors can leave unused parameters unbound: None has no T,
+        // Ok has no E, and Err has no T. Complete only those missing slots,
+        // preserving every type inferred from the operand's own payload.
         if (success_type == nullptr) {
-            // Unit variant (e.g. Option::None) or bare unspecialised nominal:
-            // the payload carried no type argument. Infer the success type
-            // from the enclosing return type so the let binding has a
-            // concrete type (Rust-consistent: `None?` in a fn returning
-            // Option<Int> yields Int).
-            if (context_.enclosing_return_type.has_value()) {
-                const TypePtr enclosing = *context_.enclosing_return_type;
-                if (enclosing != nullptr && !is_error_type(*enclosing) &&
-                    !contains_type_var(*enclosing)) {
-                    if (is_option) {
-                        if (const auto view =
-                                stdlib_bridge::std_container_type_view(*enclosing);
-                            view.has_value() &&
-                            view->kind == stdlib_bridge::StdContainerKind::Option) {
-                            success_type = view->first;
-                        }
-                    } else {
-                        if (const auto *enm = enclosing->get_if<types::EnumT>();
-                            enm != nullptr &&
-                            std::string_view{enm->canonical_name} ==
-                                stdlib_bridge::kResultType &&
-                            enm->type_args.size() >= 1) {
-                            success_type = enm->type_args[0];
-                        }
-                    }
-                }
-            }
-            if (success_type == nullptr) {
-                // Still can't infer — tolerate so diagnostics don't cascade.
-                success_type = values_.make_error_type();
+            if (expected_type_.has_value()) {
+                success_type = &expected_type_->get();
+            } else if (return_enum != nullptr && !return_enum->type_args.empty()) {
+                success_type = return_enum->type_args[0];
             }
         }
+        if (is_result && error_type == nullptr && return_enum != nullptr &&
+            return_enum->type_args.size() >= 2) {
+            error_type = return_enum->type_args[1];
+        }
+        if (success_type == nullptr) {
+            success_type = values_.make_error_type();
+        }
+        std::vector<TypePtr> source_args{success_type};
+        if (is_result) {
+            source_args.push_back(error_type != nullptr ? error_type : values_.make_error_type());
+        }
+        const TypePtr operand_enum_type =
+            services_.types().enum_type(canonical_name, owner, source_args);
+        const auto &original_args = source_enum != nullptr ? source_enum->type_args
+                                                           : source_variant->type_args;
+        const bool incomplete_operand = original_args.size() != source_args.size() ||
+            std::ranges::any_of(original_args, [](TypePtr arg) { return arg == nullptr; });
+        if (incomplete_operand) {
+            // Re-enter the existing bidirectional constructor checker with the
+            // completed source type. This persists the operand (and grouped
+            // constructor children) with the same concrete type arguments.
+            operand = services_.check_expr(
+                *try_node.operand, context_, std::cref(*operand_enum_type));
+        }
+        std::optional<TypedAdjustmentPlan> failure_adjustment;
 
         // Check the enclosing return type is compatible (RFC rule 2). Skip
         // when the enclosing return type is absent or error-typed. The
         // Option/Result shape check runs unconditionally — even for generic
         // fns returning Option<T> or Result<T, E>, the shape is verifiable.
-        // Only the E:F assignability sub-check skips TypeVar-bearing types
-        // (the concrete type is resolved at monomorphization).
         if (context_.enclosing_return_type.has_value()) {
             const TypePtr enclosing = *context_.enclosing_return_type;
             if (enclosing != nullptr && !is_error_type(*enclosing)) {
@@ -2712,14 +2730,17 @@ class ExpressionChecker final {
                                 "the enclosing function to return Result<_, F>"),
                             expr.range,
                             std::move(notes));
-                    } else if (error_type != nullptr && !is_error_type(*error_type) &&
-                               !contains_type_var(*error_type) &&
-                               !contains_type_var(*enm->type_args[1])) {
-                        // E must be assignable to F. Skip when either side
-                        // contains a TypeVar (generic fn — the concrete type
-                        // is resolved at monomorphization).
-                        if (!ahfl::is_assignable_to(*error_type, *enm->type_args[1],
-                                                    services_.relations())) {
+                    } else if (error_type != nullptr && !is_error_type(*error_type)) {
+                        // Generic bodies must prove this relation too. Equal
+                        // type variables are identity; unrelated E/F cannot be
+                        // accepted without evidence of assignability.
+                        auto decision = ahfl::decide_assignability(
+                            *error_type, *enm->type_args[1], services_.relations());
+                        if (decision.accepted) {
+                            if (error_type != enm->type_args[1]) {
+                                failure_adjustment = std::move(decision.adjustment);
+                            }
+                        } else {
                             std::vector<Diagnostic::Related> notes;
                             notes.push_back(Diagnostic::Related{
                                 .message = messages::typecheck::TryOperandErrorType.format_with(
@@ -2746,7 +2767,17 @@ class ExpressionChecker final {
             }
         }
 
-        return values_.typed_effect(success_type->clone(), operand.effect);
+        auto result = values_.typed_effect(success_type, operand.effect);
+        if (owner.has_value() && return_enum != nullptr) {
+            result.try_info = TypedTryInfo{
+                .kind = is_option ? TypedTryKind::Option : TypedTryKind::Result,
+                .operand_enum_type = operand_enum_type,
+                .return_enum_type = enclosing,
+                .owner = *owner,
+                .failure_adjustment = std::move(failure_adjustment),
+            };
+        }
+        return result;
     }
 
   private:
@@ -3427,7 +3458,7 @@ class ExpressionChecker final {
                 return values_.error_typed();
             }
 
-            return values_.typed_effect(const_type->get().clone(), ExprEffect::ConstOnly);
+            return values_.typed_effect(&const_type->get(), ExprEffect::ConstOnly);
         }
 
         const auto owner_reference =
@@ -3505,7 +3536,7 @@ class ExpressionChecker final {
             if (expected_enum != nullptr && owner_enum != nullptr &&
                 !expected_enum->type_args.empty() && expected_enum->symbol.has_value() &&
                 owner_enum->symbol.has_value() && *expected_enum->symbol == *owner_enum->symbol) {
-                return values_.typed_effect(expected_type_->get().clone(), ExprEffect::ConstOnly);
+                return values_.typed_effect(&expected_type_->get(), ExprEffect::ConstOnly);
             }
         }
 
@@ -3790,19 +3821,11 @@ class ExpressionChecker final {
         const auto *owner_enum = owner_type->get_if<types::EnumT>();
         const auto canonical_name =
             owner_enum != nullptr ? owner_enum->canonical_name : std::string{};
+        const auto owner_symbol = enum_info->get().symbol;
         const auto result_type =
-            services_.types().enum_variant_type(canonical_name, variant_name, enum_symbol, subst);
-        // Attach the struct-payload variant construction fact so lowering can
-        // mark is_enum_variant + resolve declaration slots WITHOUT recovering
-        // the variant from `type` (which the expected-type backfill below may
-        // re-converge to the owner EnumT) or from source spelling. Use the enum
-        // TYPE's own symbol (owner_enum->symbol) as the owner identity — the
-        // `enum_symbol` from the TypeName reference can resolve to the enclosing
-        // module rather than the enum decl, which would not map to EnumTypeInfo
-        // downstream.
-        const auto owner_symbol =
-            (owner_enum != nullptr && owner_enum->symbol.has_value()) ? *owner_enum->symbol
-                                                                      : enum_symbol;
+            services_.types().enum_variant_type(canonical_name, variant_name, owner_symbol, subst);
+        // Persist the declaration's canonical symbol, including when the source
+        // constructor names the enum through a type alias or re-export.
         const auto attach_variant_fact = [&](TypedValue value) {
             value.enum_variant_owner = owner_symbol;
             value.enum_variant_owner_name = canonical_name;
@@ -3820,7 +3843,7 @@ class ExpressionChecker final {
                 // field-inferred result type.
                 !contains_type_var(expected_type_->get())) {
                 return attach_variant_fact(
-                    values_.typed_effect(expected_type_->get().clone(), effect));
+                    values_.typed_effect(&expected_type_->get(), effect));
             }
         }
 
@@ -3831,7 +3854,7 @@ class ExpressionChecker final {
         const auto &call = expr.as<ast::CallExpr>();
 
         // P2 (RFC §3.2.2): a fn call resolves to a FnCallTarget reference.
-        // Check it first so a fn name takes precedence over the legacy
+        // Check it first so a fn name takes precedence over the
         // capability/predicate CallTarget reference (the resolver only writes
         // one reference kind per callee range, so the two never collide).
         if (const auto fn_reference =
@@ -4262,25 +4285,6 @@ class ExpressionChecker final {
                                             explicit_mask,
                                             receiver_pinned_mask);
             }
-            const auto expected_self =
-                is_generic
-                    ? substitute_method_type(
-                          self_param.type, subst, method.type_param_scope_id,
-                          method.method_scope_id, services_.types())
-                    : self_param.type;
-            if (expected_self != nullptr) {
-                const auto expectation = TypeExpectation{
-                    .expected = expected_self,
-                    .origin_kind = TypeExpectationOriginKind::FunctionParameter,
-                    .origin_range = self_param.declaration_range,
-                    .description = "method receiver",
-                };
-                (void)services_.check_assignable(*receiver.type,
-                                                 *expected_self,
-                                                 call.receiver->range,
-                                                 "method receiver",
-                                                 expectation);
-            }
         }
 
         const auto limit = std::min(call.arguments.size(), expected_arg_count);
@@ -4294,12 +4298,13 @@ class ExpressionChecker final {
         std::vector<TypePtr> arg_types(limit, nullptr);
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = method.params[index + receiver_param_count];
-            const auto expected_param =
-                is_generic
-                    ? substitute_method_type(
-                          param.type, subst, method.type_param_scope_id,
-                          method.method_scope_id, services_.types())
-                    : param.type;
+            const auto expected_param = is_generic
+                                            ? substitute_method_type(param.type,
+                                                                     subst,
+                                                                     method.type_param_scope_id,
+                                                                     method.method_scope_id,
+                                                                     services_.types())
+                                            : param.type;
             const auto expectation = TypeExpectation{
                 .expected = expected_param,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
@@ -4314,6 +4319,44 @@ class ExpressionChecker final {
             arg_types[index] = argument.type;
             if (is_generic && param.type != nullptr && argument.type != nullptr) {
                 unify_param_with_arg(*param.type, *argument.type, subst);
+            }
+        }
+
+        // Method arguments may supply the generic arguments missing from a unit
+        // enum receiver (e.g. None.unwrap_or(42)). Check the receiver after this
+        // inference, using its final instantiated self type.
+        bool receiver_needs_type_args = false;
+        if (!method.params.empty() && receiver.type != nullptr) {
+            const auto &self_param = method.params.front();
+            const auto expected_self = is_generic
+                                           ? substitute_method_type(self_param.type,
+                                                                    subst,
+                                                                    method.type_param_scope_id,
+                                                                    method.method_scope_id,
+                                                                    services_.types())
+                                           : self_param.type;
+            if (expected_self != nullptr) {
+                const auto expectation = TypeExpectation{
+                    .expected = expected_self,
+                    .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                    .origin_range = self_param.declaration_range,
+                    .description = "method receiver",
+                };
+                TypePtr checked_receiver = receiver.type;
+                const auto *enum_receiver = receiver.type->get_if<types::EnumT>();
+                const auto *enum_self = expected_self->get_if<types::EnumT>();
+                receiver_needs_type_args = enum_receiver != nullptr && enum_self != nullptr &&
+                                           enum_receiver->type_args.empty() &&
+                                           !enum_self->type_args.empty();
+                if (receiver_needs_type_args) {
+                    checked_receiver =
+                        services_.check_expr(*call.receiver, context_, expectation).type;
+                }
+                (void)services_.check_assignable(*checked_receiver,
+                                                 *expected_self,
+                                                 call.receiver->range,
+                                                 "method receiver",
+                                                 expectation);
             }
         }
 
@@ -4332,15 +4375,19 @@ class ExpressionChecker final {
                 .argument_index = index + 1,
             };
             if (is_generic) {
-                const auto instantiated_param = substitute_method_type(
-                    param.type, subst, method.type_param_scope_id,
-                    method.method_scope_id, services_.types());
+                const auto instantiated_param = substitute_method_type(param.type,
+                                                                       subst,
+                                                                       method.type_param_scope_id,
+                                                                       method.method_scope_id,
+                                                                       services_.types());
                 // R3: same re-substitution rationale as check_fn_call — the
                 // arg type may carry stale TypeVars from an earlier left-fold
                 // step that later args refined to concrete types.
-                const auto instantiated_arg = substitute_method_type(
-                    arg_types[index], subst, method.type_param_scope_id,
-                    method.method_scope_id, services_.types());
+                const auto instantiated_arg = substitute_method_type(arg_types[index],
+                                                                     subst,
+                                                                     method.type_param_scope_id,
+                                                                     method.method_scope_id,
+                                                                     services_.types());
                 (void)services_.check_assignable(*instantiated_arg,
                                                  *instantiated_param,
                                                  call.arguments[index]->range,
@@ -4365,7 +4412,7 @@ class ExpressionChecker final {
         if (is_generic) {
             for (const auto idx :
                  unbound_param_indices(subst, method.type_param_scope_id, method.method_scope_id)) {
-                if (idx < impl_tparam_count) {
+                if (idx < impl_tparam_count && !receiver_needs_type_args) {
                     continue;
                 }
                 // Explicit type arguments are never ambiguous (same rationale
@@ -4385,17 +4432,18 @@ class ExpressionChecker final {
 
         TypePtr result_type = nullptr;
         if (method.return_type != nullptr) {
-            result_type = is_generic
-                              ? substitute_method_type(
-                                    method.return_type, subst, method.type_param_scope_id,
-                                    method.method_scope_id, services_.types())
-                              : method.return_type;
+            result_type = is_generic ? substitute_method_type(method.return_type,
+                                                              subst,
+                                                              method.type_param_scope_id,
+                                                              method.method_scope_id,
+                                                              services_.types())
+                                     : method.return_type;
         }
         // C-5 (Wave-24): attach the dispatch target to the return value so
         // remember_expression_type can copy it to the TypedExpr. Downstream
         // passes read this directly instead of re-running dispatch resolution.
         auto result = values_.typed_effect(
-            result_type != nullptr ? result_type->clone() : values_.make_error_type(), effect);
+            result_type != nullptr ? result_type : values_.make_error_type(), effect);
         result.dispatch_target = DispatchTarget{
             .impl_index = candidate.impl->index,
             .method_name = method.name,
@@ -4472,7 +4520,7 @@ class ExpressionChecker final {
                                              expectation);
         }
 
-        return values_.typed_effect(fn_type->return_type != nullptr ? fn_type->return_type->clone()
+        return values_.typed_effect(fn_type->return_type != nullptr ? fn_type->return_type
                                                                     : values_.make_error_type(),
                                     effect);
     }
@@ -4612,7 +4660,7 @@ class ExpressionChecker final {
         // then proceed to arg i+1. This is the industry-standard
         // bidirectional ordering (Rust checks arguments left-to-right against
         // progressively-refined parameter types) and is what makes the
-        // cookbook's call form work: `option::map(xs, \x -> x + 1)` — arg 0
+        // cookbook's call form work: `xs.map(\x -> x + 1)` — arg 0
         // (xs: Option<Int>) binds T=Int, so the lambda at arg 1 is checked
         // against Fn(Int) -> U; `x` gets Int, `x + 1` typechecks, flow-back
         // (R5) gives U=Int.
@@ -4788,7 +4836,7 @@ class ExpressionChecker final {
                               : fn->get().return_type;
         }
         return values_.typed_effect(
-            result_type != nullptr ? result_type->clone() : values_.make_error_type(), effect);
+            result_type != nullptr ? result_type : values_.make_error_type(), effect);
     }
 
     // M3 (RFC §1.5): typecheck an enum variant constructor call
@@ -4956,7 +5004,7 @@ class ExpressionChecker final {
         const auto canonical_name =
             owner_enum != nullptr ? owner_enum->canonical_name : std::string{};
         const auto result_type = services_.types().enum_variant_type(
-            canonical_name, std::string(segments.back()), enum_symbol, subst);
+            canonical_name, std::string(segments.back()), enum_info->get().symbol, subst);
         if (expected_type_.has_value()) {
             const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
             if (expected_enum != nullptr && owner_enum != nullptr &&
@@ -4970,10 +5018,10 @@ class ExpressionChecker final {
                 // type params unbound (e.g. `Some(1)` against `Option<T>`
                 // must yield `Option<Int>`, not `Option<T>`).
                 !contains_type_var(expected_type_->get())) {
-                return values_.typed_effect(expected_type_->get().clone(), effect);
+                return values_.typed_effect(&expected_type_->get(), effect);
             }
         }
-        return values_.typed_effect(result_type->clone(), effect);
+        return values_.typed_effect(result_type, effect);
     }
 
     [[nodiscard]] TypedValue check_capability_call(const ast::ExprSyntax &expr,
@@ -5043,7 +5091,7 @@ class ExpressionChecker final {
         }
 
         auto result = values_.typed_effect(capability->get().return_type
-                                               ? capability->get().return_type->clone()
+                                               ? capability->get().return_type
                                                : values_.make_error_type(),
                                            ExprEffect::CapabilityCall);
         // RFC 0023: record which capability was invoked so fn-body effect
@@ -5149,7 +5197,7 @@ class ExpressionChecker final {
                 }
             }
             return values_.typed_effect(
-                operand.type ? operand.type->clone() : values_.make_error_type(), operand.effect);
+                operand.type ? operand.type : values_.make_error_type(), operand.effect);
         }
 
         return values_.error_typed_effect(operand.effect);
@@ -5250,7 +5298,7 @@ class ExpressionChecker final {
             }
             if ((op == ast::ExprBinaryOp::Add || op == ast::ExprBinaryOp::Subtract) &&
                 lhs_dec != nullptr && rhs_dec != nullptr && lhs_dec->scale == rhs_dec->scale) {
-                return lhs.type->clone();
+                return lhs.type;
             }
             if (op == ast::ExprBinaryOp::Multiply && lhs_dec != nullptr && rhs_dec != nullptr) {
                 if (const auto scale = checked_add_int64(lhs_dec->scale, rhs_dec->scale);
@@ -5400,7 +5448,7 @@ class ExpressionChecker final {
             }
 
             if (collection_view->first != nullptr) {
-                return values_.typed_effect(collection_view->first->clone(), effect);
+                return values_.typed_effect(collection_view->first, effect);
             }
 
             return values_.error_typed_effect(effect);
@@ -5414,7 +5462,7 @@ class ExpressionChecker final {
             }
 
             if (collection_view->second != nullptr) {
-                return values_.typed_effect(collection_view->second->clone(), effect);
+                return values_.typed_effect(collection_view->second, effect);
             }
 
             return values_.error_typed_effect(effect);

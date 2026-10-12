@@ -1,0 +1,53 @@
+module refund_rules::main;
+
+// Values are bounded integer minor currency units (for example cents).
+pub struct RefundAmounts {
+    amount: Int(0, 1000000);
+    total: Int(0, 1000000);
+}
+
+pub struct RuleContext {
+    value: Int = 0;
+}
+
+pub struct RefundRemainder {
+    remaining: Int;
+}
+
+pub agent RefundRule {
+    input: RefundAmounts;
+    context: RuleContext;
+    output: RefundRemainder;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+// Explicit data verification proves this formula implication only.
+// It does not prove that the flow's returned value matches the formula.
+// Callers must enforce the premise; runtime contract checks are not implemented.
+contract for RefundRule {
+    requires: input.amount <= input.total;
+    ensures: input.total - input.amount >= 0;
+}
+
+flow for RefundRule {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return RefundRemainder {
+            remaining: input.total - input.amount,
+        };
+    }
+}
+
+pub workflow RefundRuleWorkflow {
+    input: RefundAmounts;
+    output: RefundRemainder;
+    node rule: RefundRule(input);
+    return: rule;
+}

@@ -14,7 +14,7 @@
 //   * read_whole_memory returns the WHOLE fixed 64 KiB page;
 //   * alloc_then_write drives the module's own exported checked allocator and
 //     writes the exact bytes (instance-lifetime, never reclaimed);
-//   * invoke_run2 invokes run2 and delivers every ahfl_cap import
+//   * invoke_run_workflow invokes run_workflow and delivers every ahfl_cap import
 //     synchronously, nested on the same stack, passing the raw u32 status
 //     through verbatim (the engine never classifies OK/ERROR/PENDING).
 //
@@ -28,13 +28,14 @@
 //   * every func import must be ahfl_cap.cap_<decimal> with the bridge
 //     (i32)->(i32,i32) shape; anything else is InstanceUnavailable;
 //   * a host ImportAbort (or a C++ exception escaping the callback across the C
-//     boundary) unwinds run2 as Run2HostAborted via a distinct sentinel trap;
-//   * wasm3 trap pointers map to Run2Trapped by exact pointer identity.
+//     boundary) unwinds run_workflow as WorkflowRunHostAborted via a distinct sentinel trap;
+//   * wasm3 trap pointers map to WorkflowRunTrapped by exact pointer identity.
 
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <variant>
 
 #include "runtime/engine/core_wasm_resume_engine.hpp"
@@ -45,23 +46,23 @@ namespace detail {
 struct Wasm3EngineImpl;
 } // namespace detail
 
-// RFC 0026 KR6.8 WH-2: the P6-frame runv outcome. A P6-frame module's
-// `runv() -> (status:i32, value_ptr:i32)` is a DISTINCT entry point from the
-// run2 resume port: it drives the state walk and returns the borrowed input
+// RFC 0026 KR6.8 WH-2: the P6-frame run_frame outcome. A P6-frame module's
+// `run_frame() -> (status:i32, value_ptr:i32)` is a DISTINCT entry point from the
+// run_workflow resume port: it drives the state walk and returns the borrowed input
 // base (identity final) or the materialized output base (computed final). The
-// engine grows these two additive capabilities (runv invocation + mutable
+// engine grows these two additive capabilities (run_frame invocation + mutable
 // whole-memory access for the host frame writer) without touching the port
 // header or changing WH-1 semantics (decision doc section 11.1).
 //
-// The three arms mirror Run2Outcome exactly: a host ImportAbort unwinds runv
-// as Run2HostAborted (the host, not the module, aborted -- distinct from a
+// The three arms mirror WorkflowRunOutcome exactly: a host ImportAbort unwinds run_frame
+// as WorkflowRunHostAborted (the host, not the module, aborted -- distinct from a
 // Wasm trap), so the driver can classify the two failure modes separately.
-struct RunvResult {
+struct FrameRunResult {
     std::uint32_t raw_status{0};
     core_wasm_resume_engine::GuestPointer value_ptr{};
 };
-using RunvOutcome = std::variant<RunvResult, core_wasm_resume_engine::Run2Trapped,
-                                 core_wasm_resume_engine::Run2HostAborted>;
+using FrameRunOutcome = std::variant<FrameRunResult, core_wasm_resume_engine::WorkflowRunTrapped,
+                                 core_wasm_resume_engine::WorkflowRunHostAborted>;
 
 // One fresh-instance wasm3 engine session. Move-only; the Impl destructor is
 // the single owner of wasm3 teardown (the runtime, which owns the loaded
@@ -89,9 +90,9 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
                                 core_wasm_resume_engine::EngineError>
     alloc_then_write(std::span<const std::uint8_t> bytes) override;
 
-    [[nodiscard]] std::expected<core_wasm_resume_engine::Run2Outcome,
+    [[nodiscard]] std::expected<core_wasm_resume_engine::WorkflowRunOutcome,
                                 core_wasm_resume_engine::EngineError>
-    invoke_run2(core_wasm_resume_engine::GuestPointer entry_ptr,
+    invoke_run_workflow(core_wasm_resume_engine::GuestPointer entry_ptr,
                 std::uint32_t entry_len) override;
 
     // WH-2 additive: the mutable counterpart of read_whole_memory, for the host
@@ -104,20 +105,20 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
                                 core_wasm_resume_engine::EngineError>
     mutable_whole_memory() override;
 
-    // WH-2 additive: invoke the module's `runv() -> (i32,i32)` P6-frame entry.
+    // WH-2 additive: invoke the module's `run_frame() -> (i32,i32)` P6-frame entry.
     // Found lazily on first call (m3_FindFunction compiles eagerly, surfacing a
     // compile error here rather than at fresh_instance, so non-P6 modules that
-    // do not export runv still instantiate). One-shot like invoke_run2 (shares
+    // do not export run_frame still instantiate). One-shot like invoke_run_workflow (shares
     // the run_started gate): a session runs exactly one lane.
-    [[nodiscard]] std::expected<RunvOutcome, core_wasm_resume_engine::EngineError>
-    invoke_runv();
+    [[nodiscard]] std::expected<FrameRunOutcome, core_wasm_resume_engine::EngineError>
+    invoke_run_frame();
 
     // WH-4 additive: invoke the module's `step() -> i32` export. Drives one
     // state transition and returns the new state index. Found lazily on first
-    // call (like runv); a module that does not export step (a workflow module,
+    // call (like run_frame); a module that does not export step (a workflow module,
     // whose step/current_state trap by contract) returns InstanceUnavailable.
     // NOT gated by run_started: the agent_session drives step() in a bounded
-    // loop on a separate effects-free instance before the canonical runv/run2.
+    // loop on a separate effects-free instance before the canonical run_frame/run_workflow.
     [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
     invoke_step();
 
@@ -134,7 +135,7 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
     read_transition_count();
 
     // WH-4 additive: read an exported mutable i32 global by name. Found
-    // lazily on first call (like runv). The workflow_session uses this for
+    // lazily on first call (like run_frame). The workflow_session uses this for
     // `transition_count` and `workflow_completed_count`; a module that does
     // not export the named global returns InstanceUnavailable.
     [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
